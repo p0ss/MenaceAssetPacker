@@ -1,0 +1,18 @@
+# Build outputs
+bin/
+obj/
+
+# IDE settings
+*.user
+*.suo
+.vscode/
+.idea/
+
+# Dotnet CLI first-run cache
+.dotnet_cli/
+
+# Avalonia asset cache
+*.axaml.cs~
+
+# Misc
+*.DS_Store
