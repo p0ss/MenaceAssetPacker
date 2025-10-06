@@ -1,3 +1,4 @@
+using System;
 using Avalonia;
 using Avalonia.ReactiveUI;
 
@@ -13,7 +14,7 @@ internal static class Program
 
   public static AppBuilder BuildAvaloniaApp()
   {
-    return AppBuilder.Configure<ApplicationShell>()
+    return AppBuilder.Configure<App>()
       .UsePlatformDetect()
       .WithInterFont()
       .LogToTrace()

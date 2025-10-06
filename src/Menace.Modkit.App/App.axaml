@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Menace.Modkit.App"
-             x:Class="Menace.Modkit.App.ApplicationShell"
+             x:Class="Menace.Modkit.App.App"
              RequestedThemeVariant="Dark">
   <Application.Styles>
-    <FluentTheme Mode="Dark"/>
+    <FluentTheme />
   </Application.Styles>
 </Application>

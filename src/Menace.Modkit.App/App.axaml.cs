@@ -5,7 +5,7 @@ using Menace.Modkit.App.Views;
 
 namespace Menace.Modkit.App;
 
-public sealed partial class ApplicationShell : Application
+public sealed partial class App : Application
 {
   public override void Initialize()
   {

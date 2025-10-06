@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Threading;
 using Menace.Modkit.Typetrees;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -40,7 +41,7 @@ internal sealed class CacheTypetreeCommand : AsyncCommand<CacheTypetreeCommand.S
 
     try
     {
-      var result = await _cacheBuilder.BuildAsync(request, context.CancellationToken).ConfigureAwait(false);
+      var result = await _cacheBuilder.BuildAsync(request, CancellationToken.None).ConfigureAwait(false);
       AnsiConsole.MarkupLine($"[green]Typetree manifest written:[/] {result.ManifestPath}");
       return 0;
     }
