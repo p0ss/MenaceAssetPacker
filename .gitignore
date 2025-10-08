@@ -1,6 +1,8 @@
 # Build outputs
 bin/
 obj/
+**/bin/
+**/obj/
 
 # IDE settings
 *.user

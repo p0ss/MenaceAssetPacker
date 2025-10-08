@@ -19,6 +19,7 @@ public sealed class TypetreeCacheServiceTests
     var manifestExists = File.Exists(result.ManifestPath);
 
     Assert.True(manifestExists);
+    Assert.True(Directory.Exists(Path.Combine(output.Path, "typetrees")));
   }
 
   private sealed class TemporaryDirectory : IDisposable

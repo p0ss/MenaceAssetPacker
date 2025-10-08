@@ -13,6 +13,7 @@ public static class ServiceCollectionExtensions
     ArgumentNullException.ThrowIfNull(services);
 
     services.AddSingleton<ITypetreeCacheBuilder, TypetreeCacheService>();
+    services.AddSingleton<IUnityVersionDetector, UnityVersionDetector>();
 
     return services;
   }

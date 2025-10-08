@@ -9,18 +9,18 @@ GPL-3.0 licensed, cross-platform .NET tooling suite for managing Menace assets, 
 - [ ] Snapshot Menace build metadata (IL2CPP version, Unity version) for reference.
 
 ## Phase 1 – Repository & Solution Scaffolding
-- [ ] Initialize `.NET` solution with projects:
+- [x] Initialize `.NET` solution with projects:
   - `Menace.Modkit.Core` (class library)
   - `Menace.Modkit.App` (Avalonia UI)
   - `Menace.Modkit.Cli` (Spectre.Console or System.CommandLine)
   - `Menace.Modkit.Tests` (xUnit)
-- [ ] Configure shared build props (nullable, analyzers, code style).
+- [x] Configure shared build props (nullable, analyzers, code style).
 - [ ] Set up dependency injection host (`Microsoft.Extensions.Hosting`).
 - [ ] Add CI pipeline skeleton (lint/test on Linux & Windows).
 
 ## Phase 2 – Typetree & Asset Extraction Pipeline
-- [ ] Implement Windows-only CLI command `modkit cache-typetrees` using AssetRipper to dump typetrees/metadata into project cache (`ProjectRoot/Typetrees/*.json`).
-- [ ] Define cache manifest schema (JSON/TOML) including game build fingerprint.
+- [x] Implement Windows-only CLI command `modkit cache-typetrees` using AssetRipper to dump typetrees/metadata into project cache (`ProjectRoot/Typetrees/*.json`).
+- [x] Define cache manifest schema (JSON/TOML) including game build fingerprint.
 - [ ] Create cross-platform loader in Core to consume cached typetrees with validations & version checks.
 - [ ] Provide automation script/docs for Windows VM workflow.
 

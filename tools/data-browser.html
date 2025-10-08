@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Menace Data Browser</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            height: 100vh;
+        }
+
+        #sidebar {
+            width: 250px;
+            background: #252525;
+            border-right: 1px solid #333;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #toolbar {
+            background: #2a2a2a;
+            padding: 15px;
+            border-bottom: 1px solid #333;
+        }
+
+        #content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .template-type {
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .template-type:hover {
+            background: #3d3d3d;
+        }
+
+        .template-type.active {
+            background: #0066cc;
+        }
+
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 8px 12px;
+            background: #333;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            margin-bottom: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #252525;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+
+        th {
+            background: #2a2a2a;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        tr:hover {
+            background: #2d2d2d;
+        }
+
+        .stat-value {
+            font-family: 'Courier New', monospace;
+            color: #4db8ff;
+        }
+
+        .item-name {
+            color: #ffd700;
+            font-weight: 500;
+        }
+
+        .export-btn {
+            padding: 8px 16px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+
+        .export-btn:hover {
+            background: #0052a3;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .stat-card {
+            background: #2a2a2a;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+
+        .stat-label {
+            color: #999;
+            font-size: 0.9em;
+            margin-bottom: 4px;
+        }
+
+        .filter-info {
+            color: #999;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .highlight {
+            background: rgba(255, 215, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h3 style="margin-bottom: 15px; color: #ffd700;">Template Types</h3>
+        <div id="template-list"></div>
+    </div>
+
+    <div id="main">
+        <div id="toolbar">
+            <input type="file" id="data-loader" webkitdirectory directory multiple
+                   accept=".json" title="Select UserData/ExtractedData folder">
+            <input type="text" id="search" placeholder="Search items..." style="margin-top: 10px;">
+            <div class="filter-info" id="filter-info"></div>
+        </div>
+
+        <div id="content">
+            <h2>Menace Data Browser</h2>
+            <p style="color: #999; margin-top: 10px;">
+                Load your ExtractedData folder to browse templates.
+                Click a template type on the left to view items.
+            </p>
+            <div id="data-view"></div>
+        </div>
+    </div>
+
+    <script>
+        let loadedData = {};
+        let currentTemplate = null;
+        let searchTerm = '';
+
+        const importantTemplates = [
+            'WeaponTemplate',
+            'ArmorTemplate',
+            'AccessoryTemplate',
+            'EntityTemplate',
+            'VehicleItemTemplate',
+            'ItemTemplate',
+            'ModularVehicleTemplate',
+            'ModularVehicleWeaponTemplate',
+            'PerkTemplate',
+            'SkillTemplate',
+            'OffmapAbilityTemplate'
+        ];
+
+        document.getElementById('data-loader').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files).filter(f => f.name.endsWith('.json'));
+
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        const templateName = file.name.replace('.json', '');
+                        loadedData[templateName] = data;
+                        updateTemplateList();
+                    } catch (err) {
+                        console.error(`Error loading ${file.name}:`, err);
+                    }
+                };
+                reader.readAsText(file);
+            });
+        });
+
+        document.getElementById('search').addEventListener('input', function(e) {
+            searchTerm = e.target.value.toLowerCase();
+            if (currentTemplate) {
+                displayTemplate(currentTemplate);
+            }
+        });
+
+        function updateTemplateList() {
+            const listEl = document.getElementById('template-list');
+            const templates = Object.keys(loadedData).sort((a, b) => {
+                const aImportant = importantTemplates.includes(a);
+                const bImportant = importantTemplates.includes(b);
+                if (aImportant && !bImportant) return -1;
+                if (!aImportant && bImportant) return 1;
+                return a.localeCompare(b);
+            });
+
+            listEl.innerHTML = templates.map(name =>
+                `<div class="template-type" data-template="${name}">
+                    ${name} (${loadedData[name].length})
+                </div>`
+            ).join('');
+
+            listEl.querySelectorAll('.template-type').forEach(el => {
+                el.addEventListener('click', function() {
+                    document.querySelectorAll('.template-type').forEach(e => e.classList.remove('active'));
+                    this.classList.add('active');
+                    displayTemplate(this.dataset.template);
+                });
+            });
+        }
+
+        function displayTemplate(templateName) {
+            currentTemplate = templateName;
+            const data = loadedData[templateName];
+            const filtered = searchTerm ?
+                data.filter(item => JSON.stringify(item).toLowerCase().includes(searchTerm)) :
+                data;
+
+            document.getElementById('filter-info').textContent =
+                `Showing ${filtered.length} of ${data.length} items`;
+
+            const viewEl = document.getElementById('data-view');
+
+            if (filtered.length === 0) {
+                viewEl.innerHTML = '<p style="color: #999;">No items match your search.</p>';
+                return;
+            }
+
+            // Get all unique keys from items
+            const keys = [...new Set(filtered.flatMap(item => Object.keys(item)))];
+            const statKeys = keys.filter(k => k !== 'name');
+
+            let html = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2>${templateName}</h2>
+                    <button class="export-btn" onclick="exportToModified('${templateName}')">
+                        Export to ModifiedData
+                    </button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            ${statKeys.map(k => `<th>${k}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            filtered.forEach(item => {
+                const hasMatch = searchTerm && JSON.stringify(item).toLowerCase().includes(searchTerm);
+                html += `<tr ${hasMatch ? 'class="highlight"' : ''}>
+                    <td class="item-name">${item.name || 'N/A'}</td>
+                    ${statKeys.map(k => {
+                        let val = item[k];
+                        if (val === null || val === undefined) return '<td>-</td>';
+                        if (typeof val === 'object') val = JSON.stringify(val);
+                        return `<td class="stat-value">${val}</td>`;
+                    }).join('')}
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            viewEl.innerHTML = html;
+        }
+
+        function exportToModified(templateName) {
+            const data = loadedData[templateName];
+            const json = JSON.stringify(data, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${templateName}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            alert(`Exported ${templateName}.json\n\nPlace this in:\n~/.steam/.../Menace Demo/UserData/ModifiedData/\n\nEdit values and restart game to apply changes.`);
+        }
+    </script>
+</body>
+</html>

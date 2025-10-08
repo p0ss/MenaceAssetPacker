@@ -1,9 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:Menace.Modkit.App.Views"
+             xmlns:viewModels="clr-namespace:Menace.Modkit.App.ViewModels"
              x:Class="Menace.Modkit.App.App"
              RequestedThemeVariant="Dark">
   <Application.Styles>
     <FluentTheme />
   </Application.Styles>
+  <Application.DataTemplates>
+    <DataTemplate DataType="{x:Type viewModels:AssetBrowserViewModel}">
+      <views:AssetBrowserView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:StatsEditorViewModel}">
+      <views:StatsEditorView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:SettingsViewModel}">
+      <views:SettingsView />
+    </DataTemplate>
+  </Application.DataTemplates>
 </Application>

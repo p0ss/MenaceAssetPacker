@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Menace.Modkit.Typetrees;
@@ -24,4 +25,7 @@ public sealed class TypetreeCacheManifest
 
   [JsonPropertyName("toolVersion")]
   public string ToolVersion { get; init; } = "0.1.0-dev";
+
+  [JsonPropertyName("files")]
+  public List<TypetreeCacheFile> Files { get; set; } = new();
 }
