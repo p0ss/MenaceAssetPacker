@@ -9,21 +9,25 @@ public sealed class MainViewModel : ViewModelBase
   {
     AssetBrowser = new AssetBrowserViewModel();
     StatsEditor = new StatsEditorViewModel();
+    Modpacks = new ModpacksViewModel();
     Settings = new SettingsViewModel(serviceProvider);
 
-    _selectedViewModel = AssetBrowser;
-    _currentSectionTitle = "Asset Browser";
+    _selectedViewModel = Modpacks;
+    _currentSectionTitle = "Modpacks";
 
     ShowAssetBrowser = ReactiveCommand.Create(() => Navigate(AssetBrowser, "Asset Browser"));
     ShowStatsEditor = ReactiveCommand.Create(() => Navigate(StatsEditor, "Stats Editor"));
+    ShowModpacks = ReactiveCommand.Create(() => Navigate(Modpacks, "Modpacks"));
     ShowSettings = ReactiveCommand.Create(() => Navigate(Settings, "Settings"));
 
-    Navigate(AssetBrowser, "Asset Browser");
+    Navigate(Modpacks, "Modpacks");
   }
 
   public AssetBrowserViewModel AssetBrowser { get; }
 
   public StatsEditorViewModel StatsEditor { get; }
+
+  public ModpacksViewModel Modpacks { get; }
 
   public SettingsViewModel Settings { get; }
 
@@ -37,6 +41,8 @@ public sealed class MainViewModel : ViewModelBase
   public ReactiveCommand<Unit, Unit> ShowAssetBrowser { get; }
 
   public ReactiveCommand<Unit, Unit> ShowStatsEditor { get; }
+
+  public ReactiveCommand<Unit, Unit> ShowModpacks { get; }
 
   public ReactiveCommand<Unit, Unit> ShowSettings { get; }
 

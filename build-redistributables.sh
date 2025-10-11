@@ -20,10 +20,20 @@ $DOTNET publish src/Menace.Modkit.App -c Release -r linux-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/gui-linux-x64
 
+# Manually copy bundled files for Linux (PublishSingleFile excludes them)
+echo "  → Copying bundled dependencies..."
+mkdir -p dist/gui-linux-x64/third_party/bundled
+cp -r third_party/bundled/* dist/gui-linux-x64/third_party/bundled/
+
 echo "  → Windows x64..."
 $DOTNET publish src/Menace.Modkit.App -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/gui-win-x64
+
+# Manually copy bundled files (PublishSingleFile excludes them)
+echo "  → Copying bundled dependencies..."
+mkdir -p dist/gui-win-x64/third_party/bundled
+cp -r third_party/bundled/* dist/gui-win-x64/third_party/bundled/
 
 # Build CLI for each platform
 echo ""

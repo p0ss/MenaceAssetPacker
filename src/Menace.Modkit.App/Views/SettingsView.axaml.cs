@@ -17,7 +17,8 @@ public class SettingsView : UserControl
     var scrollViewer = new ScrollViewer();
     var stack = new StackPanel
     {
-      Spacing = 24
+      Spacing = 24,
+      Margin = new Thickness(24)
     };
 
     // Title
@@ -29,91 +30,243 @@ public class SettingsView : UserControl
       Foreground = Brushes.White
     });
 
-    // Settings panel
-    var settingsBorder = new Border
+    // Game Installation Settings
+    var installBorder = new Border
     {
       Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
       CornerRadius = new CornerRadius(8),
       Padding = new Thickness(24)
     };
 
-    var settingsStack = new StackPanel { Spacing = 16 };
+    var installStack = new StackPanel { Spacing = 16 };
 
-    // Header
-    settingsStack.Children.Add(new TextBlock
+    installStack.Children.Add(new TextBlock
     {
-      Text = "Menace Installation",
+      Text = "Game Installation",
       FontSize = 16,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White
     });
-    settingsStack.Children.Add(new TextBlock
+
+    installStack.Children.Add(new TextBlock
     {
-      Text = "Provide the path to the Menace installation so the tool can detect the Unity version and build typetree caches.",
+      Text = "Set the path to the Menace Demo installation directory. This is used for extracting game assets.",
       Opacity = 0.7,
       Foreground = Brushes.White,
       TextWrapping = TextWrapping.Wrap
     });
 
-    // Install path
-    var pathStack = new StackPanel { Spacing = 12 };
+    // Install path field
+    var pathStack = new StackPanel { Spacing = 8 };
     pathStack.Children.Add(new TextBlock
     {
       Text = "Install Path",
       FontWeight = FontWeight.SemiBold,
-      Foreground = Brushes.White
+      Foreground = Brushes.White,
+      FontSize = 13
     });
-    var pathBox = new TextBox { Watermark = "/path/to/Menace" };
-    pathBox.Bind(TextBox.TextProperty,
-      new Avalonia.Data.Binding("MenaceInstallPath") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    pathStack.Children.Add(pathBox);
-    settingsStack.Children.Add(pathStack);
 
-    // Buttons
-    var buttonPanel = new StackPanel
+    var pathBox = new TextBox
     {
-      Orientation = Orientation.Horizontal,
-      Spacing = 12
+      Watermark = "~/.steam/debian-installation/steamapps/common/Menace Demo",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      BorderThickness = new Thickness(1),
+      Padding = new Thickness(12, 8)
+    };
+    pathBox.Bind(TextBox.TextProperty,
+      new Avalonia.Data.Binding("GameInstallPath") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    pathStack.Children.Add(pathBox);
+
+    // Status message
+    var statusText = new TextBlock
+    {
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap,
+      FontSize = 12
+    };
+    statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("InstallPathStatus"));
+    pathStack.Children.Add(statusText);
+
+    installStack.Children.Add(pathStack);
+    installBorder.Child = installStack;
+    stack.Children.Add(installBorder);
+
+    // Extraction Settings
+    var extractionBorder = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(24)
     };
 
-    var detectButton = new Button { Content = "Detect Unity Version" };
-    detectButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("DetectUnityVersion"));
-    buttonPanel.Children.Add(detectButton);
+    var extractionStack = new StackPanel { Spacing = 16 };
 
-    var buildButton = new Button { Content = "Build Typetree Cache" };
-    buildButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("BuildTypetreeCache"));
-    buttonPanel.Children.Add(buildButton);
-
-    settingsStack.Children.Add(buttonPanel);
-
-    // Unity version status
-    var versionStack = new StackPanel { Spacing = 8 };
-    versionStack.Children.Add(new TextBlock
+    extractionStack.Children.Add(new TextBlock
     {
-      Text = "Unity Version",
+      Text = "Extraction Settings",
+      FontSize = 16,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White
     });
-    var versionStatus = new TextBlock { Opacity = 0.8, Foreground = Brushes.White };
-    versionStatus.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("UnityVersionStatus"));
-    versionStack.Children.Add(versionStatus);
-    settingsStack.Children.Add(versionStack);
 
-    // Typetree status
-    var typetreeStack = new StackPanel { Spacing = 8 };
-    typetreeStack.Children.Add(new TextBlock
+    // Performance & Caching checkboxes
+    var perfStack = new StackPanel { Spacing = 8 };
+    perfStack.Children.Add(new TextBlock
     {
-      Text = "Typetree Cache",
+      Text = "Performance & Caching",
       FontWeight = FontWeight.SemiBold,
-      Foreground = Brushes.White
+      Foreground = Brushes.White,
+      FontSize = 13
     });
-    var typetreeStatus = new TextBlock { Opacity = 0.8, Foreground = Brushes.White };
-    typetreeStatus.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("TypetreeStatus"));
-    typetreeStack.Children.Add(typetreeStatus);
-    settingsStack.Children.Add(typetreeStack);
 
-    settingsBorder.Child = settingsStack;
-    stack.Children.Add(settingsBorder);
+    var autoUpdateCheck = new CheckBox
+    {
+      Content = "Auto-update on game version change",
+      Foreground = Brushes.White
+    };
+    autoUpdateCheck.Bind(CheckBox.IsCheckedProperty,
+      new Avalonia.Data.Binding("AutoUpdateOnGameChange") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    perfStack.Children.Add(autoUpdateCheck);
+
+    var cachingCheck = new CheckBox
+    {
+      Content = "Enable caching (huge speed improvement)",
+      Foreground = Brushes.White
+    };
+    cachingCheck.Bind(CheckBox.IsCheckedProperty,
+      new Avalonia.Data.Binding("EnableCaching") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    perfStack.Children.Add(cachingCheck);
+
+    var fullDumpCheck = new CheckBox
+    {
+      Content = "Keep full IL2CPP dump (35MB) for reference",
+      Foreground = Brushes.White
+    };
+    fullDumpCheck.Bind(CheckBox.IsCheckedProperty,
+      new Avalonia.Data.Binding("KeepFullIL2CppDump") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    perfStack.Children.Add(fullDumpCheck);
+
+    var progressCheck = new CheckBox
+    {
+      Content = "Show extraction progress notifications",
+      Foreground = Brushes.White
+    };
+    progressCheck.Bind(CheckBox.IsCheckedProperty,
+      new Avalonia.Data.Binding("ShowExtractionProgress") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    perfStack.Children.Add(progressCheck);
+
+    extractionStack.Children.Add(perfStack);
+
+    // Asset Ripper Profile
+    var profileStack = new StackPanel { Spacing = 8 };
+    profileStack.Children.Add(new TextBlock
+    {
+      Text = "Asset Ripper Profile",
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White,
+      FontSize = 13,
+      Margin = new Thickness(0, 8, 0, 0)
+    });
+
+    var essentialRadio = new RadioButton
+    {
+      Content = "Essential - Sprites, Textures, Audio, Text only (~30s, ~100MB)",
+      GroupName = "AssetProfile",
+      Foreground = Brushes.White
+    };
+    essentialRadio.Bind(RadioButton.IsCheckedProperty,
+      new Avalonia.Data.Binding("IsEssentialProfile") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    profileStack.Children.Add(essentialRadio);
+
+    var standardRadio = new RadioButton
+    {
+      Content = "Standard - Essential + Meshes, Shaders, VFX, Prefabs (~1-2min, ~250MB) [Recommended]",
+      GroupName = "AssetProfile",
+      Foreground = Brushes.White
+    };
+    standardRadio.Bind(RadioButton.IsCheckedProperty,
+      new Avalonia.Data.Binding("IsStandardProfile") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    profileStack.Children.Add(standardRadio);
+
+    var completeRadio = new RadioButton
+    {
+      Content = "Complete - Everything including Unity internals (~5-10min, ~1-2GB)",
+      GroupName = "AssetProfile",
+      Foreground = Brushes.White
+    };
+    completeRadio.Bind(RadioButton.IsCheckedProperty,
+      new Avalonia.Data.Binding("IsCompleteProfile") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    profileStack.Children.Add(completeRadio);
+
+    var customRadio = new RadioButton
+    {
+      Content = "Custom - User-defined filter settings",
+      GroupName = "AssetProfile",
+      Foreground = Brushes.White
+    };
+    customRadio.Bind(RadioButton.IsCheckedProperty,
+      new Avalonia.Data.Binding("IsCustomProfile") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    profileStack.Children.Add(customRadio);
+
+    extractionStack.Children.Add(profileStack);
+
+    // Cache Management
+    var cacheStack = new StackPanel { Spacing = 8 };
+    cacheStack.Children.Add(new TextBlock
+    {
+      Text = "Cache Management",
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White,
+      FontSize = 13,
+      Margin = new Thickness(0, 8, 0, 0)
+    });
+
+    var cacheStatusText = new TextBlock
+    {
+      Foreground = Brushes.White,
+      Opacity = 0.7,
+      FontSize = 12
+    };
+    cacheStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("CacheStatus"));
+    cacheStack.Children.Add(cacheStatusText);
+
+    var cacheButtonStack = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      Margin = new Thickness(0, 8, 0, 0)
+    };
+
+    var clearCacheButton = new Button
+    {
+      Content = "Clear Cache",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(16, 8)
+    };
+    clearCacheButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ClearCacheCommand"));
+    cacheButtonStack.Children.Add(clearCacheButton);
+
+    var forceReExtractButton = new Button
+    {
+      Content = "Force Re-extract All",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(16, 8)
+    };
+    forceReExtractButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ForceReExtractCommand"));
+    cacheButtonStack.Children.Add(forceReExtractButton);
+
+    cacheStack.Children.Add(cacheButtonStack);
+    extractionStack.Children.Add(cacheStack);
+
+    extractionBorder.Child = extractionStack;
+    stack.Children.Add(extractionBorder);
 
     scrollViewer.Content = stack;
     return scrollViewer;

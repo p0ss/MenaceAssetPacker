@@ -20,5 +20,20 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.7" />
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.7" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- Copy bundled dependencies to output directory -->
+  <ItemGroup>
+    <None Include="..\..\third_party\bundled\**\*.*">
+      <Link>third_party\bundled\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- App icon -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\icon.jpg" />
   </ItemGroup>
 </Project>

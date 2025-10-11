@@ -1,5 +1,7 @@
 # Build outputs
 bin/
+dist/
+il2cpp_dump/
 obj/
 **/bin/
 **/obj/
@@ -12,9 +14,11 @@ obj/
 
 # Dotnet CLI first-run cache
 .dotnet_cli/
+.dontet9
 
 # Avalonia asset cache
 *.axaml.cs~
 
 # Misc
 *.DS_Store
+
