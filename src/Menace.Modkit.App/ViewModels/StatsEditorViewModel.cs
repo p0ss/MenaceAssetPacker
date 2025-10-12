@@ -12,10 +12,12 @@ public sealed class StatsEditorViewModel : ViewModelBase
 {
     private DataTemplateLoader? _dataLoader;
     private readonly ModpackManager _modpackManager;
+    private readonly AssetReferenceResolver _assetResolver;
 
     public StatsEditorViewModel()
     {
         _modpackManager = new ModpackManager();
+        _assetResolver = new AssetReferenceResolver();
         TreeNodes = new ObservableCollection<TreeNodeViewModel>();
 
         LoadData();
@@ -33,6 +35,14 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         ShowVanillaDataWarning = false;
         _dataLoader = new DataTemplateLoader(_modpackManager.VanillaDataPath);
+
+        // Load asset references from game install
+        var gameInstallPath = _modpackManager.GetGameInstallPath();
+        if (!string.IsNullOrEmpty(gameInstallPath))
+        {
+            _assetResolver.LoadReferences(gameInstallPath);
+        }
+
         LoadAllTemplates();
     }
 
@@ -82,8 +92,11 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     private void OnNodeSelected(TreeNodeViewModel? node)
     {
+        Console.WriteLine($"[DEBUG] OnNodeSelected: node={node?.Name}, IsCategory={node?.IsCategory}, HasTemplate={node?.Template != null}");
+
         if (node?.Template == null)
         {
+            Console.WriteLine($"[DEBUG] OnNodeSelected: No template, clearing properties");
             VanillaProperties = null;
             ModifiedProperties = null;
             return;
@@ -92,6 +105,12 @@ public sealed class StatsEditorViewModel : ViewModelBase
         // Convert template to dictionary of properties
         var properties = ConvertTemplateToProperties(node.Template);
         VanillaProperties = properties;
+
+        Console.WriteLine($"[DEBUG] OnNodeSelected: Set VanillaProperties with {properties.Count} items");
+        if (properties.Count > 0)
+        {
+            Console.WriteLine($"[DEBUG] First 3 properties: {string.Join(", ", properties.Take(3).Select(kvp => $"{kvp.Key}={kvp.Value}"))}");
+        }
 
         // TODO: Load modified properties from staging if exists
         ModifiedProperties = new System.Collections.Generic.Dictionary<string, object?>(properties); // For now, start with vanilla
@@ -105,13 +124,74 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (template is DynamicDataTemplate dynamicTemplate)
         {
             var jsonElement = dynamicTemplate.GetJsonElement();
-            foreach (var property in jsonElement.EnumerateObject())
+
+            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: template={template.Name}, jsonElement.ValueKind={jsonElement.ValueKind}");
+
+            int propCount = 0;
+            try
             {
-                result[property.Name] = property.Value;
+                foreach (var property in jsonElement.EnumerateObject())
+                {
+                    propCount++;
+                    Console.WriteLine($"[DEBUG]   Processing property {propCount}: {property.Name}");
+
+                    // Convert JsonElement to appropriate type
+                    object? value = ConvertJsonElementToValue(property.Value);
+
+                    // Try to resolve asset references
+                    if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    {
+                        var resolved = _assetResolver.Resolve(property.Value.GetInt64());
+                        if (resolved.IsReference)
+                        {
+                            // Return a formatted string with asset info
+                            if (resolved.HasAssetFile)
+                            {
+                                value = $"{resolved.DisplayValue} → {resolved.AssetPath}";
+                            }
+                            else if (!string.IsNullOrEmpty(resolved.AssetName))
+                            {
+                                value = $"{resolved.DisplayValue} (no asset file)";
+                            }
+                            else
+                            {
+                                value = resolved.DisplayValue;  // Show [Ref:ID]
+                            }
+                        }
+                    }
+
+                    result[property.Name] = value;
+                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG] ERROR in ConvertTemplateToProperties: {ex.Message}");
+                Console.WriteLine($"[DEBUG] Stack trace: {ex.StackTrace}");
+            }
+
+            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: Found {propCount} properties, result.Count={result.Count}");
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine($"ConvertTemplateToProperties: template is not DynamicDataTemplate, it's {template?.GetType().Name}");
         }
 
         return result;
+    }
+
+    private object? ConvertJsonElementToValue(System.Text.Json.JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => element.GetString(),
+            System.Text.Json.JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Null => null,
+            System.Text.Json.JsonValueKind.Array => element, // Keep arrays as JsonElement for View to handle
+            System.Text.Json.JsonValueKind.Object => element, // Keep objects as JsonElement for View to handle
+            _ => element.ToString()
+        };
     }
 
     private string _searchText = string.Empty;
@@ -130,23 +210,105 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     private void LoadAllTemplates()
     {
-        if (_dataLoader == null) return;
-
         TreeNodes.Clear();
+
+        // Load menu.json (hierarchical structure)
+        var menuPath = Path.Combine(_modpackManager.VanillaDataPath, "menu.json");
+
+        if (!File.Exists(menuPath))
+        {
+            // Fallback to old method if menu.json doesn't exist
+            LoadAllTemplatesOld();
+            return;
+        }
+
+        try
+        {
+            var menuJson = File.ReadAllText(menuPath);
+            var menuRoot = System.Text.Json.JsonDocument.Parse(menuJson).RootElement;
+
+            // Build tree from menu structure
+            foreach (var topLevelProp in menuRoot.EnumerateObject())
+            {
+                var node = BuildTreeNodeFromJson(topLevelProp.Name, topLevelProp.Value);
+                if (node != null)
+                {
+                    TreeNodes.Add(node);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to load menu.json: {ex.Message}");
+            LoadAllTemplatesOld();
+        }
+    }
+
+    private TreeNodeViewModel? BuildTreeNodeFromJson(string name, System.Text.Json.JsonElement element)
+    {
+        // Check if this is a leaf node (has template_type, name, data)
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            var hasTemplateType = element.TryGetProperty("template_type", out _);
+            var hasData = element.TryGetProperty("data", out var dataElement);
+
+            if (hasTemplateType && hasData)
+            {
+                // This is a leaf node - create template
+                // Get the template name from the data
+                var templateName = dataElement.TryGetProperty("name", out var nameProperty)
+                    ? nameProperty.GetString() ?? name
+                    : name;
+
+                var template = new DynamicDataTemplate(templateName, dataElement);
+                return new TreeNodeViewModel
+                {
+                    Name = FormatNodeName(name),
+                    IsCategory = false,
+                    Template = template
+                };
+            }
+            else
+            {
+                // This is a category node - recurse into children
+                var node = new TreeNodeViewModel
+                {
+                    Name = FormatNodeName(name),
+                    IsCategory = true
+                };
+
+                foreach (var childProp in element.EnumerateObject())
+                {
+                    var childNode = BuildTreeNodeFromJson(childProp.Name, childProp.Value);
+                    if (childNode != null)
+                    {
+                        node.Children.Add(childNode);
+                    }
+                }
+
+                return node.Children.Count > 0 ? node : null;
+            }
+        }
+
+        return null;
+    }
+
+    private void LoadAllTemplatesOld()
+    {
+        // Old method - kept as fallback
+        if (_dataLoader == null) return;
 
         foreach (var templateType in _dataLoader.GetTemplateTypes())
         {
             var templates = _dataLoader.LoadTemplatesGeneric(templateType);
             if (templates.Count == 0) continue;
 
-            // Create root node for template type (e.g., "Weapon Template")
             var rootNode = new TreeNodeViewModel
             {
                 Name = FormatTemplateTypeName(templateType),
                 IsCategory = true
             };
 
-            // Build hierarchical structure
             var hierarchy = BuildHierarchy(templates);
             foreach (var child in hierarchy)
             {

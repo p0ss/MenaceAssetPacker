@@ -22,3 +22,7 @@ obj/
 # Misc
 *.DS_Store
 
+# AssetRipper logs
+third_party/bundled/AssetRipper/*.log
+third_party/bundled/AssetRipper/compile_time.txt
+

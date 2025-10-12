@@ -17,37 +17,60 @@ public class ModpackManager
 
     public ModpackManager()
     {
-        // Vanilla extracted data (read-only)
-        _vanillaDataPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".steam", "debian-installation", "steamapps", "common", "Menace Demo",
-            "UserData", "ExtractedData");
-
-        // Staging area for work-in-progress mods
+        // Staging area for work-in-progress mods (always in Documents)
         _stagingBasePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "MenaceModkit", "staging");
 
-        // Active mods deployed to game
-        _modsBasePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".steam", "debian-installation", "steamapps", "common", "Menace Demo",
-            "Mods");
+        // Game paths will be computed from AppSettings
+        _vanillaDataPath = string.Empty;
+        _modsBasePath = string.Empty;
 
         EnsureDirectoriesExist();
     }
 
-    public string VanillaDataPath => _vanillaDataPath;
+    public string VanillaDataPath
+    {
+        get
+        {
+            var gameInstallPath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gameInstallPath))
+                return string.Empty;
+
+            return Path.Combine(gameInstallPath, "UserData", "ExtractedData");
+        }
+    }
+
     public string StagingBasePath => _stagingBasePath;
-    public string ModsBasePath => _modsBasePath;
+
+    public string ModsBasePath
+    {
+        get
+        {
+            var gameInstallPath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gameInstallPath))
+                return string.Empty;
+
+            return Path.Combine(gameInstallPath, "Mods");
+        }
+    }
+
+    /// <summary>
+    /// Get the game install path
+    /// </summary>
+    public string GetGameInstallPath()
+    {
+        return AppSettings.Instance.GameInstallPath;
+    }
 
     /// <summary>
     /// Check if vanilla data exists
     /// </summary>
     public bool HasVanillaData()
     {
-        return Directory.Exists(_vanillaDataPath) &&
-               Directory.GetFiles(_vanillaDataPath, "*.json").Any();
+        return !string.IsNullOrEmpty(VanillaDataPath) &&
+               Directory.Exists(VanillaDataPath) &&
+               Directory.GetFiles(VanillaDataPath, "*.json").Any();
     }
 
     /// <summary>
@@ -69,10 +92,10 @@ public class ModpackManager
     /// </summary>
     public List<ModpackInfo> GetActiveMods()
     {
-        if (!Directory.Exists(_modsBasePath))
+        if (string.IsNullOrEmpty(ModsBasePath) || !Directory.Exists(ModsBasePath))
             return new List<ModpackInfo>();
 
-        return Directory.GetDirectories(_modsBasePath)
+        return Directory.GetDirectories(ModsBasePath)
             .Select(dir => LoadModpackInfo(dir))
             .Where(info => info != null)
             .ToList()!;
@@ -108,7 +131,10 @@ public class ModpackManager
     /// </summary>
     public string? GetVanillaTemplatePath(string templateType)
     {
-        var path = Path.Combine(_vanillaDataPath, $"{templateType}.json");
+        if (string.IsNullOrEmpty(VanillaDataPath))
+            return null;
+
+        var path = Path.Combine(VanillaDataPath, $"{templateType}.json");
         return File.Exists(path) ? path : null;
     }
 
@@ -147,8 +173,11 @@ public class ModpackManager
     /// </summary>
     public void DeployModpack(string modpackName)
     {
+        if (string.IsNullOrEmpty(ModsBasePath))
+            throw new InvalidOperationException("Game install path not set");
+
         var stagingPath = Path.Combine(_stagingBasePath, modpackName);
-        var modsPath = Path.Combine(_modsBasePath, modpackName);
+        var modsPath = Path.Combine(ModsBasePath, modpackName);
 
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
@@ -187,8 +216,19 @@ public class ModpackManager
 
     private void EnsureDirectoriesExist()
     {
+        // Always create staging directory (it's in Documents, always valid)
         Directory.CreateDirectory(_stagingBasePath);
-        Directory.CreateDirectory(_modsBasePath);
+
+        // Only create game directories if game path is set
+        if (!string.IsNullOrEmpty(VanillaDataPath))
+        {
+            Directory.CreateDirectory(VanillaDataPath);
+        }
+
+        if (!string.IsNullOrEmpty(ModsBasePath))
+        {
+            Directory.CreateDirectory(ModsBasePath);
+        }
     }
 
     private ModpackInfo? LoadModpackInfo(string modpackDir)

@@ -149,22 +149,31 @@ public class AssetRipperService
 
     private string? FindAssetRipper()
     {
+        // Determine platform subdirectory and executable name
+        string platformDir = OperatingSystem.IsWindows() ? "windows" : "linux";
+        string executableName = OperatingSystem.IsWindows()
+            ? "AssetRipper.GUI.Free.exe"
+            : "AssetRipper.GUI.Free";
+
         // Check bundled AssetRipper
         var bundledAssetRipper = Path.Combine(
             AppContext.BaseDirectory,
-            "third_party", "bundled", "AssetRipper", "AssetRipper.GUI.Free");
+            "third_party", "bundled", "AssetRipper", platformDir, executableName);
 
         if (File.Exists(bundledAssetRipper))
         {
             // Ensure it's executable on Linux/Mac
-            try
+            if (!OperatingSystem.IsWindows())
             {
-                var chmod = Process.Start("chmod", $"+x \"{bundledAssetRipper}\"");
-                chmod?.WaitForExit();
-            }
-            catch
-            {
-                // chmod failed, might already be executable or on Windows
+                try
+                {
+                    var chmod = Process.Start("chmod", $"+x \"{bundledAssetRipper}\"");
+                    chmod?.WaitForExit();
+                }
+                catch
+                {
+                    // chmod failed, might already be executable
+                }
             }
 
             return bundledAssetRipper;
