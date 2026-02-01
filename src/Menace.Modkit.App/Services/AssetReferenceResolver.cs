@@ -42,7 +42,9 @@ namespace Menace.Modkit.App.Services
 
                 if (references != null)
                 {
-                    _references = references.ToDictionary(r => r.InstanceId, r => r);
+                    _references = references
+                        .GroupBy(r => r.InstanceId)
+                        .ToDictionary(g => g.Key, g => g.First());
                     _isLoaded = true;
                     Console.WriteLine($"Loaded {_references.Count} asset references");
                 }
@@ -87,11 +89,11 @@ namespace Menace.Modkit.App.Services
                 };
             }
 
-            // Unknown reference
+            // Not found in reference table - treat as a regular number, not a reference
             return new ResolvedAsset
             {
-                DisplayValue = $"[Ref:{instanceId}]",
-                IsReference = true,
+                DisplayValue = instanceId.ToString(),
+                IsReference = false,
                 InstanceId = instanceId,
                 HasAssetFile = false
             };

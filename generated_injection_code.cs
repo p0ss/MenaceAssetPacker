@@ -18,9 +18,181 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
     // Template-specific injection
             if (templateType.Name == "AIWeightsTemplate")
             {
+                if (modifications.ContainsKey("BehaviorScorePOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x18, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["BehaviorScorePOW"])), 0));
+                }
                 if (modifications.ContainsKey("TTL_MAX"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C, Convert.ToInt32(modifications["TTL_MAX"]));
+                }
+                if (modifications.ContainsKey("UtilityPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x20, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UtilityPOW"])), 0));
+                }
+                if (modifications.ContainsKey("UtilityScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x24, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UtilityScale"])), 0));
+                }
+                if (modifications.ContainsKey("UtilityPostPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x28, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UtilityPostPOW"])), 0));
+                }
+                if (modifications.ContainsKey("UtilityPostScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UtilityPostScale"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x30, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyPOW"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x34, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyScale"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyPostPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x38, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyPostPOW"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyPostScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x3C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyPostScale"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x40, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceScale"])), 0));
+                }
+                if (modifications.ContainsKey("DistancePickScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0x44, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistancePickScale"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatLevelPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x48, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatLevelPOW"])), 0));
+                }
+                if (modifications.ContainsKey("OpportunityLevelPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x4C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["OpportunityLevelPOW"])), 0));
+                }
+                if (modifications.ContainsKey("PickingScoreMultPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0x50, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PickingScoreMultPOW"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceToCurrentTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x54, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceToCurrentTile"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceToZones"))
+                {
+                    Marshal.WriteInt32(ptr + 0x58, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceToZones"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceToAdvanceZones"))
+                {
+                    Marshal.WriteInt32(ptr + 0x5C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceToAdvanceZones"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyOutsideDefendZones"))
+                {
+                    Marshal.WriteInt32(ptr + 0x60, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyOutsideDefendZones"])), 0));
+                }
+                if (modifications.ContainsKey("SafetyOutsideDefendZonesVehicles"))
+                {
+                    Marshal.WriteInt32(ptr + 0x64, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SafetyOutsideDefendZonesVehicles"])), 0));
+                }
+                if (modifications.ContainsKey("OccupyZoneValue"))
+                {
+                    Marshal.WriteInt32(ptr + 0x68, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["OccupyZoneValue"])), 0));
+                }
+                if (modifications.ContainsKey("CaptureZoneValue"))
+                {
+                    Marshal.WriteInt32(ptr + 0x6C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CaptureZoneValue"])), 0));
+                }
+                if (modifications.ContainsKey("CoverAgainstOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x70, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CoverAgainstOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x74, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromUnknownOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x78, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromUnknownOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromTileEffects"))
+                {
+                    Marshal.WriteInt32(ptr + 0x7C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromTileEffects"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsDamage"))
+                {
+                    Marshal.WriteInt32(ptr + 0x80, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsDamage"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsArmorDamage"))
+                {
+                    Marshal.WriteInt32(ptr + 0x84, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsArmorDamage"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsSuppression"))
+                {
+                    Marshal.WriteInt32(ptr + 0x88, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsSuppression"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsStun"))
+                {
+                    Marshal.WriteInt32(ptr + 0x8C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsStun"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromPinnedDownOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x90, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromPinnedDownOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromSuppressedOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x94, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromSuppressedOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFrom2xStunnedOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x98, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFrom2xStunnedOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromFleeingOpponents"))
+                {
+                    Marshal.WriteInt32(ptr + 0x9C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromFleeingOpponents"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsAlreadyActed"))
+                {
+                    Marshal.WriteInt32(ptr + 0xA0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsAlreadyActed"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsStaggered"))
+                {
+                    Marshal.WriteInt32(ptr + 0xA4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsStaggered"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsButAlliesInControl"))
+                {
+                    Marshal.WriteInt32(ptr + 0xA8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsButAlliesInControl"])), 0));
+                }
+                if (modifications.ContainsKey("ThreatFromOpponentsAtHypotheticalPositionsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xAC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ThreatFromOpponentsAtHypotheticalPositionsMult"])), 0));
+                }
+                if (modifications.ContainsKey("AllyMetascoreAgainstThreshold"))
+                {
+                    Marshal.WriteInt32(ptr + 0xB0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AllyMetascoreAgainstThreshold"])), 0));
+                }
+                if (modifications.ContainsKey("AvoidAlliesPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0xB4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AvoidAlliesPOW"])), 0));
+                }
+                if (modifications.ContainsKey("AvoidOpponentsPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0xB8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AvoidOpponentsPOW"])), 0));
+                }
+                if (modifications.ContainsKey("FleeFromOpponentsPOW"))
+                {
+                    Marshal.WriteInt32(ptr + 0xBC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["FleeFromOpponentsPOW"])), 0));
+                }
+                if (modifications.ContainsKey("ScalePositionWithTags"))
+                {
+                    Marshal.WriteInt32(ptr + 0xC0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ScalePositionWithTags"])), 0));
+                }
+                if (modifications.ContainsKey("IncludeAttacksAgainstAllOpponentsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xC4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["IncludeAttacksAgainstAllOpponentsMult"])), 0));
                 }
                 if (modifications.ContainsKey("OppositeSideDistanceFromOpponentCap"))
                 {
@@ -30,38 +202,258 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xCC, Convert.ToInt32(modifications["CullTilesDistances"]));
                 }
+                if (modifications.ContainsKey("DistanceToZoneDeployScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceToZoneDeployScore"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceToAlliesScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceToAlliesScore"])), 0));
+                }
+                if (modifications.ContainsKey("CoverInEachDirectionBonus"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CoverInEachDirectionBonus"])), 0));
+                }
+                if (modifications.ContainsKey("InsideBuildingDuringDeployment"))
+                {
+                    Marshal.WriteInt32(ptr + 0xDC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InsideBuildingDuringDeployment"])), 0));
+                }
+                if (modifications.ContainsKey("DeploymentConcealmentMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xE0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DeploymentConcealmentMult"])), 0));
+                }
+                if (modifications.ContainsKey("InvisibleTargetValueMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xE4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InvisibleTargetValueMult"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueDamageScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xE8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueDamageScale"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueArmorScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xEC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueArmorScale"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueSuppressionScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xF0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueSuppressionScale"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueStunScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xF4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueStunScale"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueThreatScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xF8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueThreatScale"])), 0));
+                }
+                if (modifications.ContainsKey("TargetValueMaxThreatSuppressScale"))
+                {
+                    Marshal.WriteInt32(ptr + 0xFC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetValueMaxThreatSuppressScale"])), 0));
+                }
+                if (modifications.ContainsKey("ScoreThresholdWithLimitedUses"))
+                {
+                    Marshal.WriteInt32(ptr + 0x100, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ScoreThresholdWithLimitedUses"])), 0));
+                }
+                if (modifications.ContainsKey("FriendlyFirePenalty"))
+                {
+                    Marshal.WriteInt32(ptr + 0x104, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["FriendlyFirePenalty"])), 0));
+                }
+                if (modifications.ContainsKey("DamageBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x108, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("DamageScoreMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x10C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageScoreMult"])), 0));
+                }
+                if (modifications.ContainsKey("InflictDamageFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x110, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InflictDamageFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("SuppressionBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x114, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SuppressionBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("SuppressionScoreMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x118, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SuppressionScoreMult"])), 0));
+                }
+                if (modifications.ContainsKey("InflictSuppressionFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x11C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InflictSuppressionFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("StunBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x120, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["StunBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("StunScoreMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x124, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["StunScoreMult"])), 0));
+                }
+                if (modifications.ContainsKey("StunFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x128, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["StunFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("MoveBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x12C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MoveBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("MoveScoreMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x130, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MoveScoreMult"])), 0));
+                }
                 if (modifications.ContainsKey("NearTileLimit"))
                 {
                     Marshal.WriteInt32(ptr + 0x134, Convert.ToInt32(modifications["NearTileLimit"]));
+                }
+                if (modifications.ContainsKey("TileScoreDifferenceMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x138, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TileScoreDifferenceMult"])), 0));
+                }
+                if (modifications.ContainsKey("TileScoreDifferencePow"))
+                {
+                    Marshal.WriteInt32(ptr + 0x13C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TileScoreDifferencePow"])), 0));
+                }
+                if (modifications.ContainsKey("UtilityThreshold"))
+                {
+                    Marshal.WriteInt32(ptr + 0x140, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UtilityThreshold"])), 0));
+                }
+                if (modifications.ContainsKey("PathfindingSafetyCostMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x144, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PathfindingSafetyCostMult"])), 0));
+                }
+                if (modifications.ContainsKey("PathfindingUnknownTileSafety"))
+                {
+                    Marshal.WriteInt32(ptr + 0x148, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PathfindingUnknownTileSafety"])), 0));
                 }
                 if (modifications.ContainsKey("PathfindingHiddenFromOpponentsBonus"))
                 {
                     Marshal.WriteInt32(ptr + 0x14C, Convert.ToInt32(modifications["PathfindingHiddenFromOpponentsBonus"]));
                 }
+                if (modifications.ContainsKey("EntirePathScoreContribution"))
+                {
+                    Marshal.WriteInt32(ptr + 0x150, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EntirePathScoreContribution"])), 0));
+                }
+                if (modifications.ContainsKey("MoveIfNewTileIsBetterBy"))
+                {
+                    Marshal.WriteInt32(ptr + 0x154, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MoveIfNewTileIsBetterBy"])), 0));
+                }
+                if (modifications.ContainsKey("GetUpIfNewTileIsBetterBy"))
+                {
+                    Marshal.WriteInt32(ptr + 0x158, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["GetUpIfNewTileIsBetterBy"])), 0));
+                }
+                if (modifications.ContainsKey("DistanceTooFarForOneTurnMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x15C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DistanceTooFarForOneTurnMult"])), 0));
+                }
+                if (modifications.ContainsKey("ConsiderAlternativeIfBetterBy"))
+                {
+                    Marshal.WriteInt32(ptr + 0x160, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ConsiderAlternativeIfBetterBy"])), 0));
+                }
+                if (modifications.ContainsKey("ConsiderAlternativeToUltimateIfBetterBy"))
+                {
+                    Marshal.WriteInt32(ptr + 0x164, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ConsiderAlternativeToUltimateIfBetterBy"])), 0));
+                }
+                if (modifications.ContainsKey("EnoughAPToPerformSkillAfterwards"))
+                {
+                    Marshal.WriteInt32(ptr + 0x168, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnoughAPToPerformSkillAfterwards"])), 0));
+                }
+                if (modifications.ContainsKey("EnoughAPToPerformOnlySkillAfterwards"))
+                {
+                    Marshal.WriteInt32(ptr + 0x16C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnoughAPToPerformOnlySkillAfterwards"])), 0));
+                }
+                if (modifications.ContainsKey("EnoughAPToDeployAfterwards"))
+                {
+                    Marshal.WriteInt32(ptr + 0x170, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnoughAPToDeployAfterwards"])), 0));
+                }
+                if (modifications.ContainsKey("BuffBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x174, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["BuffBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("BuffTargetValueMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x178, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["BuffTargetValueMult"])), 0));
+                }
+                if (modifications.ContainsKey("BuffFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x17C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["BuffFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("RemoveSuppressionMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x180, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RemoveSuppressionMult"])), 0));
+                }
+                if (modifications.ContainsKey("RemoveStunnedMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x184, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RemoveStunnedMult"])), 0));
+                }
+                if (modifications.ContainsKey("RestoreMoraleMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x188, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RestoreMoraleMult"])), 0));
+                }
+                if (modifications.ContainsKey("IncreaseMovementMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x18C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["IncreaseMovementMult"])), 0));
+                }
+                if (modifications.ContainsKey("IncreaseOffensiveStatsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x190, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["IncreaseOffensiveStatsMult"])), 0));
+                }
+                if (modifications.ContainsKey("IncreaseDefensiveStatsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x194, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["IncreaseDefensiveStatsMult"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x198, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoTargetValueMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x19C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoTargetValueMult"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoNoAmmoMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1A0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoNoAmmoMult"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoSpecialWeaponMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1A4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoSpecialWeaponMult"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoGoalThreshold"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1A8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoGoalThreshold"])), 0));
+                }
+                if (modifications.ContainsKey("SupplyAmmoFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1AC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SupplyAmmoFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("TargetDesignatorBaseScore"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetDesignatorBaseScore"])), 0));
+                }
+                if (modifications.ContainsKey("TargetDesignatorScoreMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetDesignatorScoreMult"])), 0));
+                }
+                if (modifications.ContainsKey("TargetDesignatorFromTile"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TargetDesignatorFromTile"])), 0));
+                }
+                if (modifications.ContainsKey("GainBonusTurnBaseMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1BC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["GainBonusTurnBaseMult"])), 0));
+                }
                 if (modifications.ContainsKey("TestValueInt"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C0, Convert.ToInt32(modifications["TestValueInt"]));
+                }
+                if (modifications.ContainsKey("TestValueFloat"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1C4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TestValueFloat"])), 0));
                 }
             }
 
             else if (templateType.Name == "AccessoryTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -77,30 +469,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-                if (modifications.ContainsKey("IconEquipment"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IconEquipment"]));
-                }
-                if (modifications.ContainsKey("IconEquipmentDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["IconEquipmentDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBar"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["IconSkillBar"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["IconSkillBarDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternative"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["IconSkillBarAlternative"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternativeDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["IconSkillBarAlternativeDisabled"]));
                 }
                 if (modifications.ContainsKey("SlotType"))
                 {
@@ -122,17 +490,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x100, Convert.ToByte(modifications["IsDestroyedAfterCombat"]));
                 }
-                if (modifications.ContainsKey("Model"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["Model"]));
-                }
                 if (modifications.ContainsKey("VisualAlterationSlot"))
                 {
                     Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["VisualAlterationSlot"]));
-                }
-                if (modifications.ContainsKey("ModelSecondary"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["ModelSecondary"]));
                 }
                 if (modifications.ContainsKey("VisualAlterationSlotSecondary"))
                 {
@@ -146,13 +506,17 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "AnimationSequenceTemplate")
             {
-                if (modifications.ContainsKey("Prefab"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Prefab"]));
-                }
                 if (modifications.ContainsKey("HasRandomRotation"))
                 {
                     Marshal.WriteByte(ptr + 0x80, Convert.ToByte(modifications["HasRandomRotation"]));
+                }
+                if (modifications.ContainsKey("MinRandomAngle"))
+                {
+                    Marshal.WriteInt32(ptr + 0x84, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinRandomAngle"])), 0));
+                }
+                if (modifications.ContainsKey("MaxRandomAngle"))
+                {
+                    Marshal.WriteInt32(ptr + 0x88, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxRandomAngle"])), 0));
                 }
             }
 
@@ -166,22 +530,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "ArmorTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -197,30 +545,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-                if (modifications.ContainsKey("IconEquipment"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IconEquipment"]));
-                }
-                if (modifications.ContainsKey("IconEquipmentDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["IconEquipmentDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBar"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["IconSkillBar"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["IconSkillBarDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternative"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["IconSkillBarAlternative"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternativeDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["IconSkillBarAlternativeDisabled"]));
                 }
                 if (modifications.ContainsKey("SlotType"))
                 {
@@ -242,17 +566,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x100, Convert.ToByte(modifications["IsDestroyedAfterCombat"]));
                 }
-                if (modifications.ContainsKey("Model"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["Model"]));
-                }
                 if (modifications.ContainsKey("VisualAlterationSlot"))
                 {
                     Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["VisualAlterationSlot"]));
-                }
-                if (modifications.ContainsKey("ModelSecondary"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["ModelSecondary"]));
                 }
                 if (modifications.ContainsKey("VisualAlterationSlotSecondary"))
                 {
@@ -270,41 +586,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x148, Convert.ToInt32(modifications["SquadLeaderMode"]));
                 }
-                if (modifications.ContainsKey("SquadLeaderModelMaleWhite"))
-                {
-                    Marshal.WriteInt32(ptr + 0x150, Convert.ToInt32(modifications["SquadLeaderModelMaleWhite"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelMaleBrown"))
-                {
-                    Marshal.WriteInt32(ptr + 0x158, Convert.ToInt32(modifications["SquadLeaderModelMaleBrown"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelMaleBlack"))
-                {
-                    Marshal.WriteInt32(ptr + 0x160, Convert.ToInt32(modifications["SquadLeaderModelMaleBlack"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelFemaleWhite"))
-                {
-                    Marshal.WriteInt32(ptr + 0x168, Convert.ToInt32(modifications["SquadLeaderModelFemaleWhite"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelFemaleBrown"))
-                {
-                    Marshal.WriteInt32(ptr + 0x170, Convert.ToInt32(modifications["SquadLeaderModelFemaleBrown"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelFemaleBlack"))
-                {
-                    Marshal.WriteInt32(ptr + 0x178, Convert.ToInt32(modifications["SquadLeaderModelFemaleBlack"]));
-                }
-                if (modifications.ContainsKey("SquadLeaderModelFixed"))
-                {
-                    Marshal.WriteInt32(ptr + 0x180, Convert.ToInt32(modifications["SquadLeaderModelFixed"]));
-                }
                 if (modifications.ContainsKey("OverrideScale"))
                 {
                     Marshal.WriteByte(ptr + 0x188, Convert.ToByte(modifications["OverrideScale"]));
-                }
-                if (modifications.ContainsKey("Scale"))
-                {
-                    Marshal.WriteInt32(ptr + 0x18C, Convert.ToInt32(modifications["Scale"]));
                 }
                 if (modifications.ContainsKey("AnimSize"))
                 {
@@ -318,33 +602,81 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x19C, Convert.ToInt32(modifications["DurabilityPerElement"]));
                 }
+                if (modifications.ContainsKey("DamageResistance"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1A0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageResistance"])), 0));
+                }
                 if (modifications.ContainsKey("HitpointsPerElement"))
                 {
                     Marshal.WriteInt32(ptr + 0x1A4, Convert.ToInt32(modifications["HitpointsPerElement"]));
+                }
+                if (modifications.ContainsKey("HitpointsPerElementMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1A8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["HitpointsPerElementMult"])), 0));
                 }
                 if (modifications.ContainsKey("Accuracy"))
                 {
                     Marshal.WriteInt32(ptr + 0x1AC, Convert.ToInt32(modifications["Accuracy"]));
                 }
+                if (modifications.ContainsKey("AccuracyMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyMult"])), 0));
+                }
+                if (modifications.ContainsKey("DefenseMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DefenseMult"])), 0));
+                }
+                if (modifications.ContainsKey("Discipline"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1B8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["Discipline"])), 0));
+                }
+                if (modifications.ContainsKey("DisciplineMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1BC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DisciplineMult"])), 0));
+                }
                 if (modifications.ContainsKey("Vision"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C0, Convert.ToInt32(modifications["Vision"]));
+                }
+                if (modifications.ContainsKey("VisionMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1C4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["VisionMult"])), 0));
                 }
                 if (modifications.ContainsKey("Detection"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C8, Convert.ToInt32(modifications["Detection"]));
                 }
+                if (modifications.ContainsKey("DetectionMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1CC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DetectionMult"])), 0));
+                }
                 if (modifications.ContainsKey("Concealment"))
                 {
                     Marshal.WriteInt32(ptr + 0x1D0, Convert.ToInt32(modifications["Concealment"]));
+                }
+                if (modifications.ContainsKey("ConcealmentMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1D4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ConcealmentMult"])), 0));
+                }
+                if (modifications.ContainsKey("SuppressionImpactMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1D8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SuppressionImpactMult"])), 0));
                 }
                 if (modifications.ContainsKey("GetDismemberedChanceBonus"))
                 {
                     Marshal.WriteInt32(ptr + 0x1DC, Convert.ToInt32(modifications["GetDismemberedChanceBonus"]));
                 }
+                if (modifications.ContainsKey("GetDismemberedChanceMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["GetDismemberedChanceMult"])), 0));
+                }
                 if (modifications.ContainsKey("ActionPoints"))
                 {
                     Marshal.WriteInt32(ptr + 0x1E4, Convert.ToInt32(modifications["ActionPoints"]));
+                }
+                if (modifications.ContainsKey("ActionPointsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ActionPointsMult"])), 0));
                 }
                 if (modifications.ContainsKey("AdditionalMovementCost"))
                 {
@@ -386,10 +718,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "BiomeTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("BiomeType"))
                 {
                     Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["BiomeType"]));
@@ -397,10 +725,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("ShowInCheatMenu"))
                 {
                     Marshal.WriteByte(ptr + 0x84, Convert.ToByte(modifications["ShowInCheatMenu"]));
-                }
-                if (modifications.ContainsKey("Material"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Material"]));
                 }
                 if (modifications.ContainsKey("PropData"))
                 {
@@ -414,10 +738,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["PhysicMaterial"]));
                 }
-                if (modifications.ContainsKey("WindZone"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["WindZone"]));
-                }
                 if (modifications.ContainsKey("HasGrass"))
                 {
                     Marshal.WriteByte(ptr + 0xC0, Convert.ToByte(modifications["HasGrass"]));
@@ -430,10 +750,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "BoolPlayerSettingTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Type"]));
@@ -478,22 +794,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "CommodityTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -509,26 +809,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-            }
-
-            else if (templateType.Name == "ConversationEffectsTemplate")
-            {
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-            }
-
-            else if (templateType.Name == "ConversationStageTemplate")
-            {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("BackgroundImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["BackgroundImage"]));
                 }
             }
 
@@ -590,6 +870,22 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x10, Convert.ToInt32(modifications["Index"]));
                 }
+                if (modifications.ContainsKey("MinSize"))
+                {
+                    Marshal.WriteInt32(ptr + 0x20, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinSize"])), 0));
+                }
+                if (modifications.ContainsKey("MaxSize"))
+                {
+                    Marshal.WriteInt32(ptr + 0x24, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxSize"])), 0));
+                }
+                if (modifications.ContainsKey("MinRotation"))
+                {
+                    Marshal.WriteInt32(ptr + 0x28, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinRotation"])), 0));
+                }
+                if (modifications.ContainsKey("MaxRotation"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxRotation"])), 0));
+                }
             }
 
             else if (templateType.Name == "DefectTemplate")
@@ -610,10 +906,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "DisplayIndexPlayerSettingTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Type"]));
@@ -626,21 +918,29 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["MinValue"]));
                 }
-                if (modifications.ContainsKey("Measure"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Measure"]));
-                }
             }
 
             else if (templateType.Name == "ElementAnimatorTemplate")
             {
-                if (modifications.ContainsKey("MovementDelayPerElement"))
+                if (modifications.ContainsKey("SpeedBlendTime"))
                 {
-                    Marshal.WriteInt32(ptr + 0x68, Convert.ToInt32(modifications["MovementDelayPerElement"]));
+                    Marshal.WriteInt32(ptr + 0x58, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SpeedBlendTime"])), 0));
                 }
-                if (modifications.ContainsKey("InitialAimDelay"))
+                if (modifications.ContainsKey("StanceDelay"))
                 {
-                    Marshal.WriteInt32(ptr + 0x74, Convert.ToInt32(modifications["InitialAimDelay"]));
+                    Marshal.WriteInt32(ptr + 0x5C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["StanceDelay"])), 0));
+                }
+                if (modifications.ContainsKey("DisableDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x60, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DisableDelay"])), 0));
+                }
+                if (modifications.ContainsKey("MovementStanceDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x64, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MovementStanceDelay"])), 0));
+                }
+                if (modifications.ContainsKey("UnderAttackResetDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x70, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["UnderAttackResetDelay"])), 0));
                 }
                 if (modifications.ContainsKey("AnimatorInPlaceTurningSpeedCurve"))
                 {
@@ -649,10 +949,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("DeathBehaviour"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["DeathBehaviour"]));
-                }
-                if (modifications.ContainsKey("AdditionalRagdollKillImpulse"))
-                {
-                    Marshal.WriteInt32(ptr + 0x8C, Convert.ToInt32(modifications["AdditionalRagdollKillImpulse"]));
                 }
                 if (modifications.ContainsKey("AdditionalRagdollKillImpulseArea"))
                 {
@@ -686,9 +982,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0xB3, Convert.ToByte(modifications["HumanIK"]));
                 }
-                if (modifications.ContainsKey("IKHintLeftElbowOffset"))
+                if (modifications.ContainsKey("LeftHandIKBlendTime"))
                 {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IKHintLeftElbowOffset"]));
+                    Marshal.WriteInt32(ptr + 0xB4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["LeftHandIKBlendTime"])), 0));
                 }
                 if (modifications.ContainsKey("NegativeSpeedTurns"))
                 {
@@ -698,9 +994,21 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0xC5, Convert.ToByte(modifications["SteeringDirection"]));
                 }
+                if (modifications.ContainsKey("MaxClampSteeringAngle"))
+                {
+                    Marshal.WriteInt32(ptr + 0xC8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxClampSteeringAngle"])), 0));
+                }
                 if (modifications.ContainsKey("Aiming"))
                 {
                     Marshal.WriteByte(ptr + 0xCC, Convert.ToByte(modifications["Aiming"]));
+                }
+                if (modifications.ContainsKey("AimSpeed"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AimSpeed"])), 0));
+                }
+                if (modifications.ContainsKey("TurnDelay180Degree"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["TurnDelay180Degree"])), 0));
                 }
                 if (modifications.ContainsKey("UseRootMotionAiming"))
                 {
@@ -718,33 +1026,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["StateType"]));
                 }
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("TooltipTitle"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["TooltipTitle"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Description"]));
-                }
                 if (modifications.ContainsKey("Effect"))
                 {
                     Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Effect"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconBig"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["IconBig"]));
-                }
-                if (modifications.ContainsKey("IconTint"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["IconTint"]));
                 }
                 if (modifications.ContainsKey("DurationInMissions"))
                 {
@@ -770,38 +1054,14 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "EnemyAssetTemplate")
             {
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconBig"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["IconBig"]));
-                }
                 if (modifications.ContainsKey("DisableAfterMission"))
                 {
                     Marshal.WriteByte(ptr + 0x90, Convert.ToByte(modifications["DisableAfterMission"]));
-                }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Description"]));
                 }
             }
 
             else if (templateType.Name == "EntityTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Type"]));
@@ -906,13 +1166,13 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0xFA, Convert.ToByte(modifications["DestroyPropsOnDeath"]));
                 }
+                if (modifications.ContainsKey("DestroyPropsRadius"))
+                {
+                    Marshal.WriteInt32(ptr + 0xFC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DestroyPropsRadius"])), 0));
+                }
                 if (modifications.ContainsKey("SpeakerTemplate"))
                 {
                     Marshal.WriteInt32(ptr + 0x108, Convert.ToInt32(modifications["SpeakerTemplate"]));
-                }
-                if (modifications.ContainsKey("AnimationSoundTemplate"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["AnimationSoundTemplate"]));
                 }
                 if (modifications.ContainsKey("IsAligningWithTerrain"))
                 {
@@ -930,41 +1190,29 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x11B, Convert.ToByte(modifications["HasExtendedRangeForCables"]));
                 }
+                if (modifications.ContainsKey("CameraAutoHeightOffset"))
+                {
+                    Marshal.WriteInt32(ptr + 0x11C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CameraAutoHeightOffset"])), 0));
+                }
                 if (modifications.ContainsKey("OverrideMissionPreviewColor"))
                 {
                     Marshal.WriteByte(ptr + 0x120, Convert.ToByte(modifications["OverrideMissionPreviewColor"]));
-                }
-                if (modifications.ContainsKey("MissionPreviewColorOverride"))
-                {
-                    Marshal.WriteInt32(ptr + 0x124, Convert.ToInt32(modifications["MissionPreviewColorOverride"]));
-                }
-                if (modifications.ContainsKey("Scale"))
-                {
-                    Marshal.WriteInt32(ptr + 0x168, Convert.ToInt32(modifications["Scale"]));
                 }
                 if (modifications.ContainsKey("OverrideScaleForSquadLeader"))
                 {
                     Marshal.WriteByte(ptr + 0x170, Convert.ToByte(modifications["OverrideScaleForSquadLeader"]));
                 }
-                if (modifications.ContainsKey("ActorLightOverride"))
+                if (modifications.ContainsKey("ScaleOffsetSquadLeader"))
                 {
-                    Marshal.WriteInt32(ptr + 0x178, Convert.ToInt32(modifications["ActorLightOverride"]));
+                    Marshal.WriteInt32(ptr + 0x174, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ScaleOffsetSquadLeader"])), 0));
                 }
                 if (modifications.ContainsKey("IsBlockingLineOfSight"))
                 {
                     Marshal.WriteByte(ptr + 0x198, Convert.ToByte(modifications["IsBlockingLineOfSight"]));
                 }
-                if (modifications.ContainsKey("Badge"))
+                if (modifications.ContainsKey("HudYOffsetScale"))
                 {
-                    Marshal.WriteInt32(ptr + 0x1B8, Convert.ToInt32(modifications["Badge"]));
-                }
-                if (modifications.ContainsKey("BadgeWhite"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1C0, Convert.ToInt32(modifications["BadgeWhite"]));
-                }
-                if (modifications.ContainsKey("PreviewMapIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1C8, Convert.ToInt32(modifications["PreviewMapIcon"]));
+                    Marshal.WriteInt32(ptr + 0x1B0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["HudYOffsetScale"])), 0));
                 }
                 if (modifications.ContainsKey("FactionSpecificAnimation"))
                 {
@@ -1006,17 +1254,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x214, Convert.ToByte(modifications["BloodPoolAnimation"]));
                 }
-                if (modifications.ContainsKey("DamageReceivedEffect"))
+                if (modifications.ContainsKey("DamageReceivedEffectThreshold"))
                 {
-                    Marshal.WriteInt32(ptr + 0x218, Convert.ToInt32(modifications["DamageReceivedEffect"]));
-                }
-                if (modifications.ContainsKey("HeavyDamageReceivedEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x220, Convert.ToInt32(modifications["HeavyDamageReceivedEffect"]));
-                }
-                if (modifications.ContainsKey("GetDismemberedBloodSprayEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x230, Convert.ToInt32(modifications["GetDismemberedBloodSprayEffect"]));
+                    Marshal.WriteInt32(ptr + 0x228, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageReceivedEffectThreshold"])), 0));
                 }
                 if (modifications.ContainsKey("GetDismemberedSmallAdditionalParts"))
                 {
@@ -1026,17 +1266,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x240, Convert.ToInt32(modifications["DeathEffectOverrides2"]));
                 }
-                if (modifications.ContainsKey("DeathEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x248, Convert.ToInt32(modifications["DeathEffect"]));
-                }
                 if (modifications.ContainsKey("DeathEffectTriggerType"))
                 {
                     Marshal.WriteInt32(ptr + 0x250, Convert.ToInt32(modifications["DeathEffectTriggerType"]));
-                }
-                if (modifications.ContainsKey("DeathAttachEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x258, Convert.ToInt32(modifications["DeathAttachEffect"]));
                 }
                 if (modifications.ContainsKey("IsSinkingIntoGroundOnDeath"))
                 {
@@ -1054,18 +1286,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x270, Convert.ToInt32(modifications["SoundWhileAlive"]));
                 }
-                if (modifications.ContainsKey("ExhaustDriveEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x278, Convert.ToInt32(modifications["ExhaustDriveEffect"]));
-                }
-                if (modifications.ContainsKey("ExhaustRevEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x280, Convert.ToInt32(modifications["ExhaustRevEffect"]));
-                }
-                if (modifications.ContainsKey("ExhaustIdleEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x288, Convert.ToInt32(modifications["ExhaustIdleEffect"]));
-                }
                 if (modifications.ContainsKey("MovementEffectOverrides2"))
                 {
                     Marshal.WriteInt32(ptr + 0x290, Convert.ToInt32(modifications["MovementEffectOverrides2"]));
@@ -1082,6 +1302,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x2A8, Convert.ToInt32(modifications["VisualPositioning"]));
                 }
+                if (modifications.ContainsKey("PullTowardsTileCenter"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2AC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PullTowardsTileCenter"])), 0));
+                }
                 if (modifications.ContainsKey("RotationAfterMovement"))
                 {
                     Marshal.WriteInt32(ptr + 0x2B0, Convert.ToInt32(modifications["RotationAfterMovement"]));
@@ -1093,6 +1317,18 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("CameraShakeOnMovementStepInterval"))
                 {
                     Marshal.WriteInt32(ptr + 0x2B8, Convert.ToInt32(modifications["CameraShakeOnMovementStepInterval"]));
+                }
+                if (modifications.ContainsKey("CameraShakeOnMovementDuration"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2BC, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CameraShakeOnMovementDuration"])), 0));
+                }
+                if (modifications.ContainsKey("CameraShakeOnMovementIntensity"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2C0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CameraShakeOnMovementIntensity"])), 0));
+                }
+                if (modifications.ContainsKey("CameraShakeOnMovementRecoverTime"))
+                {
+                    Marshal.WriteInt32(ptr + 0x2C4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CameraShakeOnMovementRecoverTime"])), 0));
                 }
                 if (modifications.ContainsKey("InventoryType"))
                 {
@@ -1134,10 +1370,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x8C, Convert.ToInt32(modifications["HalfCoverClass"]));
                 }
-                if (modifications.ContainsKey("DestroyEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["DestroyEffect"]));
-                }
                 if (modifications.ContainsKey("DestroySound"))
                 {
                     Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["DestroySound"]));
@@ -1150,26 +1382,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "FactionTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("TurnOrderIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["TurnOrderIcon"]));
-                }
-                if (modifications.ContainsKey("TurnOrderInactiveIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["TurnOrderInactiveIcon"]));
-                }
                 if (modifications.ContainsKey("AlliedFactionType"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["AlliedFactionType"]));
@@ -1186,18 +1398,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "GenericMissionTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("ObjectiveProgressText"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["ObjectiveProgressText"]));
-                }
                 if (modifications.ContainsKey("AllowedDifficulties"))
                 {
                     Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["AllowedDifficulties"]));
@@ -1214,10 +1414,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["EffectivenessConfig"]));
                 }
-                if (modifications.ContainsKey("PoiIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["PoiIcon"]));
-                }
                 if (modifications.ContainsKey("BackgroundMusic"))
                 {
                     Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["BackgroundMusic"]));
@@ -1233,6 +1429,14 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("ShowProgressBarLabel"))
                 {
                     Marshal.WriteByte(ptr + 0xC0, Convert.ToByte(modifications["ShowProgressBarLabel"]));
+                }
+                if (modifications.ContainsKey("PlayerSupplyMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xC4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PlayerSupplyMult"])), 0));
+                }
+                if (modifications.ContainsKey("EnemyArmyPointsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0xD8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnemyArmyPointsMult"])), 0));
                 }
                 if (modifications.ContainsKey("EnemyArmyFlags"))
                 {
@@ -1266,9 +1470,13 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "GlobalDifficultyTemplate")
             {
-                if (modifications.ContainsKey("Name"))
+                if (modifications.ContainsKey("PlayerSupplyMult"))
                 {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
+                    Marshal.WriteInt32(ptr + 0x80, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PlayerSupplyMult"])), 0));
+                }
+                if (modifications.ContainsKey("EnemyArmyPointsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x84, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnemyArmyPointsMult"])), 0));
                 }
                 if (modifications.ContainsKey("InitialSquaddies"))
                 {
@@ -1302,9 +1510,13 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x20, Convert.ToInt32(modifications["CoverClass"]));
                 }
-                if (modifications.ContainsKey("EffectOnDeath"))
+                if (modifications.ContainsKey("OnDeathAnimationSpeed"))
                 {
-                    Marshal.WriteInt32(ptr + 0x28, Convert.ToInt32(modifications["EffectOnDeath"]));
+                    Marshal.WriteInt32(ptr + 0x30, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["OnDeathAnimationSpeed"])), 0));
+                }
+                if (modifications.ContainsKey("OnDeathYOffset"))
+                {
+                    Marshal.WriteInt32(ptr + 0x34, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["OnDeathYOffset"])), 0));
                 }
                 if (modifications.ContainsKey("EffectOnDeathOverrides"))
                 {
@@ -1318,6 +1530,18 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "InsideCoverTemplate")
             {
+                if (modifications.ContainsKey("AccuracyMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x58, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyMult"])), 0));
+                }
+                if (modifications.ContainsKey("DamageMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x5C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageMult"])), 0));
+                }
+                if (modifications.ContainsKey("SuppressionMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x60, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SuppressionMult"])), 0));
+                }
                 if (modifications.ContainsKey("Concealment"))
                 {
                     Marshal.WriteInt32(ptr + 0x64, Convert.ToInt32(modifications["Concealment"]));
@@ -1326,10 +1550,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "IntPlayerSettingTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Type"]));
@@ -1342,26 +1562,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["MinValue"]));
                 }
-                if (modifications.ContainsKey("Measure"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Measure"]));
-                }
             }
 
             else if (templateType.Name == "ItemFilterTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("OnlyNewItems"))
                 {
                     Marshal.WriteByte(ptr + 0xA0, Convert.ToByte(modifications["OnlyNewItems"]));
@@ -1372,47 +1576,19 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 }
             }
 
-            else if (templateType.Name == "ItemListTemplate")
-            {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-            }
-
             else if (templateType.Name == "KeyBindPlayerSettingTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Type"]));
-                }
-                if (modifications.ContainsKey("Default"))
-                {
-                    Marshal.WriteInt32(ptr + 0x8C, Convert.ToInt32(modifications["Default"]));
                 }
             }
 
             else if (templateType.Name == "LightConditionTemplate")
             {
-                if (modifications.ContainsKey("DustColor"))
+                if (modifications.ContainsKey("SnowAmount"))
                 {
-                    Marshal.WriteInt32(ptr + 0x18, Convert.ToInt32(modifications["DustColor"]));
-                }
-                if (modifications.ContainsKey("SnowColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x28, Convert.ToInt32(modifications["SnowColor"]));
-                }
-                if (modifications.ContainsKey("DirectionalLightPrefab"))
-                {
-                    Marshal.WriteInt32(ptr + 0x40, Convert.ToInt32(modifications["DirectionalLightPrefab"]));
-                }
-                if (modifications.ContainsKey("DirectionalActorLightPrefab"))
-                {
-                    Marshal.WriteInt32(ptr + 0x48, Convert.ToInt32(modifications["DirectionalActorLightPrefab"]));
+                    Marshal.WriteInt32(ptr + 0x38, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["SnowAmount"])), 0));
                 }
                 if (modifications.ContainsKey("HDRPProfile"))
                 {
@@ -1430,10 +1606,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "ListPlayerSettingTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("IsActive"))
                 {
                     Marshal.WriteByte(ptr + 0x88, Convert.ToByte(modifications["IsActive"]));
@@ -1441,10 +1613,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("DefaultValueIndex"))
                 {
                     Marshal.WriteInt32(ptr + 0x8C, Convert.ToInt32(modifications["DefaultValueIndex"]));
-                }
-                if (modifications.ContainsKey("Values"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Values"]));
                 }
             }
 
@@ -1454,13 +1622,25 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["DifficultyType"]));
                 }
-                if (modifications.ContainsKey("Name"))
+                if (modifications.ContainsKey("MissionPointsMult"))
                 {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
+                    Marshal.WriteInt32(ptr + 0x88, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MissionPointsMult"])), 0));
+                }
+                if (modifications.ContainsKey("RewardRarityMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x8C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RewardRarityMult"])), 0));
                 }
                 if (modifications.ContainsKey("Skulls"))
                 {
                     Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Skulls"]));
+                }
+                if (modifications.ContainsKey("PlayerSupplyMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x94, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["PlayerSupplyMult"])), 0));
+                }
+                if (modifications.ContainsKey("EnemyArmyPointsMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x98, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EnemyArmyPointsMult"])), 0));
                 }
             }
 
@@ -1470,18 +1650,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Type"]));
                 }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
             }
 
             else if (templateType.Name == "MissionPreviewConfigTemplate")
@@ -1490,97 +1658,33 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["BorderWidth"]));
                 }
-                if (modifications.ContainsKey("BorderColor"))
+                if (modifications.ContainsKey("EntityEdgeAlpha"))
                 {
-                    Marshal.WriteInt32(ptr + 0x7C, Convert.ToInt32(modifications["BorderColor"]));
+                    Marshal.WriteInt32(ptr + 0x11C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EntityEdgeAlpha"])), 0));
                 }
-                if (modifications.ContainsKey("GridColor"))
+                if (modifications.ContainsKey("MinHeightValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x8C, Convert.ToInt32(modifications["GridColor"]));
+                    Marshal.WriteInt32(ptr + 0x128, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinHeightValue"])), 0));
                 }
-                if (modifications.ContainsKey("TileHighlightColor"))
+                if (modifications.ContainsKey("MaxHeightValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x9C, Convert.ToInt32(modifications["TileHighlightColor"]));
-                }
-                if (modifications.ContainsKey("TileDragStartColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["TileDragStartColor"]));
-                }
-                if (modifications.ContainsKey("RoadsColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xBC, Convert.ToInt32(modifications["RoadsColor"]));
-                }
-                if (modifications.ContainsKey("DeploymentZoneColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xCC, Convert.ToInt32(modifications["DeploymentZoneColor"]));
-                }
-                if (modifications.ContainsKey("ObjectiveAreaColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xDC, Convert.ToInt32(modifications["ObjectiveAreaColor"]));
-                }
-                if (modifications.ContainsKey("StructureColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xEC, Convert.ToInt32(modifications["StructureColor"]));
-                }
-                if (modifications.ContainsKey("VegetationColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xFC, Convert.ToInt32(modifications["VegetationColor"]));
-                }
-                if (modifications.ContainsKey("ActorAreaColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x10C, Convert.ToInt32(modifications["ActorAreaColor"]));
-                }
-                if (modifications.ContainsKey("MinHeightColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x130, Convert.ToInt32(modifications["MinHeightColor"]));
-                }
-                if (modifications.ContainsKey("MaxHeightColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x140, Convert.ToInt32(modifications["MaxHeightColor"]));
+                    Marshal.WriteInt32(ptr + 0x12C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxHeightValue"])), 0));
                 }
                 if (modifications.ContainsKey("HeightShades"))
                 {
                     Marshal.WriteInt32(ptr + 0x150, Convert.ToInt32(modifications["HeightShades"]));
                 }
-                if (modifications.ContainsKey("InaccessibleMinHeightColor"))
+                if (modifications.ContainsKey("InaccessibleMinHeightValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x15C, Convert.ToInt32(modifications["InaccessibleMinHeightColor"]));
+                    Marshal.WriteInt32(ptr + 0x154, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InaccessibleMinHeightValue"])), 0));
                 }
-                if (modifications.ContainsKey("InaccessibleMaxHeightColor"))
+                if (modifications.ContainsKey("InaccessibleMaxHeightValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x16C, Convert.ToInt32(modifications["InaccessibleMaxHeightColor"]));
+                    Marshal.WriteInt32(ptr + 0x158, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["InaccessibleMaxHeightValue"])), 0));
                 }
                 if (modifications.ContainsKey("InaccessibleHeightShades"))
                 {
                     Marshal.WriteInt32(ptr + 0x17C, Convert.ToInt32(modifications["InaccessibleHeightShades"]));
-                }
-                if (modifications.ContainsKey("UnknownFactionName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x180, Convert.ToInt32(modifications["UnknownFactionName"]));
-                }
-                if (modifications.ContainsKey("UnknownFactionShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x188, Convert.ToInt32(modifications["UnknownFactionShortName"]));
-                }
-                if (modifications.ContainsKey("UnknownUnitTypeName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x190, Convert.ToInt32(modifications["UnknownUnitTypeName"]));
-                }
-                if (modifications.ContainsKey("UnknownNormalColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x198, Convert.ToInt32(modifications["UnknownNormalColor"]));
-                }
-                if (modifications.ContainsKey("UnknownHoverColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1A8, Convert.ToInt32(modifications["UnknownHoverColor"]));
-                }
-                if (modifications.ContainsKey("IconUnitUnknown"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1B8, Convert.ToInt32(modifications["IconUnitUnknown"]));
-                }
-                if (modifications.ContainsKey("InfoLevelRevealDelayInSec"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1C0, Convert.ToInt32(modifications["InfoLevelRevealDelayInSec"]));
                 }
                 if (modifications.ContainsKey("Civilians"))
                 {
@@ -1626,22 +1730,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "ModularVehicleWeaponTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -1657,30 +1745,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-                if (modifications.ContainsKey("IconEquipment"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IconEquipment"]));
-                }
-                if (modifications.ContainsKey("IconEquipmentDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["IconEquipmentDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBar"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["IconSkillBar"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["IconSkillBarDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternative"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["IconSkillBarAlternative"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternativeDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["IconSkillBarAlternativeDisabled"]));
                 }
                 if (modifications.ContainsKey("SlotType"))
                 {
@@ -1702,17 +1766,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x100, Convert.ToByte(modifications["IsDestroyedAfterCombat"]));
                 }
-                if (modifications.ContainsKey("Model"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["Model"]));
-                }
                 if (modifications.ContainsKey("VisualAlterationSlot"))
                 {
                     Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["VisualAlterationSlot"]));
-                }
-                if (modifications.ContainsKey("ModelSecondary"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["ModelSecondary"]));
                 }
                 if (modifications.ContainsKey("VisualAlterationSlotSecondary"))
                 {
@@ -1746,6 +1802,66 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x144, Convert.ToInt32(modifications["MaxRange"]));
                 }
+                if (modifications.ContainsKey("AccuracyBonus"))
+                {
+                    Marshal.WriteInt32(ptr + 0x148, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyBonus"])), 0));
+                }
+                if (modifications.ContainsKey("AccuracyDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x14C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("Damage"))
+                {
+                    Marshal.WriteInt32(ptr + 0x150, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["Damage"])), 0));
+                }
+                if (modifications.ContainsKey("DamageDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x154, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctCurrentHitpoints"))
+                {
+                    Marshal.WriteInt32(ptr + 0x158, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctCurrentHitpoints"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctCurrentHitpointsMin"))
+                {
+                    Marshal.WriteInt32(ptr + 0x15C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctCurrentHitpointsMin"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctMaxHitpoints"))
+                {
+                    Marshal.WriteInt32(ptr + 0x160, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctMaxHitpoints"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctMaxHitpointsMin"))
+                {
+                    Marshal.WriteInt32(ptr + 0x164, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctMaxHitpointsMin"])), 0));
+                }
+                if (modifications.ContainsKey("ArmorPenetration"))
+                {
+                    Marshal.WriteInt32(ptr + 0x168, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ArmorPenetration"])), 0));
+                }
+                if (modifications.ContainsKey("ArmorPenetrationDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x16C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ArmorPenetrationDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurability"))
+                {
+                    Marshal.WriteInt32(ptr + 0x170, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurability"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x174, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityMult"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x178, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityDropoffMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x17C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityDropoffMult"])), 0));
+                }
+                if (modifications.ContainsKey("Suppression"))
+                {
+                    Marshal.WriteInt32(ptr + 0x180, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["Suppression"])), 0));
+                }
                 if (modifications.ContainsKey("SupportsIntegrationOfLightWeapons"))
                 {
                     Marshal.WriteByte(ptr + 0x188, Convert.ToByte(modifications["SupportsIntegrationOfLightWeapons"]));
@@ -1765,6 +1881,14 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("Chance"))
                 {
                     Marshal.WriteInt32(ptr + 0x20, Convert.ToInt32(modifications["Chance"]));
+                }
+                if (modifications.ContainsKey("MinHitpointsRequired"))
+                {
+                    Marshal.WriteInt32(ptr + 0x30, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinHitpointsRequired"])), 0));
+                }
+                if (modifications.ContainsKey("MaxHitpointsRequired"))
+                {
+                    Marshal.WriteInt32(ptr + 0x34, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxHitpointsRequired"])), 0));
                 }
                 if (modifications.ContainsKey("AmountOfMoraleEffectsRequired"))
                 {
@@ -1794,10 +1918,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "OperationDurationTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("RequiredCampaignProgress"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["RequiredCampaignProgress"]));
@@ -1814,38 +1934,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["MaxRating"]));
                 }
-                if (modifications.ContainsKey("ClientTrustChange"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA4, Convert.ToInt32(modifications["ClientTrustChange"]));
-                }
-                if (modifications.ContainsKey("EnemyTrustChange"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["EnemyTrustChange"]));
-                }
             }
 
             else if (templateType.Name == "OperationTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Goal"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Goal"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("VictoryDescription"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["VictoryDescription"]));
-                }
-                if (modifications.ContainsKey("FailureDescription"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["FailureDescription"]));
-                }
                 if (modifications.ContainsKey("Repeatable"))
                 {
                     Marshal.WriteByte(ptr + 0xA0, Convert.ToByte(modifications["Repeatable"]));
@@ -1865,10 +1957,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("ShowStartConfirmationDialog"))
                 {
                     Marshal.WriteByte(ptr + 0xB1, Convert.ToByte(modifications["ShowStartConfirmationDialog"]));
-                }
-                if (modifications.ContainsKey("StartConfirmationDialogText"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["StartConfirmationDialogText"]));
                 }
                 if (modifications.ContainsKey("SystemMapIconIdx"))
                 {
@@ -1898,26 +1986,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "PerkTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("ShortDescription"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["ShortDescription"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["IconDisabled"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Type"]));
@@ -2090,9 +2158,41 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x124, Convert.ToInt32(modifications["MaxRange"]));
                 }
+                if (modifications.ContainsKey("MinElementDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x128, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinElementDelay"])), 0));
+                }
+                if (modifications.ContainsKey("MaxElementDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x12C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxElementDelay"])), 0));
+                }
+                if (modifications.ContainsKey("ElementDelayBetween"))
+                {
+                    Marshal.WriteInt32(ptr + 0x130, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ElementDelayBetween"])), 0));
+                }
+                if (modifications.ContainsKey("MinDelayBeforeSkillUse"))
+                {
+                    Marshal.WriteInt32(ptr + 0x134, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinDelayBeforeSkillUse"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterAnimationTrigger"))
+                {
+                    Marshal.WriteInt32(ptr + 0x138, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterAnimationTrigger"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterLastRepetition"))
+                {
+                    Marshal.WriteInt32(ptr + 0x13C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterLastRepetition"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterSkillUse"))
+                {
+                    Marshal.WriteInt32(ptr + 0x140, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterSkillUse"])), 0));
+                }
                 if (modifications.ContainsKey("Repetitions"))
                 {
                     Marshal.WriteInt32(ptr + 0x144, Convert.ToInt32(modifications["Repetitions"]));
+                }
+                if (modifications.ContainsKey("RepetitionDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x148, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RepetitionDelay"])), 0));
                 }
                 if (modifications.ContainsKey("SkipDelayForLastRepetition"))
                 {
@@ -2154,9 +2254,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x194, Convert.ToInt32(modifications["MuzzleType"]));
                 }
-                if (modifications.ContainsKey("MuzzleEffect"))
+                if (modifications.ContainsKey("MuzzleSelection"))
                 {
-                    Marshal.WriteInt32(ptr + 0x1A0, Convert.ToInt32(modifications["MuzzleEffect"]));
+                    Marshal.WriteInt32(ptr + 0x198, Convert.ToInt32(modifications["MuzzleSelection"]));
                 }
                 if (modifications.ContainsKey("MuzzleEffectOverrides2"))
                 {
@@ -2174,10 +2274,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x1B4, Convert.ToInt32(modifications["CameraEffectOnFire"]));
                 }
-                if (modifications.ContainsKey("ProjectileSpawnPositionOffset"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1B8, Convert.ToInt32(modifications["ProjectileSpawnPositionOffset"]));
-                }
                 if (modifications.ContainsKey("ProjectileData"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C8, Convert.ToInt32(modifications["ProjectileData"]));
@@ -2185,6 +2281,18 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("SecondaryProjectileData"))
                 {
                     Marshal.WriteInt32(ptr + 0x1D0, Convert.ToInt32(modifications["SecondaryProjectileData"]));
+                }
+                if (modifications.ContainsKey("ImpactEffectDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ImpactEffectDelay"])), 0));
+                }
+                if (modifications.ContainsKey("ImpactDecalDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ImpactDecalDelay"])), 0));
+                }
+                if (modifications.ContainsKey("EffectDelayAfterImpact"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EffectDelayAfterImpact"])), 0));
                 }
                 if (modifications.ContainsKey("IsImpactShownOnHit"))
                 {
@@ -2222,14 +2330,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x1FC, Convert.ToByte(modifications["IsTriggeringHeavyDamagedReceivedEffect"]));
                 }
-                if (modifications.ContainsKey("RagdollImpactMult"))
-                {
-                    Marshal.WriteInt32(ptr + 0x200, Convert.ToInt32(modifications["RagdollImpactMult"]));
-                }
-                if (modifications.ContainsKey("VerticalRagdollImpactMult"))
-                {
-                    Marshal.WriteInt32(ptr + 0x208, Convert.ToInt32(modifications["VerticalRagdollImpactMult"]));
-                }
                 if (modifications.ContainsKey("RagdollHitArea"))
                 {
                     Marshal.WriteInt32(ptr + 0x210, Convert.ToInt32(modifications["RagdollHitArea"]));
@@ -2237,10 +2337,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("MalfunctionChance"))
                 {
                     Marshal.WriteInt32(ptr + 0x214, Convert.ToInt32(modifications["MalfunctionChance"]));
-                }
-                if (modifications.ContainsKey("MalfunctionEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x218, Convert.ToInt32(modifications["MalfunctionEffect"]));
                 }
                 if (modifications.ContainsKey("SoundOnMalfunction"))
                 {
@@ -2262,10 +2358,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x298, Convert.ToInt32(modifications["AIConfig"]));
                 }
-                if (modifications.ContainsKey("PerkIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x2A8, Convert.ToInt32(modifications["PerkIcon"]));
-                }
             }
 
             else if (templateType.Name == "PlanetTemplate")
@@ -2274,37 +2366,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["PlanetType"]));
                 }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("TypeName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["TypeName"]));
-                }
-                if (modifications.ContainsKey("Tags"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Tags"]));
-                }
-                if (modifications.ContainsKey("Temperature"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Temperature"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("MoodImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["MoodImage"]));
-                }
                 if (modifications.ContainsKey("ImageOverlayMargin"))
                 {
                     Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["ImageOverlayMargin"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["Icon"]));
                 }
                 if (modifications.ContainsKey("MaxMenacePresence"))
                 {
@@ -2313,14 +2377,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("MenaceDetectedEvent"))
                 {
                     Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["MenaceDetectedEvent"]));
-                }
-                if (modifications.ContainsKey("OperationSelectScenePrefab"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["OperationSelectScenePrefab"]));
-                }
-                if (modifications.ContainsKey("MissionSelectPrefab"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["MissionSelectPrefab"]));
                 }
                 if (modifications.ContainsKey("LocalFaction"))
                 {
@@ -2334,13 +2390,17 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Type"]));
                 }
-                if (modifications.ContainsKey("Name"))
+                if (modifications.ContainsKey("DefaultValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
+                    Marshal.WriteInt32(ptr + 0x90, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DefaultValue"])), 0));
                 }
-                if (modifications.ContainsKey("Icon"))
+                if (modifications.ContainsKey("MinValue"))
                 {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Icon"]));
+                    Marshal.WriteInt32(ptr + 0x94, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinValue"])), 0));
+                }
+                if (modifications.ContainsKey("MaxValue"))
+                {
+                    Marshal.WriteInt32(ptr + 0x98, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxValue"])), 0));
                 }
                 if (modifications.ContainsKey("DecimalPlaces"))
                 {
@@ -2354,18 +2414,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0xA4, Convert.ToByte(modifications["IsBiggerBetter"]));
                 }
-                if (modifications.ContainsKey("ProgressBarFillColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["ProgressBarFillColor"]));
-                }
-                if (modifications.ContainsKey("ProgressBarPreviewFillColor"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["ProgressBarPreviewFillColor"]));
-                }
-                if (modifications.ContainsKey("ProgressBarSectionLabels"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["ProgressBarSectionLabels"]));
-                }
             }
 
             else if (templateType.Name == "RagdollTemplate")
@@ -2378,33 +2426,25 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x5C, Convert.ToByte(modifications["UseCustomGravity"]));
                 }
+                if (modifications.ContainsKey("CustomGravity"))
+                {
+                    Marshal.WriteInt32(ptr + 0x60, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["CustomGravity"])), 0));
+                }
                 if (modifications.ContainsKey("CustomGravityForceMode"))
                 {
                     Marshal.WriteInt32(ptr + 0x64, Convert.ToInt32(modifications["CustomGravityForceMode"]));
                 }
-                if (modifications.ContainsKey("DismemberedPartMaxDirectionOffsetInDeg"))
+                if (modifications.ContainsKey("DismemberedPartHitForceMult"))
                 {
-                    Marshal.WriteInt32(ptr + 0x68, Convert.ToInt32(modifications["DismemberedPartMaxDirectionOffsetInDeg"]));
-                }
-                if (modifications.ContainsKey("DismemberedPartHitForceMultOffset"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["DismemberedPartHitForceMultOffset"]));
+                    Marshal.WriteInt32(ptr + 0x74, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DismemberedPartHitForceMult"])), 0));
                 }
                 if (modifications.ContainsKey("AdditionalDismemberedPieces"))
                 {
                     Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["AdditionalDismemberedPieces"]));
                 }
-                if (modifications.ContainsKey("AdditionalDismemberedPieceScale"))
+                if (modifications.ContainsKey("AdditionalDismemberedPieceHitForceMult"))
                 {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["AdditionalDismemberedPieceScale"]));
-                }
-                if (modifications.ContainsKey("AdditionalDismemberedPieceMaxDirectionOffsetInDeg"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["AdditionalDismemberedPieceMaxDirectionOffsetInDeg"]));
-                }
-                if (modifications.ContainsKey("AdditionalDismemberedPieceHitForceMultOffset"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["AdditionalDismemberedPieceHitForceMultOffset"]));
+                    Marshal.WriteInt32(ptr + 0x9C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AdditionalDismemberedPieceHitForceMult"])), 0));
                 }
                 if (modifications.ContainsKey("RootHasGeometry"))
                 {
@@ -2420,20 +2460,16 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 }
             }
 
-            else if (templateType.Name == "ResolutionPlayerSettingTemplate")
+            else if (templateType.Name == "RewardTableTemplate")
             {
-                if (modifications.ContainsKey("Name"))
+                if (modifications.ContainsKey("RarityMultiplier"))
                 {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
+                    Marshal.WriteInt32(ptr + 0x78, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RarityMultiplier"])), 0));
                 }
             }
 
             else if (templateType.Name == "ShipUpgradeSlotTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
                 if (modifications.ContainsKey("UpgradeType"))
                 {
                     Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["UpgradeType"]));
@@ -2442,29 +2478,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "ShipUpgradeTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Description"]));
-                }
                 if (modifications.ContainsKey("UpgradeType"))
                 {
                     Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["UpgradeType"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconInactive"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["IconInactive"]));
                 }
                 if (modifications.ContainsKey("OciPointsCosts"))
                 {
@@ -2486,26 +2502,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "SkillTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("ShortDescription"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["ShortDescription"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["IconDisabled"]));
-                }
                 if (modifications.ContainsKey("Type"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Type"]));
@@ -2678,9 +2674,41 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x124, Convert.ToInt32(modifications["MaxRange"]));
                 }
+                if (modifications.ContainsKey("MinElementDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x128, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinElementDelay"])), 0));
+                }
+                if (modifications.ContainsKey("MaxElementDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x12C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MaxElementDelay"])), 0));
+                }
+                if (modifications.ContainsKey("ElementDelayBetween"))
+                {
+                    Marshal.WriteInt32(ptr + 0x130, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ElementDelayBetween"])), 0));
+                }
+                if (modifications.ContainsKey("MinDelayBeforeSkillUse"))
+                {
+                    Marshal.WriteInt32(ptr + 0x134, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["MinDelayBeforeSkillUse"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterAnimationTrigger"))
+                {
+                    Marshal.WriteInt32(ptr + 0x138, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterAnimationTrigger"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterLastRepetition"))
+                {
+                    Marshal.WriteInt32(ptr + 0x13C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterLastRepetition"])), 0));
+                }
+                if (modifications.ContainsKey("DelayAfterSkillUse"))
+                {
+                    Marshal.WriteInt32(ptr + 0x140, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DelayAfterSkillUse"])), 0));
+                }
                 if (modifications.ContainsKey("Repetitions"))
                 {
                     Marshal.WriteInt32(ptr + 0x144, Convert.ToInt32(modifications["Repetitions"]));
+                }
+                if (modifications.ContainsKey("RepetitionDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x148, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["RepetitionDelay"])), 0));
                 }
                 if (modifications.ContainsKey("SkipDelayForLastRepetition"))
                 {
@@ -2742,9 +2770,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x194, Convert.ToInt32(modifications["MuzzleType"]));
                 }
-                if (modifications.ContainsKey("MuzzleEffect"))
+                if (modifications.ContainsKey("MuzzleSelection"))
                 {
-                    Marshal.WriteInt32(ptr + 0x1A0, Convert.ToInt32(modifications["MuzzleEffect"]));
+                    Marshal.WriteInt32(ptr + 0x198, Convert.ToInt32(modifications["MuzzleSelection"]));
                 }
                 if (modifications.ContainsKey("MuzzleEffectOverrides2"))
                 {
@@ -2762,10 +2790,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x1B4, Convert.ToInt32(modifications["CameraEffectOnFire"]));
                 }
-                if (modifications.ContainsKey("ProjectileSpawnPositionOffset"))
-                {
-                    Marshal.WriteInt32(ptr + 0x1B8, Convert.ToInt32(modifications["ProjectileSpawnPositionOffset"]));
-                }
                 if (modifications.ContainsKey("ProjectileData"))
                 {
                     Marshal.WriteInt32(ptr + 0x1C8, Convert.ToInt32(modifications["ProjectileData"]));
@@ -2773,6 +2797,18 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("SecondaryProjectileData"))
                 {
                     Marshal.WriteInt32(ptr + 0x1D0, Convert.ToInt32(modifications["SecondaryProjectileData"]));
+                }
+                if (modifications.ContainsKey("ImpactEffectDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E0, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ImpactEffectDelay"])), 0));
+                }
+                if (modifications.ContainsKey("ImpactDecalDelay"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E4, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ImpactDecalDelay"])), 0));
+                }
+                if (modifications.ContainsKey("EffectDelayAfterImpact"))
+                {
+                    Marshal.WriteInt32(ptr + 0x1E8, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["EffectDelayAfterImpact"])), 0));
                 }
                 if (modifications.ContainsKey("IsImpactShownOnHit"))
                 {
@@ -2810,14 +2846,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x1FC, Convert.ToByte(modifications["IsTriggeringHeavyDamagedReceivedEffect"]));
                 }
-                if (modifications.ContainsKey("RagdollImpactMult"))
-                {
-                    Marshal.WriteInt32(ptr + 0x200, Convert.ToInt32(modifications["RagdollImpactMult"]));
-                }
-                if (modifications.ContainsKey("VerticalRagdollImpactMult"))
-                {
-                    Marshal.WriteInt32(ptr + 0x208, Convert.ToInt32(modifications["VerticalRagdollImpactMult"]));
-                }
                 if (modifications.ContainsKey("RagdollHitArea"))
                 {
                     Marshal.WriteInt32(ptr + 0x210, Convert.ToInt32(modifications["RagdollHitArea"]));
@@ -2825,10 +2853,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("MalfunctionChance"))
                 {
                     Marshal.WriteInt32(ptr + 0x214, Convert.ToInt32(modifications["MalfunctionChance"]));
-                }
-                if (modifications.ContainsKey("MalfunctionEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x218, Convert.ToInt32(modifications["MalfunctionEffect"]));
                 }
                 if (modifications.ContainsKey("SoundOnMalfunction"))
                 {
@@ -2882,70 +2906,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x6C, Convert.ToInt32(modifications["NotchGroupGapWidth"]));
                 }
-                if (modifications.ContainsKey("NotchFullIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x70, Convert.ToInt32(modifications["NotchFullIcon"]));
-                }
-                if (modifications.ContainsKey("NotchFullTint"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["NotchFullTint"]));
-                }
-                if (modifications.ContainsKey("NotchFullDisabledIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["NotchFullDisabledIcon"]));
-                }
-                if (modifications.ContainsKey("NotchFullDisabledTint"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["NotchFullDisabledTint"]));
-                }
-                if (modifications.ContainsKey("NotchEmptyIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["NotchEmptyIcon"]));
-                }
-                if (modifications.ContainsKey("NotchEmptyTint"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["NotchEmptyTint"]));
-                }
-                if (modifications.ContainsKey("NotchEmptyDisabledIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["NotchEmptyDisabledIcon"]));
-                }
-                if (modifications.ContainsKey("NotchEmptyDisabledTint"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["NotchEmptyDisabledTint"]));
-                }
             }
 
             else if (templateType.Name == "SpeakerTemplate")
             {
-                if (modifications.ContainsKey("Nickname"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Nickname"]));
-                }
-                if (modifications.ContainsKey("Forename"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Forename"]));
-                }
-                if (modifications.ContainsKey("Surname"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Surname"]));
-                }
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("BarkImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["BarkImage"]));
-                }
-                if (modifications.ContainsKey("OperationSelectImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["OperationSelectImage"]));
-                }
                 if (modifications.ContainsKey("SoundOnTacticalBarkShown"))
                 {
                     Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["SoundOnTacticalBarkShown"]));
@@ -2954,38 +2918,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["TacticalBarkSoundDelayInMs"]));
                 }
-                if (modifications.ContainsKey("StandLookLeftImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["StandLookLeftImage"]));
-                }
-                if (modifications.ContainsKey("StandLookRightImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["StandLookRightImage"]));
-                }
-                if (modifications.ContainsKey("StandLookRightInactiveImage"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["StandLookRightInactiveImage"]));
-                }
             }
 
             else if (templateType.Name == "SquaddieItemTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -3002,38 +2938,10 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
                 }
-                if (modifications.ContainsKey("SquaddieNames"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["SquaddieNames"]));
-                }
-                if (modifications.ContainsKey("SquaddieNicknames"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["SquaddieNicknames"]));
-                }
             }
 
             else if (templateType.Name == "StoryFactionTemplate")
             {
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("TurnOrderIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["TurnOrderIcon"]));
-                }
-                if (modifications.ContainsKey("TurnOrderInactiveIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["TurnOrderInactiveIcon"]));
-                }
                 if (modifications.ContainsKey("AlliedFactionType"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["AlliedFactionType"]));
@@ -3054,14 +2962,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["Representative"]));
                 }
-                if (modifications.ContainsKey("FactionWindow"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE8, Convert.ToInt32(modifications["FactionWindow"]));
-                }
-                if (modifications.ContainsKey("SystemMapHUDIcon"))
-                {
-                    Marshal.WriteInt32(ptr + 0xF0, Convert.ToInt32(modifications["SystemMapHUDIcon"]));
-                }
                 if (modifications.ContainsKey("OperationIntros"))
                 {
                     Marshal.WriteInt32(ptr + 0xF8, Convert.ToInt32(modifications["OperationIntros"]));
@@ -3078,25 +2978,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "StrategicAssetTemplate")
             {
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Icon"]));
-                }
-                if (modifications.ContainsKey("IconBig"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["IconBig"]));
-                }
                 if (modifications.ContainsKey("DisableAfterMission"))
                 {
                     Marshal.WriteByte(ptr + 0x90, Convert.ToByte(modifications["DisableAfterMission"]));
-                }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x98, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Description"]));
                 }
             }
 
@@ -3156,59 +3040,59 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 }
             }
 
-            else if (templateType.Name == "SurfaceEffectsTemplate")
+            else if (templateType.Name == "SurfaceSoundsTemplate")
             {
-                if (modifications.ContainsKey("ConcreteEffect"))
+                if (modifications.ContainsKey("ConcreteSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x18, Convert.ToInt32(modifications["ConcreteEffect"]));
+                    Marshal.WriteInt32(ptr + 0x18, Convert.ToInt32(modifications["ConcreteSounds"]));
                 }
-                if (modifications.ContainsKey("MetalEffect"))
+                if (modifications.ContainsKey("MetalSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x20, Convert.ToInt32(modifications["MetalEffect"]));
+                    Marshal.WriteInt32(ptr + 0x20, Convert.ToInt32(modifications["MetalSounds"]));
                 }
-                if (modifications.ContainsKey("SandEffect"))
+                if (modifications.ContainsKey("SandSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x28, Convert.ToInt32(modifications["SandEffect"]));
+                    Marshal.WriteInt32(ptr + 0x28, Convert.ToInt32(modifications["SandSounds"]));
                 }
-                if (modifications.ContainsKey("EarthEffect"))
+                if (modifications.ContainsKey("EarthSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x30, Convert.ToInt32(modifications["EarthEffect"]));
+                    Marshal.WriteInt32(ptr + 0x30, Convert.ToInt32(modifications["EarthSounds"]));
                 }
-                if (modifications.ContainsKey("SnowEffect"))
+                if (modifications.ContainsKey("SnowSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x38, Convert.ToInt32(modifications["SnowEffect"]));
+                    Marshal.WriteInt32(ptr + 0x38, Convert.ToInt32(modifications["SnowSounds"]));
                 }
-                if (modifications.ContainsKey("WaterEffect"))
+                if (modifications.ContainsKey("WaterSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x40, Convert.ToInt32(modifications["WaterEffect"]));
+                    Marshal.WriteInt32(ptr + 0x40, Convert.ToInt32(modifications["WaterSounds"]));
                 }
-                if (modifications.ContainsKey("RuinsEffect"))
+                if (modifications.ContainsKey("RuinsSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x48, Convert.ToInt32(modifications["RuinsEffect"]));
+                    Marshal.WriteInt32(ptr + 0x48, Convert.ToInt32(modifications["RuinsSounds"]));
                 }
-                if (modifications.ContainsKey("SandStoneEffect"))
+                if (modifications.ContainsKey("SandStoneSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x50, Convert.ToInt32(modifications["SandStoneEffect"]));
+                    Marshal.WriteInt32(ptr + 0x50, Convert.ToInt32(modifications["SandStoneSounds"]));
                 }
-                if (modifications.ContainsKey("MudEffect"))
+                if (modifications.ContainsKey("MudSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x58, Convert.ToInt32(modifications["MudEffect"]));
+                    Marshal.WriteInt32(ptr + 0x58, Convert.ToInt32(modifications["MudSounds"]));
                 }
-                if (modifications.ContainsKey("GrassEffect"))
+                if (modifications.ContainsKey("GrassSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x60, Convert.ToInt32(modifications["GrassEffect"]));
+                    Marshal.WriteInt32(ptr + 0x60, Convert.ToInt32(modifications["GrassSounds"]));
                 }
-                if (modifications.ContainsKey("GlassEffect"))
+                if (modifications.ContainsKey("GlassSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x68, Convert.ToInt32(modifications["GlassEffect"]));
+                    Marshal.WriteInt32(ptr + 0x68, Convert.ToInt32(modifications["GlassSounds"]));
                 }
-                if (modifications.ContainsKey("ForestEffect"))
+                if (modifications.ContainsKey("ForestSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x70, Convert.ToInt32(modifications["ForestEffect"]));
+                    Marshal.WriteInt32(ptr + 0x70, Convert.ToInt32(modifications["ForestSounds"]));
                 }
-                if (modifications.ContainsKey("RockEffect"))
+                if (modifications.ContainsKey("RockSounds"))
                 {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["RockEffect"]));
+                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["RockSounds"]));
                 }
             }
 
@@ -3218,14 +3102,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["SurfaceType"]));
                 }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
             }
 
             else if (templateType.Name == "TagTemplate")
@@ -3233,10 +3109,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("TagType"))
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["TagType"]));
-                }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
                 }
                 if (modifications.ContainsKey("IsVisible"))
                 {
@@ -3253,14 +3125,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("SpeakerTemplate"))
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["SpeakerTemplate"]));
-                }
-                if (modifications.ContainsKey("UnitTitle"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["UnitTitle"]));
-                }
-                if (modifications.ContainsKey("UnitDescription"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["UnitDescription"]));
                 }
                 if (modifications.ContainsKey("HiringCosts"))
                 {
@@ -3282,10 +3146,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0xA5, Convert.ToInt32(modifications["SkinColor"]));
                 }
-                if (modifications.ContainsKey("CustomHead"))
-                {
-                    Marshal.WriteInt32(ptr + 0xA8, Convert.ToInt32(modifications["CustomHead"]));
-                }
                 if (modifications.ContainsKey("UnitActorType"))
                 {
                     Marshal.WriteInt32(ptr + 0xB0, Convert.ToInt32(modifications["UnitActorType"]));
@@ -3301,58 +3161,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("InitialVehicleItem"))
                 {
                     Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["InitialVehicleItem"]));
-                }
-                if (modifications.ContainsKey("Slot"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["Slot"]));
-                }
-                if (modifications.ContainsKey("SlotInactive"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["SlotInactive"]));
-                }
-                if (modifications.ContainsKey("SlotInjured"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["SlotInjured"]));
-                }
-                if (modifications.ContainsKey("SlotFactionBackground"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE8, Convert.ToInt32(modifications["SlotFactionBackground"]));
-                }
-                if (modifications.ContainsKey("SlotBadge"))
-                {
-                    Marshal.WriteInt32(ptr + 0xF0, Convert.ToInt32(modifications["SlotBadge"]));
-                }
-                if (modifications.ContainsKey("BigBackground"))
-                {
-                    Marshal.WriteInt32(ptr + 0xF8, Convert.ToInt32(modifications["BigBackground"]));
-                }
-                if (modifications.ContainsKey("FactionBackground"))
-                {
-                    Marshal.WriteInt32(ptr + 0x100, Convert.ToInt32(modifications["FactionBackground"]));
-                }
-                if (modifications.ContainsKey("BadgeMini"))
-                {
-                    Marshal.WriteInt32(ptr + 0x108, Convert.ToInt32(modifications["BadgeMini"]));
-                }
-                if (modifications.ContainsKey("BadgeDragged"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["BadgeDragged"]));
-                }
-                if (modifications.ContainsKey("BadgeUnitWindow"))
-                {
-                    Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["BadgeUnitWindow"]));
-                }
-                if (modifications.ContainsKey("Badge"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["Badge"]));
-                }
-                if (modifications.ContainsKey("BadgeWhite"))
-                {
-                    Marshal.WriteInt32(ptr + 0x128, Convert.ToInt32(modifications["BadgeWhite"]));
-                }
-                if (modifications.ContainsKey("BigBadge"))
-                {
-                    Marshal.WriteInt32(ptr + 0x130, Convert.ToInt32(modifications["BigBadge"]));
                 }
                 if (modifications.ContainsKey("Rarity"))
                 {
@@ -3374,14 +3182,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["RankType"]));
                 }
-                if (modifications.ContainsKey("Name"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["Name"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("PromotionCost"))
                 {
                     Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["PromotionCost"]));
@@ -3390,22 +3190,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "VehicleItemTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -3421,30 +3205,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-                if (modifications.ContainsKey("IconEquipment"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IconEquipment"]));
-                }
-                if (modifications.ContainsKey("IconEquipmentDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["IconEquipmentDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBar"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["IconSkillBar"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["IconSkillBarDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternative"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["IconSkillBarAlternative"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternativeDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["IconSkillBarAlternativeDisabled"]));
                 }
                 if (modifications.ContainsKey("SlotType"))
                 {
@@ -3466,17 +3226,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x100, Convert.ToByte(modifications["IsDestroyedAfterCombat"]));
                 }
-                if (modifications.ContainsKey("Model"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["Model"]));
-                }
                 if (modifications.ContainsKey("VisualAlterationSlot"))
                 {
                     Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["VisualAlterationSlot"]));
-                }
-                if (modifications.ContainsKey("ModelSecondary"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["ModelSecondary"]));
                 }
                 if (modifications.ContainsKey("VisualAlterationSlotSecondary"))
                 {
@@ -3498,22 +3250,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "VoucherTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -3542,22 +3278,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "WeaponTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("ShortName"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["ShortName"]));
-                }
-                if (modifications.ContainsKey("Description"))
-                {
-                    Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["Description"]));
-                }
-                if (modifications.ContainsKey("Icon"))
-                {
-                    Marshal.WriteInt32(ptr + 0x90, Convert.ToInt32(modifications["Icon"]));
-                }
                 if (modifications.ContainsKey("Rarity"))
                 {
                     Marshal.WriteInt32(ptr + 0xA0, Convert.ToInt32(modifications["Rarity"]));
@@ -3573,30 +3293,6 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 if (modifications.ContainsKey("BlackMarketMaxQuantity"))
                 {
                     Marshal.WriteInt32(ptr + 0xAC, Convert.ToInt32(modifications["BlackMarketMaxQuantity"]));
-                }
-                if (modifications.ContainsKey("IconEquipment"))
-                {
-                    Marshal.WriteInt32(ptr + 0xB8, Convert.ToInt32(modifications["IconEquipment"]));
-                }
-                if (modifications.ContainsKey("IconEquipmentDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC0, Convert.ToInt32(modifications["IconEquipmentDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBar"))
-                {
-                    Marshal.WriteInt32(ptr + 0xC8, Convert.ToInt32(modifications["IconSkillBar"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD0, Convert.ToInt32(modifications["IconSkillBarDisabled"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternative"))
-                {
-                    Marshal.WriteInt32(ptr + 0xD8, Convert.ToInt32(modifications["IconSkillBarAlternative"]));
-                }
-                if (modifications.ContainsKey("IconSkillBarAlternativeDisabled"))
-                {
-                    Marshal.WriteInt32(ptr + 0xE0, Convert.ToInt32(modifications["IconSkillBarAlternativeDisabled"]));
                 }
                 if (modifications.ContainsKey("SlotType"))
                 {
@@ -3618,17 +3314,9 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteByte(ptr + 0x100, Convert.ToByte(modifications["IsDestroyedAfterCombat"]));
                 }
-                if (modifications.ContainsKey("Model"))
-                {
-                    Marshal.WriteInt32(ptr + 0x110, Convert.ToInt32(modifications["Model"]));
-                }
                 if (modifications.ContainsKey("VisualAlterationSlot"))
                 {
                     Marshal.WriteInt32(ptr + 0x118, Convert.ToInt32(modifications["VisualAlterationSlot"]));
-                }
-                if (modifications.ContainsKey("ModelSecondary"))
-                {
-                    Marshal.WriteInt32(ptr + 0x120, Convert.ToInt32(modifications["ModelSecondary"]));
                 }
                 if (modifications.ContainsKey("VisualAlterationSlotSecondary"))
                 {
@@ -3662,18 +3350,70 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
                 {
                     Marshal.WriteInt32(ptr + 0x144, Convert.ToInt32(modifications["MaxRange"]));
                 }
+                if (modifications.ContainsKey("AccuracyBonus"))
+                {
+                    Marshal.WriteInt32(ptr + 0x148, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyBonus"])), 0));
+                }
+                if (modifications.ContainsKey("AccuracyDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x14C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["AccuracyDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("Damage"))
+                {
+                    Marshal.WriteInt32(ptr + 0x150, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["Damage"])), 0));
+                }
+                if (modifications.ContainsKey("DamageDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x154, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctCurrentHitpoints"))
+                {
+                    Marshal.WriteInt32(ptr + 0x158, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctCurrentHitpoints"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctCurrentHitpointsMin"))
+                {
+                    Marshal.WriteInt32(ptr + 0x15C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctCurrentHitpointsMin"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctMaxHitpoints"))
+                {
+                    Marshal.WriteInt32(ptr + 0x160, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctMaxHitpoints"])), 0));
+                }
+                if (modifications.ContainsKey("DamagePctMaxHitpointsMin"))
+                {
+                    Marshal.WriteInt32(ptr + 0x164, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamagePctMaxHitpointsMin"])), 0));
+                }
+                if (modifications.ContainsKey("ArmorPenetration"))
+                {
+                    Marshal.WriteInt32(ptr + 0x168, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ArmorPenetration"])), 0));
+                }
+                if (modifications.ContainsKey("ArmorPenetrationDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x16C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["ArmorPenetrationDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurability"))
+                {
+                    Marshal.WriteInt32(ptr + 0x170, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurability"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x174, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityMult"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityDropoff"))
+                {
+                    Marshal.WriteInt32(ptr + 0x178, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityDropoff"])), 0));
+                }
+                if (modifications.ContainsKey("DamageToArmorDurabilityDropoffMult"))
+                {
+                    Marshal.WriteInt32(ptr + 0x17C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["DamageToArmorDurabilityDropoffMult"])), 0));
+                }
+                if (modifications.ContainsKey("Suppression"))
+                {
+                    Marshal.WriteInt32(ptr + 0x180, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["Suppression"])), 0));
+                }
             }
 
             else if (templateType.Name == "WeatherTemplate")
             {
-                if (modifications.ContainsKey("Title"))
-                {
-                    Marshal.WriteInt32(ptr + 0x78, Convert.ToInt32(modifications["Title"]));
-                }
-                if (modifications.ContainsKey("CameraEffect"))
-                {
-                    Marshal.WriteInt32(ptr + 0x80, Convert.ToInt32(modifications["CameraEffect"]));
-                }
                 if (modifications.ContainsKey("AmbientSound"))
                 {
                     Marshal.WriteInt32(ptr + 0x88, Convert.ToInt32(modifications["AmbientSound"]));
@@ -3710,13 +3450,21 @@ private void ApplyTemplateModifications(UnityEngine.Object obj, Type templateTyp
 
             else if (templateType.Name == "WindControlsTemplate")
             {
-                if (modifications.ContainsKey("m_direction"))
+                if (modifications.ContainsKey("m_windTurbulence"))
                 {
-                    Marshal.WriteInt32(ptr + 0x28, Convert.ToInt32(modifications["m_direction"]));
+                    Marshal.WriteInt32(ptr + 0x18, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["m_windTurbulence"])), 0));
                 }
-                if (modifications.ContainsKey("m_windDirection"))
+                if (modifications.ContainsKey("m_windStrength"))
                 {
-                    Marshal.WriteInt32(ptr + 0x38, Convert.ToInt32(modifications["m_windDirection"]));
+                    Marshal.WriteInt32(ptr + 0x1C, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["m_windStrength"])), 0));
+                }
+                if (modifications.ContainsKey("m_windSpeed"))
+                {
+                    Marshal.WriteInt32(ptr + 0x20, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["m_windSpeed"])), 0));
+                }
+                if (modifications.ContainsKey("m_windTiling"))
+                {
+                    Marshal.WriteInt32(ptr + 0x24, BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(modifications["m_windTiling"])), 0));
                 }
             }
             else

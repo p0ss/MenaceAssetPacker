@@ -2,6 +2,7 @@ using ReactiveUI;
 using System;
 using System.IO;
 using System.Reactive;
+using System.Threading.Tasks;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.Core.Models;
 
@@ -21,7 +22,7 @@ public sealed class SettingsViewModel : ViewModelBase
     // Commands
     ViewCacheDetailsCommand = ReactiveCommand.Create(ViewCacheDetails);
     ClearCacheCommand = ReactiveCommand.Create(ClearCache);
-    ForceReExtractCommand = ReactiveCommand.Create(ForceReExtract);
+    ForceReExtractCommand = ReactiveCommand.CreateFromTask(ForceReExtractAsync);
   }
 
   public string GameInstallPath
@@ -244,10 +245,54 @@ public sealed class SettingsViewModel : ViewModelBase
     }
   }
 
-  private void ForceReExtract()
+  private async Task ForceReExtractAsync()
   {
     ClearCache();
-    // TODO: Trigger re-extraction
+
+    if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
+    {
+      CacheStatus = "❌ Set a valid game installation path first";
+      return;
+    }
+
+    var installer = new ModLoaderInstaller(GameInstallPath);
+
+    // Ensure DataExtractor mod is deployed
+    CacheStatus = "Deploying DataExtractor mod...";
+    if (!installer.IsDataExtractorInstalled())
+    {
+      var installed = await installer.InstallDataExtractorAsync(s => CacheStatus = s);
+      if (!installed)
+        return;
+    }
+    else
+    {
+      // Update to latest version
+      await installer.InstallDataExtractorAsync(s => CacheStatus = s);
+    }
+
+    // Delete old extracted data to force full re-extraction
+    var extractedDataPath = Path.Combine(GameInstallPath, "UserData", "ExtractedData");
+    if (Directory.Exists(extractedDataPath))
+    {
+      try
+      {
+        Directory.Delete(extractedDataPath, true);
+        CacheStatus = "Cleared old extracted data";
+      }
+      catch (Exception ex)
+      {
+        CacheStatus = $"Warning: could not clear old data: {ex.Message}";
+      }
+    }
+
+    // Launch game to extract fresh data
+    CacheStatus = "Launching game to re-extract template data...";
+    var launched = await installer.LaunchGameAsync(s => CacheStatus = s);
+    if (launched)
+    {
+      CacheStatus = "Game launched. Close it after reaching the main menu, then refresh the Stats Editor.";
+    }
   }
 
   private static long GetDirectorySize(string path)

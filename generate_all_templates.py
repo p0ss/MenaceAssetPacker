@@ -7,8 +7,11 @@ with offset-based extraction for all template types.
 
 Usage:
   python generate_all_templates.py
+  python generate_all_templates.py --from-schema schema.json
 """
 
+import argparse
+import json
 import re
 from pathlib import Path
 from collections import defaultdict
@@ -178,46 +181,97 @@ def generate_template_extraction(class_info, is_first=False, indent='           
     lines.append(f'{indent}}}')
     return '\n'.join(lines)
 
-def main():
-    dump_path = Path('il2cpp_dump/dump.cs')
+def load_templates_from_schema(schema_path):
+    """Load template field data from a schema.json file instead of parsing dump."""
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
 
-    if not dump_path.exists():
-        print(f"Error: {dump_path} not found")
-        print("Please ensure the IL2CPP dump is at il2cpp_dump/dump.cs")
-        return 1
-
-    print("Reading IL2CPP dump...")
-    with open(dump_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    print("Finding all Template classes...")
-
-    # Find all template classes
-    template_pattern = r'public class (\w+Template)\s'
-    template_classes = set(re.findall(template_pattern, content))
-
-    # Filter out nested/internal templates
-    template_classes = [t for t in sorted(template_classes)
-                       if '.' not in t and 'Uxml' not in t and 'DataTemplateLoader' != t]
-
-    print(f"Found {len(template_classes)} template classes")
-
-    # Parse all templates and collect all fields (including inherited)
     templates_with_fields = []
     templates_without_fields = []
 
-    for template_name in template_classes:
-        all_fields = collect_all_fields(content, template_name)
-        if all_fields:
-            # Get base class info for the template
-            class_info = parse_class_from_dump(content, template_name)
+    for tname, tinfo in sorted(schema.get('templates', {}).items()):
+        if tinfo.get('is_abstract', False):
+            continue
+
+        fields = []
+        for f in tinfo.get('fields', []):
+            # Convert schema offset "0xAB" to just "AB"
+            offset = f['offset']
+            if offset.startswith('0x'):
+                offset = offset[2:]
+            fields.append({
+                'type': f['type'],
+                'name': f['name'],
+                'offset': offset,
+            })
+
+        if fields:
             templates_with_fields.append({
-                'name': template_name,
-                'base': class_info['base'] if class_info else None,
-                'fields': all_fields  # Now includes inherited fields!
+                'name': tname,
+                'base': tinfo.get('base_class'),
+                'fields': fields,
             })
         else:
-            templates_without_fields.append(template_name)
+            templates_without_fields.append(tname)
+
+    return templates_with_fields, templates_without_fields
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate template extraction code")
+    parser.add_argument('--from-schema', dest='schema_path', default=None,
+                        help='Read types/fields/offsets from schema.json instead of parsing dump')
+    args = parser.parse_args()
+
+    if args.schema_path:
+        schema_path = Path(args.schema_path)
+        if not schema_path.exists():
+            print(f"Error: {schema_path} not found")
+            return 1
+
+        print(f"Loading templates from schema: {schema_path}")
+        templates_with_fields, templates_without_fields = load_templates_from_schema(schema_path)
+        print(f"Found {len(templates_with_fields)} concrete templates with fields")
+    else:
+        dump_path = Path('il2cpp_dump/dump.cs')
+
+        if not dump_path.exists():
+            print(f"Error: {dump_path} not found")
+            print("Please ensure the IL2CPP dump is at il2cpp_dump/dump.cs")
+            return 1
+
+        print("Reading IL2CPP dump...")
+        with open(dump_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        print("Finding all Template classes...")
+
+        # Find all template classes
+        template_pattern = r'public class (\w+Template)\s'
+        template_classes = set(re.findall(template_pattern, content))
+
+        # Filter out nested/internal templates
+        template_classes = [t for t in sorted(template_classes)
+                           if '.' not in t and 'Uxml' not in t and 'DataTemplateLoader' != t]
+
+        print(f"Found {len(template_classes)} template classes")
+
+        # Parse all templates and collect all fields (including inherited)
+        templates_with_fields = []
+        templates_without_fields = []
+
+        for template_name in template_classes:
+            all_fields = collect_all_fields(content, template_name)
+            if all_fields:
+                # Get base class info for the template
+                class_info = parse_class_from_dump(content, template_name)
+                templates_with_fields.append({
+                    'name': template_name,
+                    'base': class_info['base'] if class_info else None,
+                    'fields': all_fields  # Now includes inherited fields!
+                })
+            else:
+                templates_without_fields.append(template_name)
 
     print(f"{len(templates_with_fields)} templates have fields (including inherited)")
     print(f"{len(templates_without_fields)} templates have no fields")

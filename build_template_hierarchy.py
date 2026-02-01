@@ -4,7 +4,7 @@ Build a hierarchical menu structure from extracted templates.
 
 This script:
 1. Reads all template JSON files
-2. Analyzes template inheritance from IL2CPP dump
+2. Analyzes template inheritance from IL2CPP dump or schema
 3. Creates a menu.json with proper hierarchy based on:
    - Template inheritance (BaseItem → Weapon → specific weapons)
    - Name structure (mod_weapon.heavy.cannon_long → mod_weapon/heavy/cannon_long)
@@ -25,8 +25,13 @@ Output: menu.json with structure like:
     }
   }
 }
+
+Usage:
+  python build_template_hierarchy.py
+  python build_template_hierarchy.py --from-schema schema.json
 """
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -180,7 +185,122 @@ def build_hierarchical_menu(extracted_data_path, dump_path, output_path):
     print(f"   - {len(placement_map)} unique instances")
     print(f"   - {sum(len(v) for v in templates_by_type.values())} total instances (including duplicates)")
 
+def parse_hierarchy_from_schema(schema_path):
+    """Load template inheritance hierarchy from schema.json."""
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+
+    hierarchy = {}
+    for tname, tinfo in schema.get('templates', {}).items():
+        base = tinfo.get('base_class')
+        if base and (base.endswith('Template') or base == 'ScriptableObject'):
+            hierarchy[tname] = base if base != 'ScriptableObject' else None
+        elif base:
+            hierarchy[tname] = base
+
+    return hierarchy
+
+
+def build_hierarchical_menu_from_schema(extracted_data_path, schema_path, output_path):
+    """Build hierarchical menu using schema instead of dump."""
+    print("Loading hierarchy from schema...")
+    hierarchy = parse_hierarchy_from_schema(schema_path)
+
+    print(f"Found {len(hierarchy)} template types in hierarchy")
+    for template_type, base_type in sorted(hierarchy.items()):
+        if base_type:
+            print(f"  {template_type} -> {base_type}")
+
+    print("\nLoading extracted template data...")
+
+    # Load all template JSON files (same logic as dump-based version)
+    templates_by_type = {}
+    data_dir = Path(extracted_data_path)
+
+    for json_file in data_dir.glob("*.json"):
+        if json_file.name in ("AssetReferences.json", "menu.json"):
+            continue
+
+        template_type = json_file.stem
+
+        try:
+            with open(json_file, 'r') as f:
+                templates = json.load(f)
+
+            if isinstance(templates, list):
+                templates_by_type[template_type] = templates
+                print(f"  Loaded {len(templates)} instances of {template_type}")
+        except Exception as e:
+            print(f"  Failed to load {json_file.name}: {e}")
+
+    print(f"\nBuilding hierarchical menu...")
+
+    # Build menu structure (reuse the same logic)
+    menu = {}
+    placement_map = {}
+
+    def get_depth(template_type):
+        if template_type not in hierarchy:
+            return 0
+        chain = get_inheritance_chain(template_type, hierarchy)
+        return len(chain)
+
+    sorted_types = sorted(templates_by_type.keys(), key=get_depth, reverse=True)
+
+    for template_type in sorted_types:
+        instances = templates_by_type[template_type]
+        chain = get_inheritance_chain(template_type, hierarchy)
+
+        print(f"\n{template_type}: {' -> '.join(chain)}")
+
+        for instance in instances:
+            if not isinstance(instance, dict):
+                continue
+
+            name = instance.get('name', '')
+            if not name:
+                continue
+
+            if name in placement_map:
+                continue
+
+            path_parts = chain.copy()
+            name_parts = build_name_path(name)
+            path_parts.extend(name_parts[:-1])
+
+            current = menu
+            full_path = []
+
+            for part in path_parts:
+                full_path.append(part)
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+
+            leaf_name = name_parts[-1] if name_parts else name
+            current[leaf_name] = {
+                'template_type': template_type,
+                'name': name,
+                'data': instance
+            }
+
+            placement_map[name] = '/'.join(full_path + [leaf_name])
+
+    with open(output_path, 'w') as f:
+        json.dump(menu, f, indent=2)
+
+    print(f"\nMenu saved to: {output_path}")
+    print(f"Stats:")
+    print(f"   - {len(templates_by_type)} template types")
+    print(f"   - {len(placement_map)} unique instances")
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Build template hierarchy menu")
+    parser.add_argument('--from-schema', dest='schema_path', default=None,
+                        help='Read inheritance from schema.json instead of dump.cs')
+    args = parser.parse_args()
+
     # Paths
     game_dir = Path.home() / ".steam/debian-installation/steamapps/common/Menace Demo"
     extracted_data_path = game_dir / "UserData/ExtractedData"
@@ -188,14 +308,21 @@ def main():
     output_path = extracted_data_path / "menu.json"
 
     if not extracted_data_path.exists():
-        print(f"❌ Extracted data not found: {extracted_data_path}")
+        print(f"Extracted data not found: {extracted_data_path}")
         return 1
 
-    if not dump_path.exists():
-        print(f"❌ IL2CPP dump not found: {dump_path}")
-        return 1
+    if args.schema_path:
+        schema_path = Path(args.schema_path)
+        if not schema_path.exists():
+            print(f"Schema not found: {schema_path}")
+            return 1
+        build_hierarchical_menu_from_schema(extracted_data_path, schema_path, output_path)
+    else:
+        if not dump_path.exists():
+            print(f"IL2CPP dump not found: {dump_path}")
+            return 1
+        build_hierarchical_menu(extracted_data_path, dump_path, output_path)
 
-    build_hierarchical_menu(extracted_data_path, dump_path, output_path)
     return 0
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Reflection;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using MelonLoader;
@@ -11,7 +11,7 @@ using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 [assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", "1.0.0", "Menace Modkit")]
-[assembly: MelonGame("Turnopia AB", "Menace")]
+[assembly: MelonGame(null, null)]
 
 namespace Menace.ModpackLoader;
 
@@ -145,21 +145,43 @@ public partial class ModpackLoaderMod : MelonMod
 
     private void ApplyModpackTemplates(Modpack modpack)
     {
-        // Iterate through each template type in the modpack
+        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+
+        if (gameAssembly == null)
+        {
+            LoggerInstance.Error("Assembly-CSharp not found, cannot apply modpack");
+            return;
+        }
+
         foreach (var (templateTypeName, templateInstances) in modpack.Templates)
         {
             try
             {
-                // Find all ScriptableObjects of this template type
-                var templates = Resources.FindObjectsOfTypeAll(Il2CppType.Of<ScriptableObject>());
+                // Find the proxy type from Assembly-CSharp
+                var templateType = gameAssembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == templateTypeName && !t.IsAbstract);
+
+                if (templateType == null)
+                {
+                    LoggerInstance.Warning($"  Template type '{templateTypeName}' not found in Assembly-CSharp");
+                    continue;
+                }
+
+                // Find all instances of this specific type
+                var il2cppType = Il2CppType.From(templateType);
+                var objects = Resources.FindObjectsOfTypeAll(il2cppType);
+
+                if (objects == null || objects.Length == 0)
+                {
+                    LoggerInstance.Warning($"  No {templateTypeName} instances found in game");
+                    continue;
+                }
 
                 int appliedCount = 0;
-                foreach (var obj in templates)
+                foreach (var obj in objects)
                 {
-                    var templateType = obj.GetType();
-                    if (templateType.Name != templateTypeName)
-                        continue;
-
+                    if (obj == null) continue;
                     var templateName = obj.name;
                     if (templateInstances.ContainsKey(templateName))
                     {
@@ -171,7 +193,7 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (appliedCount > 0)
                 {
-                    LoggerInstance.Msg($"  Applied {appliedCount} modification(s) to {templateTypeName}");
+                    LoggerInstance.Msg($"  Applied modifications to {appliedCount} {templateTypeName} instance(s)");
                 }
             }
             catch (Exception ex)

@@ -4,16 +4,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Il2CppInterop.Runtime.InteropTypes.Fields;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "2.0.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.0.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
@@ -21,49 +20,121 @@ namespace Menace.DataExtractor
     public class DataExtractorMod : MelonMod
     {
         private string _outputPath = "";
+        private string _debugLogPath = "";
         private bool _hasSaved = false;
-        private Dictionary<long, AssetReference> _assetReferences = new Dictionary<long, AssetReference>();
 
-        private class AssetReference
+        // Properties to skip during extraction
+        private static readonly HashSet<string> SkipProperties = new(StringComparer.Ordinal)
         {
-            public long InstanceId { get; set; }
-            public string Name { get; set; }
-            public string Type { get; set; }
-            public string AssetPath { get; set; }
-        }
+            "Pointer", "ObjectClass", "WasCollected", "m_CachedPtr",
+            "hideFlags", "serializationData", "SerializationData",
+            "SerializedBytesString", "UnitySerializedFields",
+            "PrefabModificationsReapplied"
+        };
+
+        // Base types where we stop walking the inheritance chain
+        private static readonly HashSet<string> StopBaseTypes = new(StringComparer.Ordinal)
+        {
+            "Object", "Il2CppObjectBase", "Il2CppSystem.Object",
+            "ScriptableObject", "SerializedScriptableObject"
+        };
+
+        private MethodInfo _tryCastMethod;
+
+        // Sentinel value indicating TryReadFieldDirect can't handle this type
+        private static readonly object _skipSentinel = new object();
+
+        // Cache: templateTypeName -> { propName -> (fieldPtr, offset) }
+        // Avoids redundant il2cpp_class_get_field_from_name + il2cpp_field_get_offset calls
+        private readonly Dictionary<string, Dictionary<string, (IntPtr field, uint offset)>> _fieldInfoCache = new();
+
+        // Cache: IL2CPP class name -> managed Type (for ScriptableObject-based discovery)
+        private readonly Dictionary<string, Type> _il2cppNameToType = new(StringComparer.Ordinal);
+
+        // Cache: IL2CPP class name -> native class pointer (captured during classification, avoids
+        // il2cpp_object_get_class on data pointers which can SIGSEGV on stale/garbage pointers)
+        private readonly Dictionary<string, IntPtr> _il2cppClassPtrCache = new(StringComparer.Ordinal);
 
         public override void OnInitializeMelon()
         {
             var modsDir = Path.GetDirectoryName(typeof(DataExtractorMod).Assembly.Location) ?? "";
             var rootDir = Directory.GetParent(modsDir)?.FullName ?? "";
             _outputPath = Path.Combine(rootDir, "UserData", "ExtractedData");
+            _debugLogPath = Path.Combine(_outputPath, "_extraction_debug.log");
             Directory.CreateDirectory(_outputPath);
 
+            // Clear previous debug log
+            try { if (File.Exists(_debugLogPath)) File.Delete(_debugLogPath); } catch { }
+
+            _tryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
+
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("Menace Data Extractor v2.0.0");
+            LoggerInstance.Msg("Menace Data Extractor v4.0.0 (Full Direct-Read)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
-            LoggerInstance.Msg("Using Resources.FindObjectsOfTypeAll approach");
             LoggerInstance.Msg("===========================================");
 
             RunExtractionAsync();
         }
 
+        // Write directly to a file and flush — survives native crashes
+        private void DebugLog(string message)
+        {
+            try
+            {
+                File.AppendAllText(_debugLogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
+            }
+            catch { }
+        }
+
         private async void RunExtractionAsync()
         {
             LoggerInstance.Msg("Waiting for game to load...");
-            await Task.Delay(5000);
+            await Task.Delay(8000);
 
             for (int attempt = 1; attempt <= 60; attempt++)
             {
                 if (TryExtractAllTemplates())
                 {
-                    LoggerInstance.Msg($"✓ Extraction completed successfully on attempt {attempt}");
+                    LoggerInstance.Msg($"Extraction completed successfully on attempt {attempt}");
                     return;
                 }
-                await Task.Delay(1000);
+                await Task.Delay(2000);
             }
 
             LoggerInstance.Warning("Could not extract templates after 60 attempts");
+        }
+
+        // Holds context for a single template instance between phases
+        private class InstanceContext
+        {
+            public Dictionary<string, object> Data;
+            public object CastObj;
+            public IntPtr Pointer; // IL2CPP native object pointer
+            public string Name;
+        }
+
+        // Holds context for a template type between phases
+        private class TypeContext
+        {
+            public Type TemplateType;
+            public List<InstanceContext> Instances = new();
+        }
+
+        /// <summary>
+        /// Get the IL2CPP class name for a native object pointer by walking up
+        /// to find the most-derived class name.
+        /// </summary>
+        private string GetIl2CppClassName(IntPtr objectPointer)
+        {
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(objectPointer);
+                if (klass == IntPtr.Zero) return null;
+                IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
+                if (namePtr == IntPtr.Zero) return null;
+                return Marshal.PtrToStringAnsi(namePtr);
+            }
+            catch { return null; }
         }
 
         private bool TryExtractAllTemplates()
@@ -74,67 +145,289 @@ namespace Menace.DataExtractor
                     .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
                 if (gameAssembly == null)
-                {
                     return false;
-                }
 
                 var templateTypes = gameAssembly.GetTypes()
                     .Where(t => t.Name.EndsWith("Template") && !t.IsAbstract)
+                    .OrderBy(t => t.Name)
                     .ToList();
 
                 if (templateTypes.Count == 0)
-                {
                     return false;
-                }
+
+                // Build lookup: IL2CPP class name -> managed Type
+                _il2cppNameToType.Clear();
+                foreach (var t in templateTypes)
+                    _il2cppNameToType[t.Name] = t;
 
                 LoggerInstance.Msg($"Found {templateTypes.Count} template types, extracting...");
 
-                int successCount = 0;
-                Dictionary<string, List<object>> extractedData = new Dictionary<string, List<object>>();
+                // Clean previous extraction results to avoid stale files from
+                // abstract base types that have no instances (e.g. BaseItemTemplate, MissionTemplate)
+                CleanOutputDirectory();
+
+                DebugLog($"=== Extraction started: {templateTypes.Count} types ===");
+                for (int i = 0; i < templateTypes.Count; i++)
+                    DebugLog($"  [{i}] {templateTypes[i].Name}");
+
+                // ============================================================
+                // Fetch ALL ScriptableObjects in one call (safe — ScriptableObject
+                // is a well-known base type, unlike specific subtypes which can crash)
+                // ============================================================
+                DebugLog("=== FindObjectsOfTypeAll<ScriptableObject>... ===");
+                var allScriptableObjects = Resources.FindObjectsOfTypeAll(
+                    Il2CppType.From(typeof(ScriptableObject)));
+
+                if (allScriptableObjects == null || allScriptableObjects.Length == 0)
+                {
+                    DebugLog("  No ScriptableObjects found");
+                    return false;
+                }
+
+                DebugLog($"  Found {allScriptableObjects.Length} total ScriptableObjects");
+
+                // ============================================================
+                // Classify objects by their IL2CPP class name and group by template type
+                // ============================================================
+                DebugLog("=== Classifying objects by IL2CPP class name ===");
+                var objectsByType = new Dictionary<string, List<UnityEngine.Object>>();
+                _il2cppClassPtrCache.Clear();
+
+                for (int i = 0; i < allScriptableObjects.Length; i++)
+                {
+                    var obj = allScriptableObjects[i];
+                    if (obj == null) continue;
+
+                    var il2cppBase = obj as Il2CppObjectBase;
+                    if (il2cppBase == null || il2cppBase.Pointer == IntPtr.Zero) continue;
+
+                    // Get class from object — this is safe here because FindObjectsOfTypeAll
+                    // just returned these objects, so pointers are guaranteed valid right now
+                    IntPtr klass = IntPtr.Zero;
+                    try { klass = IL2CPP.il2cpp_object_get_class(il2cppBase.Pointer); }
+                    catch { continue; }
+                    if (klass == IntPtr.Zero) continue;
+
+                    IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
+                    if (namePtr == IntPtr.Zero) continue;
+                    string className = Marshal.PtrToStringAnsi(namePtr);
+                    if (className == null) continue;
+
+                    // Only keep objects whose class name matches a template type we want
+                    if (!_il2cppNameToType.ContainsKey(className)) continue;
+
+                    // Cache the class pointer per type (only need one — all instances share the same class)
+                    if (!_il2cppClassPtrCache.ContainsKey(className))
+                        _il2cppClassPtrCache[className] = klass;
+
+                    if (!objectsByType.TryGetValue(className, out var list))
+                    {
+                        list = new List<UnityEngine.Object>();
+                        objectsByType[className] = list;
+                    }
+                    list.Add(obj);
+                }
+
+                DebugLog($"  Classified into {objectsByType.Count} template types");
+                foreach (var kvp in objectsByType.OrderBy(k => k.Key))
+                    DebugLog($"    {kvp.Key}: {kvp.Value.Count} instances");
+
+                // ============================================================
+                // Check if key templates have m_ID populated.
+                // Different template types initialize at different times — some simple types
+                // get m_IsInitialized=true early, but the important ones (items, weapons, etc.)
+                // may still have null m_ID. We specifically check types that derive from
+                // DataTemplate and that the user actually wants to edit.
+                // ============================================================
+                string[] keyTypes = { "WeaponTemplate", "ArmorTemplate", "AccessoryTemplate",
+                                      "SkillTemplate", "PerkTemplate", "EntityTemplate" };
+                bool allKeyTypesReady = true;
+                int keyTypesChecked = 0;
+
+                foreach (var keyType in keyTypes)
+                {
+                    if (!objectsByType.TryGetValue(keyType, out var keyObjects) || keyObjects.Count == 0)
+                        continue;
+                    if (!_il2cppClassPtrCache.TryGetValue(keyType, out var keyClass))
+                        continue;
+
+                    var sampleObj = keyObjects[0] as Il2CppObjectBase;
+                    if (sampleObj == null || sampleObj.Pointer == IntPtr.Zero) continue;
+
+                    IntPtr idField = FindNativeField(keyClass, "m_ID");
+                    if (idField == IntPtr.Zero) continue;
+
+                    uint idOffset = IL2CPP.il2cpp_field_get_offset(idField);
+                    if (idOffset == 0) continue;
+
+                    keyTypesChecked++;
+                    IntPtr strPtr = Marshal.ReadIntPtr(sampleObj.Pointer + (int)idOffset);
+                    if (strPtr != IntPtr.Zero)
+                    {
+                        string id = IL2CPP.Il2CppStringToManaged(strPtr);
+                        DebugLog($"  {keyType}[0] m_ID={id}");
+                        if (string.IsNullOrEmpty(id))
+                        {
+                            allKeyTypesReady = false;
+                        }
+                    }
+                    else
+                    {
+                        DebugLog($"  {keyType}[0] m_ID=null (not yet initialized)");
+                        allKeyTypesReady = false;
+                    }
+                }
+
+                if (keyTypesChecked == 0 || !allKeyTypesReady)
+                {
+                    DebugLog("=== Key templates not yet initialized (m_ID is null on some), will retry ===");
+                    return false;
+                }
+
+                // ============================================================
+                // PHASE 1: Extract primitive properties only (safe, no native crashes)
+                // ============================================================
+                DebugLog("=== PHASE 1: Primitive properties only ===");
+
+                var allTypeContexts = new List<TypeContext>();
+                int phase1Success = 0;
 
                 foreach (var templateType in templateTypes)
                 {
+                    if (!objectsByType.TryGetValue(templateType.Name, out var objects) || objects.Count == 0)
+                    {
+                        DebugLog($">>> P1 SKIP {templateType.Name} (no instances found)");
+                        continue;
+                    }
+
+                    DebugLog($">>> P1 START {templateType.Name}");
+
                     try
                     {
-                        var il2cppType = Il2CppType.From(templateType);
-                        var objects = Resources.FindObjectsOfTypeAll(il2cppType);
-
-                        if (objects == null || objects.Length == 0)
+                        var typeCtx = ExtractTypePhase1(templateType, objects);
+                        if (typeCtx != null && typeCtx.Instances.Count > 0)
                         {
-                            continue;
+                            allTypeContexts.Add(typeCtx);
+
+                            // Save immediately — this data is safe on disk now
+                            var dataList = typeCtx.Instances
+                                .Select(i => (object)i.Data).ToList();
+                            SaveSingleTemplateType(templateType.Name, dataList);
+
+                            phase1Success++;
+                            DebugLog($"  SAVED {typeCtx.Instances.Count} instances (primitives)");
+                            LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances (primitives)");
                         }
-
-                        LoggerInstance.Msg($"✓ {templateType.Name}: {objects.Length} instances");
-
-                        var templates = new List<object>();
-
-                        foreach (var obj in objects)
+                        else
                         {
-                            if (obj != null)
-                            {
-                                // Extract using direct memory reading for known types
-                                var extracted = ExtractTemplateDataDirect(obj, templateType);
-                                templates.Add(extracted);
-                            }
-                        }
-
-                        if (templates.Count > 0)
-                        {
-                            extractedData[templateType.Name] = templates;
-                            successCount++;
+                            DebugLog($"  No instances extracted");
                         }
                     }
                     catch (Exception ex)
                     {
-                        LoggerInstance.Warning($"Failed to extract {templateType.Name}: {ex.Message}");
+                        DebugLog($"  P1 EXCEPTION: {ex.Message}");
+                    }
+
+                    DebugLog($"<<< P1 END {templateType.Name}");
+                }
+
+                DebugLog($"=== Phase 1 complete: {phase1Success} types saved ===");
+                LoggerInstance.Msg($"Phase 1 (primitives): {phase1Success} types saved");
+
+                // ============================================================
+                // PHASE 2: Fill in reference properties (may crash on some types)
+                // All primitive data is already saved to disk, so a crash here
+                // only loses reference data for the crashing type and beyond.
+                // ============================================================
+                DebugLog("=== PHASE 2: Reference properties ===");
+
+                int phase2Success = 0;
+                foreach (var typeCtx in allTypeContexts)
+                {
+                    DebugLog($">>> P2 START {typeCtx.TemplateType.Name}");
+
+                    try
+                    {
+                        bool anyRefs = false;
+                        foreach (var inst in typeCtx.Instances)
+                        {
+                            if (FillReferenceProperties(inst, typeCtx.TemplateType))
+                                anyRefs = true;
+                        }
+
+                        if (anyRefs)
+                        {
+                            // Re-save with reference data included
+                            var dataList = typeCtx.Instances
+                                .Select(i => (object)i.Data).ToList();
+                            SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
+                            DebugLog($"  UPDATED with references");
+                        }
+                        else
+                        {
+                            DebugLog($"  No reference properties to fill");
+                        }
+
+                        phase2Success++;
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugLog($"  P2 EXCEPTION: {ex.Message}");
+                    }
+
+                    DebugLog($"<<< P2 END {typeCtx.TemplateType.Name}");
+                }
+
+                DebugLog($"=== Phase 2 complete: {phase2Success}/{allTypeContexts.Count} types updated ===");
+                LoggerInstance.Msg($"Phase 2 (references): {phase2Success}/{allTypeContexts.Count} types updated");
+
+                // ============================================================
+                // PHASE 3: Try Unity Object.name for remaining "unknown_N" entries.
+                // This calls into native Unity code which can SIGSEGV on some objects.
+                // ALL data is already saved to disk from Phases 1+2, so a crash here
+                // only loses the name fix — all primitives, localization, and icons are safe.
+                // ============================================================
+                DebugLog("=== PHASE 3: Unity .name for remaining unknown names ===");
+                int phase3Fixed = 0;
+
+                foreach (var typeCtx in allTypeContexts)
+                {
+                    bool anyFixed = false;
+                    foreach (var inst in typeCtx.Instances)
+                    {
+                        if (inst.Name != null && inst.Name.StartsWith("unknown_") && inst.Pointer != IntPtr.Zero)
+                        {
+                            try
+                            {
+                                var obj = new UnityEngine.Object(inst.Pointer);
+                                string unityName = obj.name;
+                                if (!string.IsNullOrEmpty(unityName))
+                                {
+                                    inst.Name = unityName;
+                                    inst.Data["name"] = unityName;
+                                    anyFixed = true;
+                                    phase3Fixed++;
+                                }
+                            }
+                            catch
+                            {
+                                // Managed exception — skip this one, keep going
+                            }
+                        }
+                    }
+
+                    if (anyFixed)
+                    {
+                        var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                        SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
                     }
                 }
 
-                if (successCount > 0)
+                DebugLog($"=== Phase 3 complete: fixed {phase3Fixed} names ===");
+                LoggerInstance.Msg($"Phase 3 (names): fixed {phase3Fixed} unknown names");
+
+                if (phase1Success > 0)
                 {
-                    LoggerInstance.Msg($"");
-                    LoggerInstance.Msg($"Successfully extracted {successCount} template types");
-                    SaveExtractedData(extractedData);
                     _hasSaved = true;
                     return true;
                 }
@@ -143,2424 +436,1201 @@ namespace Menace.DataExtractor
             }
             catch (Exception ex)
             {
+                DebugLog($"FATAL: {ex.Message}\n{ex.StackTrace}");
                 LoggerInstance.Error($"Error: {ex.Message}");
                 return false;
             }
         }
 
-        private void LogDebugFieldsForType(object obj)
+        /// <summary>
+        /// Phase 1: Extract only primitive/safe properties from pre-collected objects.
+        /// No per-type FindObjectsOfTypeAll calls. No IL2CPP property getters.
+        /// </summary>
+        private TypeContext ExtractTypePhase1(Type templateType, List<UnityEngine.Object> objects)
         {
-            var type = obj.GetType();
-            LoggerInstance.Msg($"=== DEBUG: {type.Name} fields ===");
+            DebugLog($"  {objects.Count} instances to extract");
+            var typeCtx = new TypeContext { TemplateType = templateType };
 
-            LoggerInstance.Msg("PUBLIC PROPERTIES:");
-            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            // Get the cached IL2CPP class pointer (captured during classification)
+            // This avoids calling il2cpp_object_get_class on potentially-stale object pointers
+            IntPtr cachedKlass = IntPtr.Zero;
+            _il2cppClassPtrCache.TryGetValue(templateType.Name, out cachedKlass);
+
+            for (int i = 0; i < objects.Count; i++)
             {
-                LoggerInstance.Msg($"  {prop.PropertyType.Name} {prop.Name}");
-            }
+                var obj = objects[i];
+                if (obj == null) { DebugLog($"  [{i}] null, skip"); continue; }
 
-            LoggerInstance.Msg("ALL PROPERTIES (inc inherited):");
-            var allProps = GetAllProperties(type);
-            foreach (var prop in allProps.Take(30))
-            {
-                LoggerInstance.Msg($"  [{prop.DeclaringType?.Name}] {prop.PropertyType.Name} {prop.Name}");
-            }
-
-            LoggerInstance.Msg("ALL FIELDS (inc inherited):");
-            var allFields = GetAllFields(type);
-            foreach (var field in allFields.Take(30))
-            {
-                LoggerInstance.Msg($"  [{field.DeclaringType?.Name}] {field.FieldType.Name} {field.Name}");
-            }
-
-            LoggerInstance.Msg("ALL METHODS:");
-            var allMethods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            foreach (var method in allMethods.Where(m => !m.Name.StartsWith("get_") && !m.Name.StartsWith("set_") && !m.Name.StartsWith("add_") && !m.Name.StartsWith("remove_")).Take(50))
-            {
-                var paramStr = string.Join(", ", method.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
-                LoggerInstance.Msg($"  {method.ReturnType.Name} {method.Name}({paramStr})");
-            }
-        }
-
-        // Helper method to read a Unity Object reference and extract its data
-        private object ReadUnityObjectReference(IntPtr objectRefPtr)
-        {
-            if (objectRefPtr == IntPtr.Zero)
-                return null;
-
-            long instanceId = objectRefPtr.ToInt64();
-
-            try
-            {
-                // Try to get the Unity Object from pointer
-                var unityObj = new UnityEngine.Object(objectRefPtr);
-
-                if (unityObj != null)
+                // Get the IL2CPP pointer — if zero, object is invalid
+                var il2cppCheck = obj as Il2CppObjectBase;
+                if (il2cppCheck == null || il2cppCheck.Pointer == IntPtr.Zero)
                 {
-                    string name = "";
-                    string type = "";
+                    DebugLog($"  [{i}] zero pointer, skip");
+                    continue;
+                }
 
-                    try
+                // Check m_CachedPtr using cached class (no il2cpp_object_get_class call)
+                IntPtr objPointer = il2cppCheck.Pointer;
+                if (cachedKlass != IntPtr.Zero)
+                {
+                    if (!IsUnityObjectAliveWithClass(objPointer, cachedKlass))
                     {
-                        name = unityObj.name ?? "";
-                        type = unityObj.GetType().Name;
+                        DebugLog($"  [{i}] destroyed (m_CachedPtr=0), skip");
+                        continue;
                     }
-                    catch { }
+                }
 
-                    // Register this reference
-                    if (!_assetReferences.ContainsKey(instanceId))
-                    {
-                        _assetReferences[instanceId] = new AssetReference
-                        {
-                            InstanceId = instanceId,
-                            Name = name,
-                            Type = type,
-                            AssetPath = "" // Will be filled later if we can match to AssetRipper exports
-                        };
-                    }
+                // Read the name via direct memory using cached class
+                string objName = null;
+                if (cachedKlass != IntPtr.Zero)
+                    objName = ReadObjectNameWithClass(objPointer, cachedKlass);
 
-                    // For LocalizedString types, try to read m_DefaultTranslation at offset 0x40
-                    if (type.Contains("Localized"))
+                if (objName == null) objName = $"unknown_{i}";
+                DebugLog($"  [{i}] {objName}");
+
+                try
+                {
+                    var instCtx = ExtractPrimitives(obj, templateType, objName);
+                    if (instCtx != null)
                     {
-                        var translationPtr = Marshal.ReadIntPtr(objectRefPtr + 0x40);
-                        if (translationPtr != IntPtr.Zero)
+                        // Use m_ID as the canonical name if available (more reliable
+                        // than ReadObjectNameDirect which can't read Unity native properties)
+                        if (instCtx.Data.TryGetValue("m_ID", out var idVal) && idVal is string idStr && !string.IsNullOrEmpty(idStr))
                         {
-                            var translation = Marshal.PtrToStringAnsi(translationPtr);
-                            if (!string.IsNullOrEmpty(translation))
-                                return translation;
+                            instCtx.Name = idStr;
+                            instCtx.Data["name"] = idStr;
                         }
+                        typeCtx.Instances.Add(instCtx);
                     }
-
-                    // Return name if available
-                    if (!string.IsNullOrEmpty(name))
-                        return name;
-                }
-            }
-            catch
-            {
-                // If dereferencing fails, return the pointer value
-            }
-
-            return instanceId;
-        }
-
-        private object ExtractTemplateDataDirect(UnityEngine.Object obj, Type templateType)
-        {
-            var data = new Dictionary<string, object>();
-
-            // Get IL2CPP pointer from the object
-            IntPtr ptr = IntPtr.Zero;
-            if (obj is Il2CppObjectBase il2cppObj)
-            {
-                ptr = il2cppObj.Pointer;
-            }
-            else
-            {
-                data["name"] = $"ERROR: Object is not Il2CppObjectBase, type is {obj.GetType().Name}";
-                return data;
-            }
-
-            data["name"] = obj.name;
-
-            // Template-specific extraction
-                    if (templateType.Name == "AIWeightsTemplate")
-                    {
-                        data["BehaviorScorePOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x18)), 0);
-                        data["TTL_MAX"] = Marshal.ReadInt32(ptr + 0x1C);
-                        data["UtilityPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x20)), 0);
-                        data["UtilityScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x24)), 0);
-                        data["UtilityPostPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x28)), 0);
-                        data["UtilityPostScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2C)), 0);
-                        data["SafetyPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x30)), 0);
-                        data["SafetyScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x34)), 0);
-                        data["SafetyPostPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x38)), 0);
-                        data["SafetyPostScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x3C)), 0);
-                        data["DistanceScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x40)), 0);
-                        data["DistancePickScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x44)), 0);
-                        data["ThreatLevelPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x48)), 0);
-                        data["OpportunityLevelPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x4C)), 0);
-                        data["PickingScoreMultPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x50)), 0);
-                        data["DistanceToCurrentTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x54)), 0);
-                        data["DistanceToZones"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x58)), 0);
-                        data["DistanceToAdvanceZones"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x5C)), 0);
-                        data["SafetyOutsideDefendZones"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x60)), 0);
-                        data["SafetyOutsideDefendZonesVehicles"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x64)), 0);
-                        data["OccupyZoneValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x68)), 0);
-                        data["CaptureZoneValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x6C)), 0);
-                        data["CoverAgainstOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x70)), 0);
-                        data["ThreatFromOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x74)), 0);
-                        data["ThreatFromUnknownOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x78)), 0);
-                        data["ThreatFromTileEffects"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x7C)), 0);
-                        data["ThreatFromOpponentsDamage"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x80)), 0);
-                        data["ThreatFromOpponentsArmorDamage"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x84)), 0);
-                        data["ThreatFromOpponentsSuppression"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x88)), 0);
-                        data["ThreatFromOpponentsStun"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x8C)), 0);
-                        data["ThreatFromPinnedDownOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x90)), 0);
-                        data["ThreatFromSuppressedOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x94)), 0);
-                        data["ThreatFrom2xStunnedOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x98)), 0);
-                        data["ThreatFromFleeingOpponents"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x9C)), 0);
-                        data["ThreatFromOpponentsAlreadyActed"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xA0)), 0);
-                        data["ThreatFromOpponentsStaggered"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xA4)), 0);
-                        data["ThreatFromOpponentsButAlliesInControl"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xA8)), 0);
-                        data["ThreatFromOpponentsAtHypotheticalPositionsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xAC)), 0);
-                        data["AllyMetascoreAgainstThreshold"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xB0)), 0);
-                        data["AvoidAlliesPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xB4)), 0);
-                        data["AvoidOpponentsPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xB8)), 0);
-                        data["FleeFromOpponentsPOW"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xBC)), 0);
-                        data["ScalePositionWithTags"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xC0)), 0);
-                        data["IncludeAttacksAgainstAllOpponentsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xC4)), 0);
-                        data["OppositeSideDistanceFromOpponentCap"] = Marshal.ReadInt32(ptr + 0xC8);
-                        data["CullTilesDistances"] = Marshal.ReadInt32(ptr + 0xCC);
-                        data["DistanceToZoneDeployScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD0)), 0);
-                        data["DistanceToAlliesScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD4)), 0);
-                        data["CoverInEachDirectionBonus"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD8)), 0);
-                        data["InsideBuildingDuringDeployment"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xDC)), 0);
-                        data["DeploymentConcealmentMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xE0)), 0);
-                        data["InvisibleTargetValueMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xE4)), 0);
-                        data["TargetValueDamageScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xE8)), 0);
-                        data["TargetValueArmorScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xEC)), 0);
-                        data["TargetValueSuppressionScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xF0)), 0);
-                        data["TargetValueStunScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xF4)), 0);
-                        data["TargetValueThreatScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xF8)), 0);
-                        data["TargetValueMaxThreatSuppressScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xFC)), 0);
-                        data["ScoreThresholdWithLimitedUses"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x100)), 0);
-                        data["FriendlyFirePenalty"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x104)), 0);
-                        data["DamageBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x108)), 0);
-                        data["DamageScoreMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x10C)), 0);
-                        data["InflictDamageFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x110)), 0);
-                        data["SuppressionBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x114)), 0);
-                        data["SuppressionScoreMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x118)), 0);
-                        data["InflictSuppressionFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x11C)), 0);
-                        data["StunBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x120)), 0);
-                        data["StunScoreMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x124)), 0);
-                        data["StunFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x128)), 0);
-                        data["MoveBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x12C)), 0);
-                        data["MoveScoreMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x130)), 0);
-                        data["NearTileLimit"] = Marshal.ReadInt32(ptr + 0x134);
-                        data["TileScoreDifferenceMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x138)), 0);
-                        data["TileScoreDifferencePow"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x13C)), 0);
-                        data["UtilityThreshold"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x140)), 0);
-                        data["PathfindingSafetyCostMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x144)), 0);
-                        data["PathfindingUnknownTileSafety"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x148)), 0);
-                        data["PathfindingHiddenFromOpponentsBonus"] = Marshal.ReadInt32(ptr + 0x14C);
-                        data["EntirePathScoreContribution"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x150)), 0);
-                        data["MoveIfNewTileIsBetterBy"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x154)), 0);
-                        data["GetUpIfNewTileIsBetterBy"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x158)), 0);
-                        data["DistanceTooFarForOneTurnMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x15C)), 0);
-                        data["ConsiderAlternativeIfBetterBy"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x160)), 0);
-                        data["ConsiderAlternativeToUltimateIfBetterBy"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x164)), 0);
-                        data["EnoughAPToPerformSkillAfterwards"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x168)), 0);
-                        data["EnoughAPToPerformOnlySkillAfterwards"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x16C)), 0);
-                        data["EnoughAPToDeployAfterwards"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x170)), 0);
-                        data["BuffBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x174)), 0);
-                        data["BuffTargetValueMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x178)), 0);
-                        data["BuffFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x17C)), 0);
-                        data["RemoveSuppressionMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x180)), 0);
-                        data["RemoveStunnedMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x184)), 0);
-                        data["RestoreMoraleMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x188)), 0);
-                        data["IncreaseMovementMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x18C)), 0);
-                        data["IncreaseOffensiveStatsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x190)), 0);
-                        data["IncreaseDefensiveStatsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x194)), 0);
-                        data["SupplyAmmoBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x198)), 0);
-                        data["SupplyAmmoTargetValueMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x19C)), 0);
-                        data["SupplyAmmoNoAmmoMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1A0)), 0);
-                        data["SupplyAmmoSpecialWeaponMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1A4)), 0);
-                        data["SupplyAmmoGoalThreshold"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1A8)), 0);
-                        data["SupplyAmmoFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1AC)), 0);
-                        data["TargetDesignatorBaseScore"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B0)), 0);
-                        data["TargetDesignatorScoreMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B4)), 0);
-                        data["TargetDesignatorFromTile"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B8)), 0);
-                        data["GainBonusTurnBaseMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1BC)), 0);
-                        data["TestValueInt"] = Marshal.ReadInt32(ptr + 0x1C0);
-                        data["TestValueFloat"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1C4)), 0);
-                    }
-
-                    else if (templateType.Name == "AccessoryTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Sprite reference
-                        data["IconEquipment"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Sprite reference
-                        data["IconEquipmentDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // Sprite reference
-                        data["IconSkillBar"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["IconSkillBarDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["IconSkillBarAlternative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["IconSkillBarAlternativeDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // ItemSlot
-                        data["SlotType"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // ItemType
-                        data["ItemType"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // TODO: Array/List - OnlyEquipableBy: List<TagTemplate>
-                        // ExclusiveItemCategory
-                        data["ExclusiveCategory"] = Marshal.ReadInt32(ptr + 0xF8);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xFC);
-                        data["IsDestroyedAfterCombat"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        // TODO: Array/List - SkillsGranted: List<SkillTemplate>
-                        // GameObject reference
-                        data["Model"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlot"] = Marshal.ReadInt32(ptr + 0x118);
-                        // GameObject reference
-                        data["ModelSecondary"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlotSecondary"] = Marshal.ReadInt32(ptr + 0x128);
-                        data["AttachLightAtNight"] = Marshal.ReadByte(ptr + 0x12C) != 0;
-                    }
-
-                    else if (templateType.Name == "AnimationSequenceTemplate")
-                    {
-                        // GameObject reference
-                        data["Prefab"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        data["HasRandomRotation"] = Marshal.ReadByte(ptr + 0x80) != 0;
-                        data["MinRandomAngle"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x84)), 0);
-                        data["MaxRandomAngle"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x88)), 0);
-                        // TODO: Array/List - Phases: BaseAnimationPhase[]
-                    }
-
-                    else if (templateType.Name == "AnimationSoundTemplate")
-                    {
-                        // TODO: Array/List - SoundTriggers: AnimationSoundTemplate.SoundTrigger[]
-                    }
-
-                    else if (templateType.Name == "AnimatorParameterNameTemplate")
-                    {
-                        data["ParameterName"] = // TODO: String reading;
-                        // AnimatorParameterType
-                        data["ParameterType"] = Marshal.ReadInt32(ptr + 0x60);
-                    }
-
-                    else if (templateType.Name == "ArmorTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Sprite reference
-                        data["IconEquipment"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Sprite reference
-                        data["IconEquipmentDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // Sprite reference
-                        data["IconSkillBar"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["IconSkillBarDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["IconSkillBarAlternative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["IconSkillBarAlternativeDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // ItemSlot
-                        data["SlotType"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // ItemType
-                        data["ItemType"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // TODO: Array/List - OnlyEquipableBy: List<TagTemplate>
-                        // ExclusiveItemCategory
-                        data["ExclusiveCategory"] = Marshal.ReadInt32(ptr + 0xF8);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xFC);
-                        data["IsDestroyedAfterCombat"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        // TODO: Array/List - SkillsGranted: List<SkillTemplate>
-                        // GameObject reference
-                        data["Model"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlot"] = Marshal.ReadInt32(ptr + 0x118);
-                        // GameObject reference
-                        data["ModelSecondary"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlotSecondary"] = Marshal.ReadInt32(ptr + 0x128);
-                        data["AttachLightAtNight"] = Marshal.ReadByte(ptr + 0x12C) != 0;
-                        data["HasSpecialFemaleModels"] = Marshal.ReadByte(ptr + 0x130) != 0;
-                        // TODO: Array/List - MaleModels: GameObject[]
-                        // TODO: Array/List - FemaleModels: GameObject[]
-                        // SquadLeaderModelMode
-                        data["SquadLeaderMode"] = Marshal.ReadInt32(ptr + 0x148);
-                        // GameObject reference
-                        data["SquadLeaderModelMaleWhite"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x150));
-                        // GameObject reference
-                        data["SquadLeaderModelMaleBrown"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x158));
-                        // GameObject reference
-                        data["SquadLeaderModelMaleBlack"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x160));
-                        // GameObject reference
-                        data["SquadLeaderModelFemaleWhite"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x168));
-                        // GameObject reference
-                        data["SquadLeaderModelFemaleBrown"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x170));
-                        // GameObject reference
-                        data["SquadLeaderModelFemaleBlack"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x178));
-                        // GameObject reference
-                        data["SquadLeaderModelFixed"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x180));
-                        data["OverrideScale"] = Marshal.ReadByte(ptr + 0x188) != 0;
-                        // Vector2
-                        data["Scale"] = Marshal.ReadInt32(ptr + 0x18C);
-                        // AnimArmorSize
-                        data["AnimSize"] = Marshal.ReadInt32(ptr + 0x194);
-                        data["Armor"] = Marshal.ReadInt32(ptr + 0x198);
-                        data["DurabilityPerElement"] = Marshal.ReadInt32(ptr + 0x19C);
-                        data["DamageResistance"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1A0)), 0);
-                        data["HitpointsPerElement"] = Marshal.ReadInt32(ptr + 0x1A4);
-                        data["HitpointsPerElementMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1A8)), 0);
-                        data["Accuracy"] = Marshal.ReadInt32(ptr + 0x1AC);
-                        data["AccuracyMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B0)), 0);
-                        data["DefenseMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B4)), 0);
-                        data["Discipline"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B8)), 0);
-                        data["DisciplineMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1BC)), 0);
-                        data["Vision"] = Marshal.ReadInt32(ptr + 0x1C0);
-                        data["VisionMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1C4)), 0);
-                        data["Detection"] = Marshal.ReadInt32(ptr + 0x1C8);
-                        data["DetectionMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1CC)), 0);
-                        data["Concealment"] = Marshal.ReadInt32(ptr + 0x1D0);
-                        data["ConcealmentMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1D4)), 0);
-                        data["SuppressionImpactMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1D8)), 0);
-                        data["GetDismemberedChanceBonus"] = Marshal.ReadInt32(ptr + 0x1DC);
-                        data["GetDismemberedChanceMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E0)), 0);
-                        data["ActionPoints"] = Marshal.ReadInt32(ptr + 0x1E4);
-                        data["ActionPointsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E8)), 0);
-                        data["AdditionalMovementCost"] = Marshal.ReadInt32(ptr + 0x1EC);
-                        // TODO: Array/List - ItemSlots: uint[]
-                        // ID
-                        data["SoundOnMovementStep"] = Marshal.ReadInt32(ptr + 0x1F8);
-                        // SurfaceSoundsTemplate reference
-                        data["SoundOnMovementStepOverrides2"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x200));
-                        // ID
-                        data["SoundOnMovementSymbolic"] = Marshal.ReadInt32(ptr + 0x208);
-                        // ID
-                        data["SoundOnArmorHit"] = Marshal.ReadInt32(ptr + 0x210);
-                        // ID
-                        data["SoundOnHitpointsHit"] = Marshal.ReadInt32(ptr + 0x218);
-                        // ID
-                        data["SoundOnHitpointsHitFemale"] = Marshal.ReadInt32(ptr + 0x220);
-                        // ID
-                        data["SoundOnDeath"] = Marshal.ReadInt32(ptr + 0x228);
-                        // ID
-                        data["SoundOnDeathFemale"] = Marshal.ReadInt32(ptr + 0x230);
-                    }
-
-                    else if (templateType.Name == "ArmyListTemplate")
-                    {
-                        // TODO: Array/List - Compositions: List<Army>
-                    }
-
-                    else if (templateType.Name == "BiomeTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // BiomeType
-                        data["BiomeType"] = Marshal.ReadInt32(ptr + 0x80);
-                        data["ShowInCheatMenu"] = Marshal.ReadByte(ptr + 0x84) != 0;
-                        // TODO: Array/List - Graphs: Graph[]
-                        // TODO: Array/List - MapgenTemplates: List<MissionMapgenTemplateList>
-                        // Material reference
-                        data["Material"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // MicroSplatPropData
-                        data["PropData"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // TextureArrayConfig
-                        data["TextureArray"] = Marshal.ReadInt32(ptr + 0xA8);
-                        // PhysicsMaterial
-                        data["PhysicMaterial"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // GameObject reference
-                        data["WindZone"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        data["HasGrass"] = Marshal.ReadByte(ptr + 0xC0) != 0;
-                        // LightConditions
-                        data["LightConditions"] = Marshal.ReadInt32(ptr + 0xC8);
-                        // TODO: Array/List - WeatherChances: WeatherEntry[]
-                    }
-
-                    else if (templateType.Name == "BoolPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // BoolPlayerSetting
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x88);
-                        data["DefaultValue"] = Marshal.ReadByte(ptr + 0x8C) != 0;
-                    }
-
-                    else if (templateType.Name == "ChunkTemplate")
-                    {
-                        data["Width"] = Marshal.ReadInt32(ptr + 0x58);
-                        data["Height"] = Marshal.ReadInt32(ptr + 0x5C);
-                        // CoverConfig
-                        data["CoverConfig"] = Marshal.ReadInt32(ptr + 0x60);
-                        // ChunkType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x68);
-                        // TODO: Array/List - FixedChildren: FixedChunkEntry[]
-                        // TODO: Array/List - RandomChildren: RandomChunkEntry[]
-                        // TODO: Array/List - FixedPrefabs: FixedPrefabEntry[]
-                        // ChunkSpawnMode
-                        data["SpawnMode"] = Marshal.ReadInt32(ptr + 0x88);
-                        data["MaxSpawns"] = Marshal.ReadInt32(ptr + 0x8C);
-                        data["RandomlyRotateChildren"] = Marshal.ReadByte(ptr + 0x90) != 0;
-                    }
-
-                    else if (templateType.Name == "CommodityTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                    }
-
-                    else if (templateType.Name == "ConversationEffectsTemplate")
-                    {
-                        // TODO: Array/List - Effects: BaseGameEffect[]
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                    }
-
-                    else if (templateType.Name == "ConversationStageTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // Texture2D reference
-                        data["BackgroundImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                    }
-
-                    else if (templateType.Name == "ConversationTemplate")
-                    {
-                        // ConversationType
-                        data["ConversationType"] = Marshal.ReadInt32(ptr + 0x18);
-                        data["Active"] = Marshal.ReadByte(ptr + 0x1C) != 0;
-                        // LocaState
-                        data["LocaState"] = Marshal.ReadInt32(ptr + 0x20);
-                        data["Comment"] = // TODO: String reading;
-                        // TODO: Array/List - EventSettings: List<EventData>
-                        // ConversationTriggerTagType
-                        data["TriggerTag"] = Marshal.ReadInt32(ptr + 0x38);
-                        data["Path"] = // TODO: String reading;
-                        // ConversationStageTemplate reference
-                        data["Stage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x48));
-                        // ConversationCondition
-                        data["Condition"] = Marshal.ReadInt32(ptr + 0x50);
-                        data["Repeatable"] = Marshal.ReadByte(ptr + 0x58) != 0;
-                        data["Repetitions"] = Marshal.ReadInt32(ptr + 0x5C);
-                        data["Priority"] = Marshal.ReadInt32(ptr + 0x60);
-                        data["PlayChance"] = Marshal.ReadInt32(ptr + 0x64);
-                        // TODO: Array/List - Roles: List<Role>
-                        // TODO: Array/List - Triggers: List<ConversationTriggerType>
-                        // ConversationNodeContainer
-                        data["Nodes"] = Marshal.ReadInt32(ptr + 0x78);
-                        data["Version"] = Marshal.ReadInt32(ptr + 0x80);
-                    }
-
-                    else if (templateType.Name == "DecalTemplate")
-                    {
-                        data["Index"] = Marshal.ReadInt32(ptr + 0x10);
-                        data["Name"] = // TODO: String reading;
-                        data["MinSize"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x20)), 0);
-                        data["MaxSize"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x24)), 0);
-                        data["MinRotation"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x28)), 0);
-                        data["MaxRotation"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2C)), 0);
-                    }
-
-                    else if (templateType.Name == "DefectTemplate")
-                    {
-                        // SkillTemplate reference
-                        data["DamageEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x58));
-                        // DefectSeverity
-                        data["Severity"] = Marshal.ReadInt32(ptr + 0x60);
-                        data["Chance"] = Marshal.ReadInt32(ptr + 0x64);
-                        // TODO: Array/List - DisqualifierConditions: ITacticalCondition[]
-                        // TODO: Complex type - SkillsRemoved: HashSet<SkillTemplate>
-                    }
-
-                    else if (templateType.Name == "DisplayIndexPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // IntPlayerSetting
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x88);
-                        data["DefaultValue"] = Marshal.ReadInt32(ptr + 0x8C);
-                        data["MinValue"] = Marshal.ReadInt32(ptr + 0x90);
-                        // LocalizedLine reference
-                        data["Measure"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                    }
-
-                    else if (templateType.Name == "ElementAnimatorTemplate")
-                    {
-                        data["SpeedBlendTime"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x58)), 0);
-                        data["StanceDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x5C)), 0);
-                        data["DisableDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x60)), 0);
-                        data["MovementStanceDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x64)), 0);
-                        // Vector2
-                        data["MovementDelayPerElement"] = Marshal.ReadInt32(ptr + 0x68);
-                        data["UnderAttackResetDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x70)), 0);
-                        // Vector2
-                        data["InitialAimDelay"] = Marshal.ReadInt32(ptr + 0x74);
-                        // AnimationCurve
-                        data["AnimatorInPlaceTurningSpeedCurve"] = Marshal.ReadInt32(ptr + 0x80);
-                        // AnimatorDeathBehaviour
-                        data["DeathBehaviour"] = Marshal.ReadInt32(ptr + 0x88);
-                        // Vector3
-                        data["AdditionalRagdollKillImpulse"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // RagdollHitArea
-                        data["AdditionalRagdollKillImpulseArea"] = Marshal.ReadInt32(ptr + 0x98);
-                        // Vector2Int
-                        data["DeathAnimationVariants"] = Marshal.ReadInt32(ptr + 0x9C);
-                        data["HitAnimations"] = Marshal.ReadByte(ptr + 0xA4) != 0;
-                        // AnimationCurve
-                        data["DmgToHitAnimationStrength"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["RecoilOnHit"] = Marshal.ReadByte(ptr + 0xB0) != 0;
-                        data["DisableAttachmentAnimatorsOnDeath"] = Marshal.ReadByte(ptr + 0xB1) != 0;
-                        data["ExhaustEffects"] = Marshal.ReadByte(ptr + 0xB2) != 0;
-                        data["HumanIK"] = Marshal.ReadByte(ptr + 0xB3) != 0;
-                        data["LeftHandIKBlendTime"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xB4)), 0);
-                        // Vector3
-                        data["IKHintLeftElbowOffset"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["NegativeSpeedTurns"] = Marshal.ReadByte(ptr + 0xC4) != 0;
-                        data["SteeringDirection"] = Marshal.ReadByte(ptr + 0xC5) != 0;
-                        data["MaxClampSteeringAngle"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xC8)), 0);
-                        data["Aiming"] = Marshal.ReadByte(ptr + 0xCC) != 0;
-                        data["AimSpeed"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD0)), 0);
-                        data["TurnDelay180Degree"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD4)), 0);
-                        data["UseRootMotionAiming"] = Marshal.ReadByte(ptr + 0xD8) != 0;
-                        // AnimatorAngleMapping
-                        data["AngleMapping"] = Marshal.ReadInt32(ptr + 0xDC);
-                    }
-
-                    else if (templateType.Name == "EmotionalStateTemplate")
-                    {
-                        // EmotionalStateType
-                        data["StateType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedLine reference
-                        data["TooltipTitle"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // SkillTemplate reference
-                        data["Effect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                        // Sprite reference
-                        data["IconBig"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        // Color
-                        data["IconTint"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // Vector2Int
-                        data["DurationInMissions"] = Marshal.ReadInt32(ptr + 0xC0);
-                        // EmotionalStateCategory
-                        data["Category"] = Marshal.ReadInt32(ptr + 0xC8);
-                        data["IsPositive"] = Marshal.ReadByte(ptr + 0xCC) != 0;
-                        data["IsSuperState"] = Marshal.ReadByte(ptr + 0xCD) != 0;
-                        // EmotionalStateTemplate reference
-                        data["SuperState"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                    }
-
-                    else if (templateType.Name == "EnemyAssetTemplate")
-                    {
-                        // TODO: Array/List - Effects: BaseGameEffect[]
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["IconBig"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        data["DisableAfterMission"] = Marshal.ReadByte(ptr + 0x90) != 0;
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                    }
-
-                    else if (templateType.Name == "EntityTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // EntityType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x88);
-                        // ActorType
-                        data["ActorType"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // StructureType
-                        data["StructureType"] = Marshal.ReadInt32(ptr + 0x90);
-                        // SurfaceType
-                        data["SurfaceType"] = Marshal.ReadInt32(ptr + 0x94);
-                        // TODO: Array/List - Tags: List<TagTemplate>
-                        data["ElementsMin"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["ElementsMax"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["ChanceForFemaleElements"] = Marshal.ReadInt32(ptr + 0xA8);
-                        // OperationResources
-                        data["DeployCostsPerElement"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xB0);
-                        data["ArmyPointCost"] = Marshal.ReadInt32(ptr + 0xB4);
-                        // CoverType
-                        data["ProvidesCover"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["ProvidesCoverWhenDestroyed"] = Marshal.ReadByte(ptr + 0xBC) != 0;
-                        // UseCoverType
-                        data["UsesCover"] = Marshal.ReadInt32(ptr + 0xC0);
-                        data["IsContainableInEntities"] = Marshal.ReadByte(ptr + 0xC4) != 0;
-                        // EntityContainerType
-                        data["ContainerType"] = Marshal.ReadInt32(ptr + 0xC8);
-                        // EntityTemplate reference
-                        data["ContainedEntityOnSpawn"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        data["DespawnIfEmpty"] = Marshal.ReadByte(ptr + 0xD8) != 0;
-                        // InsideCoverTemplate reference
-                        data["ProvidesCoverInside"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // SkillTemplate reference
-                        data["EffectOnContained"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE8));
-                        data["IsIgnoredInActorCount"] = Marshal.ReadByte(ptr + 0xF0) != 0;
-                        data["IsDestructible"] = Marshal.ReadByte(ptr + 0xF1) != 0;
-                        data["IsSurfaceChangedOnDeath"] = Marshal.ReadByte(ptr + 0xF2) != 0;
-                        // SurfaceType
-                        data["ChangeSurfaceOnDeath"] = Marshal.ReadInt32(ptr + 0xF4);
-                        data["IsTraversableByInfantry"] = Marshal.ReadByte(ptr + 0xF8) != 0;
-                        data["IsAffectedByFatalities"] = Marshal.ReadByte(ptr + 0xF9) != 0;
-                        data["DestroyPropsOnDeath"] = Marshal.ReadByte(ptr + 0xFA) != 0;
-                        data["DestroyPropsRadius"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xFC)), 0);
-                        // TODO: Array/List - DefectGroups: List<DefectGroup>
-                        // SpeakerTemplate reference
-                        data["SpeakerTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x108));
-                        // AnimationSoundTemplate reference
-                        data["AnimationSoundTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        data["IsAligningWithTerrain"] = Marshal.ReadByte(ptr + 0x118) != 0;
-                        data["FixedRotationForDestroyedPrefab"] = Marshal.ReadByte(ptr + 0x119) != 0;
-                        data["IsCompatibleWithCables"] = Marshal.ReadByte(ptr + 0x11A) != 0;
-                        data["HasExtendedRangeForCables"] = Marshal.ReadByte(ptr + 0x11B) != 0;
-                        data["CameraAutoHeightOffset"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x11C)), 0);
-                        data["OverrideMissionPreviewColor"] = Marshal.ReadByte(ptr + 0x120) != 0;
-                        // Color
-                        data["MissionPreviewColorOverride"] = Marshal.ReadInt32(ptr + 0x124);
-                        // TODO: Array/List - Prefabs: List<GameObject>
-                        // TODO: Array/List - Decoration: List<PrefabListTemplate>
-                        // TODO: Array/List - SmallDecoration: List<PrefabListTemplate>
-                        // TODO: Array/List - DestroyedPrefabs: List<GameObject>
-                        // TODO: Array/List - DestroyedDecoration: List<PrefabListTemplate>
-                        // TODO: Array/List - DestroyedWalls: List<GameObject>
-                        // Vector2
-                        data["Scale"] = Marshal.ReadInt32(ptr + 0x168);
-                        data["OverrideScaleForSquadLeader"] = Marshal.ReadByte(ptr + 0x170) != 0;
-                        data["ScaleOffsetSquadLeader"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x174)), 0);
-                        // GameObject reference
-                        data["ActorLightOverride"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x178));
-                        data["ActorLightParentName"] = // TODO: String reading;
-                        data["IsBlockingLineOfSight"] = Marshal.ReadByte(ptr + 0x198) != 0;
-                        data["HudYOffsetScale"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1B0)), 0);
-                        // Sprite reference
-                        data["Badge"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1B8));
-                        // Sprite reference
-                        data["BadgeWhite"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1C0));
-                        // Sprite reference
-                        data["PreviewMapIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1C8));
-                        // TODO: Array/List - AttachedPrefabs: PrefabAttachment[]
-                        // FactionAnimationType
-                        data["FactionSpecificAnimation"] = Marshal.ReadInt32(ptr + 0x1D8);
-                        // VisualAlterationSlot
-                        data["AimWithVisualSlot"] = Marshal.ReadInt32(ptr + 0x1DC);
-                        // ElementAnimatorTemplate reference
-                        data["AnimatorTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1E0));
-                        // SkinQuality
-                        data["MinSkinQuality"] = Marshal.ReadInt32(ptr + 0x1E8);
-                        // DecalCollection
-                        data["BloodDecals"] = Marshal.ReadInt32(ptr + 0x1F0);
-                        // SurfaceDecalsTemplate reference
-                        data["BloodDecalsOverride"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1F8));
-                        // DecalCollection
-                        data["BloodPool"] = Marshal.ReadInt32(ptr + 0x200);
-                        // SurfaceDecalsTemplate reference
-                        data["BloodPoolOverride"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x208));
-                        // EffectTriggerType
-                        data["BloodPoolTriggerType"] = Marshal.ReadInt32(ptr + 0x210);
-                        data["BloodPoolAnimation"] = Marshal.ReadByte(ptr + 0x214) != 0;
-                        // GameObject reference
-                        data["DamageReceivedEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x218));
-                        // GameObject reference
-                        data["HeavyDamageReceivedEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x220));
-                        data["DamageReceivedEffectThreshold"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x228)), 0);
-                        // GameObject reference
-                        data["GetDismemberedBloodSprayEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x230));
-                        // PrefabListTemplate reference
-                        data["GetDismemberedSmallAdditionalParts"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x238));
-                        // SurfaceEffectsTemplate reference
-                        data["DeathEffectOverrides2"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x240));
-                        // GameObject reference
-                        data["DeathEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x248));
-                        // EffectTriggerType
-                        data["DeathEffectTriggerType"] = Marshal.ReadInt32(ptr + 0x250);
-                        // GameObject reference
-                        data["DeathAttachEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x258));
-                        data["IsSinkingIntoGroundOnDeath"] = Marshal.ReadByte(ptr + 0x260) != 0;
-                        // CameraEffectType
-                        data["DeathCameraEffect"] = Marshal.ReadInt32(ptr + 0x264);
-                        // ID
-                        data["SoundOnAim"] = Marshal.ReadInt32(ptr + 0x268);
-                        // ID
-                        data["SoundWhileAlive"] = Marshal.ReadInt32(ptr + 0x270);
-                        // GameObject reference
-                        data["ExhaustDriveEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x278));
-                        // GameObject reference
-                        data["ExhaustRevEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x280));
-                        // GameObject reference
-                        data["ExhaustIdleEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x288));
-                        // SurfaceEffectsTemplate reference
-                        data["MovementEffectOverrides2"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x290));
-                        data["TriggerMovementEffectsOnStep"] = Marshal.ReadByte(ptr + 0x298) != 0;
-                        // TODO: Complex type - TriggerMovementStepIntervall: uint
-                        // MovementType
-                        data["MovementType"] = Marshal.ReadInt32(ptr + 0x2A0);
-                        // TilePositioning
-                        data["VisualPositioning"] = Marshal.ReadInt32(ptr + 0x2A8);
-                        data["PullTowardsTileCenter"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2AC)), 0);
-                        // RotationAfterMovement
-                        data["RotationAfterMovement"] = Marshal.ReadInt32(ptr + 0x2B0);
-                        data["CameraShakeOnMovement"] = Marshal.ReadByte(ptr + 0x2B4) != 0;
-                        data["CameraShakeOnMovementStepInterval"] = Marshal.ReadInt32(ptr + 0x2B8);
-                        data["CameraShakeOnMovementDuration"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2BC)), 0);
-                        data["CameraShakeOnMovementIntensity"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2C0)), 0);
-                        data["CameraShakeOnMovementRecoverTime"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x2C4)), 0);
-                        // InventoryType
-                        data["InventoryType"] = Marshal.ReadInt32(ptr + 0x2C8);
-                        // TODO: Array/List - Items: List<ItemTemplate>
-                        // ModularVehicleTemplate reference
-                        data["ModularVehicle"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x2D8));
-                        // EntityProperties
-                        data["Properties"] = Marshal.ReadInt32(ptr + 0x2E0);
-                        // TODO: Array/List - SkillGroups: List<SkillGroup>
-                        // TODO: Array/List - Skills: List<SkillTemplate>
-                        // RoleData
-                        data["AIRole"] = Marshal.ReadInt32(ptr + 0x2F8);
-                    }
-
-                    else if (templateType.Name == "EnvironmentFeatureTemplate")
-                    {
-                        // TODO: Complex type - Mode: EnvironmentFeatureTemplate.SpawnMode
-                        // TODO: Array/List - Prefabs: GameObject[]
-                        // TODO: Array/List - Details: GameObject[]
-                        data["Concealment"] = Marshal.ReadInt32(ptr + 0x78);
-                        // CoverType
-                        data["Cover"] = Marshal.ReadInt32(ptr + 0x7C);
-                        // TileEffectTemplate reference
-                        data["TileEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        data["IsDestroyedByVehicle"] = Marshal.ReadByte(ptr + 0x88) != 0;
-                        // HalfCoverClass
-                        data["HalfCoverClass"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // GameObject reference
-                        data["DestroyEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // ID
-                        data["DestroySound"] = Marshal.ReadInt32(ptr + 0x98);
-                        // TODO: Complex type - ReplaceSurfaceOnDestroy: Nullable<SurfaceType>
-                        // EnvironmentFeatureTemplate reference
-                        data["SpawnOnDestroy"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                    }
-
-                    else if (templateType.Name == "FactionTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["TurnOrderIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // Sprite reference
-                        data["TurnOrderInactiveIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // FactionType
-                        data["AlliedFactionType"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // FactionType
-                        data["EnemyFactionType"] = Marshal.ReadInt32(ptr + 0xA4);
-                        // TODO: Array/List - Operations: OperationTemplate[]
-                        // TODO: Array/List - EnemyAssets: EnemyAssetTemplate[]
-                        // ArmyListTemplate reference
-                        data["ArmyList"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // TODO: Array/List - MissionRewardTables: RewardTableTemplate[]
-                        // TODO: Array/List - MissionTrashRewardTables: RewardTableTemplate[]
-                    }
-
-                    else if (templateType.Name == "GenericMissionTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["ObjectiveProgressText"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // MissionDifficultyFlag
-                        data["AllowedDifficulties"] = Marshal.ReadInt32(ptr + 0x90);
-                        data["ProgressRequired"] = Marshal.ReadInt32(ptr + 0x94);
-                        // ConversationCondition
-                        data["Condition"] = Marshal.ReadInt32(ptr + 0x98);
-                        // MissionEffectivenessConfig
-                        data["EffectivenessConfig"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // Sprite reference
-                        data["PoiIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        // ID
-                        data["BackgroundMusic"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // AnimationSequenceType
-                        data["StartAnimationSequence"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["IdealDuration"] = Marshal.ReadInt32(ptr + 0xBC);
-                        data["ShowProgressBarLabel"] = Marshal.ReadByte(ptr + 0xC0) != 0;
-                        data["PlayerSupplyMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xC4)), 0);
-                        // TODO: Array/List - PotentialStrategicAssets: MissionStrategicAssetTemplate[]
-                        data["EnemyArmyPointsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0xD8)), 0);
-                        // ArmyFlag
-                        data["EnemyArmyFlags"] = Marshal.ReadInt32(ptr + 0xDC);
-                        // ArmyFlag
-                        data["EnemyArmyExcludedFlags"] = Marshal.ReadInt32(ptr + 0xE0);
-                        // ActorSpawnAreaSettings
-                        data["EnemySpawnAreaSettings"] = Marshal.ReadInt32(ptr + 0xE4);
-                        data["EnemyStartInSleepMode"] = Marshal.ReadByte(ptr + 0xE5) != 0;
-                        data["RoamWhileSleeping"] = Marshal.ReadByte(ptr + 0xE6) != 0;
-                        // FactionType
-                        data["SetpieceOwner"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // TODO: Array/List - PrimarySetpieces: List<MissionSetpieceList>
-                        // TODO: Array/List - SecondarySetpieces: List<MissionSetpieceList>
-                        // TODO: Array/List - Actors: List<MissionActorConfig>
-                        // ActorSpawnAreaSettings
-                        data["m_EnemyReinforcementsSpawnAreaSettings"] = Marshal.ReadInt32(ptr + 0x150);
-                    }
-
-                    else if (templateType.Name == "GlobalDifficultyTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        data["PlayerSupplyMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x80)), 0);
-                        data["EnemyArmyPointsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x84)), 0);
-                        data["InitialSquaddies"] = Marshal.ReadInt32(ptr + 0x88);
-                    }
-
-                    else if (templateType.Name == "HalfCoverTemplate")
-                    {
-                        data["IsBlockingMovement"] = Marshal.ReadByte(ptr + 0x18) != 0;
-                        data["IsBlockingSight"] = Marshal.ReadByte(ptr + 0x19) != 0;
-                        data["IsVaultedOver"] = Marshal.ReadByte(ptr + 0x1A) != 0;
-                        data["IsDestroyedOnContactWithVehicles"] = Marshal.ReadByte(ptr + 0x1B) != 0;
-                        data["IsProvidingCover"] = Marshal.ReadByte(ptr + 0x1C) != 0;
-                        // HalfCoverClass
-                        data["CoverClass"] = Marshal.ReadInt32(ptr + 0x20);
-                        // GameObject reference
-                        data["EffectOnDeath"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x28));
-                        data["OnDeathAnimationSpeed"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x30)), 0);
-                        data["OnDeathYOffset"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x34)), 0);
-                        // SurfaceEffectsTemplate reference
-                        data["EffectOnDeathOverrides"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x38));
-                        // ID
-                        data["SoundOnDeath"] = Marshal.ReadInt32(ptr + 0x40);
-                    }
-
-                    else if (templateType.Name == "InsideCoverTemplate")
-                    {
-                        data["AccuracyMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x58)), 0);
-                        data["DamageMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x5C)), 0);
-                        data["SuppressionMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x60)), 0);
-                        data["Concealment"] = Marshal.ReadInt32(ptr + 0x64);
-                    }
-
-                    else if (templateType.Name == "IntPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // IntPlayerSetting
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x88);
-                        data["DefaultValue"] = Marshal.ReadInt32(ptr + 0x8C);
-                        data["MinValue"] = Marshal.ReadInt32(ptr + 0x90);
-                        // LocalizedLine reference
-                        data["Measure"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                    }
-
-                    else if (templateType.Name == "ItemFilterTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // TODO: Complex type - ItemSlots: HashSet<ItemSlot>
-                        // TODO: Complex type - Tags: HashSet<TagType>
-                        data["OnlyNewItems"] = Marshal.ReadByte(ptr + 0xA0) != 0;
-                        data["OnlyAvailableItems"] = Marshal.ReadByte(ptr + 0xA1) != 0;
-                    }
-
-                    else if (templateType.Name == "ItemListTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // TODO: Array/List - Items: List<BaseItemTemplate>
-                    }
-
-                    else if (templateType.Name == "KeyBindPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // KeyBindPlayerSetting
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x88);
-                        // KeyBinding
-                        data["Default"] = Marshal.ReadInt32(ptr + 0x8C);
-                    }
-
-                    else if (templateType.Name == "LightConditionTemplate")
-                    {
-                        // Color
-                        data["DustColor"] = Marshal.ReadInt32(ptr + 0x18);
-                        // Color
-                        data["SnowColor"] = Marshal.ReadInt32(ptr + 0x28);
-                        data["SnowAmount"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x38)), 0);
-                        // GameObject reference
-                        data["DirectionalLightPrefab"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x40));
-                        // GameObject reference
-                        data["DirectionalActorLightPrefab"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x48));
-                        // VolumeProfile
-                        data["HDRPProfile"] = Marshal.ReadInt32(ptr + 0x50);
-                        // TileHighlightColorOverrides
-                        data["TileHighlightColorOverrides"] = Marshal.ReadInt32(ptr + 0x58);
-                        // SkillTemplate reference
-                        data["SkillToApply"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x60));
-                    }
-
-                    else if (templateType.Name == "ListPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        data["IsActive"] = Marshal.ReadByte(ptr + 0x88) != 0;
-                        data["DefaultValueIndex"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // LocalizedMultiLine reference
-                        data["Values"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                    }
-
-                    else if (templateType.Name == "MissionDifficultyTemplate")
-                    {
-                        // MissionDifficultyType
-                        data["DifficultyType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        data["MissionPointsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x88)), 0);
-                        data["RewardRarityMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x8C)), 0);
-                        data["Skulls"] = Marshal.ReadInt32(ptr + 0x90);
-                        data["PlayerSupplyMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x94)), 0);
-                        data["EnemyArmyPointsMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x98)), 0);
-                    }
-
-                    else if (templateType.Name == "MissionPOITemplate")
-                    {
-                        // MissionPOIType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                    }
-
-                    else if (templateType.Name == "MissionPreviewConfigTemplate")
-                    {
-                        data["BorderWidth"] = Marshal.ReadInt32(ptr + 0x78);
-                        // Color
-                        data["BorderColor"] = Marshal.ReadInt32(ptr + 0x7C);
-                        // Color
-                        data["GridColor"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // Color
-                        data["TileHighlightColor"] = Marshal.ReadInt32(ptr + 0x9C);
-                        // Color
-                        data["TileDragStartColor"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Color
-                        data["RoadsColor"] = Marshal.ReadInt32(ptr + 0xBC);
-                        // Color
-                        data["DeploymentZoneColor"] = Marshal.ReadInt32(ptr + 0xCC);
-                        // Color
-                        data["ObjectiveAreaColor"] = Marshal.ReadInt32(ptr + 0xDC);
-                        // Color
-                        data["StructureColor"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // Color
-                        data["VegetationColor"] = Marshal.ReadInt32(ptr + 0xFC);
-                        // Color
-                        data["ActorAreaColor"] = Marshal.ReadInt32(ptr + 0x10C);
-                        data["EntityEdgeAlpha"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x11C)), 0);
-                        // TODO: Array/List - EntityCoverTint: Color[]
-                        data["MinHeightValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x128)), 0);
-                        data["MaxHeightValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x12C)), 0);
-                        // Color
-                        data["MinHeightColor"] = Marshal.ReadInt32(ptr + 0x130);
-                        // Color
-                        data["MaxHeightColor"] = Marshal.ReadInt32(ptr + 0x140);
-                        data["HeightShades"] = Marshal.ReadInt32(ptr + 0x150);
-                        data["InaccessibleMinHeightValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x154)), 0);
-                        data["InaccessibleMaxHeightValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x158)), 0);
-                        // Color
-                        data["InaccessibleMinHeightColor"] = Marshal.ReadInt32(ptr + 0x15C);
-                        // Color
-                        data["InaccessibleMaxHeightColor"] = Marshal.ReadInt32(ptr + 0x16C);
-                        data["InaccessibleHeightShades"] = Marshal.ReadInt32(ptr + 0x17C);
-                        // LocalizedLine reference
-                        data["UnknownFactionName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x180));
-                        // LocalizedLine reference
-                        data["UnknownFactionShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x188));
-                        // LocalizedLine reference
-                        data["UnknownUnitTypeName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x190));
-                        // Color
-                        data["UnknownNormalColor"] = Marshal.ReadInt32(ptr + 0x198);
-                        // Color
-                        data["UnknownHoverColor"] = Marshal.ReadInt32(ptr + 0x1A8);
-                        // Sprite reference
-                        data["IconUnitUnknown"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1B8));
-                        // Vector2
-                        data["InfoLevelRevealDelayInSec"] = Marshal.ReadInt32(ptr + 0x1C0);
-                        // MissionPreviewFactionConfig
-                        data["Civilians"] = Marshal.ReadInt32(ptr + 0x1C8);
-                        // MissionPreviewFactionConfig
-                        data["AlienWildlife"] = Marshal.ReadInt32(ptr + 0x1D0);
-                        // MissionPreviewFactionConfig
-                        data["Allies"] = Marshal.ReadInt32(ptr + 0x1D8);
-                        // MissionPreviewFactionConfig
-                        data["Enemies"] = Marshal.ReadInt32(ptr + 0x1E0);
-                    }
-
-                    else if (templateType.Name == "MissionStrategicAssetTemplate")
-                    {
-                        // StrategicAssetTemplate reference
-                        data["StrategicAsset"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x10));
-                        // MissionDifficultyFlag
-                        data["ReqMissionDifficulty"] = Marshal.ReadInt32(ptr + 0x18);
-                        data["Weight"] = Marshal.ReadInt32(ptr + 0x1C);
-                    }
-
-                    else if (templateType.Name == "ModularVehicleTemplate")
-                    {
-                        // ModularVehicleType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x78);
-                        // TODO: Array/List - Slots: ModularVehicleSlot[]
-                    }
-
-                    else if (templateType.Name == "ModularVehicleWeaponTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Sprite reference
-                        data["IconEquipment"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Sprite reference
-                        data["IconEquipmentDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // Sprite reference
-                        data["IconSkillBar"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["IconSkillBarDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["IconSkillBarAlternative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["IconSkillBarAlternativeDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // ItemSlot
-                        data["SlotType"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // ItemType
-                        data["ItemType"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // TODO: Array/List - OnlyEquipableBy: List<TagTemplate>
-                        // ExclusiveItemCategory
-                        data["ExclusiveCategory"] = Marshal.ReadInt32(ptr + 0xF8);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xFC);
-                        data["IsDestroyedAfterCombat"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        // TODO: Array/List - SkillsGranted: List<SkillTemplate>
-                        // GameObject reference
-                        data["Model"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlot"] = Marshal.ReadInt32(ptr + 0x118);
-                        // GameObject reference
-                        data["ModelSecondary"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlotSecondary"] = Marshal.ReadInt32(ptr + 0x128);
-                        data["AttachLightAtNight"] = Marshal.ReadByte(ptr + 0x12C) != 0;
-                        // WeaponAnimType
-                        data["AnimType"] = Marshal.ReadInt32(ptr + 0x130);
-                        // AnimWeaponSize
-                        data["AnimSize"] = Marshal.ReadInt32(ptr + 0x134);
-                        // AnimWeaponGrip
-                        data["AnimGrip"] = Marshal.ReadInt32(ptr + 0x138);
-                        data["MinRange"] = Marshal.ReadInt32(ptr + 0x13C);
-                        data["IdealRange"] = Marshal.ReadInt32(ptr + 0x140);
-                        data["MaxRange"] = Marshal.ReadInt32(ptr + 0x144);
-                        data["AccuracyBonus"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x148)), 0);
-                        data["AccuracyDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x14C)), 0);
-                        data["Damage"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x150)), 0);
-                        data["DamageDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x154)), 0);
-                        data["DamagePctCurrentHitpoints"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x158)), 0);
-                        data["DamagePctCurrentHitpointsMin"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x15C)), 0);
-                        data["DamagePctMaxHitpoints"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x160)), 0);
-                        data["DamagePctMaxHitpointsMin"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x164)), 0);
-                        data["ArmorPenetration"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x168)), 0);
-                        data["ArmorPenetrationDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x16C)), 0);
-                        data["DamageToArmorDurability"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x170)), 0);
-                        data["DamageToArmorDurabilityMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x174)), 0);
-                        data["DamageToArmorDurabilityDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x178)), 0);
-                        data["DamageToArmorDurabilityDropoffMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x17C)), 0);
-                        data["Suppression"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x180)), 0);
-                        data["SupportsIntegrationOfLightWeapons"] = Marshal.ReadByte(ptr + 0x188) != 0;
-                        data["DisableOtherWeaponSlots"] = Marshal.ReadByte(ptr + 0x189) != 0;
-                        // TODO: Array/List - Setups: ModularVehicleWeaponSetup[]
-                    }
-
-                    else if (templateType.Name == "MoraleEffectTemplate")
-                    {
-                        // SkillTemplate reference
-                        data["MoraleEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x18));
-                        data["Chance"] = Marshal.ReadInt32(ptr + 0x20);
-                        // TODO: Array/List - SkipIfTheseExist: List<MoraleEffectTemplate>
-                        data["MinHitpointsRequired"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x30)), 0);
-                        data["MaxHitpointsRequired"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x34)), 0);
-                        data["AmountOfMoraleEffectsRequired"] = Marshal.ReadInt32(ptr + 0x38);
-                        // MoraleEffectPrerequisite
-                        data["Prerequisites"] = Marshal.ReadInt32(ptr + 0x40);
-                    }
-
-                    else if (templateType.Name == "OffmapAbilityTemplate")
-                    {
-                        // SkillTemplate reference
-                        data["SkillTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        data["DelayInRounds"] = Marshal.ReadInt32(ptr + 0x80);
-                        // ID
-                        data["SoundOnUse"] = Marshal.ReadInt32(ptr + 0x84);
-                    }
-
-                    else if (templateType.Name == "OperationDurationTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // TODO: Array/List - Layers: MissionLayerConfig[]
-                        // Vector2Int
-                        data["RequiredCampaignProgress"] = Marshal.ReadInt32(ptr + 0x88);
-                        // Vector2Int
-                        data["TotalMissionOptions"] = Marshal.ReadInt32(ptr + 0x90);
-                        // Vector2Int
-                        data["EnemyAssets"] = Marshal.ReadInt32(ptr + 0x98);
-                        data["MaxRating"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // OperationTrustChange
-                        data["ClientTrustChange"] = Marshal.ReadInt32(ptr + 0xA4);
-                        // OperationTrustChange
-                        data["EnemyTrustChange"] = Marshal.ReadInt32(ptr + 0xC8);
-                        // TODO: Array/List - StrategyVarChanges: StrategyVarChangeOnOperationEvent[]
-                    }
-
-                    else if (templateType.Name == "OperationIntrosTemplate")
-                    {
-                        // TODO: Array/List - CustomConditions: List<ConditionalOperationIntro>
-                        // TODO: Array/List - ConditionSettings: ConditionSetting[]
-                        // TODO: Array/List - Generic: List<OperationIntro>
-                        // TODO: Array/List - FailedLastOp: List<OperationIntro>
-                        // TODO: Array/List - FailedManyOpsInRow: List<OperationIntro>
-                        // TODO: Array/List - SucceededLastOp: List<OperationIntro>
-                        // TODO: Array/List - SucceededManyOpsInRow: List<OperationIntro>
-                        // TODO: Array/List - FoughtThereLastOp: List<OperationIntro>
-                        // TODO: Array/List - MenaceOnPlanetLow: List<OperationIntro>
-                        // TODO: Array/List - MenaceOnPlanetMid: List<OperationIntro>
-                        // TODO: Array/List - MenaceOnPlanetHigh: List<OperationIntro>
-                        // TODO: Array/List - TrustLevel3: List<OperationIntro>
-                        // TODO: Array/List - TrustLevel6: List<OperationIntro>
-                        // TODO: Array/List - TrustLevelMax: List<OperationIntro>
-                    }
-
-                    else if (templateType.Name == "OperationTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Goal"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // LocalizedMultiLine reference
-                        data["VictoryDescription"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // LocalizedMultiLine reference
-                        data["FailureDescription"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        data["Repeatable"] = Marshal.ReadByte(ptr + 0xA0) != 0;
-                        data["CanTimeout"] = Marshal.ReadByte(ptr + 0xA1) != 0;
-                        // ConversationCondition
-                        data["Condition"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["SkipOperationScreens"] = Marshal.ReadByte(ptr + 0xB0) != 0;
-                        data["ShowStartConfirmationDialog"] = Marshal.ReadByte(ptr + 0xB1) != 0;
-                        // LocalizedMultiLine reference
-                        data["StartConfirmationDialogText"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        data["SystemMapIconIdx"] = Marshal.ReadInt32(ptr + 0xC0);
-                        data["CanHaveFriendlyForce"] = Marshal.ReadByte(ptr + 0xC4) != 0;
-                        // FactionTemplate reference
-                        data["OverrideFaction"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // TODO: Array/List - Durations: OperationDurationTemplate[]
-                        // TODO: Array/List - MissionsFirstLayer: MissionConfig[]
-                        // TODO: Array/List - MissionsMiddleLayer: MissionConfig[]
-                        // TODO: Array/List - MissionsFinalLayer: MissionConfig[]
-                        // TODO: Array/List - StoryMissions: StoryMission[]
-                        // ConversationTemplate reference
-                        data["VictoryEvent"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        // ConversationTemplate reference
-                        data["FailureEvent"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x100));
-                        // ConversationTemplate reference
-                        data["AbortEvent"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x108));
-                        // TODO: Array/List - IntroConversations: ConversationTemplate[]
-                        // TODO: Array/List - VictoryConversations: ConversationTemplate[]
-                        // TODO: Array/List - FailureConversations: ConversationTemplate[]
-                        // TODO: Array/List - AbortConversations: ConversationTemplate[]
-                    }
-
-                    else if (templateType.Name == "PerkTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["ShortDescription"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // Sprite reference
-                        data["IconDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // SkillType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // TODO: Array/List - Tags: List<TagTemplate>
-                        // SkillOrder
-                        data["Order"] = Marshal.ReadInt32(ptr + 0xB0);
-                        data["ActionPointCost"] = Marshal.ReadInt32(ptr + 0xB4);
-                        data["IsLimitedUses"] = Marshal.ReadByte(ptr + 0xB8) != 0;
-                        data["Uses"] = Marshal.ReadInt32(ptr + 0xBC);
-                        // SkillUsesDisplayTemplate reference
-                        data["UsesDisplayTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        data["IsActive"] = Marshal.ReadByte(ptr + 0xC8) != 0;
-                        data["HideApCosts"] = Marshal.ReadByte(ptr + 0xC9) != 0;
-                        // KeyBindPlayerSetting
-                        data["KeyBind"] = Marshal.ReadInt32(ptr + 0xCC);
-                        // ExecutingElementType
-                        data["ExecutingElement"] = Marshal.ReadInt32(ptr + 0xD0);
-                        // AnimationType
-                        data["AnimationType"] = Marshal.ReadInt32(ptr + 0xD4);
-                        // AimingType
-                        data["AimingType"] = Marshal.ReadInt32(ptr + 0xD8);
-                        data["IsOverrideAimSlot"] = Marshal.ReadByte(ptr + 0xDC) != 0;
-                        // VisualAlterationSlot
-                        data["OverrideAimSlot"] = Marshal.ReadInt32(ptr + 0xE0);
-                        data["IsTargeted"] = Marshal.ReadByte(ptr + 0xE4) != 0;
-                        // CursorType
-                        data["TargetingCursor"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // SkillTarget
-                        data["TargetsAllowed"] = Marshal.ReadInt32(ptr + 0xEC);
-                        data["KeepSelectedIfStillUsable"] = Marshal.ReadByte(ptr + 0xF0) != 0;
-                        data["IsLineOfFireNeeded"] = Marshal.ReadByte(ptr + 0xF1) != 0;
-                        data["IsAttack"] = Marshal.ReadByte(ptr + 0xF2) != 0;
-                        data["IsAlwaysHitting"] = Marshal.ReadByte(ptr + 0xF3) != 0;
-                        data["CanHitAnotherTile"] = Marshal.ReadByte(ptr + 0xF4) != 0;
-                        data["IsUsedInBackground"] = Marshal.ReadByte(ptr + 0xF5) != 0;
-                        // SkillTemplate reference
-                        data["OverrideBackgroundUseWithSkill"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        data["IsIgnoringCover"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        data["IsIgnoringCoverInside"] = Marshal.ReadByte(ptr + 0x101) != 0;
-                        data["IsSilent"] = Marshal.ReadByte(ptr + 0x102) != 0;
-                        data["IgnoreMalfunctionChance"] = Marshal.ReadByte(ptr + 0x103) != 0;
-                        data["IsDeploymentRequired"] = Marshal.ReadByte(ptr + 0x104) != 0;
-                        data["IsWeaponSetupRequired"] = Marshal.ReadByte(ptr + 0x105) != 0;
-                        data["IsUsableWhileContained"] = Marshal.ReadByte(ptr + 0x106) != 0;
-                        data["IsUsableWhilePinnedDown"] = Marshal.ReadByte(ptr + 0x107) != 0;
-                        data["IsStacking"] = Marshal.ReadByte(ptr + 0x108) != 0;
-                        data["IsSerialized"] = Marshal.ReadByte(ptr + 0x109) != 0;
-                        data["IsRemovedAfterCombat"] = Marshal.ReadByte(ptr + 0x10A) != 0;
-                        data["IsRemovedAfterOperation"] = Marshal.ReadByte(ptr + 0x10B) != 0;
-                        data["IsHidden"] = Marshal.ReadByte(ptr + 0x10C) != 0;
-                        // RangeShape
-                        data["Shape"] = Marshal.ReadInt32(ptr + 0x110);
-                        data["ConeAngle"] = Marshal.ReadInt32(ptr + 0x114);
-                        data["IsOverridingRanges"] = Marshal.ReadByte(ptr + 0x118) != 0;
-                        data["MinRange"] = Marshal.ReadInt32(ptr + 0x11C);
-                        data["IdealRange"] = Marshal.ReadInt32(ptr + 0x120);
-                        data["MaxRange"] = Marshal.ReadInt32(ptr + 0x124);
-                        data["MinElementDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x128)), 0);
-                        data["MaxElementDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x12C)), 0);
-                        data["ElementDelayBetween"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x130)), 0);
-                        data["MinDelayBeforeSkillUse"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x134)), 0);
-                        data["DelayAfterAnimationTrigger"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x138)), 0);
-                        data["DelayAfterLastRepetition"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x13C)), 0);
-                        data["DelayAfterSkillUse"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x140)), 0);
-                        data["Repetitions"] = Marshal.ReadInt32(ptr + 0x144);
-                        data["RepetitionDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x148)), 0);
-                        data["SkipDelayForLastRepetition"] = Marshal.ReadByte(ptr + 0x14C) != 0;
-                        data["IsPlayingAnimationForEachRepetition"] = Marshal.ReadByte(ptr + 0x14D) != 0;
-                        data["UseCustomAoEShape"] = Marshal.ReadByte(ptr + 0x158) != 0;
-                        // ICustomAoEShape
-                        data["CustomAoEShape"] = Marshal.ReadInt32(ptr + 0x160);
-                        // SkillAoEType
-                        data["AoEType"] = Marshal.ReadInt32(ptr + 0x168);
-                        // ITacticalCondition
-                        data["AoEFilter"] = Marshal.ReadInt32(ptr + 0x170);
-                        // FactionType
-                        data["TargetFaction"] = Marshal.ReadInt32(ptr + 0x178);
-                        data["AoEChanceToHitCenter"] = Marshal.ReadInt32(ptr + 0x17C);
-                        data["SelectableTiles"] = Marshal.ReadInt32(ptr + 0x180);
-                        // ScatterMode
-                        data["ScatterMode"] = Marshal.ReadInt32(ptr + 0x184);
-                        data["Scatter"] = Marshal.ReadInt32(ptr + 0x188);
-                        data["ScatterChance"] = Marshal.ReadInt32(ptr + 0x18C);
-                        data["ScatterHitEachTileOnlyOnce"] = Marshal.ReadByte(ptr + 0x190) != 0;
-                        data["ScatterHitOnlyValidTiles"] = Marshal.ReadByte(ptr + 0x191) != 0;
-                        // MuzzleType
-                        data["MuzzleType"] = Marshal.ReadInt32(ptr + 0x194);
-                        // TODO: Array/List - MuzzleSelection: MuzzleType[]
-                        // GameObject reference
-                        data["MuzzleEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1A0));
-                        // SurfaceEffectsTemplate reference
-                        data["MuzzleEffectOverrides2"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1A8));
-                        data["IsSpawningMuzzleForEachRepetition"] = Marshal.ReadByte(ptr + 0x1B0) != 0;
-                        data["IsAttachingMuzzleToTransform"] = Marshal.ReadByte(ptr + 0x1B1) != 0;
-                        // CameraEffectType
-                        data["CameraEffectOnFire"] = Marshal.ReadInt32(ptr + 0x1B4);
-                        // Vector3
-                        data["ProjectileSpawnPositionOffset"] = Marshal.ReadInt32(ptr + 0x1B8);
-                        // BaseProjectileData
-                        data["ProjectileData"] = Marshal.ReadInt32(ptr + 0x1C8);
-                        // BaseProjectileData
-                        data["SecondaryProjectileData"] = Marshal.ReadInt32(ptr + 0x1D0);
-                        // TODO: Array/List - ImpactOnSurface: List<SkillOnSurfaceDefinition>
-                        data["ImpactEffectDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E0)), 0);
-                        data["ImpactDecalDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E4)), 0);
-                        data["EffectDelayAfterImpact"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E8)), 0);
-                        data["IsImpactShownOnHit"] = Marshal.ReadByte(ptr + 0x1EC) != 0;
-                        data["IsImpactCenteredOnTile"] = Marshal.ReadByte(ptr + 0x1ED) != 0;
-                        data["IsImpactOnlyOnAOECenterTile"] = Marshal.ReadByte(ptr + 0x1EE) != 0;
-                        data["IsDecalOnlyOnAOECenterTile"] = Marshal.ReadByte(ptr + 0x1EF) != 0;
-                        data["IsImpactCenteredOnExecutingElement"] = Marshal.ReadByte(ptr + 0x1F0) != 0;
-                        data["IsImpactAlignedToInfantry"] = Marshal.ReadByte(ptr + 0x1F1) != 0;
-                        // CameraEffectType
-                        data["CameraEffectOnImpact"] = Marshal.ReadInt32(ptr + 0x1F4);
-                        // CameraEffectType
-                        data["CameraEffectOnPlayerHit"] = Marshal.ReadInt32(ptr + 0x1F8);
-                        data["IsTriggeringHeavyDamagedReceivedEffect"] = Marshal.ReadByte(ptr + 0x1FC) != 0;
-                        // Vector2
-                        data["RagdollImpactMult"] = Marshal.ReadInt32(ptr + 0x200);
-                        // Vector2
-                        data["VerticalRagdollImpactMult"] = Marshal.ReadInt32(ptr + 0x208);
-                        // RagdollHitArea
-                        data["RagdollHitArea"] = Marshal.ReadInt32(ptr + 0x210);
-                        data["MalfunctionChance"] = Marshal.ReadInt32(ptr + 0x214);
-                        // GameObject reference
-                        data["MalfunctionEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x218));
-                        // ID
-                        data["SoundOnMalfunction"] = Marshal.ReadInt32(ptr + 0x220);
-                        data["IsAudibleWhenNotVisible"] = Marshal.ReadByte(ptr + 0x228) != 0;
-                        // TODO: Array/List - SoundsOnBeforeUse: List<ID>
-                        // TODO: Array/List - SoundsOnUse: List<ID>
-                        // TODO: Array/List - SoundsOnAttackPerElement: List<ID>
-                        data["IsSoundOnAttackPerElementPlayingAfterAnimationDelay"] = Marshal.ReadByte(ptr + 0x248) != 0;
-                        // TODO: Array/List - SoundsOnAttack: List<ID>
-                        // TODO: Array/List - SoundsOnHit: List<ID>
-                        // TODO: Array/List - SoundsOnElementDestroyed: List<ID>
-                        // TODO: Array/List - SoundsOnBeforeUseFar: List<ID>
-                        // TODO: Array/List - SoundsOnUseFar: List<ID>
-                        // TODO: Array/List - SoundsOnAttackPerElementFar: List<ID>
-                        data["IsSoundOnAttackPerElementFarPlayingAfterAnimationDelay"] = Marshal.ReadByte(ptr + 0x280) != 0;
-                        // TODO: Array/List - SoundsOnAttackFar: List<ID>
-                        // TODO: Array/List - EventHandlers: List<SkillEventHandlerTemplate>
-                        // SkillBehavior
-                        data["AIConfig"] = Marshal.ReadInt32(ptr + 0x298);
-                        // Sprite reference
-                        data["PerkIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x2A8));
-                    }
-
-                    else if (templateType.Name == "PerkTreeTemplate")
-                    {
-                        // TODO: Array/List - Perks: Perk[]
-                    }
-
-                    else if (templateType.Name == "PlanetTemplate")
-                    {
-                        // PlanetType
-                        data["PlanetType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedLine reference
-                        data["TypeName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // LocalizedLine reference
-                        data["Tags"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // LocalizedLine reference
-                        data["Temperature"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                        // Texture2D reference
-                        data["MoodImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        data["ImageOverlayMargin"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        data["MaxMenacePresence"] = Marshal.ReadInt32(ptr + 0xC0);
-                        // ConversationTemplate reference
-                        data["MenaceDetectedEvent"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // GameObject reference
-                        data["OperationSelectScenePrefab"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // GameObject reference
-                        data["MissionSelectPrefab"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // TODO: Array/List - Neighbors: PlanetTemplate[]
-                        // TODO: Array/List - Biomes: BiomeTemplate[]
-                        // TODO: Array/List - Effects: BaseGameEffect[]
-                        // StoryFactionTemplate reference
-                        data["LocalFaction"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        // TODO: Array/List - RegularEnemyFactions: FactionTemplate[]
-                    }
-
-                    else if (templateType.Name == "PrefabListTemplate")
-                    {
-                        // TODO: Array/List - Prefabs: GameObject[]
-                    }
-
-                    else if (templateType.Name == "PropertyDisplayConfigTemplate")
-                    {
-                        // PropertyDisplayConfig
-                        data["Type"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        data["DefaultValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x90)), 0);
-                        data["MinValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x94)), 0);
-                        data["MaxValue"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x98)), 0);
-                        data["DecimalPlaces"] = Marshal.ReadInt32(ptr + 0x9C);
-                        data["ProgressBarSections"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["IsBiggerBetter"] = Marshal.ReadByte(ptr + 0xA4) != 0;
-                        // Color
-                        data["ProgressBarFillColor"] = Marshal.ReadInt32(ptr + 0xA8);
-                        // Color
-                        data["ProgressBarPreviewFillColor"] = Marshal.ReadInt32(ptr + 0xB8);
-                        // LocalizedMultiLine reference
-                        data["ProgressBarSectionLabels"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                    }
-
-                    else if (templateType.Name == "RagdollTemplate")
-                    {
-                        // RagdollBloodPoolPosition
-                        data["BloodPoolPosition"] = Marshal.ReadInt32(ptr + 0x58);
-                        data["UseCustomGravity"] = Marshal.ReadByte(ptr + 0x5C) != 0;
-                        data["CustomGravity"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x60)), 0);
-                        // ForceMode
-                        data["CustomGravityForceMode"] = Marshal.ReadInt32(ptr + 0x64);
-                        // Vector3
-                        data["DismemberedPartMaxDirectionOffsetInDeg"] = Marshal.ReadInt32(ptr + 0x68);
-                        data["DismemberedPartHitForceMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x74)), 0);
-                        // Vector2
-                        data["DismemberedPartHitForceMultOffset"] = Marshal.ReadInt32(ptr + 0x78);
-                        // Vector2Int
-                        data["AdditionalDismemberedPieces"] = Marshal.ReadInt32(ptr + 0x80);
-                        // Vector2
-                        data["AdditionalDismemberedPieceScale"] = Marshal.ReadInt32(ptr + 0x88);
-                        // Vector3
-                        data["AdditionalDismemberedPieceMaxDirectionOffsetInDeg"] = Marshal.ReadInt32(ptr + 0x90);
-                        data["AdditionalDismemberedPieceHitForceMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x9C)), 0);
-                        // Vector2
-                        data["AdditionalDismemberedPieceHitForceMultOffset"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["RootHasGeometry"] = Marshal.ReadByte(ptr + 0xA8) != 0;
-                        data["CenterPartIndex"] = Marshal.ReadInt32(ptr + 0xAC);
-                        data["GeometryRootIndex"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // TODO: Array/List - Parts: RagdollPartConfig[]
-                    }
-
-                    else if (templateType.Name == "ResolutionPlayerSettingTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                    }
-
-                    else if (templateType.Name == "RewardTableTemplate")
-                    {
-                        data["RarityMultiplier"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x78)), 0);
-                        // TODO: Array/List - Items: List<BaseItemTemplate>
-                    }
-
-                    else if (templateType.Name == "ShipUpgradeSlotTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // ShipUpgradeType
-                        data["UpgradeType"] = Marshal.ReadInt32(ptr + 0x80);
-                    }
-
-                    else if (templateType.Name == "ShipUpgradeTemplate")
-                    {
-                        // TODO: Array/List - Effects: BaseGameEffect[]
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // ShipUpgradeType
-                        data["UpgradeType"] = Marshal.ReadInt32(ptr + 0x98);
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                        // Sprite reference
-                        data["IconInactive"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        data["OciPointsCosts"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // ShipUpgradeUnlockType
-                        data["UnlockType"] = Marshal.ReadInt32(ptr + 0xB4);
-                        // StoryFactionType
-                        data["UnlockedByFaction"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["UnlockSelectWeight"] = Marshal.ReadInt32(ptr + 0xBC);
-                    }
-
-                    else if (templateType.Name == "SkillTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["ShortDescription"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // Sprite reference
-                        data["IconDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // SkillType
-                        data["Type"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // TODO: Array/List - Tags: List<TagTemplate>
-                        // SkillOrder
-                        data["Order"] = Marshal.ReadInt32(ptr + 0xB0);
-                        data["ActionPointCost"] = Marshal.ReadInt32(ptr + 0xB4);
-                        data["IsLimitedUses"] = Marshal.ReadByte(ptr + 0xB8) != 0;
-                        data["Uses"] = Marshal.ReadInt32(ptr + 0xBC);
-                        // SkillUsesDisplayTemplate reference
-                        data["UsesDisplayTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        data["IsActive"] = Marshal.ReadByte(ptr + 0xC8) != 0;
-                        data["HideApCosts"] = Marshal.ReadByte(ptr + 0xC9) != 0;
-                        // KeyBindPlayerSetting
-                        data["KeyBind"] = Marshal.ReadInt32(ptr + 0xCC);
-                        // ExecutingElementType
-                        data["ExecutingElement"] = Marshal.ReadInt32(ptr + 0xD0);
-                        // AnimationType
-                        data["AnimationType"] = Marshal.ReadInt32(ptr + 0xD4);
-                        // AimingType
-                        data["AimingType"] = Marshal.ReadInt32(ptr + 0xD8);
-                        data["IsOverrideAimSlot"] = Marshal.ReadByte(ptr + 0xDC) != 0;
-                        // VisualAlterationSlot
-                        data["OverrideAimSlot"] = Marshal.ReadInt32(ptr + 0xE0);
-                        data["IsTargeted"] = Marshal.ReadByte(ptr + 0xE4) != 0;
-                        // CursorType
-                        data["TargetingCursor"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // SkillTarget
-                        data["TargetsAllowed"] = Marshal.ReadInt32(ptr + 0xEC);
-                        data["KeepSelectedIfStillUsable"] = Marshal.ReadByte(ptr + 0xF0) != 0;
-                        data["IsLineOfFireNeeded"] = Marshal.ReadByte(ptr + 0xF1) != 0;
-                        data["IsAttack"] = Marshal.ReadByte(ptr + 0xF2) != 0;
-                        data["IsAlwaysHitting"] = Marshal.ReadByte(ptr + 0xF3) != 0;
-                        data["CanHitAnotherTile"] = Marshal.ReadByte(ptr + 0xF4) != 0;
-                        data["IsUsedInBackground"] = Marshal.ReadByte(ptr + 0xF5) != 0;
-                        // SkillTemplate reference
-                        data["OverrideBackgroundUseWithSkill"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        data["IsIgnoringCover"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        data["IsIgnoringCoverInside"] = Marshal.ReadByte(ptr + 0x101) != 0;
-                        data["IsSilent"] = Marshal.ReadByte(ptr + 0x102) != 0;
-                        data["IgnoreMalfunctionChance"] = Marshal.ReadByte(ptr + 0x103) != 0;
-                        data["IsDeploymentRequired"] = Marshal.ReadByte(ptr + 0x104) != 0;
-                        data["IsWeaponSetupRequired"] = Marshal.ReadByte(ptr + 0x105) != 0;
-                        data["IsUsableWhileContained"] = Marshal.ReadByte(ptr + 0x106) != 0;
-                        data["IsUsableWhilePinnedDown"] = Marshal.ReadByte(ptr + 0x107) != 0;
-                        data["IsStacking"] = Marshal.ReadByte(ptr + 0x108) != 0;
-                        data["IsSerialized"] = Marshal.ReadByte(ptr + 0x109) != 0;
-                        data["IsRemovedAfterCombat"] = Marshal.ReadByte(ptr + 0x10A) != 0;
-                        data["IsRemovedAfterOperation"] = Marshal.ReadByte(ptr + 0x10B) != 0;
-                        data["IsHidden"] = Marshal.ReadByte(ptr + 0x10C) != 0;
-                        // RangeShape
-                        data["Shape"] = Marshal.ReadInt32(ptr + 0x110);
-                        data["ConeAngle"] = Marshal.ReadInt32(ptr + 0x114);
-                        data["IsOverridingRanges"] = Marshal.ReadByte(ptr + 0x118) != 0;
-                        data["MinRange"] = Marshal.ReadInt32(ptr + 0x11C);
-                        data["IdealRange"] = Marshal.ReadInt32(ptr + 0x120);
-                        data["MaxRange"] = Marshal.ReadInt32(ptr + 0x124);
-                        data["MinElementDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x128)), 0);
-                        data["MaxElementDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x12C)), 0);
-                        data["ElementDelayBetween"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x130)), 0);
-                        data["MinDelayBeforeSkillUse"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x134)), 0);
-                        data["DelayAfterAnimationTrigger"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x138)), 0);
-                        data["DelayAfterLastRepetition"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x13C)), 0);
-                        data["DelayAfterSkillUse"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x140)), 0);
-                        data["Repetitions"] = Marshal.ReadInt32(ptr + 0x144);
-                        data["RepetitionDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x148)), 0);
-                        data["SkipDelayForLastRepetition"] = Marshal.ReadByte(ptr + 0x14C) != 0;
-                        data["IsPlayingAnimationForEachRepetition"] = Marshal.ReadByte(ptr + 0x14D) != 0;
-                        data["UseCustomAoEShape"] = Marshal.ReadByte(ptr + 0x158) != 0;
-                        // ICustomAoEShape
-                        data["CustomAoEShape"] = Marshal.ReadInt32(ptr + 0x160);
-                        // SkillAoEType
-                        data["AoEType"] = Marshal.ReadInt32(ptr + 0x168);
-                        // ITacticalCondition
-                        data["AoEFilter"] = Marshal.ReadInt32(ptr + 0x170);
-                        // FactionType
-                        data["TargetFaction"] = Marshal.ReadInt32(ptr + 0x178);
-                        data["AoEChanceToHitCenter"] = Marshal.ReadInt32(ptr + 0x17C);
-                        data["SelectableTiles"] = Marshal.ReadInt32(ptr + 0x180);
-                        // ScatterMode
-                        data["ScatterMode"] = Marshal.ReadInt32(ptr + 0x184);
-                        data["Scatter"] = Marshal.ReadInt32(ptr + 0x188);
-                        data["ScatterChance"] = Marshal.ReadInt32(ptr + 0x18C);
-                        data["ScatterHitEachTileOnlyOnce"] = Marshal.ReadByte(ptr + 0x190) != 0;
-                        data["ScatterHitOnlyValidTiles"] = Marshal.ReadByte(ptr + 0x191) != 0;
-                        // MuzzleType
-                        data["MuzzleType"] = Marshal.ReadInt32(ptr + 0x194);
-                        // TODO: Array/List - MuzzleSelection: MuzzleType[]
-                        // GameObject reference
-                        data["MuzzleEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1A0));
-                        // SurfaceEffectsTemplate reference
-                        data["MuzzleEffectOverrides2"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x1A8));
-                        data["IsSpawningMuzzleForEachRepetition"] = Marshal.ReadByte(ptr + 0x1B0) != 0;
-                        data["IsAttachingMuzzleToTransform"] = Marshal.ReadByte(ptr + 0x1B1) != 0;
-                        // CameraEffectType
-                        data["CameraEffectOnFire"] = Marshal.ReadInt32(ptr + 0x1B4);
-                        // Vector3
-                        data["ProjectileSpawnPositionOffset"] = Marshal.ReadInt32(ptr + 0x1B8);
-                        // BaseProjectileData
-                        data["ProjectileData"] = Marshal.ReadInt32(ptr + 0x1C8);
-                        // BaseProjectileData
-                        data["SecondaryProjectileData"] = Marshal.ReadInt32(ptr + 0x1D0);
-                        // TODO: Array/List - ImpactOnSurface: List<SkillOnSurfaceDefinition>
-                        data["ImpactEffectDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E0)), 0);
-                        data["ImpactDecalDelay"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E4)), 0);
-                        data["EffectDelayAfterImpact"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1E8)), 0);
-                        data["IsImpactShownOnHit"] = Marshal.ReadByte(ptr + 0x1EC) != 0;
-                        data["IsImpactCenteredOnTile"] = Marshal.ReadByte(ptr + 0x1ED) != 0;
-                        data["IsImpactOnlyOnAOECenterTile"] = Marshal.ReadByte(ptr + 0x1EE) != 0;
-                        data["IsDecalOnlyOnAOECenterTile"] = Marshal.ReadByte(ptr + 0x1EF) != 0;
-                        data["IsImpactCenteredOnExecutingElement"] = Marshal.ReadByte(ptr + 0x1F0) != 0;
-                        data["IsImpactAlignedToInfantry"] = Marshal.ReadByte(ptr + 0x1F1) != 0;
-                        // CameraEffectType
-                        data["CameraEffectOnImpact"] = Marshal.ReadInt32(ptr + 0x1F4);
-                        // CameraEffectType
-                        data["CameraEffectOnPlayerHit"] = Marshal.ReadInt32(ptr + 0x1F8);
-                        data["IsTriggeringHeavyDamagedReceivedEffect"] = Marshal.ReadByte(ptr + 0x1FC) != 0;
-                        // Vector2
-                        data["RagdollImpactMult"] = Marshal.ReadInt32(ptr + 0x200);
-                        // Vector2
-                        data["VerticalRagdollImpactMult"] = Marshal.ReadInt32(ptr + 0x208);
-                        // RagdollHitArea
-                        data["RagdollHitArea"] = Marshal.ReadInt32(ptr + 0x210);
-                        data["MalfunctionChance"] = Marshal.ReadInt32(ptr + 0x214);
-                        // GameObject reference
-                        data["MalfunctionEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x218));
-                        // ID
-                        data["SoundOnMalfunction"] = Marshal.ReadInt32(ptr + 0x220);
-                        data["IsAudibleWhenNotVisible"] = Marshal.ReadByte(ptr + 0x228) != 0;
-                        // TODO: Array/List - SoundsOnBeforeUse: List<ID>
-                        // TODO: Array/List - SoundsOnUse: List<ID>
-                        // TODO: Array/List - SoundsOnAttackPerElement: List<ID>
-                        data["IsSoundOnAttackPerElementPlayingAfterAnimationDelay"] = Marshal.ReadByte(ptr + 0x248) != 0;
-                        // TODO: Array/List - SoundsOnAttack: List<ID>
-                        // TODO: Array/List - SoundsOnHit: List<ID>
-                        // TODO: Array/List - SoundsOnElementDestroyed: List<ID>
-                        // TODO: Array/List - SoundsOnBeforeUseFar: List<ID>
-                        // TODO: Array/List - SoundsOnUseFar: List<ID>
-                        // TODO: Array/List - SoundsOnAttackPerElementFar: List<ID>
-                        data["IsSoundOnAttackPerElementFarPlayingAfterAnimationDelay"] = Marshal.ReadByte(ptr + 0x280) != 0;
-                        // TODO: Array/List - SoundsOnAttackFar: List<ID>
-                        // TODO: Array/List - EventHandlers: List<SkillEventHandlerTemplate>
-                        // SkillBehavior
-                        data["AIConfig"] = Marshal.ReadInt32(ptr + 0x298);
-                    }
-
-                    else if (templateType.Name == "SkillUsesDisplayTemplate")
-                    {
-                        data["ShowInItemTooltips"] = Marshal.ReadByte(ptr + 0x58) != 0;
-                        data["ShowOnSkillBarWeapon"] = Marshal.ReadByte(ptr + 0x59) != 0;
-                        // FlexDirection
-                        data["NotchLayout"] = Marshal.ReadInt32(ptr + 0x5C);
-                        data["NotchHeight"] = Marshal.ReadInt32(ptr + 0x60);
-                        data["NotchWidth"] = Marshal.ReadInt32(ptr + 0x64);
-                        data["NotchGapWidth"] = Marshal.ReadInt32(ptr + 0x68);
-                        data["NotchGroupGapWidth"] = Marshal.ReadInt32(ptr + 0x6C);
-                        // Sprite reference
-                        data["NotchFullIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x70));
-                        // Color
-                        data["NotchFullTint"] = Marshal.ReadInt32(ptr + 0x78);
-                        // Sprite reference
-                        data["NotchFullDisabledIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Color
-                        data["NotchFullDisabledTint"] = Marshal.ReadInt32(ptr + 0x90);
-                        // Sprite reference
-                        data["NotchEmptyIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                        // Color
-                        data["NotchEmptyTint"] = Marshal.ReadInt32(ptr + 0xA8);
-                        // Sprite reference
-                        data["NotchEmptyDisabledIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Color
-                        data["NotchEmptyDisabledTint"] = Marshal.ReadInt32(ptr + 0xC0);
-                    }
-
-                    else if (templateType.Name == "SpeakerTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Nickname"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["Forename"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedLine reference
-                        data["Surname"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        data["Tags"] = // TODO: String reading;
-                        // Sprite reference
-                        data["BarkImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        // Texture2D reference
-                        data["OperationSelectImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB0));
-                        // ID
-                        data["SoundOnTacticalBarkShown"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["TacticalBarkSoundDelayInMs"] = Marshal.ReadInt32(ptr + 0xC0);
-                        // Texture2D reference
-                        data["StandLookLeftImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Texture2D reference
-                        data["StandLookRightImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Texture2D reference
-                        data["StandLookRightInactiveImage"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                    }
-
-                    else if (templateType.Name == "SquaddieItemTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // TODO: Array/List - Squaddies: SquaddieConfig[]
-                        // LocalizedMultiLine reference
-                        data["SquaddieNames"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // LocalizedMultiLine reference
-                        data["SquaddieNicknames"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                    }
-
-                    else if (templateType.Name == "StoryFactionTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["TurnOrderIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        // Sprite reference
-                        data["TurnOrderInactiveIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // FactionType
-                        data["AlliedFactionType"] = Marshal.ReadInt32(ptr + 0xA0);
-                        // FactionType
-                        data["EnemyFactionType"] = Marshal.ReadInt32(ptr + 0xA4);
-                        // TODO: Array/List - Operations: OperationTemplate[]
-                        // TODO: Array/List - EnemyAssets: EnemyAssetTemplate[]
-                        // ArmyListTemplate reference
-                        data["ArmyList"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // TODO: Array/List - MissionRewardTables: RewardTableTemplate[]
-                        // TODO: Array/List - MissionTrashRewardTables: RewardTableTemplate[]
-                        // StoryFactionType
-                        data["FactionType"] = Marshal.ReadInt32(ptr + 0xD8);
-                        // SpeakerTemplate reference
-                        data["Representative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // Texture2D reference
-                        data["FactionWindow"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE8));
-                        // Sprite reference
-                        data["SystemMapHUDIcon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF0));
-                        // OperationIntrosTemplate reference
-                        data["OperationIntros"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        // StoryFactionStatus
-                        data["InitialStatus"] = Marshal.ReadInt32(ptr + 0x100);
-                        data["InitialTotalTrust"] = Marshal.ReadInt32(ptr + 0x104);
-                        // TODO: Array/List - RequiredTotalTrustForLevel: int[]
-                        // TODO: Array/List - HostileFactions: FactionTemplate[]
-                    }
-
-                    else if (templateType.Name == "StrategicAssetTemplate")
-                    {
-                        // TODO: Array/List - Effects: BaseGameEffect[]
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["IconBig"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        data["DisableAfterMission"] = Marshal.ReadByte(ptr + 0x90) != 0;
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                    }
-
-                    else if (templateType.Name == "SurfaceDecalsTemplate")
-                    {
-                        // DecalCollection
-                        data["ConcreteEffect"] = Marshal.ReadInt32(ptr + 0x18);
-                        // DecalCollection
-                        data["MetalEffect"] = Marshal.ReadInt32(ptr + 0x20);
-                        // DecalCollection
-                        data["SandEffect"] = Marshal.ReadInt32(ptr + 0x28);
-                        // DecalCollection
-                        data["EarthEffect"] = Marshal.ReadInt32(ptr + 0x30);
-                        // DecalCollection
-                        data["SnowEffect"] = Marshal.ReadInt32(ptr + 0x38);
-                        // DecalCollection
-                        data["WaterEffect"] = Marshal.ReadInt32(ptr + 0x40);
-                        // DecalCollection
-                        data["RuinsEffect"] = Marshal.ReadInt32(ptr + 0x48);
-                        // DecalCollection
-                        data["SandStoneEffect"] = Marshal.ReadInt32(ptr + 0x50);
-                        // DecalCollection
-                        data["MudEffect"] = Marshal.ReadInt32(ptr + 0x58);
-                        // DecalCollection
-                        data["GrassEffect"] = Marshal.ReadInt32(ptr + 0x60);
-                        // DecalCollection
-                        data["GlassEffect"] = Marshal.ReadInt32(ptr + 0x68);
-                        // DecalCollection
-                        data["ForestEffect"] = Marshal.ReadInt32(ptr + 0x70);
-                        // DecalCollection
-                        data["RockEffect"] = Marshal.ReadInt32(ptr + 0x78);
-                    }
-
-                    else if (templateType.Name == "SurfaceEffectsTemplate")
-                    {
-                        // GameObject reference
-                        data["ConcreteEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x18));
-                        // GameObject reference
-                        data["MetalEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x20));
-                        // GameObject reference
-                        data["SandEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x28));
-                        // GameObject reference
-                        data["EarthEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x30));
-                        // GameObject reference
-                        data["SnowEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x38));
-                        // GameObject reference
-                        data["WaterEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x40));
-                        // GameObject reference
-                        data["RuinsEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x48));
-                        // GameObject reference
-                        data["SandStoneEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x50));
-                        // GameObject reference
-                        data["MudEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x58));
-                        // GameObject reference
-                        data["GrassEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x60));
-                        // GameObject reference
-                        data["GlassEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x68));
-                        // GameObject reference
-                        data["ForestEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x70));
-                        // GameObject reference
-                        data["RockEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                    }
-
-                    else if (templateType.Name == "SurfaceSoundsTemplate")
-                    {
-                        // TODO: Array/List - ConcreteSounds: ID[]
-                        // TODO: Array/List - MetalSounds: ID[]
-                        // TODO: Array/List - SandSounds: ID[]
-                        // TODO: Array/List - EarthSounds: ID[]
-                        // TODO: Array/List - SnowSounds: ID[]
-                        // TODO: Array/List - WaterSounds: ID[]
-                        // TODO: Array/List - RuinsSounds: ID[]
-                        // TODO: Array/List - SandStoneSounds: ID[]
-                        // TODO: Array/List - MudSounds: ID[]
-                        // TODO: Array/List - GrassSounds: ID[]
-                        // TODO: Array/List - GlassSounds: ID[]
-                        // TODO: Array/List - ForestSounds: ID[]
-                        // TODO: Array/List - RockSounds: ID[]
-                    }
-
-                    else if (templateType.Name == "SurfaceTypeTemplate")
-                    {
-                        // SurfaceType
-                        data["SurfaceType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                    }
-
-                    else if (templateType.Name == "TagTemplate")
-                    {
-                        // TagType
-                        data["TagType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        data["IsVisible"] = Marshal.ReadByte(ptr + 0x88) != 0;
-                        // TagValue
-                        data["Value"] = Marshal.ReadInt32(ptr + 0x8C);
-                        // TODO: Array/List - GoodAgainst: List<TagTemplate>
-                        // TODO: Array/List - BadAgainst: List<TagTemplate>
-                    }
-
-                    else if (templateType.Name == "UnitLeaderTemplate")
-                    {
-                        // SpeakerTemplate reference
-                        data["SpeakerTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["UnitTitle"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["UnitDescription"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        data["HiringCosts"] = Marshal.ReadInt32(ptr + 0x90);
-                        // ID
-                        data["HiringSelectBarkSound"] = Marshal.ReadInt32(ptr + 0x94);
-                        // ID
-                        data["HiredBarkSound"] = Marshal.ReadInt32(ptr + 0x9C);
-                        // Gender
-                        data["Gender"] = Marshal.ReadInt32(ptr + 0xA4);
-                        // SkinColor
-                        data["SkinColor"] = Marshal.ReadInt32(ptr + 0xA5);
-                        // GameObject reference
-                        data["CustomHead"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        // ActorType
-                        data["UnitActorType"] = Marshal.ReadInt32(ptr + 0xB0);
-                        // EntityTemplate reference
-                        data["InfantryUnitTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // InventoryType
-                        data["PilotInventoryTemplate"] = Marshal.ReadInt32(ptr + 0xC0);
-                        // VehicleItemTemplate reference
-                        data["InitialVehicleItem"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["Slot"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["SlotInactive"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["SlotInjured"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // Texture2D reference
-                        data["SlotFactionBackground"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE8));
-                        // Sprite reference
-                        data["SlotBadge"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF0));
-                        // Texture2D reference
-                        data["BigBackground"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xF8));
-                        // Texture2D reference
-                        data["FactionBackground"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x100));
-                        // Sprite reference
-                        data["BadgeMini"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x108));
-                        // Sprite reference
-                        data["BadgeDragged"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // Sprite reference
-                        data["BadgeUnitWindow"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x118));
-                        // Sprite reference
-                        data["Badge"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // Sprite reference
-                        data["BadgeWhite"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x128));
-                        // Sprite reference
-                        data["BigBadge"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x130));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0x138);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0x13C);
-                        // PerkTemplate reference
-                        data["InitialPerk"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x140));
-                        // TODO: Array/List - PerkTrees: PerkTreeTemplate[]
-                        // TODO: Array/List - EmotionalTriggerReactions: List<EmotionalTriggerReaction>
-                        // TODO: Array/List - EmotionalStateResponses: List<EmotionalStateResponse>
-                        // TODO: Array/List - FavorablePlanets: PlanetTemplate[]
-                    }
-
-                    else if (templateType.Name == "UnitRankTemplate")
-                    {
-                        // UnitRankType
-                        data["RankType"] = Marshal.ReadInt32(ptr + 0x78);
-                        // LocalizedLine reference
-                        data["Name"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        data["PromotionCost"] = Marshal.ReadInt32(ptr + 0x90);
-                    }
-
-                    else if (templateType.Name == "VehicleItemTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Sprite reference
-                        data["IconEquipment"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Sprite reference
-                        data["IconEquipmentDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // Sprite reference
-                        data["IconSkillBar"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["IconSkillBarDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["IconSkillBarAlternative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["IconSkillBarAlternativeDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // ItemSlot
-                        data["SlotType"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // ItemType
-                        data["ItemType"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // TODO: Array/List - OnlyEquipableBy: List<TagTemplate>
-                        // ExclusiveItemCategory
-                        data["ExclusiveCategory"] = Marshal.ReadInt32(ptr + 0xF8);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xFC);
-                        data["IsDestroyedAfterCombat"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        // TODO: Array/List - SkillsGranted: List<SkillTemplate>
-                        // GameObject reference
-                        data["Model"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlot"] = Marshal.ReadInt32(ptr + 0x118);
-                        // GameObject reference
-                        data["ModelSecondary"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlotSecondary"] = Marshal.ReadInt32(ptr + 0x128);
-                        data["AttachLightAtNight"] = Marshal.ReadByte(ptr + 0x12C) != 0;
-                        // EntityTemplate reference
-                        data["EntityTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x130));
-                        data["AccessorySlots"] = Marshal.ReadInt32(ptr + 0x138);
-                    }
-
-                    else if (templateType.Name == "VoucherTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // StrategyVars
-                        data["VoucherType"] = Marshal.ReadInt32(ptr + 0xB8);
-                        data["VoucherChange"] = Marshal.ReadInt32(ptr + 0xBC);
-                    }
-
-                    else if (templateType.Name == "WeaponTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // LocalizedLine reference
-                        data["ShortName"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // LocalizedMultiLine reference
-                        data["Description"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x88));
-                        // Sprite reference
-                        data["Icon"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x90));
-                        data["Rarity"] = Marshal.ReadInt32(ptr + 0xA0);
-                        data["MinCampaignProgress"] = Marshal.ReadInt32(ptr + 0xA4);
-                        data["TradeValue"] = Marshal.ReadInt32(ptr + 0xA8);
-                        data["BlackMarketMaxQuantity"] = Marshal.ReadInt32(ptr + 0xAC);
-                        // Sprite reference
-                        data["IconEquipment"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // Sprite reference
-                        data["IconEquipmentDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                        // Sprite reference
-                        data["IconSkillBar"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC8));
-                        // Sprite reference
-                        data["IconSkillBarDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD0));
-                        // Sprite reference
-                        data["IconSkillBarAlternative"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xD8));
-                        // Sprite reference
-                        data["IconSkillBarAlternativeDisabled"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xE0));
-                        // ItemSlot
-                        data["SlotType"] = Marshal.ReadInt32(ptr + 0xE8);
-                        // ItemType
-                        data["ItemType"] = Marshal.ReadInt32(ptr + 0xEC);
-                        // TODO: Array/List - OnlyEquipableBy: List<TagTemplate>
-                        // ExclusiveItemCategory
-                        data["ExclusiveCategory"] = Marshal.ReadInt32(ptr + 0xF8);
-                        // OperationResources
-                        data["DeployCosts"] = Marshal.ReadInt32(ptr + 0xFC);
-                        data["IsDestroyedAfterCombat"] = Marshal.ReadByte(ptr + 0x100) != 0;
-                        // TODO: Array/List - SkillsGranted: List<SkillTemplate>
-                        // GameObject reference
-                        data["Model"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x110));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlot"] = Marshal.ReadInt32(ptr + 0x118);
-                        // GameObject reference
-                        data["ModelSecondary"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x120));
-                        // VisualAlterationSlot
-                        data["VisualAlterationSlotSecondary"] = Marshal.ReadInt32(ptr + 0x128);
-                        data["AttachLightAtNight"] = Marshal.ReadByte(ptr + 0x12C) != 0;
-                        // WeaponAnimType
-                        data["AnimType"] = Marshal.ReadInt32(ptr + 0x130);
-                        // AnimWeaponSize
-                        data["AnimSize"] = Marshal.ReadInt32(ptr + 0x134);
-                        // AnimWeaponGrip
-                        data["AnimGrip"] = Marshal.ReadInt32(ptr + 0x138);
-                        data["MinRange"] = Marshal.ReadInt32(ptr + 0x13C);
-                        data["IdealRange"] = Marshal.ReadInt32(ptr + 0x140);
-                        data["MaxRange"] = Marshal.ReadInt32(ptr + 0x144);
-                        data["AccuracyBonus"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x148)), 0);
-                        data["AccuracyDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x14C)), 0);
-                        data["Damage"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x150)), 0);
-                        data["DamageDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x154)), 0);
-                        data["DamagePctCurrentHitpoints"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x158)), 0);
-                        data["DamagePctCurrentHitpointsMin"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x15C)), 0);
-                        data["DamagePctMaxHitpoints"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x160)), 0);
-                        data["DamagePctMaxHitpointsMin"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x164)), 0);
-                        data["ArmorPenetration"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x168)), 0);
-                        data["ArmorPenetrationDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x16C)), 0);
-                        data["DamageToArmorDurability"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x170)), 0);
-                        data["DamageToArmorDurabilityMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x174)), 0);
-                        data["DamageToArmorDurabilityDropoff"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x178)), 0);
-                        data["DamageToArmorDurabilityDropoffMult"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x17C)), 0);
-                        data["Suppression"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x180)), 0);
-                    }
-
-                    else if (templateType.Name == "WeatherTemplate")
-                    {
-                        // LocalizedLine reference
-                        data["Title"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x78));
-                        // GameObject reference
-                        data["CameraEffect"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x80));
-                        // ID
-                        data["AmbientSound"] = Marshal.ReadInt32(ptr + 0x88);
-                        data["DisableDustEffects"] = Marshal.ReadByte(ptr + 0x90) != 0;
-                        // SkillTemplate reference
-                        data["SkillToApply"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0x98));
-                        // LightConditionTemplate reference
-                        data["DawnTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA0));
-                        // LightConditionTemplate reference
-                        data["DayTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xA8));
-                        // LightConditionTemplate reference
-                        data["DuskTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB0));
-                        // LightConditionTemplate reference
-                        data["NightTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xB8));
-                        // WindControlsTemplate reference
-                        data["WindControlsTemplate"] = ReadUnityObjectReference(Marshal.ReadIntPtr(ptr + 0xC0));
-                    }
-
-                    else if (templateType.Name == "WindControlsTemplate")
-                    {
-                        data["m_windTurbulence"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x18)), 0);
-                        data["m_windStrength"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x1C)), 0);
-                        data["m_windSpeed"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x20)), 0);
-                        data["m_windTiling"] = BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(ptr + 0x24)), 0);
-                        // Color
-                        data["m_direction"] = Marshal.ReadInt32(ptr + 0x28);
-                        // Vector3
-                        data["m_windDirection"] = Marshal.ReadInt32(ptr + 0x38);
-                    }
-                    else
-                    {
-                        // Unknown template type - return basic info only
-                        data["_template_type"] = templateType.Name;
-                    }
-
-            return data;
-        }
-
-        private object ExtractTemplateData(object template)
-        {
-            var data = new Dictionary<string, object>();
-            var type = template.GetType();
-
-            try
-            {
-                // Get ALL properties including inherited ones, public and non-public
-                var allProperties = GetAllProperties(type);
-                foreach (var prop in allProperties)
-                {
-                    try
-                    {
-                        if (prop.Name == "Pointer" || prop.Name == "m_CachedPtr" || prop.Name == "ObjectClass") continue;
-                        if (!prop.CanRead) continue;
-
-                        var value = prop.GetValue(template, null);
-                        data[prop.Name] = ConvertValue(value, 0);
-                    }
-                    catch
-                    {
-                        // Skip properties that can't be read
-                    }
-                }
-
-                // Get ALL fields including inherited ones, public and non-public
-                var allFields = GetAllFields(type);
-                foreach (var field in allFields)
-                {
-                    try
-                    {
-                        if (field.Name.StartsWith("NativeFieldInfoPtr") || field.Name.StartsWith("Il2Cpp")) continue;
-                        if (data.ContainsKey(field.Name)) continue; // Skip if property already added it
-
-                        var value = field.GetValue(template);
-                        data[field.Name] = ConvertValue(value, 0);
-                    }
-                    catch
-                    {
-                        // Skip fields that can't be read
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"Extract error: {ex.Message}");
-            }
-
-            return data;
-        }
-
-        private IEnumerable<PropertyInfo> GetAllProperties(Type type)
-        {
-            var properties = new List<PropertyInfo>();
-            while (type != null && type != typeof(object))
-            {
-                properties.AddRange(type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
-                type = type.BaseType;
-            }
-            return properties.GroupBy(p => p.Name).Select(g => g.First());
-        }
-
-        private IEnumerable<FieldInfo> GetAllFields(Type type)
-        {
-            var fields = new List<FieldInfo>();
-            while (type != null && type != typeof(object))
-            {
-                fields.AddRange(type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly));
-                type = type.BaseType;
-            }
-            return fields.GroupBy(f => f.Name).Select(g => g.First());
-        }
-
-        private object ConvertValue(object value, int depth)
-        {
-            if (value == null) return null;
-            if (depth > 3) return value.ToString(); // Prevent infinite recursion
-
-            var type = value.GetType();
-
-            if (type.IsPrimitive || type == typeof(string) || type.IsEnum)
-                return value;
-
-            if (value is UnityEngine.Object unityObj)
-            {
-                try
-                {
-                    var nameProp = unityObj.GetType().GetProperty("name");
-                    return nameProp?.GetValue(unityObj, null)?.ToString() ?? unityObj.ToString();
-                }
-                catch
-                {
-                    return unityObj.ToString();
-                }
-            }
-
-            if (type.IsArray)
-            {
-                var array = (Array)value;
-                var list = new List<object>();
-                int maxItems = Math.Min(array.Length, 100); // Limit array size
-                for (int i = 0; i < maxItems; i++)
-                {
-                    list.Add(ConvertValue(array.GetValue(i), depth + 1));
-                }
-                return list;
-            }
-
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
-            {
-                var list = new List<object>();
-                int count = 0;
-                foreach (var item in (System.Collections.IEnumerable)value)
-                {
-                    if (count++ >= 100) break; // Limit list size
-                    list.Add(ConvertValue(item, depth + 1));
-                }
-                return list;
-            }
-
-            // If it's a complex IL2CPP object, try to extract its data
-            if (type.Namespace != null && (type.Namespace.StartsWith("Il2Cpp") || type.Namespace.StartsWith("UnityEngine")))
-            {
-                try
-                {
-                    var nested = new Dictionary<string, object>();
-                    var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                    foreach (var prop in props)
-                    {
-                        if (prop.Name == "Pointer" || prop.Name == "m_CachedPtr") continue;
-                        if (!prop.CanRead) continue;
-                        try
-                        {
-                            var val = prop.GetValue(value, null);
-                            nested[prop.Name] = ConvertValue(val, depth + 1);
-                        }
-                        catch { }
-                    }
-                    return nested.Count > 0 ? nested : value.ToString();
-                }
-                catch
-                {
-                    return value.ToString();
-                }
-            }
-
-            return value.ToString();
-        }
-
-        private void SaveExtractedData(Dictionary<string, List<object>> extractedData)
-        {
-            LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("Saving data to JSON files...");
-            LoggerInstance.Msg("===========================================");
-
-            foreach (var kvp in extractedData)
-            {
-                try
-                {
-                    string fileName = $"{kvp.Key}.json";
-                    string filePath = Path.Combine(_outputPath, fileName);
-
-                    var json = JsonConvert.SerializeObject(kvp.Value, Formatting.Indented, new JsonSerializerSettings
-                    {
-                        ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
-                        NullValueHandling = NullValueHandling.Include,
-                        MaxDepth = 10
-                    });
-
-                    File.WriteAllText(filePath, json);
-                    LoggerInstance.Msg($"✓ Saved {kvp.Value.Count} {kvp.Key} instances");
                 }
                 catch (Exception ex)
                 {
-                    LoggerInstance.Error($"✗ Failed to save {kvp.Key}: {ex.Message}");
+                    DebugLog($"  [{i}] P1 FAILED: {ex.Message}");
                 }
             }
 
-            // Save asset reference lookup table
+            return typeCtx;
+        }
+
+        /// <summary>
+        /// Extract only non-reference properties from a template instance.
+        /// Uses direct memory reads via IL2CPP field offsets — completely bypasses
+        /// property getters to avoid native SIGSEGV crashes.
+        /// Returns an InstanceContext with the data dict and cast object for Phase 2.
+        /// </summary>
+        private InstanceContext ExtractPrimitives(UnityEngine.Object obj, Type templateType, string objName)
+        {
+            DebugLog($"    TryCast<{templateType.Name}>...");
+            object castObj = null;
             try
             {
-                string refFilePath = Path.Combine(_outputPath, "AssetReferences.json");
-                var refJson = JsonConvert.SerializeObject(_assetReferences.Values.ToList(), Formatting.Indented);
-                File.WriteAllText(refFilePath, refJson);
-                LoggerInstance.Msg($"✓ Saved {_assetReferences.Count} asset references");
+                var genericTryCast = _tryCastMethod.MakeGenericMethod(templateType);
+                castObj = genericTryCast.Invoke(obj, null);
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"✗ Failed to save asset references: {ex.Message}");
+                DebugLog($"    TryCast failed: {ex.Message}");
+                return null;
             }
 
-            LoggerInstance.Msg("");
-            LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("DATA EXTRACTION COMPLETE!");
-            LoggerInstance.Msg($"Location: {_outputPath}");
-            LoggerInstance.Msg("===========================================");
+            if (castObj == null)
+            {
+                DebugLog($"    TryCast returned null");
+                return null;
+            }
+
+            var il2cppBase = castObj as Il2CppObjectBase;
+            if (il2cppBase == null || il2cppBase.Pointer == IntPtr.Zero)
+            {
+                DebugLog($"    Invalid pointer after TryCast");
+                return null;
+            }
+
+            // Use cached class pointer from classification (no il2cpp_object_get_class on data pointer)
+            IntPtr klass = IntPtr.Zero;
+            _il2cppClassPtrCache.TryGetValue(templateType.Name, out klass);
+            DebugLog($"    TryCast OK ptr={il2cppBase.Pointer} klass={klass}, reading primitives (direct)...");
+
+            var data = new Dictionary<string, object>();
+            data["name"] = objName;
+
+            var currentType = templateType;
+            while (currentType != null && !StopBaseTypes.Contains(currentType.Name))
+            {
+                PropertyInfo[] props;
+                try
+                {
+                    props = currentType.GetProperties(
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                }
+                catch
+                {
+                    currentType = currentType.BaseType;
+                    continue;
+                }
+
+                foreach (var prop in props)
+                {
+                    if (!prop.CanRead) continue;
+                    if (SkipProperties.Contains(prop.Name)) continue;
+                    if (data.ContainsKey(prop.Name)) continue;
+                    if (ShouldSkipPropertyType(prop)) continue;
+
+                    // Skip IL2CPP reference properties — Phase 2 handles these
+                    if (IsIl2CppReferenceProperty(prop))
+                        continue;
+
+                    DebugLog($"    .{prop.Name} ({prop.PropertyType.Name})");
+
+                    // Read field value directly from memory (no property getter calls)
+                    if (klass != IntPtr.Zero)
+                    {
+                        object directValue = TryReadFieldDirect(
+                            klass, templateType.Name, prop.Name, prop.PropertyType, il2cppBase.Pointer);
+                        if (directValue != _skipSentinel)
+                        {
+                            data[prop.Name] = directValue;
+                            continue;
+                        }
+                    }
+
+                    // Field not found or type not supported for direct read — skip
+                    // (Do NOT fall back to property getter — that's what causes crashes)
+                    DebugLog($"      -> skipped (no direct read)");
+                }
+
+                currentType = currentType.BaseType;
+            }
+
+            DebugLog($"    Done: {data.Count} primitive fields");
+            return new InstanceContext
+            {
+                Data = data,
+                CastObj = castObj,
+                Pointer = il2cppBase.Pointer,
+                Name = objName
+            };
+        }
+
+        /// <summary>
+        /// Look up a native field by name (trying multiple naming conventions)
+        /// and cache the result. Returns (fieldPtr, offset).
+        /// </summary>
+        private (IntPtr field, uint offset) GetCachedFieldInfo(IntPtr klass, string typeName, string propName)
+        {
+            if (!_fieldInfoCache.TryGetValue(typeName, out var typeCache))
+            {
+                typeCache = new Dictionary<string, (IntPtr, uint)>();
+                _fieldInfoCache[typeName] = typeCache;
+            }
+
+            if (typeCache.TryGetValue(propName, out var cached))
+                return cached;
+
+            // Look up the field in the native class (tries multiple naming conventions)
+            IntPtr field = FindNativeField(klass, propName);
+            uint offset = 0;
+
+            if (field != IntPtr.Zero)
+            {
+                DebugLog($"      [cache] il2cpp_field_get_offset({typeName}.{propName})...");
+                offset = IL2CPP.il2cpp_field_get_offset(field);
+                DebugLog($"      [cache] offset={offset}");
+            }
+            else
+            {
+                DebugLog($"      [cache] field not found for {typeName}.{propName}");
+            }
+
+            var result = (field, offset);
+            typeCache[propName] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// Find a native IL2CPP field by name, trying several naming conventions.
+        /// Walks parent classes because fields may be defined on a base type.
+        /// </summary>
+        private IntPtr FindNativeField(IntPtr klass, string propName)
+        {
+            string[] namesToTry = new[]
+            {
+                propName,
+                propName.Length > 0 && char.IsUpper(propName[0])
+                    ? char.ToLower(propName[0]) + propName.Substring(1) : null,
+                "_" + propName,
+                "m_" + propName,
+                $"<{propName}>k__BackingField"
+            };
+
+            IntPtr searchKlass = klass;
+            while (searchKlass != IntPtr.Zero)
+            {
+                foreach (var name in namesToTry)
+                {
+                    if (name == null) continue;
+                    IntPtr field = IL2CPP.il2cpp_class_get_field_from_name(searchKlass, name);
+                    if (field != IntPtr.Zero) return field;
+                }
+                searchKlass = IL2CPP.il2cpp_class_get_parent(searchKlass);
+            }
+
+            return IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// Read a field value directly from the object's memory at the field's offset.
+        /// Completely bypasses IL2CPP interop property getters.
+        /// Returns _skipSentinel if the field can't be found or the type isn't supported.
+        /// </summary>
+        private object TryReadFieldDirect(IntPtr klass, string typeName, string propName, Type propType, IntPtr objectPointer)
+        {
+            try
+            {
+                var (field, offset) = GetCachedFieldInfo(klass, typeName, propName);
+
+                if (field == IntPtr.Zero || offset == 0)
+                    return _skipSentinel;
+
+                IntPtr addr = objectPointer + (int)offset;
+
+                // Primitive types — direct Marshal reads
+                if (propType == typeof(int))
+                    return Marshal.ReadInt32(addr);
+                if (propType == typeof(uint))
+                    return (int)(uint)Marshal.ReadInt32(addr); // store as int for JSON
+                if (propType == typeof(float))
+                    return BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(addr)), 0);
+                if (propType == typeof(bool))
+                    return Marshal.ReadByte(addr) != 0;
+                if (propType == typeof(byte))
+                    return (int)Marshal.ReadByte(addr);
+                if (propType == typeof(short))
+                    return (int)Marshal.ReadInt16(addr);
+                if (propType == typeof(ushort))
+                    return (int)(ushort)Marshal.ReadInt16(addr);
+                if (propType == typeof(long))
+                    return Marshal.ReadInt64(addr);
+                if (propType == typeof(ulong))
+                    return (long)(ulong)Marshal.ReadInt64(addr);
+                if (propType == typeof(double))
+                    return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+
+                // String — read the Il2CppString pointer, then convert
+                if (propType == typeof(string))
+                {
+                    IntPtr strPtr = Marshal.ReadIntPtr(addr);
+                    if (strPtr == IntPtr.Zero) return null;
+                    return IL2CPP.Il2CppStringToManaged(strPtr);
+                }
+
+                // Enum — read based on underlying type
+                if (propType.IsEnum)
+                {
+                    var underlying = Enum.GetUnderlyingType(propType);
+                    if (underlying == typeof(int))
+                        return Marshal.ReadInt32(addr);
+                    if (underlying == typeof(byte))
+                        return (int)Marshal.ReadByte(addr);
+                    if (underlying == typeof(short))
+                        return (int)Marshal.ReadInt16(addr);
+                    if (underlying == typeof(long))
+                        return Marshal.ReadInt64(addr);
+                    return Marshal.ReadInt32(addr); // default
+                }
+
+                // Unity struct types — read component floats directly
+                string typeName2 = propType.Name;
+                if (typeName2 == "Vector2")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", ReadFloat(addr) },
+                        { "y", ReadFloat(addr + 4) }
+                    };
+                }
+                if (typeName2 == "Vector3")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", ReadFloat(addr) },
+                        { "y", ReadFloat(addr + 4) },
+                        { "z", ReadFloat(addr + 8) }
+                    };
+                }
+                if (typeName2 == "Vector4" || typeName2 == "Quaternion")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", ReadFloat(addr) },
+                        { "y", ReadFloat(addr + 4) },
+                        { "z", ReadFloat(addr + 8) },
+                        { "w", ReadFloat(addr + 12) }
+                    };
+                }
+                if (typeName2 == "Color")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "r", ReadFloat(addr) },
+                        { "g", ReadFloat(addr + 4) },
+                        { "b", ReadFloat(addr + 8) },
+                        { "a", ReadFloat(addr + 12) }
+                    };
+                }
+                if (typeName2 == "Rect")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", ReadFloat(addr) },
+                        { "y", ReadFloat(addr + 4) },
+                        { "width", ReadFloat(addr + 8) },
+                        { "height", ReadFloat(addr + 12) }
+                    };
+                }
+                if (typeName2 == "Vector2Int")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", Marshal.ReadInt32(addr) },
+                        { "y", Marshal.ReadInt32(addr + 4) }
+                    };
+                }
+                if (typeName2 == "Vector3Int")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "x", Marshal.ReadInt32(addr) },
+                        { "y", Marshal.ReadInt32(addr + 4) },
+                        { "z", Marshal.ReadInt32(addr + 8) }
+                    };
+                }
+                if (typeName2 == "Color32")
+                {
+                    return new Dictionary<string, object>
+                    {
+                        { "r", (int)Marshal.ReadByte(addr) },
+                        { "g", (int)Marshal.ReadByte(addr + 1) },
+                        { "b", (int)Marshal.ReadByte(addr + 2) },
+                        { "a", (int)Marshal.ReadByte(addr + 3) }
+                    };
+                }
+
+                // Type not supported for direct read
+                return _skipSentinel;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"      direct-read error: {ex.GetType().Name}: {ex.Message}");
+                return _skipSentinel;
+            }
+        }
+
+        private static float ReadFloat(IntPtr addr)
+        {
+            return BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(addr)), 0);
+        }
+
+        /// <summary>
+        /// Check if a Unity Object is still alive by reading its m_CachedPtr field.
+        /// Unity sets m_CachedPtr to zero when an object is destroyed.
+        /// If m_CachedPtr is zero, ANY property access (including .name) will crash.
+        /// </summary>
+        private bool IsUnityObjectAlive(IntPtr objectPointer)
+        {
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(objectPointer);
+                if (klass == IntPtr.Zero) return false;
+
+                IntPtr cachedPtrField = IL2CPP.il2cpp_class_get_field_from_name(klass, "m_CachedPtr");
+                if (cachedPtrField == IntPtr.Zero) return true; // can't check, assume alive
+
+                uint offset = IL2CPP.il2cpp_field_get_offset(cachedPtrField);
+                if (offset == 0) return true; // can't check, assume alive
+
+                IntPtr nativePtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                return nativePtr != IntPtr.Zero;
+            }
+            catch
+            {
+                return false; // error reading = treat as dead
+            }
+        }
+
+        /// <summary>
+        /// Read a Menace template object's name directly from memory.
+        /// Unity's Object.name has no backing field in IL2CPP (it's a native engine property),
+        /// so we use m_ID from Menace.Tools.DataTemplate which all templates inherit.
+        /// </summary>
+        private string ReadObjectNameDirect(IntPtr objectPointer)
+        {
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(objectPointer);
+                if (klass == IntPtr.Zero) return null;
+
+                // m_ID is on Menace.Tools.DataTemplate — FindNativeField walks parents
+                IntPtr idField = FindNativeField(klass, "m_ID");
+                if (idField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(idField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string id = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(id))
+                                return id;
+                        }
+                    }
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Phase 2: Fill in IL2CPP reference properties for an already-extracted instance.
+        /// Uses direct memory reads — NO property getters are called.
+        /// Returns true if any reference properties were added.
+        /// </summary>
+        private bool FillReferenceProperties(InstanceContext inst, Type templateType)
+        {
+            if (inst.Pointer == IntPtr.Zero)
+                return false;
+
+            // Use cached class pointer (no il2cpp_object_get_class on data pointer)
+            IntPtr klass = IntPtr.Zero;
+            _il2cppClassPtrCache.TryGetValue(templateType.Name, out klass);
+            if (klass == IntPtr.Zero) return false;
+
+            bool addedAny = false;
+            var currentType = templateType;
+
+            while (currentType != null && !StopBaseTypes.Contains(currentType.Name))
+            {
+                PropertyInfo[] props;
+                try
+                {
+                    props = currentType.GetProperties(
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                }
+                catch
+                {
+                    currentType = currentType.BaseType;
+                    continue;
+                }
+
+                foreach (var prop in props)
+                {
+                    if (!prop.CanRead) continue;
+                    if (SkipProperties.Contains(prop.Name)) continue;
+                    if (inst.Data.ContainsKey(prop.Name)) continue;
+                    if (ShouldSkipPropertyType(prop)) continue;
+
+                    // Only handle reference properties in this phase
+                    if (!IsIl2CppReferenceProperty(prop))
+                        continue;
+
+                    DebugLog($"    [{inst.Name}].{prop.Name} ({prop.PropertyType.Name})");
+
+                    // Get the IL2CPP field + offset
+                    var (field, offset) = GetCachedFieldInfo(klass, templateType.Name, prop.Name);
+                    if (field == IntPtr.Zero || offset == 0)
+                    {
+                        DebugLog($"      -> field not found, skip");
+                        continue;
+                    }
+
+                    // Get field type from IL2CPP METADATA (safe — reads type tables, not object memory)
+                    IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
+                    if (fieldType == IntPtr.Zero) { DebugLog($"      -> no type info"); continue; }
+                    int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+
+                    // Read the raw pointer stored in the field
+                    IntPtr refPtr = Marshal.ReadIntPtr(inst.Pointer + (int)offset);
+                    if (refPtr == IntPtr.Zero)
+                    {
+                        inst.Data[prop.Name] = null;
+                        DebugLog($"      -> null");
+                        addedAny = true;
+                        continue;
+                    }
+
+                    DebugLog($"      typeEnum={typeEnum} refPtr={refPtr}");
+
+                    // Route based on IL2CPP type enum — all classification from metadata, no pointer dereference
+                    if (typeEnum == 29) // IL2CPP_TYPE_SZARRAY — single-dimension array
+                    {
+                        object arrayVal = ReadArrayFromFieldMetadata(refPtr, fieldType, 0);
+                        if (arrayVal != null)
+                        {
+                            inst.Data[prop.Name] = arrayVal;
+                            addedAny = true;
+                        }
+                        DebugLog($"      -> array ({(arrayVal is List<object> l ? l.Count + " items" : "error")})");
+                    }
+                    else if (typeEnum == 18 || typeEnum == 21) // IL2CPP_TYPE_CLASS or IL2CPP_TYPE_GENERICINST
+                    {
+                        // Get the expected class from metadata (safe)
+                        IntPtr expectedClass = IL2CPP.il2cpp_class_from_type(fieldType);
+                        if (expectedClass == IntPtr.Zero) { DebugLog($"      -> no class"); continue; }
+
+                        string className = GetClassNameSafe(expectedClass);
+                        DebugLog($"      expected class: {className}");
+
+                        if (IsLocalizationClass(className, expectedClass))
+                        {
+                            // Localization string — read m_DefaultTranslation using known class
+                            string locText = ReadLocalizedStringWithClass(refPtr, expectedClass);
+                            if (locText != null)
+                            {
+                                inst.Data[prop.Name] = locText;
+                                if (prop.Name == "Title" && !inst.Data.ContainsKey("DisplayTitle"))
+                                    inst.Data["DisplayTitle"] = locText;
+                                else if (prop.Name == "ShortName" && !inst.Data.ContainsKey("DisplayShortName"))
+                                    inst.Data["DisplayShortName"] = locText;
+                                else if (prop.Name == "Description" && !inst.Data.ContainsKey("DisplayDescription"))
+                                    inst.Data["DisplayDescription"] = locText;
+                                addedAny = true;
+                                DebugLog($"      -> localized: {(locText.Length > 60 ? locText[..60] + "..." : locText)}");
+                            }
+                            else
+                            {
+                                DebugLog($"      -> localization read failed");
+                            }
+                        }
+                        else if (IsUnityObjectClass(expectedClass))
+                        {
+                            // Unity Object — check alive using known class, then read name
+                            // NOTE: Do NOT call Unity .name property (SIGSEGV risk even on alive objects).
+                            // Use m_ID for DataTemplate refs; class name for Sprites/AudioClips/etc.
+                            if (IsUnityObjectAliveWithClass(refPtr, expectedClass))
+                            {
+                                string assetName = ReadObjectNameWithClass(refPtr, expectedClass);
+                                if (prop.Name == "Icon")
+                                {
+                                    inst.Data["HasIcon"] = true;
+                                    DebugLog($"      -> HasIcon=true");
+                                }
+                                else
+                                {
+                                    inst.Data[prop.Name] = assetName ?? $"({className})";
+                                    DebugLog($"      -> {inst.Data[prop.Name]}");
+                                }
+                                addedAny = true;
+                            }
+                            else
+                            {
+                                if (prop.Name == "Icon")
+                                    inst.Data["HasIcon"] = false;
+                                else
+                                    inst.Data[prop.Name] = null;
+                                addedAny = true;
+                                DebugLog($"      -> dead object");
+                            }
+                        }
+                        else
+                        {
+                            // Nested non-Unity object — read fields using metadata-known class
+                            object nested = ReadNestedObjectDirect(refPtr, expectedClass, className, 0);
+                            inst.Data[prop.Name] = nested;
+                            addedAny = true;
+                            DebugLog($"      -> nested ({className})");
+                        }
+                    }
+                    else
+                    {
+                        DebugLog($"      -> unhandled typeEnum {typeEnum}");
+                    }
+                }
+
+                currentType = currentType.BaseType;
+            }
+
+            return addedAny;
+        }
+
+        // ── Metadata-driven helpers (never call il2cpp_object_get_class on data pointers) ──
+
+        /// <summary>
+        /// Get a class name from IL2CPP metadata (safe, no object memory reads).
+        /// </summary>
+        private string GetClassNameSafe(IntPtr klass)
+        {
+            if (klass == IntPtr.Zero) return "?";
+            IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
+            return namePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(namePtr) : "?";
+        }
+
+        /// <summary>
+        /// Check if a class (from metadata) is a localization type by walking its parent chain.
+        /// </summary>
+        private bool IsLocalizationClass(string className, IntPtr klass)
+        {
+            if (className == "LocalizedLine" || className == "LocalizedMultiLine" ||
+                className == "BaseLocalizedString")
+                return true;
+
+            // Check parent chain
+            IntPtr parent = IL2CPP.il2cpp_class_get_parent(klass);
+            while (parent != IntPtr.Zero)
+            {
+                string pName = GetClassNameSafe(parent);
+                if (pName == "BaseLocalizedString")
+                    return true;
+                parent = IL2CPP.il2cpp_class_get_parent(parent);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Read m_DefaultTranslation from a localization object using a known class (from metadata).
+        /// Does NOT call il2cpp_object_get_class — the class comes from field type metadata.
+        /// </summary>
+        private string ReadLocalizedStringWithClass(IntPtr objPtr, IntPtr klass)
+        {
+            try
+            {
+                IntPtr field = FindNativeField(klass, "m_DefaultTranslation");
+                if (field == IntPtr.Zero) return null;
+
+                uint offset = IL2CPP.il2cpp_field_get_offset(field);
+                if (offset == 0) return null;
+
+                IntPtr strPtr = Marshal.ReadIntPtr(objPtr + (int)offset);
+                if (strPtr == IntPtr.Zero) return null;
+
+                return IL2CPP.Il2CppStringToManaged(strPtr);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Check if a Unity Object's native pointer is alive, using a known class (from metadata).
+        /// Does NOT call il2cpp_object_get_class — the class comes from field type metadata.
+        /// </summary>
+        private bool IsUnityObjectAliveWithClass(IntPtr objectPointer, IntPtr klass)
+        {
+            try
+            {
+                IntPtr cachedPtrField = FindNativeField(klass, "m_CachedPtr");
+                if (cachedPtrField == IntPtr.Zero) return true; // can't check, assume alive
+
+                uint offset = IL2CPP.il2cpp_field_get_offset(cachedPtrField);
+                if (offset == 0) return true;
+
+                IntPtr nativePtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                return nativePtr != IntPtr.Zero;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Read a template object's name (m_ID) using a known class (from metadata).
+        /// Only reads m_ID — does NOT call Unity's .name property (which can SIGSEGV).
+        /// For Unity asset names (Sprites etc.), use ReadUnityObjectName separately in Phase 2.
+        /// </summary>
+        private string ReadObjectNameWithClass(IntPtr objectPointer, IntPtr klass)
+        {
+            try
+            {
+                IntPtr idField = FindNativeField(klass, "m_ID");
+                if (idField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(idField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string id = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(id))
+                                return id;
+                        }
+                    }
+                }
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+
+        /// <summary>
+        /// Read an IL2CPP array using field type metadata for element classification.
+        /// The element class comes from metadata (safe), not from il2cpp_object_get_class on elements.
+        /// Il2CppArray layout: [Il2CppObject header (2*IntPtr)] [IntPtr bounds] [int32 max_length] [elements...]
+        /// </summary>
+        private object ReadArrayFromFieldMetadata(IntPtr arrayPtr, IntPtr fieldType, int depth)
+        {
+            if (depth > 2) return null;
+
+            try
+            {
+                // Get array class and element class from METADATA (safe)
+                IntPtr arrayClass = IL2CPP.il2cpp_class_from_type(fieldType);
+                if (arrayClass == IntPtr.Zero) return null;
+
+                IntPtr elemClass = IL2CPP.il2cpp_class_get_element_class(arrayClass);
+                if (elemClass == IntPtr.Zero) return null;
+
+                // Read array length from known Il2CppArray layout
+                int headerSize = IntPtr.Size * 3; // object header (2 ptrs) + bounds ptr
+                int length = Marshal.ReadInt32(arrayPtr + headerSize);
+
+                DebugLog($"        array length={length}");
+
+                // Sanity check the length
+                if (length < 0 || length > 10000) return null;
+                if (length == 0) return new List<object>();
+                if (length > 100) length = 100; // cap for safety
+
+                int elementsOffset = headerSize + IntPtr.Size; // length is padded to IntPtr alignment
+                bool elemIsValueType = IL2CPP.il2cpp_class_is_valuetype(elemClass);
+                string elemClassName = GetClassNameSafe(elemClass);
+
+                var result = new List<object>();
+
+                if (elemIsValueType)
+                {
+                    int elemSize = IL2CPP.il2cpp_class_instance_size(elemClass) - IntPtr.Size * 2;
+                    if (elemSize <= 0) elemSize = 4;
+
+                    for (int i = 0; i < length; i++)
+                    {
+                        IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
+                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize));
+                    }
+                }
+                else
+                {
+                    // Classify element type from metadata (safe, no data pointer dereference)
+                    bool elemIsUnityObject = IsUnityObjectClass(elemClass);
+                    bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
+
+                    for (int i = 0; i < length; i++)
+                    {
+                        IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
+                        if (elemPtr == IntPtr.Zero)
+                        {
+                            result.Add(null);
+                            continue;
+                        }
+
+                        if (elemIsUnityObject)
+                        {
+                            if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
+                                result.Add(ReadObjectNameWithClass(elemPtr, elemClass) ?? $"({elemClassName})");
+                            else
+                                result.Add(null);
+                        }
+                        else if (elemIsLocalization)
+                        {
+                            result.Add(ReadLocalizedStringWithClass(elemPtr, elemClass) ?? "");
+                        }
+                        else
+                        {
+                            result.Add(ReadNestedObjectDirect(elemPtr, elemClass, elemClassName, depth + 1));
+                        }
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        array read error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Read an IL2CPP reference object via direct memory. Handles arrays,
+        /// Unity Object references, and nested objects — no property getters.
+        /// </summary>
+        private object ReadReferenceDirect(IntPtr objPtr, Type expectedType, int depth)
+        {
+            if (objPtr == IntPtr.Zero) return null;
+            if (depth > 3) return "(max depth)";
+
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(objPtr);
+                if (klass == IntPtr.Zero) return null;
+
+                IntPtr classNamePtr = IL2CPP.il2cpp_class_get_name(klass);
+                string className = classNamePtr != IntPtr.Zero
+                    ? Marshal.PtrToStringAnsi(classNamePtr) : "?";
+
+                // Check if this is an IL2CPP array (native Il2CppArray)
+                // Il2CppArray layout: [Il2CppObject header] [IntPtr bounds] [int32 max_length] [elements...]
+                // The class will have a rank > 0, or the type name ends with "[]"
+                if (IsIl2CppArrayClass(klass))
+                {
+                    return ReadIl2CppArrayDirect(objPtr, klass, depth);
+                }
+
+                // Unity Object reference -> return its name (check alive first)
+                if (IsUnityObjectClass(klass))
+                {
+                    if (!IsUnityObjectAlive(objPtr))
+                        return "(destroyed)";
+                    string name = ReadObjectNameDirect(objPtr);
+                    return name ?? "(unnamed)";
+                }
+
+                // Nested IL2CPP object -> read its primitive fields
+                return ReadNestedObjectDirect(objPtr, klass, className, depth);
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"      ReadReferenceDirect error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Check if an IL2CPP class represents an array type.
+        /// </summary>
+        private bool IsIl2CppArrayClass(IntPtr klass)
+        {
+            try
+            {
+                int rank = IL2CPP.il2cpp_class_get_rank(klass);
+                return rank > 0;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Check if an IL2CPP class derives from UnityEngine.Object
+        /// by walking the parent chain and checking class names.
+        /// </summary>
+        private bool IsUnityObjectClass(IntPtr klass)
+        {
+            try
+            {
+                IntPtr check = klass;
+                while (check != IntPtr.Zero)
+                {
+                    IntPtr namePtr = IL2CPP.il2cpp_class_get_name(check);
+                    if (namePtr != IntPtr.Zero)
+                    {
+                        string name = Marshal.PtrToStringAnsi(namePtr);
+                        if (name == "Object")
+                        {
+                            // Verify it's UnityEngine.Object, not System.Object
+                            IntPtr nsPtr = IL2CPP.il2cpp_class_get_namespace(check);
+                            string ns = nsPtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(nsPtr) : "";
+                            if (ns == "UnityEngine")
+                                return true;
+                        }
+                    }
+                    check = IL2CPP.il2cpp_class_get_parent(check);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// Read an IL2CPP array directly from memory.
+        /// Il2CppArray layout: [object header (2*IntPtr)] [IntPtr bounds] [int32 max_length] [elements...]
+        /// </summary>
+        private object ReadIl2CppArrayDirect(IntPtr arrayPtr, IntPtr arrayKlass, int depth)
+        {
+            try
+            {
+                // Get element class to determine element size and type
+                IntPtr elemKlass = IL2CPP.il2cpp_class_get_element_class(arrayKlass);
+
+                // Read array length: offset = 2*IntPtr (object header) + IntPtr (bounds)
+                int headerSize = IntPtr.Size * 3; // object header (2 ptrs) + bounds ptr
+                int length = Marshal.ReadInt32(arrayPtr + headerSize);
+
+                if (length <= 0) return new List<object>();
+                if (length > 100) length = 100; // safety cap
+
+                // Elements start after header + length field (aligned)
+                int elementsOffset = headerSize + IntPtr.Size; // length is padded to IntPtr alignment
+
+                // Determine if elements are value types or references
+                bool elemIsValueType = IL2CPP.il2cpp_class_is_valuetype(elemKlass);
+
+                var result = new List<object>();
+
+                if (!elemIsValueType)
+                {
+                    // Reference array: each element is an IntPtr
+                    for (int i = 0; i < length; i++)
+                    {
+                        IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
+                        if (elemPtr == IntPtr.Zero)
+                        {
+                            result.Add(null);
+                            continue;
+                        }
+
+                        // Check if element is a Unity Object (return name) or nested object
+                        IntPtr elemObjKlass = IL2CPP.il2cpp_object_get_class(elemPtr);
+                        if (IsUnityObjectClass(elemObjKlass))
+                        {
+                            result.Add(ReadObjectNameDirect(elemPtr));
+                        }
+                        else
+                        {
+                            result.Add(ReadReferenceDirect(elemPtr, null, depth + 1));
+                        }
+                    }
+                }
+                else
+                {
+                    // Value type array: each element is inline at class instance size
+                    int elemSize = IL2CPP.il2cpp_class_instance_size(elemKlass) - IntPtr.Size * 2;
+                    if (elemSize <= 0) elemSize = 4; // fallback
+
+                    IntPtr elemNamePtr = IL2CPP.il2cpp_class_get_name(elemKlass);
+                    string elemName = elemNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(elemNamePtr) : "?";
+
+                    for (int i = 0; i < length; i++)
+                    {
+                        IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
+                        // Try to read as common value types
+                        object val = ReadValueTypeElement(addr, elemName, elemSize);
+                        result.Add(val);
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"      ReadIl2CppArrayDirect error: {ex.Message}");
+                return new List<object>();
+            }
+        }
+
+        /// <summary>
+        /// Read a value type array element at the given address.
+        /// </summary>
+        private object ReadValueTypeElement(IntPtr addr, string elemTypeName, int elemSize)
+        {
+            try
+            {
+                switch (elemTypeName)
+                {
+                    case "Int32": return Marshal.ReadInt32(addr);
+                    case "Single": return ReadFloat(addr);
+                    case "Boolean": return Marshal.ReadByte(addr) != 0;
+                    case "Byte": return (int)Marshal.ReadByte(addr);
+                    case "Int16": return (int)Marshal.ReadInt16(addr);
+                    case "Int64": return Marshal.ReadInt64(addr);
+                    case "Double": return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+                    case "UInt32": return (int)(uint)Marshal.ReadInt32(addr);
+                    default:
+                        // For structs, try to read as a dict of fields
+                        return $"({elemTypeName})";
+                }
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Read a nested IL2CPP object's fields directly from memory.
+        /// Returns a Dictionary of field name -> value for JSON serialization.
+        /// </summary>
+        private int _nestedDebugCount = 0;
+
+        private object ReadNestedObjectDirect(IntPtr objPtr, IntPtr klass, string className, int depth)
+        {
+            bool doLog = _nestedDebugCount < 3;
+            if (doLog) _nestedDebugCount++;
+
+            try
+            {
+                var result = new Dictionary<string, object>();
+
+                // Iterate all fields of this class (and parent classes)
+                IntPtr walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    if (doLog)
+                    {
+                        IntPtr cn = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string cname = cn != IntPtr.Zero ? Marshal.PtrToStringAnsi(cn) : "?";
+                        DebugLog($"        [nested] class={cname}");
+                    }
+
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr field;
+                    while ((field = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        IntPtr fieldNamePtr = IL2CPP.il2cpp_field_get_name(field);
+                        if (fieldNamePtr == IntPtr.Zero) continue;
+                        string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
+                        if (string.IsNullOrEmpty(fieldName)) continue;
+
+                        uint fieldOffset = IL2CPP.il2cpp_field_get_offset(field);
+                        if (fieldOffset == 0) continue;
+
+                        IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
+                        if (fieldType == IntPtr.Zero) continue;
+
+                        int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+                        IntPtr addr = objPtr + (int)fieldOffset;
+
+                        if (doLog) DebugLog($"        [nested]   {fieldName} typeEnum={typeEnum} offset={fieldOffset}");
+
+                        object value = typeEnum switch
+                        {
+                            1 => Marshal.ReadByte(addr) != 0,           // IL2CPP_TYPE_BOOLEAN
+                            2 => (int)Marshal.ReadByte(addr),            // IL2CPP_TYPE_CHAR
+                            3 => (int)(sbyte)Marshal.ReadByte(addr),     // IL2CPP_TYPE_I1
+                            4 => (int)Marshal.ReadByte(addr),            // IL2CPP_TYPE_U1
+                            5 => (int)Marshal.ReadInt16(addr),           // IL2CPP_TYPE_I2
+                            6 => (int)(ushort)Marshal.ReadInt16(addr),   // IL2CPP_TYPE_U2
+                            7 => Marshal.ReadInt32(addr),                // IL2CPP_TYPE_I4
+                            8 => (int)(uint)Marshal.ReadInt32(addr),     // IL2CPP_TYPE_U4
+                            9 => Marshal.ReadInt64(addr),                // IL2CPP_TYPE_I8
+                            10 => (long)(ulong)Marshal.ReadInt64(addr),  // IL2CPP_TYPE_U8
+                            11 => ReadFloat(addr),                       // IL2CPP_TYPE_R4
+                            12 => BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr)), // IL2CPP_TYPE_R8
+                            14 => ReadIl2CppStringAt(addr),              // IL2CPP_TYPE_STRING
+                            _ => null
+                        };
+
+                        if (doLog && value != null) DebugLog($"        [nested]     -> {value}");
+
+                        if (value != null)
+                            result[fieldName] = value;
+                    }
+
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                }
+
+                return result.Count > 0 ? result : $"({className})";
+            }
+            catch
+            {
+                return $"({className})";
+            }
+        }
+
+        /// <summary>
+        /// Read an IL2CPP string pointer at the given address.
+        /// </summary>
+        private string ReadIl2CppStringAt(IntPtr addr)
+        {
+            try
+            {
+                IntPtr strPtr = Marshal.ReadIntPtr(addr);
+                if (strPtr == IntPtr.Zero) return null;
+                return IL2CPP.Il2CppStringToManaged(strPtr);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Check if a property returns an IL2CPP reference type (array, list, object)
+        /// that could cause a native crash if the backing field is null.
+        /// </summary>
+        private bool IsIl2CppReferenceProperty(PropertyInfo prop)
+        {
+            var pt = prop.PropertyType;
+            try
+            {
+                // Il2CppReferenceArray<T>, Il2CppStructArray<T>
+                if (pt.IsGenericType)
+                {
+                    var genDef = pt.GetGenericTypeDefinition();
+                    if (genDef != null)
+                    {
+                        var genName = genDef.Name;
+                        if (genName.StartsWith("Il2CppReferenceArray") ||
+                            genName.StartsWith("Il2CppStructArray"))
+                            return true;
+                    }
+                }
+                // Any Il2CppObjectBase-derived type (including Il2Cpp collections, nested objects)
+                if (typeof(Il2CppObjectBase).IsAssignableFrom(pt))
+                    return true;
+            }
+            catch
+            {
+                // If we can't determine the type, treat as reference for safety
+                return true;
+            }
+            return false;
+        }
+
+        private bool ShouldSkipPropertyType(PropertyInfo prop)
+        {
+            var propType = prop.PropertyType;
+
+            // Skip delegates/actions
+            if (typeof(Delegate).IsAssignableFrom(propType))
+                return true;
+
+            // Skip IntPtr/UIntPtr
+            if (propType == typeof(IntPtr) || propType == typeof(UIntPtr))
+                return true;
+
+            // Skip indexer properties
+            if (prop.GetIndexParameters().Length > 0)
+                return true;
+
+            return false;
+        }
+
+        private void SaveSingleTemplateType(string typeName, List<object> templates)
+        {
+            try
+            {
+                string filePath = Path.Combine(_outputPath, $"{typeName}.json");
+                var json = JsonConvert.SerializeObject(templates, Formatting.Indented, new JsonSerializerSettings
+                {
+                    ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+                    NullValueHandling = NullValueHandling.Include,
+                    MaxDepth = 10
+                });
+                File.WriteAllText(filePath, json);
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"  Failed to save {typeName}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Delete all previous .json files in the output directory so stale template
+        /// types (abstract base classes with no instances) don't persist across runs.
+        /// </summary>
+        private void CleanOutputDirectory()
+        {
+            try
+            {
+                foreach (var file in Directory.GetFiles(_outputPath, "*.json"))
+                {
+                    try { File.Delete(file); } catch { }
+                }
+                DebugLog("Cleaned output directory");
+            }
+            catch { }
         }
 
         public override void OnApplicationQuit()

@@ -194,6 +194,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
         };
     }
 
+    // Master copy of all tree nodes (unfiltered)
+    private List<TreeNodeViewModel> _allTreeNodes = new();
+
     private string _searchText = string.Empty;
     public string SearchText
     {
@@ -203,14 +206,72 @@ public sealed class StatsEditorViewModel : ViewModelBase
             if (_searchText != value)
             {
                 this.RaiseAndSetIfChanged(ref _searchText, value);
-                // TODO: Implement search filtering
+                ApplySearchFilter();
             }
         }
+    }
+
+    private void ApplySearchFilter()
+    {
+        TreeNodes.Clear();
+
+        if (string.IsNullOrWhiteSpace(_searchText))
+        {
+            foreach (var node in _allTreeNodes)
+                TreeNodes.Add(node);
+            return;
+        }
+
+        var query = _searchText.Trim();
+        foreach (var node in _allTreeNodes)
+        {
+            var filtered = FilterNode(node, query);
+            if (filtered != null)
+                TreeNodes.Add(filtered);
+        }
+    }
+
+    private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string query)
+    {
+        // Leaf node: match against name
+        if (!node.IsCategory)
+        {
+            return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                ? node
+                : null;
+        }
+
+        // Category node: include if any children match
+        var matchingChildren = new List<TreeNodeViewModel>();
+        foreach (var child in node.Children)
+        {
+            var filtered = FilterNode(child, query);
+            if (filtered != null)
+                matchingChildren.Add(filtered);
+        }
+
+        if (matchingChildren.Count == 0)
+            return null;
+
+        // If all children match, return original node to avoid unnecessary copies
+        if (matchingChildren.Count == node.Children.Count)
+            return node;
+
+        var copy = new TreeNodeViewModel
+        {
+            Name = node.Name,
+            IsCategory = true
+        };
+        foreach (var child in matchingChildren)
+            copy.Children.Add(child);
+
+        return copy;
     }
 
     private void LoadAllTemplates()
     {
         TreeNodes.Clear();
+        _allTreeNodes.Clear();
 
         // Load menu.json (hierarchical structure)
         var menuPath = Path.Combine(_modpackManager.VanillaDataPath, "menu.json");
@@ -219,6 +280,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         {
             // Fallback to old method if menu.json doesn't exist
             LoadAllTemplatesOld();
+            _allTreeNodes = TreeNodes.ToList();
             return;
         }
 
@@ -242,6 +304,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
             System.Diagnostics.Debug.WriteLine($"Failed to load menu.json: {ex.Message}");
             LoadAllTemplatesOld();
         }
+
+        // Store master copy for search filtering
+        _allTreeNodes = TreeNodes.ToList();
     }
 
     private TreeNodeViewModel? BuildTreeNodeFromJson(string name, System.Text.Json.JsonElement element)
@@ -378,8 +443,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
     private string FormatNodeName(string name)
     {
         // "pirate_laser_lance" -> "Pirate Laser Lance"
-        return string.Join(" ", name.Split('_')
-            .Select(w => char.ToUpper(w[0]) + w.Substring(1)));
+        return string.Join(" ", name.Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : ""));
     }
 
     private string _setupStatus = string.Empty;

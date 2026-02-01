@@ -7,8 +7,11 @@ allowing modified template data to be written back into IL2CPP memory.
 
 Usage:
   python generate_injection_code.py
+  python generate_injection_code.py --from-schema schema.json
 """
 
+import argparse
+import json
 import re
 from pathlib import Path
 
@@ -142,20 +145,79 @@ def generate_injection_method(templates):
 
     return '\n'.join(lines)
 
+def load_templates_from_schema(schema_path):
+    """Load template field data from schema.json for injection code generation."""
+    with open(schema_path, 'r') as f:
+        schema = json.load(f)
+
+    # Map schema categories to Marshal types
+    schema_type_map = {
+        'int': 'int', 'Int32': 'int',
+        'float': 'float', 'Single': 'float',
+        'bool': 'byte', 'Boolean': 'byte',
+        'byte': 'byte', 'Byte': 'byte',
+        'short': 'short', 'Int16': 'short',
+        'long': 'long', 'Int64': 'long',
+        'double': 'double', 'Double': 'double',
+    }
+
+    templates = {}
+    for tname, tinfo in schema.get('templates', {}).items():
+        if tinfo.get('is_abstract', False):
+            continue
+
+        fields = []
+        for f in tinfo.get('fields', []):
+            if f.get('category') in ('collection', 'unity_asset', 'localization',
+                                     'unknown', 'string'):
+                continue
+
+            marshal_type = schema_type_map.get(f['type'])
+            if not marshal_type and f.get('category') in ('enum', 'reference'):
+                marshal_type = 'int'
+            if not marshal_type:
+                continue
+
+            fields.append({
+                'name': f['name'],
+                'type': marshal_type,
+                'offset': f['offset'],
+            })
+
+        if fields:
+            templates[tname] = fields
+
+    return templates
+
+
 def main():
-    extraction_file = Path('generated_extraction_code.cs')
+    parser = argparse.ArgumentParser(description="Generate template injection code")
+    parser.add_argument('--from-schema', dest='schema_path', default=None,
+                        help='Read types/fields/offsets from schema.json instead of extraction code')
+    args = parser.parse_args()
 
-    if not extraction_file.exists():
-        print(f"Error: {extraction_file} not found")
-        print("Please run generate_all_templates.py first")
-        return 1
+    if args.schema_path:
+        schema_path = Path(args.schema_path)
+        if not schema_path.exists():
+            print(f"Error: {schema_path} not found")
+            return 1
 
-    print("Reading extraction code...")
-    with open(extraction_file, 'r') as f:
-        content = f.read()
+        print(f"Loading templates from schema: {schema_path}")
+        templates = load_templates_from_schema(schema_path)
+    else:
+        extraction_file = Path('generated_extraction_code.cs')
 
-    print("Parsing field information...")
-    templates = parse_extraction_code(content)
+        if not extraction_file.exists():
+            print(f"Error: {extraction_file} not found")
+            print("Please run generate_all_templates.py first")
+            return 1
+
+        print("Reading extraction code...")
+        with open(extraction_file, 'r') as f:
+            content = f.read()
+
+        print("Parsing field information...")
+        templates = parse_extraction_code(content)
 
     print(f"Found {len(templates)} templates with {sum(len(f) for f in templates.values())} total fields")
 
@@ -166,13 +228,7 @@ def main():
     with open(output_file, 'w') as f:
         f.write(injection_code)
 
-    print(f"\n✅ Generated injection code written to: {output_file}")
-    print(f"\n💡 Next steps:")
-    print(f"   1. Review {output_file}")
-    print(f"   2. Add ApplyTemplateModifications() method to your mod loader")
-    print(f"   3. Load modpack JSON files with template modifications")
-    print(f"   4. Call ApplyTemplateModifications() for each modified template")
-    print(f"   5. Test in game!")
+    print(f"\nGenerated injection code written to: {output_file}")
 
     return 0
 

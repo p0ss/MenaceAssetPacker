@@ -306,19 +306,22 @@ public class StatsEditorView : UserControl
       ColumnDefinitions = new ColumnDefinitions("*,*")
     };
 
-    // Left: Vanilla Stats
-    var vanillaPanel = new StackPanel
+    // Left: Vanilla Stats (use Grid so ScrollViewer gets constrained height)
+    var vanillaPanel = new Grid
     {
-      Margin = new Thickness(0, 0, 12, 0)
+      Margin = new Thickness(0, 0, 12, 0),
+      RowDefinitions = new RowDefinitions("Auto,*")
     };
-    vanillaPanel.Children.Add(new TextBlock
+    var vanillaHeader = new TextBlock
     {
       Text = "Vanilla",
       FontSize = 16,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White,
       Margin = new Thickness(0, 0, 0, 12)
-    });
+    };
+    vanillaPanel.Children.Add(vanillaHeader);
+    Grid.SetRow(vanillaHeader, 0);
 
     var vanillaScrollViewer = new ScrollViewer
     {
@@ -326,14 +329,6 @@ public class StatsEditorView : UserControl
       Padding = new Thickness(16)
     };
 
-    var vanillaPropertiesPanel = new StackPanel
-    {
-      Spacing = 8
-    };
-    vanillaPropertiesPanel.Bind(StackPanel.DataContextProperty,
-      new Avalonia.Data.Binding("VanillaProperties"));
-
-    // Dynamically build property fields for vanilla (read-only)
     var vanillaContent = new ContentControl();
     vanillaContent.Bind(ContentControl.ContentProperty,
       new Avalonia.Data.Binding("VanillaProperties"));
@@ -341,23 +336,27 @@ public class StatsEditorView : UserControl
 
     vanillaScrollViewer.Content = vanillaContent;
     vanillaPanel.Children.Add(vanillaScrollViewer);
+    Grid.SetRow(vanillaScrollViewer, 1);
 
     mainGrid.Children.Add(vanillaPanel);
     Grid.SetColumn(vanillaPanel, 0);
 
-    // Right: Modified Stats
-    var modifiedPanel = new StackPanel
+    // Right: Modified Stats (use Grid so ScrollViewer gets constrained height)
+    var modifiedPanel = new Grid
     {
-      Margin = new Thickness(12, 0, 0, 0)
+      Margin = new Thickness(12, 0, 0, 0),
+      RowDefinitions = new RowDefinitions("Auto,*")
     };
-    modifiedPanel.Children.Add(new TextBlock
+    var modifiedHeader = new TextBlock
     {
       Text = "Modified",
       FontSize = 16,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White,
       Margin = new Thickness(0, 0, 0, 12)
-    });
+    };
+    modifiedPanel.Children.Add(modifiedHeader);
+    Grid.SetRow(modifiedHeader, 0);
 
     var modifiedScrollViewer = new ScrollViewer
     {
@@ -372,6 +371,7 @@ public class StatsEditorView : UserControl
 
     modifiedScrollViewer.Content = modifiedContent;
     modifiedPanel.Children.Add(modifiedScrollViewer);
+    Grid.SetRow(modifiedScrollViewer, 1);
 
     mainGrid.Children.Add(modifiedPanel);
     Grid.SetColumn(modifiedPanel, 1);

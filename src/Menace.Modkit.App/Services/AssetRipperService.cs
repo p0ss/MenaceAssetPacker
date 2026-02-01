@@ -35,7 +35,7 @@ public class AssetRipperService
             var assetRipperPath = FindAssetRipper();
             if (assetRipperPath == null)
             {
-                progressCallback?.Invoke("Error: AssetRipper not found");
+                progressCallback?.Invoke("❌ AssetRipper not found. Expected at: third_party/bundled/AssetRipper/");
                 return false;
             }
 
@@ -44,7 +44,7 @@ public class AssetRipperService
             var dataPath = Path.Combine(gameInstallPath, "Menace_Data");
             if (!Directory.Exists(dataPath))
             {
-                progressCallback?.Invoke($"Error: Game data not found at {dataPath}");
+                progressCallback?.Invoke($"❌ Game data not found at {dataPath}");
                 return false;
             }
 
@@ -55,26 +55,56 @@ public class AssetRipperService
             var startInfo = new ProcessStartInfo
             {
                 FileName = assetRipperPath,
-                Arguments = $"--launch-browser=false --port={_port}",
+                Arguments = $"--launch-browser=false --port={_port} --log=false",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(assetRipperPath)
             };
 
             _assetRipperProcess = Process.Start(startInfo);
             if (_assetRipperProcess == null)
             {
-                progressCallback?.Invoke("Error: Failed to start AssetRipper");
+                progressCallback?.Invoke("❌ Failed to start AssetRipper process");
                 return false;
             }
 
-            // Wait for server to start
+            // Wait for server to become available (retry with backoff)
             progressCallback?.Invoke("Waiting for AssetRipper server to start...");
-            await Task.Delay(3000);
-
             using var client = new HttpClient();
             client.Timeout = TimeSpan.FromMinutes(10);
+
+            bool serverReady = false;
+            for (int attempt = 0; attempt < 15; attempt++)
+            {
+                await Task.Delay(1000);
+                try
+                {
+                    var probe = await client.GetAsync($"http://localhost:{_port}/");
+                    if (probe.IsSuccessStatusCode)
+                    {
+                        serverReady = true;
+                        break;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Server not ready yet
+                }
+
+                if (_assetRipperProcess.HasExited)
+                {
+                    progressCallback?.Invoke($"❌ AssetRipper exited with code {_assetRipperProcess.ExitCode}");
+                    return false;
+                }
+            }
+
+            if (!serverReady)
+            {
+                progressCallback?.Invoke("❌ AssetRipper server did not start within 15 seconds");
+                return false;
+            }
 
             // Load folder
             progressCallback?.Invoke($"Loading game assets from {dataPath}...");
@@ -155,28 +185,38 @@ public class AssetRipperService
             ? "AssetRipper.GUI.Free.exe"
             : "AssetRipper.GUI.Free";
 
-        // Check bundled AssetRipper
-        var bundledAssetRipper = Path.Combine(
-            AppContext.BaseDirectory,
-            "third_party", "bundled", "AssetRipper", platformDir, executableName);
-
-        if (File.Exists(bundledAssetRipper))
+        // Search in multiple locations
+        var candidates = new[]
         {
-            // Ensure it's executable on Linux/Mac
-            if (!OperatingSystem.IsWindows())
-            {
-                try
-                {
-                    var chmod = Process.Start("chmod", $"+x \"{bundledAssetRipper}\"");
-                    chmod?.WaitForExit();
-                }
-                catch
-                {
-                    // chmod failed, might already be executable
-                }
-            }
+            // Bundled with app output
+            Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", "AssetRipper", platformDir, executableName),
+            // Source tree (development)
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "bundled", "AssetRipper", platformDir, executableName),
+            // Alongside the executable
+            Path.Combine(AppContext.BaseDirectory, "AssetRipper", platformDir, executableName),
+        };
 
-            return bundledAssetRipper;
+        foreach (var candidate in candidates)
+        {
+            var resolved = Path.GetFullPath(candidate);
+            if (File.Exists(resolved))
+            {
+                // Ensure it's executable on Linux/Mac
+                if (!OperatingSystem.IsWindows())
+                {
+                    try
+                    {
+                        var chmod = Process.Start("chmod", $"+x \"{resolved}\"");
+                        chmod?.WaitForExit();
+                    }
+                    catch
+                    {
+                        // chmod failed, might already be executable
+                    }
+                }
+
+                return resolved;
+            }
         }
 
         return null;
