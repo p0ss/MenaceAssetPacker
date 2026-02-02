@@ -183,7 +183,6 @@ public class BalanceModPlugin : IModpackPlugin
         if (!__result)
         {
             __result = true;
-            Log?.Msg("[CrawlPatch] Crawl re-enabled for pinned unit");
         }
     }
 

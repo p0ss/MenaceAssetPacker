@@ -269,8 +269,16 @@ public sealed class StatsEditorViewModel : ViewModelBase
             if (vanilla is bool b)
                 return bool.TryParse(modStr, out var parsed) && parsed == b;
 
+            // Array comparison: vanilla JsonElement array vs modified text
+            if (vanilla is JsonElement vanJe && vanJe.ValueKind == JsonValueKind.Array)
+                return vanJe.GetRawText() == modStr;
+
             return vanilla.ToString() == modStr;
         }
+
+        // JsonElement comparison by raw text
+        if (vanilla is JsonElement vanEl && modified is JsonElement modEl)
+            return vanEl.GetRawText() == modEl.GetRawText();
 
         // AssetPropertyValue comparison by asset name
         if (vanilla is AssetPropertyValue vanAsset && modified is AssetPropertyValue modAsset)
@@ -288,10 +296,32 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     public void UpdateModifiedProperty(string fieldName, string text)
     {
-        if (_modifiedProperties != null && _modifiedProperties.ContainsKey(fieldName))
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
+            return;
+
+        // If the vanilla value is an array, try to parse the edited text back as JSON array
+        if (_vanillaProperties != null
+            && _vanillaProperties.TryGetValue(fieldName, out var vanillaVal)
+            && vanillaVal is JsonElement vanJe
+            && vanJe.ValueKind == JsonValueKind.Array)
         {
-            _modifiedProperties[fieldName] = text;
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    // Store as a JsonElement so it round-trips correctly
+                    _modifiedProperties[fieldName] = doc.RootElement.Clone();
+                    return;
+                }
+            }
+            catch
+            {
+                // Not valid JSON — store as raw string (will be caught at save time)
+            }
         }
+
+        _modifiedProperties[fieldName] = text;
     }
 
     public void SaveToStaging()
@@ -428,6 +458,10 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (value is bool bv) return JsonValue.Create(bv);
         if (value is AssetPropertyValue asset) return JsonValue.Create(asset.AssetName ?? "");
 
+        // Preserve JsonElement arrays/objects (from vanilla data or parsed array edits)
+        if (value is JsonElement je && (je.ValueKind == JsonValueKind.Array || je.ValueKind == JsonValueKind.Object))
+            return JsonNode.Parse(je.GetRawText());
+
         return JsonValue.Create(value.ToString());
     }
 
@@ -485,9 +519,10 @@ public sealed class StatsEditorViewModel : ViewModelBase
                     }
 
                     // Try to resolve numeric asset references (legacy path)
-                    if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number
+                        && property.Value.TryGetInt64(out var longVal))
                     {
-                        var resolved = _assetResolver.Resolve(property.Value.GetInt64());
+                        var resolved = _assetResolver.Resolve(longVal);
                         if (resolved.IsReference)
                         {
                             if (resolved.HasAssetFile)
@@ -589,8 +624,16 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     // Master copy of all tree nodes (unfiltered)
     private List<TreeNodeViewModel> _allTreeNodes = new();
-    // Search index: leaf node → concatenated searchable text
-    private readonly Dictionary<TreeNodeViewModel, string> _searchIndex = new();
+
+    // Tiered search index for ranked results
+    private class SearchEntry
+    {
+        public string Name = "";        // node.Name + m_ID + templateType
+        public string Title = "";       // DisplayTitle, DisplayShortName, Title, ShortName
+        public string Fields = "";      // other string property values (excl description)
+        public string Description = ""; // Description, DisplayDescription
+    }
+    private readonly Dictionary<TreeNodeViewModel, SearchEntry> _searchEntries = new();
 
     private bool _showModpackOnly;
     public bool ShowModpackOnly
@@ -634,11 +677,28 @@ public sealed class StatsEditorViewModel : ViewModelBase
             return;
         }
 
+        var scores = new Dictionary<TreeNodeViewModel, int>();
+
         foreach (var node in _allTreeNodes)
         {
-            var filtered = FilterNode(node, query);
+            var filtered = FilterNode(node, query, scores);
             if (filtered != null)
                 TreeNodes.Add(filtered);
+        }
+
+        // Sort results by score when there's an active search query
+        if (hasQuery)
+        {
+            // Propagate scores through the tree and sort children
+            foreach (var node in TreeNodes)
+                SortByScore(node, scores);
+
+            // Sort root-level nodes by propagated score
+            var sortedRoots = TreeNodes.OrderByDescending(n =>
+                scores.TryGetValue(n, out var s) ? s : 0).ToList();
+            TreeNodes.Clear();
+            foreach (var n in sortedRoots)
+                TreeNodes.Add(n);
         }
 
         // Auto-expand filtered results so matches are visible
@@ -667,7 +727,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         }
     }
 
-    private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string? query)
+    private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string? query, Dictionary<TreeNodeViewModel, int> scores)
     {
         // Leaf node
         if (!node.IsCategory)
@@ -683,9 +743,12 @@ public sealed class StatsEditorViewModel : ViewModelBase
             if (query == null)
                 return node;
 
-            if (_searchIndex.TryGetValue(node, out var indexText))
-                return indexText.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
-            return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
+            var score = ScoreMatch(node, query);
+            if (score < 0)
+                return null;
+
+            scores[node] = score;
+            return node;
         }
 
         // Category name matches query (and not modpack-only) → include entire subtree
@@ -697,7 +760,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         var matchingChildren = new List<TreeNodeViewModel>();
         foreach (var child in node.Children)
         {
-            var filtered = FilterNode(child, query);
+            var filtered = FilterNode(child, query, scores);
             if (filtered != null)
                 matchingChildren.Add(filtered);
         }
@@ -724,7 +787,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
     {
         TreeNodes.Clear();
         _allTreeNodes.Clear();
-        _searchIndex.Clear();
+        _searchEntries.Clear();
 
         if (_dataLoader == null) return;
 
@@ -744,7 +807,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
             // Get filtered inheritance chain (exclude ScriptableObject, SerializedScriptableObject)
             var chain = _schemaService.GetInheritanceChain(templateType)
-                .Where(c => c != "ScriptableObject" && c != "SerializedScriptableObject")
+                .Where(c => c != "ScriptableObject" && c != "SerializedScriptableObject" && c != "DataTemplate")
                 .ToList();
 
             foreach (var template in templates)
@@ -823,6 +886,11 @@ public sealed class StatsEditorViewModel : ViewModelBase
             .Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : ""));
     }
 
+    private static readonly HashSet<string> TitleFieldNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Title", "ShortName", "DisplayTitle", "DisplayShortName"
+    };
+
     private void BuildSearchIndex(IEnumerable<TreeNodeViewModel> nodes)
     {
         foreach (var node in nodes)
@@ -833,11 +901,24 @@ public sealed class StatsEditorViewModel : ViewModelBase
             }
             else if (node.Template is DynamicDataTemplate dyn)
             {
-                var sb = new StringBuilder();
-                sb.Append(node.Name);
-                sb.Append(' ');
-                sb.Append(dyn.Name);
-                sb.Append(' ');
+                var entry = new SearchEntry();
+
+                // Name tier: node display name + m_ID + templateType
+                var nameSb = new StringBuilder();
+                nameSb.Append(node.Name);
+                nameSb.Append(' ');
+                nameSb.Append(dyn.Name);
+                nameSb.Append(' ');
+                nameSb.Append(dyn.TemplateTypeName);
+                entry.Name = nameSb.ToString();
+
+                // Title tier from known properties on the model
+                var titleSb = new StringBuilder();
+                if (!string.IsNullOrEmpty(dyn.DisplayTitle)) { titleSb.Append(dyn.DisplayTitle); titleSb.Append(' '); }
+                if (!string.IsNullOrEmpty(dyn.DisplayShortName)) { titleSb.Append(dyn.DisplayShortName); titleSb.Append(' '); }
+
+                var fieldsSb = new StringBuilder();
+                var descSb = new StringBuilder();
 
                 try
                 {
@@ -846,21 +927,71 @@ public sealed class StatsEditorViewModel : ViewModelBase
                     {
                         foreach (var prop in json.EnumerateObject())
                         {
-                            sb.Append(prop.Name);
-                            sb.Append(' ');
-                            if (prop.Value.ValueKind == JsonValueKind.String)
+                            if (prop.Value.ValueKind != JsonValueKind.String)
+                                continue;
+
+                            var sv = prop.Value.GetString();
+                            if (string.IsNullOrEmpty(sv))
+                                continue;
+
+                            if (prop.Name.Contains("Description", StringComparison.OrdinalIgnoreCase))
                             {
-                                sb.Append(prop.Value.GetString());
-                                sb.Append(' ');
+                                descSb.Append(sv);
+                                descSb.Append(' ');
+                            }
+                            else if (TitleFieldNames.Contains(prop.Name))
+                            {
+                                titleSb.Append(sv);
+                                titleSb.Append(' ');
+                            }
+                            else
+                            {
+                                fieldsSb.Append(sv);
+                                fieldsSb.Append(' ');
                             }
                         }
                     }
                 }
                 catch { }
 
-                _searchIndex[node] = sb.ToString();
+                entry.Title = titleSb.ToString();
+                entry.Fields = fieldsSb.ToString();
+                entry.Description = descSb.ToString();
+
+                _searchEntries[node] = entry;
             }
         }
+    }
+
+    private int ScoreMatch(TreeNodeViewModel node, string query)
+    {
+        if (!_searchEntries.TryGetValue(node, out var entry)) return -1;
+        if (entry.Name.Contains(query, StringComparison.OrdinalIgnoreCase)) return 100;
+        if (entry.Title.Contains(query, StringComparison.OrdinalIgnoreCase)) return 80;
+        if (entry.Fields.Contains(query, StringComparison.OrdinalIgnoreCase)) return 40;
+        if (entry.Description.Contains(query, StringComparison.OrdinalIgnoreCase)) return 20;
+        return -1;
+    }
+
+    private int SortByScore(TreeNodeViewModel node, Dictionary<TreeNodeViewModel, int> scores)
+    {
+        if (!node.IsCategory)
+            return scores.TryGetValue(node, out var s) ? s : 0;
+
+        int maxChild = 0;
+        foreach (var child in node.Children)
+        {
+            var childScore = SortByScore(child, scores);
+            if (childScore > maxChild) maxChild = childScore;
+        }
+
+        var sorted = node.Children.OrderByDescending(c =>
+            scores.TryGetValue(c, out var s) ? s : 0).ToList();
+        node.Children.Clear();
+        foreach (var c in sorted) node.Children.Add(c);
+
+        scores[node] = maxChild;
+        return maxChild;
     }
 
     private string _setupStatus = string.Empty;

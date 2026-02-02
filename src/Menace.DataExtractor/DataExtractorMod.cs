@@ -11,15 +11,18 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.0.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.1.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
+        private const string ExtractorVersion = "4.1.0";
+
         private string _outputPath = "";
         private string _debugLogPath = "";
+        private string _fingerprintPath = "";
         private bool _hasSaved = false;
 
         // Properties to skip during extraction
@@ -60,6 +63,7 @@ namespace Menace.DataExtractor
             var rootDir = Directory.GetParent(modsDir)?.FullName ?? "";
             _outputPath = Path.Combine(rootDir, "UserData", "ExtractedData");
             _debugLogPath = Path.Combine(_outputPath, "_extraction_debug.log");
+            _fingerprintPath = Path.Combine(_outputPath, "_extraction_fingerprint.txt");
             Directory.CreateDirectory(_outputPath);
 
             // Clear previous debug log
@@ -68,11 +72,100 @@ namespace Menace.DataExtractor
             _tryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("Menace Data Extractor v4.0.0 (Full Direct-Read)");
+            LoggerInstance.Msg("Menace Data Extractor v4.1.0 (Full Direct-Read + List extraction)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
 
-            MelonCoroutines.Start(RunExtractionCoroutine());
+            // Check if extraction can be skipped (game data unchanged)
+            var currentFingerprint = ComputeGameFingerprint(rootDir);
+            if (IsExtractionCurrent(currentFingerprint))
+            {
+                LoggerInstance.Msg("Extracted data is up to date, skipping extraction");
+                _hasSaved = true;
+                return;
+            }
+
+            LoggerInstance.Msg("Game data changed or no previous extraction, running extraction...");
+            MelonCoroutines.Start(RunExtractionCoroutine(currentFingerprint));
+        }
+
+        /// <summary>
+        /// Compute a fingerprint of the game's data files to detect when re-extraction is needed.
+        /// Includes the extractor version so updated extraction logic triggers re-extraction.
+        /// </summary>
+        private string ComputeGameFingerprint(string gameRoot)
+        {
+            // Include extractor version so logic changes invalidate the cache
+            var extractorVersion = ExtractorVersion;
+
+            try
+            {
+                // Primary: GameAssembly.dll (changes on every game update)
+                var gameAssembly = Path.Combine(gameRoot, "GameAssembly.dll");
+                if (File.Exists(gameAssembly))
+                {
+                    var info = new FileInfo(gameAssembly);
+                    return $"Extractor|{extractorVersion}|GameAssembly|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+                }
+
+                // Fallback: globalgamemanagers
+                var dataDirs = Directory.GetDirectories(gameRoot, "*_Data");
+                foreach (var dataDir in dataDirs)
+                {
+                    var ggm = Path.Combine(dataDir, "globalgamemanagers");
+                    if (File.Exists(ggm))
+                    {
+                        var info = new FileInfo(ggm);
+                        return $"Extractor|{extractorVersion}|GGM|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Check if the stored fingerprint matches the current game data
+        /// and that extracted JSON files actually exist.
+        /// </summary>
+        private bool IsExtractionCurrent(string currentFingerprint)
+        {
+            if (string.IsNullOrEmpty(currentFingerprint))
+                return false;
+
+            try
+            {
+                if (!File.Exists(_fingerprintPath))
+                    return false;
+
+                var storedFingerprint = File.ReadAllText(_fingerprintPath).Trim();
+                if (storedFingerprint != currentFingerprint)
+                    return false;
+
+                // Verify that extracted data actually exists (at least a few JSON files)
+                var jsonFiles = Directory.GetFiles(_outputPath, "*.json");
+                return jsonFiles.Length >= 3;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Save the fingerprint after successful extraction.
+        /// </summary>
+        private void SaveFingerprint(string fingerprint)
+        {
+            if (string.IsNullOrEmpty(fingerprint))
+                return;
+
+            try
+            {
+                File.WriteAllText(_fingerprintPath, fingerprint);
+            }
+            catch { }
         }
 
         // Write directly to a file and flush — survives native crashes
@@ -89,7 +182,7 @@ namespace Menace.DataExtractor
         private List<Type> _pendingTemplateTypes;
         private Dictionary<string, List<UnityEngine.Object>> _pendingObjectsByType;
 
-        private System.Collections.IEnumerator RunExtractionCoroutine()
+        private System.Collections.IEnumerator RunExtractionCoroutine(string fingerprint = null)
         {
             LoggerInstance.Msg("Waiting for game to load...");
 
@@ -231,6 +324,8 @@ namespace Menace.DataExtractor
                     LoggerInstance.Msg($"Phase 3 (names): fixed {phase3Fixed} unknown names");
 
                     _hasSaved = phase1Success > 0;
+                    if (_hasSaved)
+                        SaveFingerprint(fingerprint);
                     LoggerInstance.Msg($"Extraction completed successfully on attempt {attempt}");
                     yield break;
                 }
@@ -1168,6 +1263,14 @@ namespace Menace.DataExtractor
                                 DebugLog($"      -> dead object");
                             }
                         }
+                        else if (IsIl2CppListClass(className, expectedClass))
+                        {
+                            // IL2CPP List<T> — read contents via _items array + _size
+                            object listContents = ReadIl2CppListDirect(refPtr, expectedClass, 0);
+                            inst.Data[prop.Name] = listContents;
+                            addedAny = true;
+                            DebugLog($"      -> list ({(listContents is List<object> lc ? lc.Count + " items" : "empty/error")})");
+                        }
                         else
                         {
                             // Nested non-Unity object — read fields using metadata-known class
@@ -1190,6 +1293,147 @@ namespace Menace.DataExtractor
         }
 
         // ── Metadata-driven helpers (never call il2cpp_object_get_class on data pointers) ──
+
+        /// <summary>
+        /// Check if a class (from metadata) is an IL2CPP List by walking the parent chain.
+        /// IL2CPP generic List shows as "List`1" in metadata.
+        /// </summary>
+        private bool IsIl2CppListClass(string className, IntPtr klass)
+        {
+            if (className == "List`1") return true;
+
+            IntPtr parent = IL2CPP.il2cpp_class_get_parent(klass);
+            while (parent != IntPtr.Zero)
+            {
+                string pName = GetClassNameSafe(parent);
+                if (pName == "List`1") return true;
+                if (pName == "Object") break;
+                parent = IL2CPP.il2cpp_class_get_parent(parent);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Read the contents of an IL2CPP List&lt;T&gt; by accessing its _items array and _size.
+        /// Uses field metadata for type classification — no il2cpp_object_get_class on element pointers.
+        /// </summary>
+        private object ReadIl2CppListDirect(IntPtr listPtr, IntPtr listClass, int depth)
+        {
+            if (depth > 2) return null;
+
+            try
+            {
+                // Read _size
+                IntPtr sizeField = FindNativeField(listClass, "_size");
+                if (sizeField == IntPtr.Zero)
+                {
+                    DebugLog($"        list: _size field not found");
+                    return new List<object>();
+                }
+                uint sizeOffset = IL2CPP.il2cpp_field_get_offset(sizeField);
+                if (sizeOffset == 0) return new List<object>();
+                int size = Marshal.ReadInt32(listPtr + (int)sizeOffset);
+
+                DebugLog($"        list: _size={size}");
+                if (size <= 0) return new List<object>();
+                if (size > 100) size = 100; // safety cap
+
+                // Read _items array pointer
+                IntPtr itemsField = FindNativeField(listClass, "_items");
+                if (itemsField == IntPtr.Zero)
+                {
+                    DebugLog($"        list: _items field not found");
+                    return new List<object>();
+                }
+                uint itemsOffset = IL2CPP.il2cpp_field_get_offset(itemsField);
+                if (itemsOffset == 0) return new List<object>();
+                IntPtr arrayPtr = Marshal.ReadIntPtr(listPtr + (int)itemsOffset);
+                if (arrayPtr == IntPtr.Zero)
+                {
+                    DebugLog($"        list: _items is null");
+                    return new List<object>();
+                }
+
+                // Get element type from the _items field type metadata
+                IntPtr itemsFieldType = IL2CPP.il2cpp_field_get_type(itemsField);
+                if (itemsFieldType == IntPtr.Zero) return new List<object>();
+
+                // _items is T[] (SZARRAY), get element class from array class
+                IntPtr arrayClass = IL2CPP.il2cpp_class_from_type(itemsFieldType);
+                if (arrayClass == IntPtr.Zero) return new List<object>();
+
+                IntPtr elemClass = IL2CPP.il2cpp_class_get_element_class(arrayClass);
+                if (elemClass == IntPtr.Zero) return new List<object>();
+
+                bool elemIsValueType = IL2CPP.il2cpp_class_is_valuetype(elemClass);
+                string elemClassName = GetClassNameSafe(elemClass);
+
+                DebugLog($"        list: elem={elemClassName} isValue={elemIsValueType}");
+
+                // Read array elements — same layout as ReadArrayFromFieldMetadata
+                // Il2CppArray: [object header (2*IntPtr)] [IntPtr bounds] [int32 max_length] [elements...]
+                int headerSize = IntPtr.Size * 3;
+                int elementsOffset = headerSize + IntPtr.Size; // length padded to IntPtr
+
+                var result = new List<object>();
+
+                if (elemIsValueType)
+                {
+                    int elemSize = IL2CPP.il2cpp_class_instance_size(elemClass) - IntPtr.Size * 2;
+                    if (elemSize <= 0) elemSize = 4;
+
+                    for (int i = 0; i < size; i++)
+                    {
+                        IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
+                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize));
+                    }
+                }
+                else
+                {
+                    // Classify element type from metadata
+                    bool elemIsUnityObject = IsUnityObjectClass(elemClass);
+                    bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
+                    bool elemIsList = IsIl2CppListClass(elemClassName, elemClass);
+
+                    for (int i = 0; i < size; i++)
+                    {
+                        IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
+                        if (elemPtr == IntPtr.Zero)
+                        {
+                            result.Add(null);
+                            continue;
+                        }
+
+                        if (elemIsUnityObject)
+                        {
+                            if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
+                                result.Add(ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})");
+                            else
+                                result.Add(null);
+                        }
+                        else if (elemIsLocalization)
+                        {
+                            result.Add(ReadLocalizedStringWithClass(elemPtr, elemClass) ?? "");
+                        }
+                        else if (elemIsList)
+                        {
+                            result.Add(ReadIl2CppListDirect(elemPtr, elemClass, depth + 1));
+                        }
+                        else
+                        {
+                            result.Add(ReadNestedObjectDirect(elemPtr, elemClass, elemClassName, depth + 1));
+                        }
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        list read error: {ex.Message}");
+                return new List<object>();
+            }
+        }
 
         /// <summary>
         /// Get a class name from IL2CPP metadata (safe, no object memory reads).

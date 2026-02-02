@@ -118,6 +118,57 @@ public class ModLoaderInstaller
         }
     }
 
+    public async Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
+    {
+        try
+        {
+            progressCallback?.Invoke("Installing ModpackLoader mod...");
+
+            var modpackLoaderDll = Path.Combine(
+                AppContext.BaseDirectory,
+                "third_party", "bundled", "ModpackLoader", "Menace.ModpackLoader.dll");
+
+            if (!File.Exists(modpackLoaderDll))
+            {
+                progressCallback?.Invoke("❌ Bundled ModpackLoader.dll not found");
+                return false;
+            }
+
+            var modsFolder = Path.Combine(_gameInstallPath, "Mods");
+            Directory.CreateDirectory(modsFolder);
+
+            var targetPath = Path.Combine(modsFolder, "Menace.ModpackLoader.dll");
+            File.Copy(modpackLoaderDll, targetPath, overwrite: true);
+
+            progressCallback?.Invoke("✓ ModpackLoader mod installed successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            progressCallback?.Invoke($"❌ Error installing ModpackLoader: {ex.Message}");
+            return false;
+        }
+    }
+
+    public async Task CleanModsDirectoryAsync(Action<string>? progressCallback = null)
+    {
+        var modsFolder = Path.Combine(_gameInstallPath, "Mods");
+
+        if (Directory.Exists(modsFolder))
+        {
+            progressCallback?.Invoke("Deleting Mods directory contents...");
+
+            foreach (var file in Directory.GetFiles(modsFolder))
+                File.Delete(file);
+
+            foreach (var dir in Directory.GetDirectories(modsFolder))
+                Directory.Delete(dir, true);
+        }
+
+        Directory.CreateDirectory(modsFolder);
+        progressCallback?.Invoke("✓ Mods directory cleaned");
+    }
+
     public bool IsMelonLoaderInstalled()
     {
         var melonLoaderDll = Path.Combine(_gameInstallPath, "MelonLoader", "MelonLoader.dll");

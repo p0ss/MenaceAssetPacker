@@ -517,14 +517,14 @@ public class ModpacksView : UserControl
 
     mainStack.Children.Add(globalButtonPanel);
 
-    var deployStatusText = new TextBlock
+    var deployStatusText = new SelectableTextBlock
     {
       FontSize = 12,
       Foreground = new SolidColorBrush(Color.Parse("#BBBBBB")),
       TextWrapping = TextWrapping.Wrap,
       Margin = new Thickness(0, 4, 0, 0)
     };
-    deployStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DeployStatus"));
+    deployStatusText.Bind(SelectableTextBlock.TextProperty, new Avalonia.Data.Binding("DeployStatus"));
     mainStack.Children.Add(deployStatusText);
 
     var scrollViewer = new ScrollViewer
@@ -556,11 +556,11 @@ public class ModpacksView : UserControl
     Margin = new Thickness(0, 0, 0, 16)
   };
 
-  private void OnDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  private async void OnDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
+    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null && !vm.IsDeploying)
     {
-      vm.SelectedModpack.Deploy();
+      await vm.DeploySingleAsync();
     }
   }
 

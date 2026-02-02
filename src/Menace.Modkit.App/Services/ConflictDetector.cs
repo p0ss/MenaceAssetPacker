@@ -24,24 +24,27 @@ public class ConflictDetector
         foreach (var modpack in orderedModpacks)
         {
             // Collect patches from the manifest
-            foreach (var (templateType, instances) in modpack.Patches)
+            if (modpack.Patches != null)
             {
-                foreach (var (instanceName, fields) in instances)
+                foreach (var (templateType, instances) in modpack.Patches)
                 {
-                    foreach (var (fieldName, value) in fields)
+                    foreach (var (instanceName, fields) in instances)
                     {
-                        var key = $"{templateType}/{instanceName}/{fieldName}";
-                        if (!fieldMap.TryGetValue(key, out var list))
+                        foreach (var (fieldName, value) in fields)
                         {
-                            list = new List<ConflictingMod>();
-                            fieldMap[key] = list;
+                            var key = $"{templateType}/{instanceName}/{fieldName}";
+                            if (!fieldMap.TryGetValue(key, out var list))
+                            {
+                                list = new List<ConflictingMod>();
+                                fieldMap[key] = list;
+                            }
+                            list.Add(new ConflictingMod
+                            {
+                                ModpackName = modpack.Name,
+                                LoadOrder = modpack.LoadOrder,
+                                Value = value.ToString() ?? string.Empty
+                            });
                         }
-                        list.Add(new ConflictingMod
-                        {
-                            ModpackName = modpack.Name,
-                            LoadOrder = modpack.LoadOrder,
-                            Value = value.ToString() ?? string.Empty
-                        });
                     }
                 }
             }
@@ -117,6 +120,8 @@ public class ConflictDetector
 
         foreach (var modpack in modpacks)
         {
+            if (modpack.Code?.PrebuiltDlls == null) continue;
+
             foreach (var dll in modpack.Code.PrebuiltDlls)
             {
                 var asmName = Path.GetFileNameWithoutExtension(dll);

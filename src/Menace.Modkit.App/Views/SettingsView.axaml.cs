@@ -94,6 +94,56 @@ public class SettingsView : UserControl
     installBorder.Child = installStack;
     stack.Children.Add(installBorder);
 
+    // Deployment section
+    var deployBorder = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(24)
+    };
+
+    var deployStack = new StackPanel { Spacing = 16 };
+
+    deployStack.Children.Add(new TextBlock
+    {
+      Text = "Deployment",
+      FontSize = 16,
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White
+    });
+
+    deployStack.Children.Add(new TextBlock
+    {
+      Text = "Wipe the game's Mods folder and install fresh runtime dependencies (MelonLoader, DataExtractor, ModpackLoader). After clean redeploy, go to Modpacks and click Deploy All to redeploy your mods.",
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap
+    });
+
+    var cleanRedeployButton = new Button
+    {
+      Content = "Clean Redeploy",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(16, 8)
+    };
+    cleanRedeployButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("CleanRedeployCommand"));
+    deployStack.Children.Add(cleanRedeployButton);
+
+    var cleanRedeployStatusText = new TextBlock
+    {
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap,
+      FontSize = 12
+    };
+    cleanRedeployStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("CleanRedeployStatus"));
+    deployStack.Children.Add(cleanRedeployStatusText);
+
+    deployBorder.Child = deployStack;
+    stack.Children.Add(deployBorder);
+
     // Extracted Assets Directory
     var assetsBorder = new Border
     {

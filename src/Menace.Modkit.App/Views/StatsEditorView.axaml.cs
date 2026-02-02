@@ -323,11 +323,12 @@ public class StatsEditorView : UserControl
     grid.Children.Add(buttonPanel);
     Grid.SetRow(buttonPanel, 1);
 
-    // Row 2: Hierarchical TreeView
+    // Row 2: Hierarchical TreeView (non-virtualizing so Expand All works fully)
     var treeView = new TreeView
     {
       Background = Brushes.Transparent,
-      BorderThickness = new Thickness(0)
+      BorderThickness = new Thickness(0),
+      ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Panel?>(() => new StackPanel())
     };
     treeView.Bind(TreeView.ItemsSourceProperty,
       new Avalonia.Data.Binding("TreeNodes"));
@@ -355,6 +356,10 @@ public class StatsEditorView : UserControl
     {
       if (e.Container is TreeViewItem tvi && tvi.DataContext is TreeNodeViewModel nodeVm)
       {
+        // Set initial value before binding so the container starts in the correct state.
+        // Without this, Avalonia defaults to collapsed and the binding may not propagate
+        // in time for cascading expansion to work.
+        tvi.IsExpanded = nodeVm.IsExpanded;
         tvi.Bind(TreeViewItem.IsExpandedProperty,
           new Avalonia.Data.Binding("IsExpanded")
           {
@@ -599,16 +604,43 @@ public class StatsEditorView : UserControl
           return fieldStack;
 
         case System.Text.Json.JsonValueKind.Array:
-          // Array - show as formatted list
-          var arrayPanel = new StackPanel { Spacing = 4, Margin = new Thickness(16, 4, 0, 0) };
-          int idx = 0;
-          foreach (var item in jsonElement.EnumerateArray())
+          // Array - show as editable JSON text for full-replacement patching
+          var arrayText = jsonElement.GetRawText();
+          if (isEditable)
           {
-            var itemField = CreatePropertyField($"[{idx}]", item, isEditable, 0);
-            arrayPanel.Children.Add(itemField);
-            idx++;
+            var textBox = new TextBox
+            {
+              Text = arrayText,
+              Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+              Foreground = Brushes.White,
+              BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+              BorderThickness = new Thickness(1),
+              Padding = new Thickness(8, 6),
+              FontSize = 12,
+              TextWrapping = TextWrapping.Wrap,
+              AcceptsReturn = true,
+              MinHeight = 48,
+              Tag = name
+            };
+            textBox.TextChanged += OnEditableTextBoxChanged;
+            fieldStack.Children.Add(textBox);
           }
-          fieldStack.Children.Add(arrayPanel);
+          else
+          {
+            var valueBox = new TextBox
+            {
+              Text = arrayText,
+              Background = Brushes.Transparent,
+              Foreground = Brushes.White,
+              BorderThickness = new Thickness(0),
+              Padding = new Thickness(8, 6),
+              FontSize = 12,
+              IsReadOnly = true,
+              TextWrapping = TextWrapping.Wrap,
+              Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Arrow)
+            };
+            fieldStack.Children.Add(valueBox);
+          }
           return fieldStack;
 
         default:

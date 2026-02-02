@@ -21,12 +21,66 @@ namespace Menace.Modkit.App.Services;
 public class DeployManager
 {
     private readonly ModpackManager _modpackManager;
+    private readonly CompilationService _compilationService = new();
     private string DeployStateFilePath =>
         Path.Combine(Path.GetDirectoryName(_modpackManager.StagingBasePath)!, "deploy-state.json");
 
     public DeployManager(ModpackManager modpackManager)
     {
         _modpackManager = modpackManager;
+    }
+
+    /// <summary>
+    /// Deploy a single staging modpack to the game's Mods/ folder (with compilation).
+    /// </summary>
+    public async Task<DeployResult> DeploySingleAsync(ModpackManifest modpack, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var modsBasePath = _modpackManager.ModsBasePath;
+        if (string.IsNullOrEmpty(modsBasePath))
+            return new DeployResult { Success = false, Message = "Game install path not set" };
+
+        try
+        {
+            // Deploy runtime DLLs first so ModpackLoader.dll is available as a reference
+            progress?.Report("Deploying runtime DLLs...");
+            await Task.Run(() => DeployRuntimeDlls(modsBasePath), ct);
+
+            // Compile source code if present
+            if (modpack.Code.HasAnySources)
+            {
+                progress?.Report($"Compiling {modpack.Name}...");
+                ModkitLog.Info($"Compiling {modpack.Name}: sources={string.Join(", ", modpack.Code.Sources)}, refs={string.Join(", ", modpack.Code.References)}");
+                var compileResult = await _compilationService.CompileModpackAsync(modpack, ct);
+                foreach (var diag in compileResult.Diagnostics)
+                    ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
+                if (!compileResult.Success)
+                {
+                    var errors = string.Join("\n", compileResult.Diagnostics
+                        .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
+                        .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
+                    var msg = $"Compile failed for {modpack.Name}:\n{errors}";
+                    ModkitLog.Error(msg);
+                    return new DeployResult { Success = false, Message = msg };
+                }
+                ModkitLog.Info($"Compiled {modpack.Name} → {compileResult.OutputDllPath}");
+            }
+
+            progress?.Report($"Deploying {modpack.Name}...");
+            await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
+
+            ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
+            progress?.Report($"Deployed {modpack.Name}");
+            return new DeployResult { Success = true, Message = $"Deployed {modpack.Name}", DeployedCount = 1 };
+        }
+        catch (OperationCanceledException)
+        {
+            return new DeployResult { Success = false, Message = "Deployment cancelled" };
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"Deploy single failed: {ex}");
+            return new DeployResult { Success = false, Message = $"Deploy failed: {ex.Message}" };
+        }
     }
 
     /// <summary>
@@ -56,12 +110,39 @@ public class DeployManager
             progress?.Report("Cleaning old deployment...");
             await Task.Run(() => CleanPreviousDeployment(previousState, modsBasePath), ct);
 
-            // Step 2: Deploy each modpack
+            // Step 2: Deploy runtime DLLs first (ModpackLoader, DataExtractor, etc.)
+            // Must happen before compilation so modpacks can reference Menace.ModpackLoader.dll
+            progress?.Report("Deploying runtime DLLs...");
+            var runtimeFiles = await Task.Run(() => DeployRuntimeDlls(modsBasePath), ct);
+            deployedFiles.AddRange(runtimeFiles);
+
+            // Step 3: Compile and deploy each modpack
             int total = modpacks.Count;
             for (int i = 0; i < total; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var modpack = modpacks[i];
+
+                // Compile source code if present
+                if (modpack.Code.HasAnySources)
+                {
+                    progress?.Report($"Compiling {modpack.Name} ({i + 1}/{total})...");
+                    ModkitLog.Info($"Compiling {modpack.Name}: sources={string.Join(", ", modpack.Code.Sources)}, refs={string.Join(", ", modpack.Code.References)}");
+                    var compileResult = await _compilationService.CompileModpackAsync(modpack, ct);
+                    foreach (var diag in compileResult.Diagnostics)
+                        ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
+                    if (!compileResult.Success)
+                    {
+                        var errors = string.Join("\n", compileResult.Diagnostics
+                            .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
+                            .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
+                        var msg = $"Compilation failed for {modpack.Name}:\n{errors}";
+                        ModkitLog.Error(msg);
+                        return new DeployResult { Success = false, Message = msg };
+                    }
+                    ModkitLog.Info($"Compiled {modpack.Name} → {compileResult.OutputDllPath}");
+                }
+
                 progress?.Report($"Deploying {modpack.Name} ({i + 1}/{total})...");
 
                 var files = await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
@@ -77,12 +158,12 @@ public class DeployManager
                 });
             }
 
-            // Step 3: Try to compile merged patches into an asset bundle
+            // Step 4: Try to compile merged patches into an asset bundle
             progress?.Report("Compiling asset bundles...");
             var bundleFiles = await TryCompileBundleAsync(modpacks, modsBasePath, ct);
             deployedFiles.AddRange(bundleFiles);
 
-            // Step 4: Save deploy state
+            // Step 5: Save deploy state
             var state = new DeployState
             {
                 DeployedModpacks = deployedModpacks,
@@ -105,6 +186,7 @@ public class DeployManager
         }
         catch (Exception ex)
         {
+            ModkitLog.Error($"Deploy all failed: {ex}");
             return new DeployResult { Success = false, Message = $"Deploy failed: {ex.Message}" };
         }
     }
@@ -483,6 +565,55 @@ public class DeployManager
 
         var manifestPath = Path.Combine(deployPath, "modpack.json");
         File.WriteAllText(manifestPath, runtimeObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    /// <summary>
+    /// Copy runtime DLLs (ModpackLoader, DataExtractor, etc.) from the runtime/
+    /// directory to the game's Mods/ root. Compares file sizes to avoid unnecessary copies.
+    /// Returns list of deployed files (relative to modsBasePath).
+    /// </summary>
+    private List<string> DeployRuntimeDlls(string modsBasePath)
+    {
+        var files = new List<string>();
+        var runtimeDlls = _modpackManager.GetRuntimeDlls();
+
+        if (runtimeDlls.Count == 0)
+            return files;
+
+        foreach (var (fileName, sourcePath) in runtimeDlls)
+        {
+            var destPath = Path.Combine(modsBasePath, fileName);
+            try
+            {
+                // Copy if destination doesn't exist or source is different size/newer
+                bool needsCopy = !File.Exists(destPath);
+                if (!needsCopy)
+                {
+                    var srcInfo = new FileInfo(sourcePath);
+                    var destInfo = new FileInfo(destPath);
+                    needsCopy = srcInfo.Length != destInfo.Length ||
+                                srcInfo.LastWriteTimeUtc > destInfo.LastWriteTimeUtc;
+                }
+
+                if (needsCopy)
+                {
+                    File.Copy(sourcePath, destPath, true);
+                    Console.WriteLine($"[DeployManager] Deployed runtime DLL: {fileName}");
+                }
+                else
+                {
+                    Console.WriteLine($"[DeployManager] Runtime DLL up to date: {fileName}");
+                }
+
+                files.Add(fileName);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DeployManager] Failed to deploy {fileName}: {ex.Message}");
+            }
+        }
+
+        return files;
     }
 
     private void CleanPreviousDeployment(DeployState previousState, string modsBasePath)

@@ -124,11 +124,12 @@ public class AssetBrowserView : UserControl
         grid.Children.Add(buttonPanel);
         Grid.SetRow(buttonPanel, 1);
 
-        // Row 2: Asset Tree
+        // Row 2: Asset Tree (non-virtualizing so Expand All works fully)
         var treeView = new TreeView
         {
             Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0)
+            BorderThickness = new Thickness(0),
+            ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         treeView.Bind(TreeView.ItemsSourceProperty,
             new Avalonia.Data.Binding("FolderTree"));

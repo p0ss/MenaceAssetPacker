@@ -56,6 +56,9 @@ echo ""
 echo "📦 Building DataExtractor Mod..."
 $DOTNET build src/Menace.DataExtractor -c Release -o dist/DataExtractor
 
+# Update source tree bundled copy
+cp dist/DataExtractor/Menace.DataExtractor.dll third_party/bundled/DataExtractor/
+
 # Bundle DataExtractor with GUI builds
 echo "  → Bundling DataExtractor with GUI builds..."
 mkdir -p dist/gui-linux-x64/third_party/bundled/DataExtractor
@@ -67,6 +70,10 @@ cp dist/DataExtractor/Menace.DataExtractor.dll dist/gui-win-x64/third_party/bund
 echo ""
 echo "📦 Building ModpackLoader Mod..."
 $DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
+
+# Update source tree bundled copy
+mkdir -p third_party/bundled/ModpackLoader
+cp dist/ModpackLoader/Menace.ModpackLoader.dll third_party/bundled/ModpackLoader/
 
 # Bundle ModpackLoader with GUI builds
 echo "  → Bundling ModpackLoader with GUI builds..."

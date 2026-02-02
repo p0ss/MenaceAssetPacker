@@ -43,19 +43,54 @@ public sealed class ModpacksViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isDeploying, value);
     }
 
+    public async Task DeploySingleAsync()
+    {
+        if (SelectedModpack == null) return;
+
+        IsDeploying = true;
+        DeployStatus = "Deploying...";
+
+        try
+        {
+            var progress = new Progress<string>(s => DeployStatus = s);
+            var result = await _deployManager.DeploySingleAsync(SelectedModpack.Manifest, progress);
+            DeployStatus = result.Message;
+
+            if (result.Success)
+                RefreshModpacks();
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Deploy failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDeploying = false;
+        }
+    }
+
     public async Task DeployAllAsync()
     {
         IsDeploying = true;
         DeployStatus = "Deploying...";
 
-        var progress = new Progress<string>(s => DeployStatus = s);
-        var result = await _deployManager.DeployAllAsync(progress);
+        try
+        {
+            var progress = new Progress<string>(s => DeployStatus = s);
+            var result = await _deployManager.DeployAllAsync(progress);
+            DeployStatus = result.Message;
 
-        DeployStatus = result.Message;
-        IsDeploying = false;
-
-        if (result.Success)
-            RefreshModpacks();
+            if (result.Success)
+                RefreshModpacks();
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Deploy failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDeploying = false;
+        }
     }
 
     public async Task UndeployAllAsync()

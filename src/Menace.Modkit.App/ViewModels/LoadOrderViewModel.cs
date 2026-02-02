@@ -47,16 +47,24 @@ public sealed class LoadOrderViewModel : ViewModelBase
     /// </summary>
     public void Refresh()
     {
-        var modpacks = _modpackManager.GetStagingModpacks()
-            .OrderBy(m => m.LoadOrder)
-            .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        try
+        {
+            var modpacks = _modpackManager.GetStagingModpacks()
+                .OrderBy(m => m.LoadOrder)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-        OrderedModpacks.Clear();
-        foreach (var m in modpacks)
-            OrderedModpacks.Add(new LoadOrderItemViewModel(m));
+            OrderedModpacks.Clear();
+            foreach (var m in modpacks)
+                OrderedModpacks.Add(new LoadOrderItemViewModel(m));
 
-        RunConflictDetection(modpacks);
+            RunConflictDetection(modpacks);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"Load order refresh failed: {ex}");
+            StatusText = $"Error: {ex.Message}";
+        }
     }
 
     /// <summary>
@@ -64,11 +72,19 @@ public sealed class LoadOrderViewModel : ViewModelBase
     /// </summary>
     public void MoveUp(LoadOrderItemViewModel item)
     {
-        var index = OrderedModpacks.IndexOf(item);
-        if (index <= 0) return;
+        try
+        {
+            var index = OrderedModpacks.IndexOf(item);
+            if (index <= 0) return;
 
-        OrderedModpacks.Move(index, index - 1);
-        ReassignLoadOrders();
+            OrderedModpacks.Move(index, index - 1);
+            ReassignLoadOrders();
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"MoveUp failed: {ex}");
+            StatusText = $"Error: {ex.Message}";
+        }
     }
 
     /// <summary>
@@ -76,11 +92,19 @@ public sealed class LoadOrderViewModel : ViewModelBase
     /// </summary>
     public void MoveDown(LoadOrderItemViewModel item)
     {
-        var index = OrderedModpacks.IndexOf(item);
-        if (index < 0 || index >= OrderedModpacks.Count - 1) return;
+        try
+        {
+            var index = OrderedModpacks.IndexOf(item);
+            if (index < 0 || index >= OrderedModpacks.Count - 1) return;
 
-        OrderedModpacks.Move(index, index + 1);
-        ReassignLoadOrders();
+            OrderedModpacks.Move(index, index + 1);
+            ReassignLoadOrders();
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"MoveDown failed: {ex}");
+            StatusText = $"Error: {ex.Message}";
+        }
     }
 
     private void ReassignLoadOrders()
@@ -106,17 +130,26 @@ public sealed class LoadOrderViewModel : ViewModelBase
         DllConflicts.Clear();
         DependencyIssues.Clear();
 
-        var fieldConflicts = _conflictDetector.DetectFieldConflicts(modpacks);
-        foreach (var c in fieldConflicts)
-            FieldConflicts.Add(c);
+        try
+        {
+            var fieldConflicts = _conflictDetector.DetectFieldConflicts(modpacks);
+            foreach (var c in fieldConflicts)
+                FieldConflicts.Add(c);
 
-        var dllConflicts = _conflictDetector.DetectDllConflicts(modpacks);
-        foreach (var c in dllConflicts)
-            DllConflicts.Add(c);
+            var dllConflicts = _conflictDetector.DetectDllConflicts(modpacks);
+            foreach (var c in dllConflicts)
+                DllConflicts.Add(c);
 
-        var depIssues = _conflictDetector.DetectDependencyIssues(modpacks);
-        foreach (var i in depIssues)
-            DependencyIssues.Add(i);
+            var depIssues = _conflictDetector.DetectDependencyIssues(modpacks);
+            foreach (var i in depIssues)
+                DependencyIssues.Add(i);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"Conflict detection failed: {ex}");
+            StatusText = $"Conflict detection error: {ex.Message}";
+            return;
+        }
 
         this.RaisePropertyChanged(nameof(HasConflicts));
         this.RaisePropertyChanged(nameof(HasDependencyIssues));

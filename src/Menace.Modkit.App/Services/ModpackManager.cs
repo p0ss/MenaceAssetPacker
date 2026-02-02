@@ -27,6 +27,13 @@ public class ModpackManager
 
     public string StagingBasePath => _stagingBasePath;
 
+    /// <summary>
+    /// Directory containing runtime DLLs (ModpackLoader, DataExtractor, DevMode)
+    /// that should be deployed to the game's Mods/ root alongside modpacks.
+    /// </summary>
+    public string RuntimeDllsPath =>
+        Path.Combine(Path.GetDirectoryName(_stagingBasePath)!, "runtime");
+
     public string VanillaDataPath
     {
         get
@@ -493,9 +500,24 @@ public class ModpackManager
             new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    /// <summary>
+    /// Get runtime DLLs available in the runtime/ directory.
+    /// Returns list of (fileName, fullPath) pairs.
+    /// </summary>
+    public List<(string FileName, string FullPath)> GetRuntimeDlls()
+    {
+        if (!Directory.Exists(RuntimeDllsPath))
+            return new List<(string, string)>();
+
+        return Directory.GetFiles(RuntimeDllsPath, "*.dll")
+            .Select(f => (Path.GetFileName(f), f))
+            .ToList();
+    }
+
     private void EnsureDirectoriesExist()
     {
         Directory.CreateDirectory(_stagingBasePath);
+        Directory.CreateDirectory(RuntimeDllsPath);
 
         if (!string.IsNullOrEmpty(VanillaDataPath))
             Directory.CreateDirectory(VanillaDataPath);

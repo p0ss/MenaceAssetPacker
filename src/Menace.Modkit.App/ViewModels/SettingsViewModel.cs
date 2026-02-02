@@ -13,6 +13,8 @@ public sealed class SettingsViewModel : ViewModelBase
   private string _installPathStatus = string.Empty;
   private string _assetsPathStatus = string.Empty;
   private string _cacheStatus = "Calculating...";
+  private string _cleanRedeployStatus = string.Empty;
+  private bool _isCleanRedeploying;
 
   public SettingsViewModel(IServiceProvider serviceProvider)
   {
@@ -25,6 +27,7 @@ public sealed class SettingsViewModel : ViewModelBase
     ViewCacheDetailsCommand = ReactiveCommand.Create(ViewCacheDetails);
     ClearCacheCommand = ReactiveCommand.Create(ClearCache);
     ForceReExtractCommand = ReactiveCommand.CreateFromTask(ForceReExtractAsync);
+    CleanRedeployCommand = ReactiveCommand.CreateFromTask(CleanRedeployAsync);
   }
 
   public string GameInstallPath
@@ -170,10 +173,23 @@ public sealed class SettingsViewModel : ViewModelBase
     private set => this.RaiseAndSetIfChanged(ref _cacheStatus, value);
   }
 
+  public string CleanRedeployStatus
+  {
+    get => _cleanRedeployStatus;
+    private set => this.RaiseAndSetIfChanged(ref _cleanRedeployStatus, value);
+  }
+
+  public bool IsCleanRedeploying
+  {
+    get => _isCleanRedeploying;
+    private set => this.RaiseAndSetIfChanged(ref _isCleanRedeploying, value);
+  }
+
   // Commands
   public ReactiveCommand<Unit, Unit> ViewCacheDetailsCommand { get; }
   public ReactiveCommand<Unit, Unit> ClearCacheCommand { get; }
   public ReactiveCommand<Unit, Unit> ForceReExtractCommand { get; }
+  public ReactiveCommand<Unit, Unit> CleanRedeployCommand { get; }
 
   private void ValidateInstallPath()
   {
@@ -359,6 +375,49 @@ public sealed class SettingsViewModel : ViewModelBase
     if (launched)
     {
       CacheStatus = "Game launched. Close it after reaching the main menu, then refresh the Stats Editor.";
+    }
+  }
+
+  private async Task CleanRedeployAsync()
+  {
+    IsCleanRedeploying = true;
+    try
+    {
+      if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
+      {
+        CleanRedeployStatus = "❌ Set a valid game installation path first";
+        return;
+      }
+
+      var installer = new ModLoaderInstaller(GameInstallPath);
+
+      CleanRedeployStatus = "Cleaning Mods directory...";
+      await installer.CleanModsDirectoryAsync(s => CleanRedeployStatus = s);
+
+      if (!installer.IsMelonLoaderInstalled())
+      {
+        CleanRedeployStatus = "Installing MelonLoader...";
+        var ok = await installer.InstallMelonLoaderAsync(s => CleanRedeployStatus = s);
+        if (!ok) return;
+      }
+
+      CleanRedeployStatus = "Installing DataExtractor...";
+      if (!await installer.InstallDataExtractorAsync(s => CleanRedeployStatus = s))
+        return;
+
+      CleanRedeployStatus = "Installing ModpackLoader...";
+      if (!await installer.InstallModpackLoaderAsync(s => CleanRedeployStatus = s))
+        return;
+
+      CleanRedeployStatus = "✓ Clean redeploy complete. Go to Modpacks and click Deploy All to redeploy your mods.";
+    }
+    catch (Exception ex)
+    {
+      CleanRedeployStatus = $"❌ Error during clean redeploy: {ex.Message}";
+    }
+    finally
+    {
+      IsCleanRedeploying = false;
     }
   }
 

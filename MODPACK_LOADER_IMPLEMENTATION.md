@@ -14,6 +14,7 @@ ModpackLoader is a MelonLoader mod (`Menace.ModpackLoader.dll`) that discovers m
 │   CompilationService (Roslyn)    │  Compile src/ -> build/*.dll
 │   SecurityScanner                │  Scan sources for dangerous patterns
 │   DeployManager                  │  Copy modpack + DLL to Mods/
+│   BundleCompiler                 │  Merge patches -> UnityFS bundle
 └──────────────┬───────────────────┘
                │  deploys to
                ▼
@@ -21,14 +22,15 @@ ModpackLoader is a MelonLoader mod (`Menace.ModpackLoader.dll`) that discovers m
 │     Mods/<ModpackName>/          │
 │     ├── modpack.json             │  V2 manifest
 │     ├── dlls/                    │  Compiled plugin DLLs
-│     ├── bundles/                 │  AssetBundles (.bundle)
-│     └── Assets/                  │  Loose asset files
+│     ├── *.bundle                 │  AssetBundles (models, audio, etc.)
+│     └── assets/                  │  Loose asset files (images)
 └──────────────┬───────────────────┘
                │  loaded by
                ▼
 ┌──────────────────────────────────┐
 │     ModpackLoaderMod (MelonMod)  │  Entry point, runs in game
-│     ├── BundleLoader             │  AssetBundle.LoadFromFile
+│     ├── BundleLoader             │  AssetBundle loading + asset registry
+│     ├── AssetReplacer            │  Multi-type asset replacement
 │     ├── DllLoader                │  Assembly.LoadFrom, IModpackPlugin discovery
 │     └── TemplateInjection        │  Reflection-based field injection
 └──────────────┬───────────────────┘
@@ -38,6 +40,7 @@ ModpackLoader is a MelonLoader mod (`Menace.ModpackLoader.dll`) that discovers m
 │     Menace Game (Unity IL2CPP)   │
 │     Assembly-CSharp              │
 │     ScriptableObject templates   │
+│     Textures, Meshes, Audio, etc │
 └──────────────────────────────────┘
 ```
 
@@ -78,8 +81,8 @@ V1 manifests (using `templates` instead of `patches`, no `manifestVersion` or `c
 | Section | Purpose |
 |---------|---------|
 | `patches` | Template field overrides: `TypeName -> InstanceName -> FieldName -> Value`. Applied via reflection + `Marshal.Write*`. |
-| `assets` | Asset path -> local file path mappings for texture/sprite replacement. |
-| `bundles` | List of `.bundle` files to load via `AssetBundle.LoadFromFile`. |
+| `assets` | Asset path -> local file path mappings. Used for disk-file texture replacement (PNG/JPG/TGA/BMP). |
+| `bundles` | List of `.bundle` files to load via `AssetBundle.LoadFromFile`. Primary path for all non-texture assets (models, audio, materials, prefabs). |
 | `code` | Source files, assembly references, and prebuilt DLLs for plugin compilation. |
 | `securityStatus` | Trust label from SecurityScanner (`SourceVerified`, `SourceWithWarnings`, `Unreviewed`). |
 
@@ -98,6 +101,7 @@ V1 manifests (using `templates` instead of `patches`, no `manifestVersion` or `c
 
 1. Forward to **DllLoader.NotifySceneLoaded** (all plugins).
 2. On first `MainMenu` scene: start coroutine to wait for templates, then **ApplyAllModpacks** (template injection).
+3. On every scene load: start coroutine to apply asset replacements after a short delay (**AssetReplacer.ApplyAllReplacements**). This runs whenever disk-file replacements or bundle assets are registered.
 
 ### 3. ModpackLoaderMod.OnUpdate / OnGUI
 
@@ -126,9 +130,75 @@ NotifyOnGUI()
 
 Each plugin gets its own `MelonLogger.Instance` (named after the modpack) and `HarmonyLib.Harmony` instance (ID: `com.menace.modpack.<assembly>.<type>`). All forwarding calls are individually try/caught.
 
-## BundleLoader
+## BundleLoader -- asset registry
 
-Scans modpack directories for `*.bundle` files, calls `AssetBundle.LoadFromFile`, and logs loaded assets. Provides `UnloadAll()` for cleanup.
+Scans modpack directories for `*.bundle` files, calls `AssetBundle.LoadFromFile`, and registers every loaded asset in a queryable registry. This is the primary path for non-texture content: 3D models (GLB/FBX), audio, materials, prefabs, and any other Unity asset type.
+
+### Asset registration
+
+When a bundle is loaded, `LoadAllAssets()` is called and each asset is stored in two indices:
+
+- **Name index** (`_assetsByName`): asset name -> list of objects (multiple types may share a name).
+- **Type+name index** (`_assetsByTypeAndName`): `"TypeName:assetName"` -> single object. Last-loaded wins for the same key, so modpack load order determines which replacement takes effect.
+
+### Query API
+
+```csharp
+// By type and name
+Texture2D tex = BundleLoader.GetAsset<Texture2D>("MyTexture");
+AudioClip clip = BundleLoader.GetAsset<AudioClip>("BattleTheme");
+GameObject prefab = BundleLoader.GetAsset<GameObject>("PirateCaptain");
+
+// By name only (first match, any type)
+UnityEngine.Object asset = BundleLoader.GetAsset("SomeAsset");
+
+// All assets of a given IL2CPP type name
+List<UnityEngine.Object> meshes = BundleLoader.GetAssetsByType("Mesh");
+
+// Existence check
+bool exists = BundleLoader.HasAsset("CustomModel");
+
+// Stats
+int bundles = BundleLoader.LoadedBundleCount;
+int assets = BundleLoader.LoadedAssetCount;
+```
+
+Provides `UnloadAll()` for cleanup (unloads all bundles, clears registry).
+
+## AssetReplacer -- multi-type asset replacement
+
+Handles replacement of existing game assets after each scene load. Supports two sources:
+
+### 1. Disk-file replacements
+
+Registered from the modpack `assets` map. Asset kind is inferred from file extension:
+
+| Extension | Kind | Runtime strategy |
+|-----------|------|-----------------|
+| `.png`, `.jpg`, `.jpeg`, `.tga`, `.bmp` | Texture | `ImageConversion.LoadImage` overwrites existing `Texture2D` in-place |
+| `.wav`, `.ogg`, `.mp3` | Audio | Registered; requires bundle for actual replacement |
+| `.glb`, `.gltf`, `.fbx`, `.obj` | Model | Registered; requires bundle for actual replacement |
+| `.mat` | Material | Registered; requires bundle for actual replacement |
+
+Only image textures can be loaded from raw disk files at runtime. All other types require Unity's serialization and must come from AssetBundles.
+
+### 2. Bundle-sourced replacements
+
+For each asset type present in `BundleLoader`'s registry, `AssetReplacer` searches for matching game objects (same name, same type) and applies type-specific in-place overwrite:
+
+| Type | Strategy |
+|------|----------|
+| `Texture2D` | `Graphics.CopyTexture(bundleTex, gameTex)` -- all materials/UI update automatically |
+| `AudioClip` | `GetData`/`SetData` -- copy samples from bundle clip to game clip |
+| `Mesh` | Clear + copy vertices, normals, tangents, UVs, triangles, bone weights, submeshes; recalculate bounds |
+| `Material` | Find all `Renderer` components using a material with the same name, swap `sharedMaterials` to the bundle version |
+| `GameObject` (prefab) | Recursive hierarchy copy matching children by name; swaps `MeshFilter.sharedMesh`, `Renderer.sharedMaterials`, `SkinnedMeshRenderer` mesh/materials on each matched child |
+
+Bundle assets that don't match any existing game object are treated as **new content** -- they remain in memory via `BundleLoader` and can be queried by plugin code.
+
+### IL2CPP limitations
+
+`Resources.Load<T>()` is generic in IL2CPP and cannot be Harmony-patched. Instead, `AssetReplacer` uses `Resources.FindObjectsOfTypeAll(il2cppType)` to locate all loaded objects of each type, then matches by name. This runs after a short delay (10 frames) on each scene load to ensure assets are initialized.
 
 ## CompilationService (Modkit App)
 
@@ -166,11 +236,11 @@ V2 `patches` and V1 `templates` both follow this `TypeName -> InstanceName -> Fi
 
 | File | Description |
 |------|-------------|
-| `ModpackLoaderMod.cs` | MelonMod entry point, modpack loading, template application |
+| `ModpackLoaderMod.cs` | MelonMod entry point, modpack loading, template application, scene lifecycle |
 | `TemplateInjection.cs` | Partial class with field injection handlers |
-| `AssetInjectionPatches.cs` | Harmony patches for Unity asset interception |
+| `AssetInjectionPatches.cs` | `AssetReplacer` -- multi-type asset replacement (textures, audio, meshes, materials, prefabs) |
 | `DllLoader.cs` | DLL loading, plugin discovery, lifecycle forwarding |
-| `BundleLoader.cs` | AssetBundle loading |
+| `BundleLoader.cs` | AssetBundle loading and queryable asset registry |
 | `IModpackPlugin.cs` | Plugin interface definition |
 | `Menace.ModpackLoader.csproj` | Project configuration |
 

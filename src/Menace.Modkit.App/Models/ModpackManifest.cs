@@ -66,16 +66,16 @@ public class ModpackManifest
     /// </summary>
     [JsonIgnore]
     public List<ModpackDependency> ParsedDependencies =>
-        Dependencies.Select(d =>
+        (Dependencies ?? new List<string>()).Select(d =>
         {
             ModpackDependency.TryParse(d, out var dep);
             return dep;
         }).Where(d => d != null).ToList()!;
 
-    public bool HasCode => Code.HasAnyCode;
-    public bool HasPatches => Patches.Count > 0;
-    public bool HasBundles => Bundles.Count > 0;
-    public bool HasAssets => Assets.Count > 0;
+    public bool HasCode => Code?.HasAnyCode ?? false;
+    public bool HasPatches => Patches?.Count > 0;
+    public bool HasBundles => Bundles?.Count > 0;
+    public bool HasAssets => Assets?.Count > 0;
 
     // ---------------------------------------------------------------
     // Serialization

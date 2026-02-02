@@ -22,7 +22,7 @@ public class CodeManifest
     /// </summary>
     public List<string> PrebuiltDlls { get; set; } = new();
 
-    public bool HasAnySources => Sources.Count > 0;
-    public bool HasAnyPrebuilt => PrebuiltDlls.Count > 0;
+    public bool HasAnySources => Sources?.Count > 0;
+    public bool HasAnyPrebuilt => PrebuiltDlls?.Count > 0;
     public bool HasAnyCode => HasAnySources || HasAnyPrebuilt;
 }

@@ -35,10 +35,16 @@ All calls are wrapped in try/catch by `DllLoader`; a crash in one plugin won't t
 MyModpack/
   modpack.json
   src/
-    MyPlugin.cs
+    MyPlugin.cs          # Plugin source code (compiled at deploy time)
+  assets/
+    textures/bg.png      # Disk-file replacements (images)
+  bundles/
+    custom.bundle        # AssetBundles (models, audio, materials, prefabs)
+  stats/
+    WeaponTemplate.json  # Data patches for game templates
 ```
 
-The `modpack.json` manifest declares everything -- metadata, data patches, asset replacements, and the `code` section for compiled plugins.
+The `modpack.json` manifest declares everything -- metadata, data patches, asset replacements, bundles, and the `code` section for compiled plugins.
 
 ## The `code` manifest section
 
@@ -81,9 +87,83 @@ These assemblies can be listed in `references` by name:
 | `UnityEngine.InputLegacyModule` | `Il2CppAssemblies/...` | `Input.GetKeyDown` etc. |
 | `UnityEngine.IMGUIModule` | `Il2CppAssemblies/...` | `GUI.*`, `GUIStyle` |
 | `UnityEngine.TextRenderingModule` | `Il2CppAssemblies/...` | Font/text rendering |
-| `Menace.ModpackLoader` | `Mods/Menace.ModpackLoader.dll` | `IModpackPlugin` interface |
+| `UnityEngine.AudioModule` | `Il2CppAssemblies/...` | `AudioClip`, `AudioSource` |
+| `UnityEngine.AssetBundleModule` | `Il2CppAssemblies/...` | `AssetBundle` API |
+| `UnityEngine.AnimationModule` | `Il2CppAssemblies/...` | `Animator`, `AnimationClip` |
+| `UnityEngine.PhysicsModule` | `Il2CppAssemblies/...` | `Rigidbody`, `Collider` |
+| `Menace.ModpackLoader` | `Mods/Menace.ModpackLoader.dll` | `IModpackPlugin`, `BundleLoader`, `AssetReplacer` |
 
 `ReferenceResolver` searches the game install path for these by name. Only list what you actually use.
+
+## Assets and bundles
+
+Modpacks can include content beyond code and data patches. There are two asset paths:
+
+### Disk-file replacements (the `assets` map)
+
+For **image textures only** (PNG, JPG, TGA, BMP). Maps a Unity asset path to a local file:
+
+```json
+{
+  "assets": {
+    "Assets/Resources/ui/textures/backgrounds/loading_bg_03.png": "assets/textures/loading_bg_03.png"
+  }
+}
+```
+
+At runtime, `AssetReplacer` finds the existing game `Texture2D` with the matching name and overwrites its pixel data in-place using `ImageConversion.LoadImage`. Every material, sprite, and UI element referencing that texture sees the new image automatically.
+
+### AssetBundles (the `bundles` list)
+
+For **all asset types** -- 3D models (GLB/FBX), audio, materials, textures, prefabs, and any other Unity asset. Bundle files are created in the Unity Editor and placed in the modpack directory:
+
+```json
+{
+  "bundles": ["bundles/custom_models.bundle", "bundles/audio.bundle"]
+}
+```
+
+At runtime, `BundleLoader` loads each bundle via `AssetBundle.LoadFromFile` and registers every asset in a queryable registry. The system then handles replacement and new content differently:
+
+**Replacement** -- if a bundle asset has the same name and type as an existing game asset, `AssetReplacer` overwrites the original:
+
+| Asset type | Replacement strategy |
+|------------|---------------------|
+| `Texture2D` | `Graphics.CopyTexture` (in-place pixel copy) |
+| `AudioClip` | `GetData`/`SetData` (in-place sample copy) |
+| `Mesh` | Copy vertices, normals, UVs, triangles, bone weights, submeshes |
+| `Material` | Swap `sharedMaterials` references on all `Renderer` components |
+| `GameObject` (prefab) | Recursive hierarchy copy -- matches children by name, swaps `MeshFilter.sharedMesh`, `Renderer.sharedMaterials`, `SkinnedMeshRenderer` mesh/materials |
+
+**New content** -- bundle assets that don't match any existing game asset are simply available in memory. Plugin code can query them:
+
+```csharp
+// Get a specific asset by type and name
+var tex = BundleLoader.GetAsset<Texture2D>("MyCustomTexture");
+var clip = BundleLoader.GetAsset<AudioClip>("BattleTheme");
+var prefab = BundleLoader.GetAsset<GameObject>("PirateCaptain");
+
+// Get by name (any type)
+var asset = BundleLoader.GetAsset("SomeAsset");
+
+// Get all assets of a type
+var allMeshes = BundleLoader.GetAssetsByType("Mesh");
+
+// Check existence
+if (BundleLoader.HasAsset("CustomModel"))
+    // ...
+```
+
+### Which to use?
+
+| Content | Approach |
+|---------|----------|
+| Replace a game texture with a new image | Disk file in `assets` map (simplest) or Texture2D in a bundle |
+| Replace a game 3D model | GLB/FBX exported as a bundle |
+| Replace game audio | AudioClip in a bundle |
+| Replace a material/shader | Material in a bundle |
+| Add entirely new content | Bundle (any asset type) + plugin code to use it |
+| Stat/data changes only | `patches` section, no assets needed |
 
 ## Migrating from MelonMod
 

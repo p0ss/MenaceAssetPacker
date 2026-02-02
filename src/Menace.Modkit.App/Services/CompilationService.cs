@@ -110,7 +110,8 @@ public class CompilationService
             references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
                 .WithOptimizationLevel(OptimizationLevel.Release)
-                .WithPlatform(Platform.AnyCpu));
+                .WithPlatform(Platform.AnyCpu)
+                .WithAllowUnsafe(true));
 
         // Output path
         var buildDir = Path.Combine(modpackDir, "build");

@@ -18,7 +18,7 @@ namespace Menace.ModpackLoader;
 public partial class ModpackLoaderMod : MelonMod
 {
     private readonly Dictionary<string, Modpack> _loadedModpacks = new();
-    private readonly Dictionary<string, Texture2D> _assetReplacements = new();
+    private readonly HashSet<string> _registeredAssetPaths = new();
     private bool _templatesLoaded = false;
 
     public override void OnInitializeMelon()
@@ -32,10 +32,16 @@ public partial class ModpackLoaderMod : MelonMod
     {
         DllLoader.NotifySceneLoaded(buildIndex, sceneName);
 
-        if (!_templatesLoaded && sceneName == "MainMenu")
+        if (!_templatesLoaded)
         {
-            LoggerInstance.Msg("MainMenu loaded, waiting for templates...");
+            LoggerInstance.Msg($"First scene '{sceneName}' loaded, waiting for templates...");
             MelonCoroutines.Start(WaitForTemplatesAndApply());
+        }
+
+        // Apply asset replacements after every scene load (assets get reloaded per scene)
+        if (AssetReplacer.RegisteredCount > 0 || BundleLoader.LoadedAssetCount > 0)
+        {
+            MelonCoroutines.Start(ApplyAssetReplacementsDelayed(sceneName));
         }
     }
 
@@ -147,7 +153,8 @@ public partial class ModpackLoaderMod : MelonMod
                 var fullPath = Path.Combine(modpack.DirectoryPath, replacementFile);
                 if (File.Exists(fullPath))
                 {
-                    _assetReplacements[assetPath] = null;
+                    _registeredAssetPaths.Add(assetPath);
+                    AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
                     LoggerInstance.Msg($"  Registered asset replacement: {assetPath}");
                 }
                 else
@@ -323,6 +330,16 @@ public partial class ModpackLoaderMod : MelonMod
                 LoggerInstance.Error($"  Failed to apply modifications to {templateTypeName}: {ex.Message}");
             }
         }
+    }
+
+    private System.Collections.IEnumerator ApplyAssetReplacementsDelayed(string sceneName)
+    {
+        // Wait a few frames for textures to finish loading
+        for (int i = 0; i < 10; i++)
+            yield return null;
+
+        LoggerInstance.Msg($"Applying asset replacements for scene: {sceneName}");
+        AssetReplacer.ApplyAllReplacements();
     }
 
     // ApplyTemplateModifications is implemented in TemplateInjection.cs (partial class)
