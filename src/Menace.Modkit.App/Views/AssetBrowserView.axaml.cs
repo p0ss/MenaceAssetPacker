@@ -76,12 +76,22 @@ public class AssetBrowserView : UserControl
     treeView.Bind(TreeView.ItemsSourceProperty,
       new Avalonia.Data.Binding("FolderTree"));
 
+    // HierarchicalDataTemplate so child folders expand in the tree
+    treeView.ItemTemplate = new Avalonia.Controls.Templates.FuncTreeDataTemplate<AssetFolderTreeNode>(
+      (node, _) => new TextBlock
+      {
+        Text = node.Name,
+        Foreground = Brushes.White,
+        FontSize = 13
+      },
+      node => node.Children);
+
     scrollViewer.Content = treeView;
     grid.Children.Add(scrollViewer);
     Grid.SetRow(scrollViewer, 1);
 
-    // Extraction Status Text
-    var statusText = new TextBlock
+    // Extraction Status Text (selectable so errors can be copied)
+    var statusText = new SelectableTextBlock
     {
       Foreground = Brushes.White,
       Opacity = 0.8,
@@ -89,7 +99,7 @@ public class AssetBrowserView : UserControl
       Margin = new Thickness(0, 12, 0, 8),
       TextWrapping = TextWrapping.Wrap
     };
-    statusText.Bind(TextBlock.TextProperty,
+    statusText.Bind(SelectableTextBlock.TextProperty,
       new Avalonia.Data.Binding("ExtractionStatus"));
     grid.Children.Add(statusText);
     Grid.SetRow(statusText, 2);

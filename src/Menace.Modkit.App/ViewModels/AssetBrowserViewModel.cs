@@ -125,20 +125,9 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     _rootFolders.Clear();
     FolderTree.Clear();
 
-    // Try to find asset output path from game install or default location
-    var gameInstallPath = AppSettings.Instance.GameInstallPath;
-    string assetPath;
+    var assetPath = AppSettings.GetEffectiveAssetsPath();
 
-    if (!string.IsNullOrEmpty(gameInstallPath) && Directory.Exists(gameInstallPath))
-    {
-      assetPath = Path.Combine(gameInstallPath, "UserData", "ExtractedAssets");
-    }
-    else
-    {
-      assetPath = Path.Combine(Directory.GetCurrentDirectory(), "out2");
-    }
-
-    if (Directory.Exists(assetPath))
+    if (assetPath != null)
     {
       LoadAssetFolders(assetPath);
       ExtractionStatus = $"Loaded assets from: {assetPath}";
@@ -412,6 +401,8 @@ public sealed class AssetFolderTreeNode : ViewModelBase
   public ObservableCollection<AssetFileInfo> Files { get; } = new();
 
   public bool HasChildren => Children.Count > 0 || Files.Count > 0;
+
+  public override string ToString() => Name;
 }
 
 public sealed class AssetFileInfo : ViewModelBase

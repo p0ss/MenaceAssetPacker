@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Menace.Modkit.App.ViewModels;
 
 namespace Menace.Modkit.App.Views;
@@ -255,6 +256,7 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
       Padding = new Thickness(16, 8)
     };
+    deployButton.Click += OnDeployClick;
     buttonPanel.Children.Add(deployButton);
 
     var exportButton = new Button
@@ -265,6 +267,7 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
       Padding = new Thickness(16, 8)
     };
+    exportButton.Click += OnExportClick;
     buttonPanel.Children.Add(exportButton);
 
     mainStack.Children.Add(buttonPanel);
@@ -276,6 +279,39 @@ public class ModpacksView : UserControl
 
     border.Child = scrollViewer;
     return border;
+  }
+
+  private void OnDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
+    {
+      vm.SelectedModpack.Deploy();
+    }
+  }
+
+  private async void OnExportClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
+    {
+      var topLevel = TopLevel.GetTopLevel(this);
+      if (topLevel == null) return;
+
+      var storageProvider = topLevel.StorageProvider;
+      var result = await storageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+      {
+        Title = "Export Modpack",
+        SuggestedFileName = $"{vm.SelectedModpack.Name}.zip",
+        FileTypeChoices = new[]
+        {
+          new Avalonia.Platform.Storage.FilePickerFileType("ZIP Archive") { Patterns = new[] { "*.zip" } }
+        }
+      });
+
+      if (result != null)
+      {
+        vm.SelectedModpack.Export(result.Path.LocalPath);
+      }
+    }
   }
 
   private async void ShowCreateDialog()

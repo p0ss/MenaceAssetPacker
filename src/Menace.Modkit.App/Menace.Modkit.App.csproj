@@ -32,6 +32,14 @@
     </None>
   </ItemGroup>
 
+  <!-- Schema file for field metadata (asset type detection) -->
+  <ItemGroup>
+    <None Include="..\..\schema.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- App icon -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\icon.jpg" />

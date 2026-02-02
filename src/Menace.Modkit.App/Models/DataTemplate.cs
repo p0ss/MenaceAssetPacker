@@ -56,10 +56,17 @@ public class DynamicDataTemplate : DataTemplate
 {
     private readonly JsonElement _jsonElement;
 
-    public DynamicDataTemplate(string name, JsonElement jsonElement)
+    /// <summary>
+    /// The template type name (e.g., "WeaponTemplate") from menu.json's template_type field.
+    /// Used for schema lookups.
+    /// </summary>
+    public string? TemplateTypeName { get; set; }
+
+    public DynamicDataTemplate(string name, JsonElement jsonElement, string? templateTypeName = null)
     {
         Name = name;
         _jsonElement = jsonElement;
+        TemplateTypeName = templateTypeName;
 
         // Populate base properties if they exist
         if (_jsonElement.TryGetProperty("DisplayTitle", out var displayTitle))

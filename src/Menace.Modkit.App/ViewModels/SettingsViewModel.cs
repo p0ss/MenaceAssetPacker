@@ -11,12 +11,14 @@ namespace Menace.Modkit.App.ViewModels;
 public sealed class SettingsViewModel : ViewModelBase
 {
   private string _installPathStatus = string.Empty;
+  private string _assetsPathStatus = string.Empty;
   private string _cacheStatus = "Calculating...";
 
   public SettingsViewModel(IServiceProvider serviceProvider)
   {
     // Load from app settings
     ValidateInstallPath();
+    ValidateAssetsPath();
     UpdateCacheStatus();
 
     // Commands
@@ -35,6 +37,7 @@ public sealed class SettingsViewModel : ViewModelBase
         AppSettings.Instance.SetGameInstallPath(value);
         this.RaisePropertyChanged();
         ValidateInstallPath();
+        ValidateAssetsPath();
         UpdateCacheStatus();
       }
     }
@@ -44,6 +47,26 @@ public sealed class SettingsViewModel : ViewModelBase
   {
     get => _installPathStatus;
     private set => this.RaiseAndSetIfChanged(ref _installPathStatus, value);
+  }
+
+  public string ExtractedAssetsPath
+  {
+    get => AppSettings.Instance.ExtractedAssetsPath;
+    set
+    {
+      if (AppSettings.Instance.ExtractedAssetsPath != value)
+      {
+        AppSettings.Instance.SetExtractedAssetsPath(value);
+        this.RaisePropertyChanged();
+        ValidateAssetsPath();
+      }
+    }
+  }
+
+  public string AssetsPathStatus
+  {
+    get => _assetsPathStatus;
+    private set => this.RaiseAndSetIfChanged(ref _assetsPathStatus, value);
   }
 
   // Extraction Settings Properties
@@ -174,6 +197,50 @@ public sealed class SettingsViewModel : ViewModelBase
     }
 
     InstallPathStatus = "✓ Game installation found";
+  }
+
+  private void ValidateAssetsPath()
+  {
+    var configured = ExtractedAssetsPath;
+
+    if (string.IsNullOrWhiteSpace(configured))
+    {
+      // No custom path configured - show the auto-detected path
+      var effective = AppSettings.GetEffectiveAssetsPath();
+      if (effective != null)
+      {
+        try
+        {
+          var count = Directory.GetFiles(effective, "*.*", SearchOption.AllDirectories).Length;
+          AssetsPathStatus = $"Auto-detected: {effective} ({count} files)";
+        }
+        catch
+        {
+          AssetsPathStatus = $"Auto-detected: {effective}";
+        }
+      }
+      else
+      {
+        AssetsPathStatus = "No extracted assets found. Run AssetRipper extraction first, or set a path.";
+      }
+      return;
+    }
+
+    if (!Directory.Exists(configured))
+    {
+      AssetsPathStatus = "Directory not found";
+      return;
+    }
+
+    try
+    {
+      var count = Directory.GetFiles(configured, "*.*", SearchOption.AllDirectories).Length;
+      AssetsPathStatus = $"Found {count} asset files";
+    }
+    catch (Exception ex)
+    {
+      AssetsPathStatus = $"Error reading directory: {ex.Message}";
+    }
   }
 
   private void UpdateCacheStatus()

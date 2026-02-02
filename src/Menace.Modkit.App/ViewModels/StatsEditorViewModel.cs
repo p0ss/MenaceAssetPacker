@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using ReactiveUI;
 using Menace.Modkit.App.Models;
@@ -13,12 +16,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
     private DataTemplateLoader? _dataLoader;
     private readonly ModpackManager _modpackManager;
     private readonly AssetReferenceResolver _assetResolver;
+    private readonly SchemaService _schemaService;
+    private string? _assetOutputPath;
+
+    // Change tracking: key = "{TemplateTypeName}/{instanceName}", value = { "field": value }
+    private readonly Dictionary<string, Dictionary<string, object?>> _pendingChanges = new();
+    private readonly Dictionary<string, Dictionary<string, object?>> _stagingOverrides = new();
 
     public StatsEditorViewModel()
     {
         _modpackManager = new ModpackManager();
         _assetResolver = new AssetReferenceResolver();
+        _schemaService = new SchemaService();
         TreeNodes = new ObservableCollection<TreeNodeViewModel>();
+        AvailableModpacks = new ObservableCollection<string>();
 
         LoadData();
     }
@@ -43,10 +54,25 @@ public sealed class StatsEditorViewModel : ViewModelBase
             _assetResolver.LoadReferences(gameInstallPath);
         }
 
+        // Load schema for field metadata (asset type detection)
+        var schemaPath = Path.Combine(AppContext.BaseDirectory, "schema.json");
+        if (!File.Exists(schemaPath))
+            schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "schema.json");
+        _schemaService.LoadSchema(schemaPath);
+
+        // Determine asset output path via centralized setting
+        _assetOutputPath = AppSettings.GetEffectiveAssetsPath();
+
+        // Populate available modpacks
+        AvailableModpacks.Clear();
+        foreach (var mp in _modpackManager.GetStagingModpacks())
+            AvailableModpacks.Add(mp.Name);
+
         LoadAllTemplates();
     }
 
     public ObservableCollection<TreeNodeViewModel> TreeNodes { get; }
+    public ObservableCollection<string> AvailableModpacks { get; }
 
     private bool _showVanillaDataWarning;
     public bool ShowVanillaDataWarning
@@ -59,7 +85,26 @@ public sealed class StatsEditorViewModel : ViewModelBase
     public string? CurrentModpackName
     {
         get => _currentModpackName;
-        set => this.RaiseAndSetIfChanged(ref _currentModpackName, value);
+        set
+        {
+            if (_currentModpackName != value)
+            {
+                FlushCurrentEdits();
+                this.RaiseAndSetIfChanged(ref _currentModpackName, value);
+                _pendingChanges.Clear();
+                LoadStagingOverrides();
+                // Re-render current node with new overrides
+                if (_selectedNode?.Template != null)
+                    OnNodeSelected(_selectedNode);
+            }
+        }
+    }
+
+    private string _saveStatus = string.Empty;
+    public string SaveStatus
+    {
+        get => _saveStatus;
+        set => this.RaiseAndSetIfChanged(ref _saveStatus, value);
     }
 
     private TreeNodeViewModel? _selectedNode;
@@ -70,6 +115,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
         {
             if (_selectedNode != value)
             {
+                // Flush edits BEFORE changing _selectedNode so the key is correct
+                FlushCurrentEdits();
                 this.RaiseAndSetIfChanged(ref _selectedNode, value);
                 OnNodeSelected(value);
             }
@@ -112,11 +159,279 @@ public sealed class StatsEditorViewModel : ViewModelBase
             Console.WriteLine($"[DEBUG] First 3 properties: {string.Join(", ", properties.Take(3).Select(kvp => $"{kvp.Key}={kvp.Value}"))}");
         }
 
-        // TODO: Load modified properties from staging if exists
-        ModifiedProperties = new System.Collections.Generic.Dictionary<string, object?>(properties); // For now, start with vanilla
+        // Build modified properties: vanilla → staging overrides → pending changes
+        var modified = new Dictionary<string, object?>(properties);
+        var key = GetTemplateKey(node.Template);
+        if (key != null)
+        {
+            if (_stagingOverrides.TryGetValue(key, out var stagingDiffs))
+            {
+                foreach (var kvp in stagingDiffs)
+                    if (modified.ContainsKey(kvp.Key))
+                        modified[kvp.Key] = kvp.Value;
+            }
+            if (_pendingChanges.TryGetValue(key, out var pendingDiffs))
+            {
+                foreach (var kvp in pendingDiffs)
+                    if (modified.ContainsKey(kvp.Key))
+                        modified[kvp.Key] = kvp.Value;
+            }
+        }
+
+        ModifiedProperties = modified;
     }
 
-    private System.Collections.Generic.Dictionary<string, object?> ConvertTemplateToProperties(DataTemplate template)
+    private void LoadStagingOverrides()
+    {
+        _stagingOverrides.Clear();
+
+        if (string.IsNullOrEmpty(_currentModpackName))
+            return;
+
+        var statsDir = Path.Combine(_modpackManager.StagingBasePath, _currentModpackName, "stats");
+        if (!Directory.Exists(statsDir))
+            return;
+
+        foreach (var file in Directory.GetFiles(statsDir, "*.json"))
+        {
+            var templateType = Path.GetFileNameWithoutExtension(file);
+            try
+            {
+                var json = File.ReadAllText(file);
+                using var doc = JsonDocument.Parse(json);
+
+                // Each file is { "instanceName": { "field": value, ... }, ... }
+                foreach (var instanceProp in doc.RootElement.EnumerateObject())
+                {
+                    var compositeKey = $"{templateType}/{instanceProp.Name}";
+                    var diffs = new Dictionary<string, object?>();
+
+                    if (instanceProp.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var fieldProp in instanceProp.Value.EnumerateObject())
+                        {
+                            diffs[fieldProp.Name] = ConvertJsonElementToValue(fieldProp.Value);
+                        }
+                    }
+
+                    if (diffs.Count > 0)
+                        _stagingOverrides[compositeKey] = diffs;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG] Failed to load staging overrides from {file}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"[DEBUG] Loaded {_stagingOverrides.Count} staging override entries for modpack '{_currentModpackName}'");
+    }
+
+    private void FlushCurrentEdits()
+    {
+        if (_selectedNode?.Template == null || _vanillaProperties == null || _modifiedProperties == null)
+            return;
+
+        var key = GetTemplateKey(_selectedNode.Template);
+        if (key == null)
+            return;
+
+        var diffs = new Dictionary<string, object?>();
+        foreach (var kvp in _modifiedProperties)
+        {
+            if (!_vanillaProperties.TryGetValue(kvp.Key, out var vanillaVal))
+                continue;
+
+            if (!ValuesEqual(vanillaVal, kvp.Value))
+                diffs[kvp.Key] = kvp.Value;
+        }
+
+        if (diffs.Count > 0)
+            _pendingChanges[key] = diffs;
+        else
+            _pendingChanges.Remove(key);
+    }
+
+    private static bool ValuesEqual(object? vanilla, object? modified)
+    {
+        if (vanilla == null && modified == null) return true;
+        if (vanilla == null || modified == null) return false;
+
+        // If modified is a string (from TextBox), compare against typed vanilla
+        if (modified is string modStr)
+        {
+            if (vanilla is string vanStr)
+                return vanStr == modStr;
+            if (vanilla is long l)
+                return long.TryParse(modStr, out var parsed) && parsed == l;
+            if (vanilla is double d)
+                return double.TryParse(modStr, out var parsed) && parsed == d;
+            if (vanilla is bool b)
+                return bool.TryParse(modStr, out var parsed) && parsed == b;
+
+            return vanilla.ToString() == modStr;
+        }
+
+        // AssetPropertyValue comparison by asset name
+        if (vanilla is AssetPropertyValue vanAsset && modified is AssetPropertyValue modAsset)
+            return vanAsset.AssetName == modAsset.AssetName;
+
+        return vanilla.Equals(modified);
+    }
+
+    private static string? GetTemplateKey(DataTemplate template)
+    {
+        if (template is DynamicDataTemplate dyn && !string.IsNullOrEmpty(dyn.TemplateTypeName))
+            return $"{dyn.TemplateTypeName}/{template.Name}";
+        return null;
+    }
+
+    public void UpdateModifiedProperty(string fieldName, string text)
+    {
+        if (_modifiedProperties != null && _modifiedProperties.ContainsKey(fieldName))
+        {
+            _modifiedProperties[fieldName] = text;
+        }
+    }
+
+    public void SaveToStaging()
+    {
+        if (string.IsNullOrEmpty(_currentModpackName))
+        {
+            SaveStatus = "No modpack selected";
+            return;
+        }
+
+        // Flush whatever's on screen right now
+        FlushCurrentEdits();
+
+        // Merge staging overrides + pending changes, grouped by template type
+        var byType = new Dictionary<string, Dictionary<string, Dictionary<string, object?>>>();
+
+        void AddToByType(Dictionary<string, Dictionary<string, object?>> source)
+        {
+            foreach (var kvp in source)
+            {
+                // key = "TemplateType/instanceName"
+                var slash = kvp.Key.IndexOf('/');
+                if (slash < 0) continue;
+                var templateType = kvp.Key[..slash];
+                var instanceName = kvp.Key[(slash + 1)..];
+
+                if (!byType.TryGetValue(templateType, out var instances))
+                {
+                    instances = new Dictionary<string, Dictionary<string, object?>>();
+                    byType[templateType] = instances;
+                }
+
+                if (!instances.TryGetValue(instanceName, out var fields))
+                {
+                    fields = new Dictionary<string, object?>();
+                    instances[instanceName] = fields;
+                }
+
+                // Pending changes overwrite staging overrides for same field
+                foreach (var field in kvp.Value)
+                    fields[field.Key] = field.Value;
+            }
+        }
+
+        AddToByType(_stagingOverrides);
+        AddToByType(_pendingChanges);
+
+        if (byType.Count == 0)
+        {
+            SaveStatus = "No changes to save";
+            return;
+        }
+
+        // Serialize and write each template type
+        int fileCount = 0;
+        foreach (var typeKvp in byType)
+        {
+            var root = new JsonObject();
+            foreach (var instanceKvp in typeKvp.Value)
+            {
+                var instanceObj = new JsonObject();
+                foreach (var fieldKvp in instanceKvp.Value)
+                {
+                    instanceObj[fieldKvp.Key] = ConvertToJsonNode(fieldKvp.Value, typeKvp.Key, instanceKvp.Key, fieldKvp.Key);
+                }
+                root[instanceKvp.Key] = instanceObj;
+            }
+
+            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            _modpackManager.SaveStagingTemplate(_currentModpackName, typeKvp.Key, json);
+            fileCount++;
+        }
+
+        // Move pending into staging overrides, clear pending
+        foreach (var kvp in _pendingChanges)
+        {
+            if (!_stagingOverrides.TryGetValue(kvp.Key, out var existing))
+            {
+                existing = new Dictionary<string, object?>();
+                _stagingOverrides[kvp.Key] = existing;
+            }
+            foreach (var field in kvp.Value)
+                existing[field.Key] = field.Value;
+        }
+        _pendingChanges.Clear();
+
+        SaveStatus = $"Saved {fileCount} template file(s) to '{_currentModpackName}'";
+    }
+
+    /// <summary>
+    /// Convert a property value to a JsonNode, using the vanilla type as guide for type conversion.
+    /// </summary>
+    private JsonNode? ConvertToJsonNode(object? value, string templateType, string instanceName, string fieldName)
+    {
+        if (value == null)
+            return null;
+
+        // If the value is a string from a TextBox, try to convert back to the vanilla type
+        if (value is string str)
+        {
+            // Look up the vanilla value to determine target type
+            var vanillaKey = $"{templateType}/{instanceName}";
+            object? vanillaValue = null;
+
+            // Try to get the vanilla type from current vanilla properties or by reloading
+            if (_vanillaProperties != null && _selectedNode?.Template != null
+                && GetTemplateKey(_selectedNode.Template) == vanillaKey)
+            {
+                _vanillaProperties.TryGetValue(fieldName, out vanillaValue);
+            }
+
+            if (vanillaValue is long)
+            {
+                if (long.TryParse(str, out var l))
+                    return JsonValue.Create(l);
+            }
+            else if (vanillaValue is double)
+            {
+                if (double.TryParse(str, out var d))
+                    return JsonValue.Create(d);
+            }
+            else if (vanillaValue is bool)
+            {
+                if (bool.TryParse(str, out var b))
+                    return JsonValue.Create(b);
+            }
+
+            // Default: keep as string
+            return JsonValue.Create(str);
+        }
+
+        if (value is long lv) return JsonValue.Create(lv);
+        if (value is double dv) return JsonValue.Create(dv);
+        if (value is bool bv) return JsonValue.Create(bv);
+        if (value is AssetPropertyValue asset) return JsonValue.Create(asset.AssetName ?? "");
+
+        return JsonValue.Create(value.ToString());
+    }
+
+    private Dictionary<string, object?> ConvertTemplateToProperties(DataTemplate template)
     {
         var result = new System.Collections.Generic.Dictionary<string, object?>();
 
@@ -124,8 +439,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (template is DynamicDataTemplate dynamicTemplate)
         {
             var jsonElement = dynamicTemplate.GetJsonElement();
+            var templateTypeName = dynamicTemplate.TemplateTypeName ?? "";
 
-            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: template={template.Name}, jsonElement.ValueKind={jsonElement.ValueKind}");
+            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: template={template.Name}, type={templateTypeName}, jsonElement.ValueKind={jsonElement.ValueKind}");
 
             int propCount = 0;
             try
@@ -133,30 +449,53 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 foreach (var property in jsonElement.EnumerateObject())
                 {
                     propCount++;
-                    Console.WriteLine($"[DEBUG]   Processing property {propCount}: {property.Name}");
 
                     // Convert JsonElement to appropriate type
                     object? value = ConvertJsonElementToValue(property.Value);
 
-                    // Try to resolve asset references
+                    // Check if this is a unity_asset field via schema
+                    if (_schemaService.IsLoaded && _schemaService.IsAssetField(templateTypeName, property.Name))
+                    {
+                        var fieldMeta = _schemaService.GetFieldMetadata(templateTypeName, property.Name);
+                        if (fieldMeta != null)
+                        {
+                            var assetValue = new AssetPropertyValue
+                            {
+                                FieldName = property.Name,
+                                AssetType = fieldMeta.Type,
+                                RawValue = value,
+                            };
+
+                            // Determine if the value is an actual asset name or a placeholder
+                            if (value is string strVal && !string.IsNullOrEmpty(strVal))
+                            {
+                                if (!strVal.StartsWith("(") || !strVal.EndsWith(")"))
+                                {
+                                    // This looks like an actual asset name
+                                    assetValue.AssetName = strVal;
+                                    // Try to find the asset file in the AssetRipper output
+                                    assetValue.AssetFilePath = ResolveAssetFilePath(fieldMeta.Type, strVal);
+                                    assetValue.ThumbnailPath = assetValue.AssetFilePath;
+                                }
+                            }
+
+                            result[property.Name] = assetValue;
+                            continue;
+                        }
+                    }
+
+                    // Try to resolve numeric asset references (legacy path)
                     if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
                     {
                         var resolved = _assetResolver.Resolve(property.Value.GetInt64());
                         if (resolved.IsReference)
                         {
-                            // Return a formatted string with asset info
                             if (resolved.HasAssetFile)
-                            {
                                 value = $"{resolved.DisplayValue} → {resolved.AssetPath}";
-                            }
                             else if (!string.IsNullOrEmpty(resolved.AssetName))
-                            {
                                 value = $"{resolved.DisplayValue} (no asset file)";
-                            }
                             else
-                            {
-                                value = resolved.DisplayValue;  // Show [Ref:ID]
-                            }
+                                value = resolved.DisplayValue;
                         }
                     }
 
@@ -179,6 +518,60 @@ public sealed class StatsEditorViewModel : ViewModelBase
         return result;
     }
 
+    /// <summary>
+    /// Try to find the actual asset file in the AssetRipper output directory.
+    /// Searches under Assets/{AssetType}/ for files matching the asset name.
+    /// </summary>
+    private string? ResolveAssetFilePath(string assetType, string assetName)
+    {
+        if (_assetOutputPath == null || string.IsNullOrEmpty(assetName))
+            return null;
+
+        // Search in the expected type directory
+        var typeDir = Path.Combine(_assetOutputPath, "Assets", assetType);
+        if (Directory.Exists(typeDir))
+        {
+            var match = FindAssetFileByName(typeDir, assetName);
+            if (match != null) return match;
+        }
+
+        // Also try common alternative paths
+        string[] altPaths = { "Assets/Sprite", "Assets/Texture2D", "Assets/Resources" };
+        foreach (var alt in altPaths)
+        {
+            var altDir = Path.Combine(_assetOutputPath, alt);
+            if (Directory.Exists(altDir))
+            {
+                var match = FindAssetFileByName(altDir, assetName);
+                if (match != null) return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? FindAssetFileByName(string directory, string assetName)
+    {
+        try
+        {
+            // Look for files matching the asset name (with any extension)
+            foreach (var file in Directory.GetFiles(directory, $"{assetName}.*"))
+            {
+                return file;
+            }
+            // Also search subdirectories one level deep
+            foreach (var subDir in Directory.GetDirectories(directory))
+            {
+                foreach (var file in Directory.GetFiles(subDir, $"{assetName}.*"))
+                {
+                    return file;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private object? ConvertJsonElementToValue(System.Text.Json.JsonElement element)
     {
         return element.ValueKind switch
@@ -196,6 +589,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     // Master copy of all tree nodes (unfiltered)
     private List<TreeNodeViewModel> _allTreeNodes = new();
+    // Search index: leaf node → concatenated searchable text
+    private readonly Dictionary<TreeNodeViewModel, string> _searchIndex = new();
 
     private string _searchText = string.Empty;
     public string SearchText
@@ -229,19 +624,48 @@ public sealed class StatsEditorViewModel : ViewModelBase
             if (filtered != null)
                 TreeNodes.Add(filtered);
         }
+
+        // Auto-expand search results so matches are visible
+        SetExpansionState(TreeNodes, true);
+    }
+
+    public void ExpandAll()
+    {
+        SetExpansionState(TreeNodes, true);
+    }
+
+    public void CollapseAll()
+    {
+        SetExpansionState(TreeNodes, false);
+    }
+
+    private static void SetExpansionState(IEnumerable<TreeNodeViewModel> nodes, bool expanded)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsCategory)
+            {
+                node.IsExpanded = expanded;
+                SetExpansionState(node.Children, expanded);
+            }
+        }
     }
 
     private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string query)
     {
-        // Leaf node: match against name
+        // Leaf node: check search index
         if (!node.IsCategory)
         {
-            return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
-                ? node
-                : null;
+            if (_searchIndex.TryGetValue(node, out var indexText))
+                return indexText.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
+            return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
         }
 
-        // Category node: include if any children match
+        // Category name matches → include entire subtree
+        if (node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            return node;
+
+        // Otherwise check children recursively
         var matchingChildren = new List<TreeNodeViewModel>();
         foreach (var child in node.Children)
         {
@@ -272,172 +696,96 @@ public sealed class StatsEditorViewModel : ViewModelBase
     {
         TreeNodes.Clear();
         _allTreeNodes.Clear();
+        _searchIndex.Clear();
 
-        // Load menu.json (hierarchical structure)
-        var menuPath = Path.Combine(_modpackManager.VanillaDataPath, "menu.json");
-
-        if (!File.Exists(menuPath))
-        {
-            // Fallback to old method if menu.json doesn't exist
-            LoadAllTemplatesOld();
-            _allTreeNodes = TreeNodes.ToList();
-            return;
-        }
-
-        try
-        {
-            var menuJson = File.ReadAllText(menuPath);
-            var menuRoot = System.Text.Json.JsonDocument.Parse(menuJson).RootElement;
-
-            // Build tree from menu structure
-            foreach (var topLevelProp in menuRoot.EnumerateObject())
-            {
-                var node = BuildTreeNodeFromJson(topLevelProp.Name, topLevelProp.Value);
-                if (node != null)
-                {
-                    TreeNodes.Add(node);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Failed to load menu.json: {ex.Message}");
-            LoadAllTemplatesOld();
-        }
-
-        // Store master copy for search filtering
-        _allTreeNodes = TreeNodes.ToList();
-    }
-
-    private TreeNodeViewModel? BuildTreeNodeFromJson(string name, System.Text.Json.JsonElement element)
-    {
-        // Check if this is a leaf node (has template_type, name, data)
-        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
-        {
-            var hasTemplateType = element.TryGetProperty("template_type", out _);
-            var hasData = element.TryGetProperty("data", out var dataElement);
-
-            if (hasTemplateType && hasData)
-            {
-                // This is a leaf node - create template
-                // Get the template name from the data
-                var templateName = dataElement.TryGetProperty("name", out var nameProperty)
-                    ? nameProperty.GetString() ?? name
-                    : name;
-
-                var template = new DynamicDataTemplate(templateName, dataElement);
-                return new TreeNodeViewModel
-                {
-                    Name = FormatNodeName(name),
-                    IsCategory = false,
-                    Template = template
-                };
-            }
-            else
-            {
-                // This is a category node - recurse into children
-                var node = new TreeNodeViewModel
-                {
-                    Name = FormatNodeName(name),
-                    IsCategory = true
-                };
-
-                foreach (var childProp in element.EnumerateObject())
-                {
-                    var childNode = BuildTreeNodeFromJson(childProp.Name, childProp.Value);
-                    if (childNode != null)
-                    {
-                        node.Children.Add(childNode);
-                    }
-                }
-
-                return node.Children.Count > 0 ? node : null;
-            }
-        }
-
-        return null;
-    }
-
-    private void LoadAllTemplatesOld()
-    {
-        // Old method - kept as fallback
         if (_dataLoader == null) return;
 
-        foreach (var templateType in _dataLoader.GetTemplateTypes())
+        var placedInstances = new HashSet<string>(StringComparer.Ordinal);
+        var rootDict = new Dictionary<string, TreeNodeViewModel>();
+
+        // Get all template types, sorted by inheritance depth descending (most specific first)
+        var templateTypes = _dataLoader.GetTemplateTypes()
+            .Where(t => t != "AssetReferences" && t != "menu")
+            .OrderByDescending(t => _schemaService.GetInheritanceDepth(t))
+            .ToList();
+
+        foreach (var templateType in templateTypes)
         {
             var templates = _dataLoader.LoadTemplatesGeneric(templateType);
             if (templates.Count == 0) continue;
 
-            var rootNode = new TreeNodeViewModel
+            // Get filtered inheritance chain (exclude ScriptableObject, SerializedScriptableObject)
+            var chain = _schemaService.GetInheritanceChain(templateType)
+                .Where(c => c != "ScriptableObject" && c != "SerializedScriptableObject")
+                .ToList();
+
+            foreach (var template in templates)
             {
-                Name = FormatTemplateTypeName(templateType),
-                IsCategory = true
-            };
+                if (placedInstances.Contains(template.Name))
+                    continue;
+                placedInstances.Add(template.Name);
 
-            var hierarchy = BuildHierarchy(templates);
-            foreach (var child in hierarchy)
-            {
-                rootNode.Children.Add(child);
-            }
+                // Set TemplateTypeName on DynamicDataTemplate
+                if (template is DynamicDataTemplate dyn)
+                    dyn.TemplateTypeName = templateType;
 
-            TreeNodes.Add(rootNode);
-        }
-    }
+                var nameParts = template.Name.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
-    private string FormatTemplateTypeName(string templateType)
-    {
-        // "WeaponTemplate" -> "Weapon Template"
-        return System.Text.RegularExpressions.Regex.Replace(
-            templateType.Replace("Template", ""),
-            "([a-z])([A-Z])",
-            "$1 $2");
-    }
+                // path = inheritance chain + all name parts except last
+                var pathParts = new List<string>(chain);
+                for (int i = 0; i < nameParts.Length - 1; i++)
+                    pathParts.Add(nameParts[i]);
 
-    private List<TreeNodeViewModel> BuildHierarchy(List<DataTemplate> templates)
-    {
-        var root = new Dictionary<string, TreeNodeViewModel>();
+                var leafName = nameParts.Length > 0 ? nameParts[^1] : template.Name;
 
-        foreach (var template in templates)
-        {
-            var parts = template.Name.Split('.');
-            var currentLevel = root;
-            TreeNodeViewModel? parentNode = null;
+                // Navigate/create tree nodes along the path
+                var currentDict = rootDict;
+                TreeNodeViewModel? parentNode = null;
 
-            for (int i = 0; i < parts.Length; i++)
-            {
-                var part = parts[i];
-                var isLeaf = i == parts.Length - 1;
-
-                if (!currentLevel.ContainsKey(part))
+                foreach (var part in pathParts)
                 {
-                    var node = new TreeNodeViewModel
+                    if (!currentDict.TryGetValue(part, out var node))
                     {
-                        Name = FormatNodeName(part),
-                        IsCategory = !isLeaf,
-                        Template = isLeaf ? template : null
-                    };
+                        node = new TreeNodeViewModel
+                        {
+                            Name = FormatNodeName(part),
+                            IsCategory = true,
+                            ChildrenDict = new Dictionary<string, TreeNodeViewModel>()
+                        };
+                        currentDict[part] = node;
 
-                    currentLevel[part] = node;
-
-                    if (parentNode != null)
-                    {
-                        parentNode.Children.Add(node);
+                        if (parentNode != null)
+                            parentNode.Children.Add(node);
                     }
+
+                    parentNode = node;
+                    currentDict = node.ChildrenDict ??= new Dictionary<string, TreeNodeViewModel>();
                 }
 
-                if (!isLeaf)
+                // Place leaf
+                var leaf = new TreeNodeViewModel
                 {
-                    parentNode = currentLevel[part];
-                    if (parentNode.ChildrenDict == null)
-                    {
-                        parentNode.ChildrenDict = new Dictionary<string, TreeNodeViewModel>();
-                    }
-                    currentLevel = parentNode.ChildrenDict;
-                }
+                    Name = FormatNodeName(leafName),
+                    IsCategory = false,
+                    Template = template
+                };
+
+                if (parentNode != null)
+                    parentNode.Children.Add(leaf);
+                else
+                    rootDict[leafName] = leaf;
             }
         }
 
-        return root.Values.ToList();
+        // Add root-level nodes to TreeNodes
+        foreach (var node in rootDict.Values)
+            TreeNodes.Add(node);
+
+        // Build search index
+        BuildSearchIndex(TreeNodes);
+
+        // Store master copy for search filtering
+        _allTreeNodes = TreeNodes.ToList();
     }
 
     private string FormatNodeName(string name)
@@ -445,6 +793,46 @@ public sealed class StatsEditorViewModel : ViewModelBase
         // "pirate_laser_lance" -> "Pirate Laser Lance"
         return string.Join(" ", name.Split('_', StringSplitOptions.RemoveEmptyEntries)
             .Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : ""));
+    }
+
+    private void BuildSearchIndex(IEnumerable<TreeNodeViewModel> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsCategory)
+            {
+                BuildSearchIndex(node.Children);
+            }
+            else if (node.Template is DynamicDataTemplate dyn)
+            {
+                var sb = new StringBuilder();
+                sb.Append(node.Name);
+                sb.Append(' ');
+                sb.Append(dyn.Name);
+                sb.Append(' ');
+
+                try
+                {
+                    var json = dyn.GetJsonElement();
+                    if (json.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var prop in json.EnumerateObject())
+                        {
+                            sb.Append(prop.Name);
+                            sb.Append(' ');
+                            if (prop.Value.ValueKind == JsonValueKind.String)
+                            {
+                                sb.Append(prop.Value.GetString());
+                                sb.Append(' ');
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                _searchIndex[node] = sb.ToString();
+            }
+        }
     }
 
     private string _setupStatus = string.Empty;
@@ -538,6 +926,13 @@ public sealed class TreeNodeViewModel : ViewModelBase
     public bool IsCategory { get; set; }
     public DataTemplate? Template { get; set; }
     public ObservableCollection<TreeNodeViewModel> Children { get; } = new();
+
+    private bool _isExpanded;
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => this.RaiseAndSetIfChanged(ref _isExpanded, value);
+    }
 
     // Helper for hierarchy building
     public Dictionary<string, TreeNodeViewModel>? ChildrenDict { get; set; }

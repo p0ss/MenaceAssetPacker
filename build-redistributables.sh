@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Use .NET 9 SDK
-DOTNET="$HOME/.dotnet9/dotnet"
+# Use system .NET SDK
+DOTNET="dotnet"
 
 echo "Building Menace Modkit redistributables..."
 echo "Using: $($DOTNET --version)"
@@ -62,6 +62,18 @@ mkdir -p dist/gui-linux-x64/third_party/bundled/DataExtractor
 mkdir -p dist/gui-win-x64/third_party/bundled/DataExtractor
 cp dist/DataExtractor/Menace.DataExtractor.dll dist/gui-linux-x64/third_party/bundled/DataExtractor/
 cp dist/DataExtractor/Menace.DataExtractor.dll dist/gui-win-x64/third_party/bundled/DataExtractor/
+
+# Build ModpackLoader mod
+echo ""
+echo "📦 Building ModpackLoader Mod..."
+$DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
+
+# Bundle ModpackLoader with GUI builds
+echo "  → Bundling ModpackLoader with GUI builds..."
+mkdir -p dist/gui-linux-x64/third_party/bundled/ModpackLoader
+mkdir -p dist/gui-win-x64/third_party/bundled/ModpackLoader
+cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-linux-x64/third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-win-x64/third_party/bundled/ModpackLoader/
 
 # Build CLI for each platform
 echo ""

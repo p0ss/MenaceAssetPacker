@@ -50,7 +50,7 @@ public class SettingsView : UserControl
 
     installStack.Children.Add(new TextBlock
     {
-      Text = "Set the path to the Menace Demo installation directory. This is used for extracting game assets.",
+      Text = "Set the path to the Menace installation directory. This is used for extracting game assets.",
       Opacity = 0.7,
       Foreground = Brushes.White,
       TextWrapping = TextWrapping.Wrap
@@ -68,7 +68,7 @@ public class SettingsView : UserControl
 
     var pathBox = new TextBox
     {
-      Watermark = "~/.steam/debian-installation/steamapps/common/Menace Demo",
+      Watermark = "~/.steam/debian-installation/steamapps/common/Menace",
       Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
       Foreground = Brushes.White,
       BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
@@ -93,6 +93,69 @@ public class SettingsView : UserControl
     installStack.Children.Add(pathStack);
     installBorder.Child = installStack;
     stack.Children.Add(installBorder);
+
+    // Extracted Assets Directory
+    var assetsBorder = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(24)
+    };
+
+    var assetsStack = new StackPanel { Spacing = 16 };
+
+    assetsStack.Children.Add(new TextBlock
+    {
+      Text = "Extracted Assets Directory",
+      FontSize = 16,
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White
+    });
+
+    assetsStack.Children.Add(new TextBlock
+    {
+      Text = "Point this to your AssetRipper output directory. Allows you to extract once and reuse across app versions. Leave blank to auto-detect.",
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap
+    });
+
+    var assetsPathStack = new StackPanel { Spacing = 8 };
+    assetsPathStack.Children.Add(new TextBlock
+    {
+      Text = "Assets Path",
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White,
+      FontSize = 13
+    });
+
+    var assetsPathBox = new TextBox
+    {
+      Watermark = "(auto-detect from game install or out2/assets)",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      BorderThickness = new Thickness(1),
+      Padding = new Thickness(12, 8)
+    };
+    assetsPathBox.Bind(TextBox.TextProperty,
+      new Avalonia.Data.Binding("ExtractedAssetsPath") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    assetsPathStack.Children.Add(assetsPathBox);
+
+    // Assets status message
+    var assetsStatusText = new TextBlock
+    {
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap,
+      FontSize = 12
+    };
+    assetsStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("AssetsPathStatus"));
+    assetsPathStack.Children.Add(assetsStatusText);
+
+    assetsStack.Children.Add(assetsPathStack);
+    assetsBorder.Child = assetsStack;
+    stack.Children.Add(assetsBorder);
 
     // Extraction Settings
     var extractionBorder = new Border

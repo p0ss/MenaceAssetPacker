@@ -19,14 +19,17 @@ public class DevModeMod : MelonMod
     private bool _sceneSeen;
     private bool _cheatsEnabled;
     private bool _showUI;
+    private bool _earlyDiagDone;
+    private int _updateCount;
     private string _statusMessage = "";
     private float _statusTime;
 
     // Reflection cache — all looked up by name, no hardcoded offsets
     private MethodInfo _tacticalStateGet;
     private MethodInfo _startDevModeAction;
-    private object _godModeAction;
-    private object _deleteEntityAction;
+    private ConstructorInfo _godModeActionCtor;
+    private object _godModeTargetValue;          // GodModeAction.GodModeTarget.Target (0)
+    private ConstructorInfo _deleteEntityActionCtor;
     private Type _entityTemplateType;
     private ConstructorInfo _spawnEntityActionCtor;
     private PropertyInfo _entityTypeProperty;   // EntityTemplate.Type
@@ -65,49 +68,69 @@ public class DevModeMod : MelonMod
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
-        if (sceneName == "Title" && !_sceneSeen)
+        LoggerInstance.Msg($"Scene loaded: '{sceneName}' (index {buildIndex})");
+
+        if (!_sceneSeen)
         {
+            LoggerInstance.Msg($"First scene '{sceneName}', starting setup coroutine...");
             _sceneSeen = true;
-            MelonCoroutines.Start(WaitAndRunPhases());
+            MelonCoroutines.Start(WaitAndSetupCore());
         }
     }
 
-    private System.Collections.IEnumerator WaitAndRunPhases()
+    /// <summary>
+    /// Phase 1: Enable cheats and cache action types. No FindObjectsOfTypeAll needed.
+    /// This works even on Unity versions where FindObjectsOfTypeAll crashes.
+    /// </summary>
+    private System.Collections.IEnumerator WaitAndSetupCore()
     {
         for (int attempt = 0; attempt < 30; attempt++)
         {
             yield return new WaitForSeconds(2f);
 
-            if (TryRunPhases())
+            LoggerInstance.Msg($"Setup attempt {attempt + 1}/30...");
+
+            if (TrySetupCore())
             {
-                LoggerInstance.Msg("Dev mode setup complete.");
+                LoggerInstance.Msg("Dev mode core setup complete (cheats + actions).");
                 yield break;
             }
         }
 
-        LoggerInstance.Warning("Failed to set up dev mode after 30 attempts.");
+        LoggerInstance.Warning("Failed to set up dev mode core after 30 attempts.");
         _devModeReady = true;
     }
 
-    private bool TryRunPhases()
+    /// <summary>
+    /// Core setup: resolve types, enable cheats, cache action constructors.
+    /// Does NOT call FindObjectsOfTypeAll — pure reflection against Assembly-CSharp.
+    /// </summary>
+    private bool TrySetupCore()
     {
         var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
         if (gameAssembly == null)
+        {
+            LoggerInstance.Msg("Assembly-CSharp not loaded yet");
             return false;
+        }
+
+        LoggerInstance.Msg($"Assembly-CSharp found, {gameAssembly.GetTypes().Length} types");
 
         _entityTemplateType = gameAssembly.GetTypes()
             .FirstOrDefault(t => t.Name == "EntityTemplate" && !t.IsAbstract);
 
         if (_entityTemplateType == null)
+        {
+            // Dump type names that look relevant to help diagnose renamed types
+            var candidates = gameAssembly.GetTypes()
+                .Where(t => t.Name.Contains("Entity") || t.Name.Contains("Template"))
+                .Select(t => t.Name)
+                .Take(30);
+            LoggerInstance.Msg($"EntityTemplate not found. Candidates: {string.Join(", ", candidates)}");
             return false;
-
-        var il2cppType = Il2CppType.From(_entityTemplateType);
-        var objects = Resources.FindObjectsOfTypeAll(il2cppType);
-
-        if (objects == null || objects.Length == 0)
-            return false;
+        }
 
         // Resolve all enums and properties by name before using them
         if (!ResolveReflectionCache(gameAssembly))
@@ -115,11 +138,228 @@ public class DevModeMod : MelonMod
 
         EnableCheats(gameAssembly);
         CacheActions(gameAssembly);
-        LoadEntityTemplates(objects);
+        TryLoadEntityTemplates(gameAssembly);
 
         _devModeReady = true;
         _showUI = true;
         return true;
+    }
+
+    /// <summary>
+    /// Loads entity templates via DataTemplateLoader.GetAll&lt;EntityTemplate&gt;().
+    /// Uses the game's own data pipeline — no FindObjectsOfTypeAll needed.
+    /// </summary>
+    private void TryLoadEntityTemplates(Assembly gameAssembly)
+    {
+        try
+        {
+            LoggerInstance.Msg("Loading entity templates via DataTemplateLoader...");
+
+            var loaderType = gameAssembly.GetTypes()
+                .FirstOrDefault(t => t.Name == "DataTemplateLoader");
+
+            if (loaderType == null)
+            {
+                // Dump loader-like types to see what the EA build calls it
+                var loaderCandidates = gameAssembly.GetTypes()
+                    .Where(t => t.Name.Contains("Loader") || t.Name.Contains("Template") || t.Name.Contains("Data"))
+                    .Where(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name.Contains("Get")))
+                    .Select(t => t.Name)
+                    .Take(20);
+                LoggerInstance.Warning($"DataTemplateLoader not found. Static getter types: {string.Join(", ", loaderCandidates)}");
+                return;
+            }
+
+            // Log all public static methods on the loader
+            var loaderMethods = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Select(m => $"{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))}){(m.IsGenericMethodDefinition ? "<T>" : "")}")
+                .ToList();
+            LoggerInstance.Msg($"DataTemplateLoader methods: {string.Join(", ", loaderMethods)}");
+
+            // DataTemplateLoader.GetAll<EntityTemplate>()
+            var getAllMethod = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "GetAll" && m.IsGenericMethodDefinition);
+
+            if (getAllMethod == null)
+            {
+                LoggerInstance.Warning("DataTemplateLoader.GetAll<T> not found — spawn menu unavailable");
+                return;
+            }
+
+            var getAllEntity = getAllMethod.MakeGenericMethod(_entityTemplateType);
+            var collection = getAllEntity.Invoke(null, null);
+
+            if (collection == null)
+            {
+                LoggerInstance.Warning("DataTemplateLoader.GetAll<EntityTemplate>() returned null");
+                return;
+            }
+
+            LoggerInstance.Msg($"GetAll returned type: {collection.GetType().FullName}");
+
+            var entityObjects = EnumerateIl2CppCollection(collection);
+
+            if (entityObjects.Count > 0)
+            {
+                LoadEntityTemplates(entityObjects.ToArray());
+            }
+            else
+            {
+                LoggerInstance.Warning("No EntityTemplate instances returned — spawn menu unavailable");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"Could not load entity templates: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Enumerates an IL2CPP collection object using multiple strategies.
+    /// IL2CPP collections don't implement managed System.Collections.IEnumerable,
+    /// so we need to go through Il2CppInterop's type system.
+    /// </summary>
+    private List<UnityEngine.Object> EnumerateIl2CppCollection(object collection)
+    {
+        var results = new List<UnityEngine.Object>();
+
+        // Strategy 1: TryCast to Il2CppSystem.Collections.IEnumerable (IL2CPP-level cast)
+        if (collection is Il2CppObjectBase il2cppObj)
+        {
+            try
+            {
+                var il2cppEnumerable = il2cppObj.TryCast<Il2CppSystem.Collections.IEnumerable>();
+                if (il2cppEnumerable != null)
+                {
+                    var enumerator = il2cppEnumerable.GetEnumerator();
+                    while (enumerator.MoveNext())
+                    {
+                        var current = enumerator.Current;
+                        if (current == null) continue;
+
+                        var unityObj = current.TryCast<UnityEngine.Object>();
+                        if (unityObj != null)
+                            results.Add(unityObj);
+                    }
+
+                    if (results.Count > 0)
+                    {
+                        LoggerInstance.Msg($"Enumerated via Il2Cpp IEnumerable: {results.Count} items");
+                        return results;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Msg($"Il2Cpp IEnumerable strategy failed: {ex.Message}");
+            }
+        }
+
+        // Strategy 2: Reflection-based GetEnumerator on the IL2CPP proxy type
+        try
+        {
+            var collType = collection.GetType();
+            var getEnumeratorMethod = collType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "GetEnumerator" && m.GetParameters().Length == 0);
+
+            if (getEnumeratorMethod != null)
+            {
+                var enumerator = getEnumeratorMethod.Invoke(collection, null);
+                if (enumerator != null)
+                {
+                    var enumType = enumerator.GetType();
+                    var moveNext = enumType.GetMethod("MoveNext",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    var currentProp = enumType.GetProperty("Current",
+                        BindingFlags.Public | BindingFlags.Instance);
+
+                    if (moveNext != null && currentProp != null)
+                    {
+                        while ((bool)moveNext.Invoke(enumerator, null))
+                        {
+                            var item = currentProp.GetValue(enumerator);
+                            AddAsUnityObject(results, item);
+                        }
+
+                        if (results.Count > 0)
+                        {
+                            LoggerInstance.Msg($"Enumerated via reflection GetEnumerator: {results.Count} items");
+                            return results;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Msg($"Reflection GetEnumerator strategy failed: {ex.Message}");
+        }
+
+        // Strategy 3: Count property + indexer
+        try
+        {
+            var collType = collection.GetType();
+            var countProp = collType.GetProperty("Count",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (countProp != null)
+            {
+                int count = Convert.ToInt32(countProp.GetValue(collection));
+                LoggerInstance.Msg($"Collection Count={count}, trying indexer...");
+
+                var indexer = collType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(p => p.GetIndexParameters().Length == 1);
+
+                if (indexer != null)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        var item = indexer.GetValue(collection, new object[] { i });
+                        AddAsUnityObject(results, item);
+                    }
+
+                    if (results.Count > 0)
+                    {
+                        LoggerInstance.Msg($"Enumerated via Count+indexer: {results.Count} items");
+                        return results;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Msg($"Count+indexer strategy failed: {ex.Message}");
+        }
+
+        // Strategy 4: managed IEnumerable (last resort, works for Il2CppArrayBase etc.)
+        if (collection is System.Collections.IEnumerable managedEnumerable)
+        {
+            foreach (var item in managedEnumerable)
+                AddAsUnityObject(results, item);
+
+            if (results.Count > 0)
+                LoggerInstance.Msg($"Enumerated via managed IEnumerable: {results.Count} items");
+        }
+
+        return results;
+    }
+
+    private void AddAsUnityObject(List<UnityEngine.Object> results, object item)
+    {
+        if (item == null) return;
+
+        if (item is UnityEngine.Object unityObj)
+        {
+            results.Add(unityObj);
+            return;
+        }
+
+        if (item is Il2CppObjectBase il2cppItem)
+        {
+            var cast = il2cppItem.TryCast<UnityEngine.Object>();
+            if (cast != null)
+                results.Add(cast);
+        }
     }
 
     /// <summary>
@@ -130,12 +370,20 @@ public class DevModeMod : MelonMod
     {
         try
         {
+            // Log all EntityTemplate properties so we can see what the EA build has
+            var etProps = _entityTemplateType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Select(p => $"{p.Name}:{p.PropertyType.Name}")
+                .ToList();
+            LoggerInstance.Msg($"EntityTemplate properties ({etProps.Count}): {string.Join(", ", etProps)}");
+
             // EntityType enum — find the "Actor" value
             var entityTypeEnum = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "EntityType" && t.IsEnum);
             if (entityTypeEnum != null)
             {
-                foreach (var name in Enum.GetNames(entityTypeEnum))
+                var allNames = Enum.GetNames(entityTypeEnum);
+                LoggerInstance.Msg($"EntityType enum values: {string.Join(", ", allNames)}");
+                foreach (var name in allNames)
                 {
                     if (name == "Actor")
                     {
@@ -143,6 +391,10 @@ public class DevModeMod : MelonMod
                         break;
                     }
                 }
+            }
+            else
+            {
+                LoggerInstance.Warning("EntityType enum not found in assembly");
             }
 
             if (_entityTypeActorValue == null)
@@ -174,18 +426,34 @@ public class DevModeMod : MelonMod
             {
                 var names = Enum.GetNames(devSettingEnum);
                 var values = Enum.GetValues(devSettingEnum);
+                // Log all enum values so we can see what the EA build has
+                var enumEntries = new List<string>();
                 for (int i = 0; i < names.Length; i++)
                 {
                     int val = Convert.ToInt32(values.GetValue(i));
+                    enumEntries.Add($"{names[i]}={val}");
                     if (names[i] == "CheatsEnabled") _cheatsEnabledIndex = val;
                     else if (names[i] == "ShowDeveloperSettings") _showDevSettingsIndex = val;
                 }
+                LoggerInstance.Msg($"DeveloperSettingType values ({names.Length}): {string.Join(", ", enumEntries)}");
+            }
+            else
+            {
+                var enumCandidates = gameAssembly.GetTypes()
+                    .Where(t => t.IsEnum && (t.Name.Contains("Developer") || t.Name.Contains("Setting") || t.Name.Contains("Cheat")))
+                    .Select(t => t.Name)
+                    .Take(15);
+                LoggerInstance.Warning($"DeveloperSettingType enum not found. Candidates: {string.Join(", ", enumCandidates)}");
             }
 
             if (_cheatsEnabledIndex >= 0)
                 LoggerInstance.Msg($"DeveloperSettingType.CheatsEnabled = {_cheatsEnabledIndex}");
+            else
+                LoggerInstance.Warning("CheatsEnabled not found in DeveloperSettingType");
             if (_showDevSettingsIndex >= 0)
                 LoggerInstance.Msg($"DeveloperSettingType.ShowDeveloperSettings = {_showDevSettingsIndex}");
+            else
+                LoggerInstance.Warning("ShowDeveloperSettings not found in DeveloperSettingType");
 
             // FactionType enum — build the full list dynamically
             _factionEnumType = gameAssembly.GetTypes()
@@ -243,13 +511,33 @@ public class DevModeMod : MelonMod
         {
             var devSettingsType = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "DevSettings");
-            if (devSettingsType == null) return;
+            if (devSettingsType == null)
+            {
+                // Look for renamed settings types
+                var settingsCandidates = gameAssembly.GetTypes()
+                    .Where(t => t.Name.Contains("Setting") || t.Name.Contains("Dev") || t.Name.Contains("Cheat"))
+                    .Select(t => t.Name)
+                    .Take(20);
+                LoggerInstance.Warning($"DevSettings type not found. Candidates: {string.Join(", ", settingsCandidates)}");
+                return;
+            }
+
+            // Log all fields on DevSettings so we can see what the EA build has
+            var allFields = devSettingsType.GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+                .Select(f => f.Name)
+                .ToList();
+            LoggerInstance.Msg($"DevSettings fields ({allFields.Count}): {string.Join(", ", allFields.Take(30))}");
 
             var nativeFieldInfo = devSettingsType.GetField("NativeFieldInfoPtr_VALUES",
                 BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-            if (nativeFieldInfo == null) return;
+            if (nativeFieldInfo == null)
+            {
+                LoggerInstance.Warning("DevSettings.NativeFieldInfoPtr_VALUES not found");
+                return;
+            }
 
             IntPtr fieldInfoPtr = (IntPtr)nativeFieldInfo.GetValue(null);
+            LoggerInstance.Msg($"DevSettings fieldInfoPtr = 0x{fieldInfoPtr.ToInt64():X}");
             if (fieldInfoPtr == IntPtr.Zero) return;
 
             IntPtr arrayPtr;
@@ -260,15 +548,26 @@ public class DevModeMod : MelonMod
                 arrayPtr = temp;
             }
 
+            LoggerInstance.Msg($"DevSettings arrayPtr = 0x{arrayPtr.ToInt64():X}");
             if (arrayPtr == IntPtr.Zero) return;
 
             // IL2CPP array header is 0x20 bytes — this is an IL2CPP runtime constant, not game-specific
             const int headerSize = 0x20;
             const int elemSize = 4;
 
+            // Read array length from IL2CPP array header (length is at offset 0x18)
+            int arrayLength = Marshal.ReadInt32(arrayPtr + 0x18);
+            LoggerInstance.Msg($"DevSettings VALUES array length = {arrayLength}, CheatsEnabled index = {_cheatsEnabledIndex}, ShowDevSettings index = {_showDevSettingsIndex}");
+
+            if (_cheatsEnabledIndex >= arrayLength)
+            {
+                LoggerInstance.Warning($"CheatsEnabled index {_cheatsEnabledIndex} is out of bounds (array length {arrayLength})");
+                return;
+            }
+
             Marshal.WriteInt32(arrayPtr + headerSize + (_cheatsEnabledIndex * elemSize), 1);
 
-            if (_showDevSettingsIndex >= 0)
+            if (_showDevSettingsIndex >= 0 && _showDevSettingsIndex < arrayLength)
                 Marshal.WriteInt32(arrayPtr + headerSize + (_showDevSettingsIndex * elemSize), 1);
 
             _cheatsEnabled = Marshal.ReadInt32(arrayPtr + headerSize + (_cheatsEnabledIndex * elemSize)) == 1;
@@ -276,7 +575,7 @@ public class DevModeMod : MelonMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"EnableCheats error: {ex.Message}");
+            LoggerInstance.Warning($"EnableCheats error: {ex.Message}\n{ex.StackTrace}");
         }
     }
 
@@ -288,36 +587,106 @@ public class DevModeMod : MelonMod
                 .FirstOrDefault(t => t.Name == "TacticalState");
             if (tacticalStateType != null)
             {
+                // Log all public methods so we can see what's available
+                var methods = tacticalStateType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                    .Where(m => !m.IsSpecialName)
+                    .Select(m => $"{(m.IsStatic ? "static " : "")}{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})")
+                    .ToList();
+                LoggerInstance.Msg($"TacticalState methods ({methods.Count}): {string.Join(", ", methods.Take(25))}");
+
                 _tacticalStateGet = tacticalStateType.GetMethod("Get",
                     BindingFlags.Public | BindingFlags.Static);
                 _startDevModeAction = tacticalStateType.GetMethod("StartDevModeAction",
                     BindingFlags.Public | BindingFlags.Instance);
+
+                LoggerInstance.Msg($"TacticalState.Get={_tacticalStateGet != null}, StartDevModeAction={_startDevModeAction != null}");
+            }
+            else
+            {
+                var stateCandidates = gameAssembly.GetTypes()
+                    .Where(t => t.Name.Contains("Tactical") || t.Name.Contains("State"))
+                    .Select(t => t.Name)
+                    .Take(20);
+                LoggerInstance.Warning($"TacticalState not found. Candidates: {string.Join(", ", stateCandidates)}");
             }
 
-            CacheSimpleAction(gameAssembly, "GodModeAction", out _godModeAction);
-            CacheSimpleAction(gameAssembly, "DeleteEntityAction", out _deleteEntityAction);
+            // GodModeAction — EA build takes GodModeTarget enum, demo was parameterless
+            var godModeType = gameAssembly.GetTypes().FirstOrDefault(t => t.Name == "GodModeAction");
+            if (godModeType != null)
+            {
+                // Try parameterless first (demo), then 1-param (EA)
+                _godModeActionCtor = godModeType.GetConstructor(Type.EmptyTypes);
+                if (_godModeActionCtor == null)
+                {
+                    _godModeActionCtor = godModeType.GetConstructors()
+                        .FirstOrDefault(c => c.GetParameters().Length == 1);
+
+                    if (_godModeActionCtor != null)
+                    {
+                        // Resolve GodModeTarget.Target (the "click on a unit" mode)
+                        var targetEnum = godModeType.GetNestedTypes()
+                            .FirstOrDefault(t => t.IsEnum && t.Name == "GodModeTarget");
+                        if (targetEnum != null)
+                        {
+                            var targetName = Enum.GetNames(targetEnum).FirstOrDefault(n => n == "Target") ?? Enum.GetNames(targetEnum).First();
+                            _godModeTargetValue = Enum.Parse(targetEnum, targetName);
+                            LoggerInstance.Msg($"GodModeAction: using 1-param ctor with GodModeTarget.{targetName}");
+                        }
+                        else
+                        {
+                            LoggerInstance.Warning("GodModeAction: found 1-param ctor but couldn't resolve GodModeTarget enum");
+                            _godModeActionCtor = null;
+                        }
+                    }
+                }
+                else
+                {
+                    LoggerInstance.Msg("GodModeAction: using parameterless ctor (demo build)");
+                }
+            }
+
+            CacheActionCtor(gameAssembly, "DeleteEntityAction", out _deleteEntityActionCtor);
 
             var spawnType = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "SpawnEntityAction");
             if (spawnType != null)
             {
+                // Log all constructors so we can see what signatures are available
+                var ctors = spawnType.GetConstructors()
+                    .Select(c => $"({string.Join(", ", c.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"))})")
+                    .ToList();
+                LoggerInstance.Msg($"SpawnEntityAction constructors: {string.Join(", ", ctors)}");
+
                 _spawnEntityActionCtor = spawnType.GetConstructors()
                     .FirstOrDefault(c => c.GetParameters().Length == 2);
             }
+            else
+            {
+                var actionCandidates = gameAssembly.GetTypes()
+                    .Where(t => t.Name.Contains("Spawn") || t.Name.Contains("Action"))
+                    .Select(t => t.Name)
+                    .Take(20);
+                LoggerInstance.Warning($"SpawnEntityAction not found. Candidates: {string.Join(", ", actionCandidates)}");
+            }
 
-            LoggerInstance.Msg($"Actions: GodMode={_godModeAction != null}, " +
-                             $"Delete={_deleteEntityAction != null}, " +
+            LoggerInstance.Msg($"Actions: GodMode={_godModeActionCtor != null}, " +
+                             $"Delete={_deleteEntityActionCtor != null}, " +
                              $"SpawnCtor={_spawnEntityActionCtor != null}");
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"CacheActions error: {ex.Message}");
+            LoggerInstance.Warning($"CacheActions error: {ex.Message}\n{ex.StackTrace}");
         }
     }
 
     private void LoadEntityTemplates(UnityEngine.Object[] allObjects)
     {
         int totalCount = 0;
+        int nullPtrCount = 0;
+        int nonActorCount = 0;
+        int noNameCount = 0;
+        int errorCount = 0;
+        var seenEntityTypes = new HashSet<string>();
         var entries = new List<(string name, string actorType, UnityEngine.Object obj)>();
 
         foreach (var obj in allObjects)
@@ -330,14 +699,17 @@ public class DevModeMod : MelonMod
                 IntPtr ptr = IntPtr.Zero;
                 if (obj is Il2CppObjectBase il2cppObj)
                     ptr = il2cppObj.Pointer;
-                if (ptr == IntPtr.Zero) continue;
+                if (ptr == IntPtr.Zero) { nullPtrCount++; continue; }
 
                 // Create typed proxy for property access (no hardcoded offsets)
                 var typed = Activator.CreateInstance(_entityTemplateType, new object[] { ptr });
 
                 // Filter: only EntityType.Actor
                 var entityTypeVal = _entityTypeProperty.GetValue(typed);
-                if (!Equals(entityTypeVal, _entityTypeActorValue)) continue;
+                var entityTypeName = entityTypeVal?.ToString() ?? "null";
+                seenEntityTypes.Add(entityTypeName);
+
+                if (!Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
 
                 // Read ActorType for display
                 string actorTypeName = "Unit";
@@ -350,12 +722,20 @@ public class DevModeMod : MelonMod
 
                 string name = "(unknown)";
                 try { name = obj.name; } catch { }
-                if (string.IsNullOrEmpty(name) || name == "(unknown)") continue;
+                if (string.IsNullOrEmpty(name) || name == "(unknown)") { noNameCount++; continue; }
 
                 entries.Add((name, actorTypeName, obj));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                errorCount++;
+                if (errorCount <= 3)
+                    LoggerInstance.Warning($"Entity iteration error #{errorCount}: {ex.InnerException?.Message ?? ex.Message}");
+            }
         }
+
+        LoggerInstance.Msg($"Entity scan: {totalCount} total, {entries.Count} actors, {nonActorCount} non-actor, {nullPtrCount} null ptr, {noNameCount} unnamed, {errorCount} errors");
+        LoggerInstance.Msg($"EntityType values seen: {string.Join(", ", seenEntityTypes)}");
 
         entries.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.Ordinal));
 
@@ -367,18 +747,18 @@ public class DevModeMod : MelonMod
         }
 
         LoggerInstance.Msg($"Entity templates: {_entityTemplates.Count} actors (filtered from {totalCount} total)");
+
+        // Log first 20 entity names for diagnostics
+        var sample = entries.Take(20).Select(e => $"{e.name} ({e.actorType})");
+        LoggerInstance.Msg($"First entities: {string.Join(", ", sample)}");
     }
 
-    private void CacheSimpleAction(Assembly gameAssembly, string typeName, out object action)
+    private void CacheActionCtor(Assembly gameAssembly, string typeName, out ConstructorInfo ctor)
     {
-        action = null;
+        ctor = null;
         var type = gameAssembly.GetTypes().FirstOrDefault(t => t.Name == typeName);
         if (type != null)
-        {
-            var ctor = type.GetConstructor(Type.EmptyTypes);
-            if (ctor != null)
-                action = ctor.Invoke(null);
-        }
+            ctor = type.GetConstructor(Type.EmptyTypes);
     }
 
     private void SetStatus(string msg)
@@ -389,6 +769,48 @@ public class DevModeMod : MelonMod
 
     public override void OnUpdate()
     {
+        _updateCount++;
+
+        // Early diagnostics — runs once after a few frames, regardless of scene callbacks
+        if (!_earlyDiagDone && _updateCount == 60)
+        {
+            _earlyDiagDone = true;
+            LoggerInstance.Msg($"--- Early diagnostics (frame {_updateCount}) ---");
+            LoggerInstance.Msg($"sceneSeen={_sceneSeen}, devModeReady={_devModeReady}");
+            LoggerInstance.Msg($"Active scene: '{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}'");
+
+            try
+            {
+                int sceneCount = UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings;
+                LoggerInstance.Msg($"Scenes in build settings: {sceneCount}");
+                for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+                {
+                    var s = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                    LoggerInstance.Msg($"  Loaded scene [{i}]: '{s.name}' (path: {s.path}, isLoaded: {s.isLoaded})");
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"Scene enumeration error: {ex.Message}");
+            }
+
+            try
+            {
+                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                var gameAsm = assemblies.FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                LoggerInstance.Msg($"Loaded assemblies: {assemblies.Length}, Assembly-CSharp: {(gameAsm != null ? $"yes ({gameAsm.GetTypes().Length} types)" : "NOT FOUND")}");
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"Assembly check error: {ex.Message}");
+            }
+
+            if (!_sceneSeen)
+                LoggerInstance.Warning("OnSceneWasLoaded has NOT fired yet — scene callback may not be working");
+
+            LoggerInstance.Msg("--- End early diagnostics ---");
+        }
+
         if (!_devModeReady) return;
 
         try
@@ -428,11 +850,11 @@ public class DevModeMod : MelonMod
             }
             else if (Input.GetKeyDown(KeyCode.F2))
             {
-                TryStartSimpleAction(_godModeAction, "God Mode - click unit");
+                TryStartAction(_godModeActionCtor, _godModeTargetValue, "God Mode - click unit");
             }
             else if (Input.GetKeyDown(KeyCode.F3))
             {
-                TryStartSimpleAction(_deleteEntityAction, "Delete - click unit");
+                TryStartAction(_deleteEntityActionCtor, null, "Delete - click unit");
             }
         }
         catch { }
@@ -476,9 +898,9 @@ public class DevModeMod : MelonMod
         }
     }
 
-    private void TryStartSimpleAction(object action, string description)
+    private void TryStartAction(ConstructorInfo actionCtor, object ctorArg, string description)
     {
-        if (_tacticalStateGet == null || _startDevModeAction == null || action == null)
+        if (_tacticalStateGet == null || _startDevModeAction == null || actionCtor == null)
             return;
 
         try
@@ -490,6 +912,11 @@ public class DevModeMod : MelonMod
                 return;
             }
 
+            // Create action instance on demand (not ahead of time) to avoid
+            // stale IL2CPP objects persisting across scene transitions
+            var action = ctorArg != null
+                ? actionCtor.Invoke(new[] { ctorArg })
+                : actionCtor.Invoke(null);
             SetStatus(description);
             _startDevModeAction.Invoke(state, new[] { action });
         }

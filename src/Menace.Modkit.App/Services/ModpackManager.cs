@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Menace.Modkit.App.Services;
 
@@ -169,7 +170,9 @@ public class ModpackManager
     }
 
     /// <summary>
-    /// Deploy modpack to active mods (copy staging to Mods folder)
+    /// Deploy modpack to active mods (copy staging to Mods folder).
+    /// Builds a runtime-compatible modpack.json that merges metadata,
+    /// stats/*.json template overrides, and asset entries.
     /// </summary>
     public void DeployModpack(string modpackName)
     {
@@ -184,6 +187,81 @@ public class ModpackManager
 
         // Copy entire staging directory to mods
         CopyDirectory(stagingPath, modsPath);
+
+        // Overwrite the deployed modpack.json with a runtime-compatible manifest
+        BuildRuntimeManifest(stagingPath, modsPath);
+    }
+
+    /// <summary>
+    /// Builds a modpack.json in the deploy directory that the runtime ModpackLoader can read.
+    /// The loader expects lowercase keys: name, version, author, templates, assets.
+    /// Templates are merged from stats/*.json files and any existing manifest entries.
+    /// </summary>
+    private void BuildRuntimeManifest(string stagingPath, string deployPath)
+    {
+        var info = LoadModpackInfo(stagingPath);
+
+        var manifest = new JsonObject
+        {
+            ["name"] = info?.Name ?? System.IO.Path.GetFileName(stagingPath),
+            ["version"] = info?.Version ?? "1.0.0",
+            ["author"] = info?.Author ?? "Unknown"
+        };
+
+        // Collect template overrides from stats/*.json files
+        var templates = new JsonObject();
+        var statsDir = System.IO.Path.Combine(stagingPath, "stats");
+        if (Directory.Exists(statsDir))
+        {
+            foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
+            {
+                var templateType = System.IO.Path.GetFileNameWithoutExtension(statsFile);
+                try
+                {
+                    var node = JsonNode.Parse(File.ReadAllText(statsFile));
+                    if (node != null)
+                        templates[templateType] = node;
+                }
+                catch { /* skip malformed files */ }
+            }
+        }
+
+        // Also merge any templates/assets already in the staging manifest (e.g. from AssetBrowser)
+        JsonObject? assets = null;
+        var stagingManifestPath = System.IO.Path.Combine(stagingPath, "modpack.json");
+        if (File.Exists(stagingManifestPath))
+        {
+            try
+            {
+                var existing = JsonNode.Parse(File.ReadAllText(stagingManifestPath))?.AsObject();
+                if (existing != null)
+                {
+                    // Merge templates from manifest (stats/ files take priority)
+                    var existingTemplates = (existing["templates"] ?? existing["Templates"]) as JsonObject;
+                    if (existingTemplates != null)
+                    {
+                        foreach (var kvp in existingTemplates)
+                        {
+                            if (!templates.ContainsKey(kvp.Key) && kvp.Value != null)
+                                templates[kvp.Key] = JsonNode.Parse(kvp.Value.ToJsonString());
+                        }
+                    }
+
+                    // Preserve asset entries
+                    var existingAssets = (existing["assets"] ?? existing["Assets"]) as JsonObject;
+                    if (existingAssets != null)
+                        assets = JsonNode.Parse(existingAssets.ToJsonString())?.AsObject();
+                }
+            }
+            catch { }
+        }
+
+        manifest["templates"] = templates;
+        manifest["assets"] = assets ?? new JsonObject();
+
+        var deployManifestPath = System.IO.Path.Combine(deployPath, "modpack.json");
+        File.WriteAllText(deployManifestPath, manifest.ToJsonString(
+            new JsonSerializerOptions { WriteIndented = true }));
     }
 
     /// <summary>
@@ -202,16 +280,11 @@ public class ModpackManager
     }
 
     /// <summary>
-    /// Update modpack metadata (save manifest)
+    /// Update modpack metadata (save manifest), preserving existing templates/assets fields
     /// </summary>
     public void UpdateModpackMetadata(ModpackInfo modpack)
     {
-        var manifestPath = Path.Combine(modpack.Path, "modpack.json");
-        var json = JsonSerializer.Serialize(modpack, new JsonSerializerOptions
-        {
-            WriteIndented = true
-        });
-        File.WriteAllText(manifestPath, json);
+        WriteModpackMetadata(modpack);
     }
 
     private void EnsureDirectoriesExist()
@@ -231,6 +304,11 @@ public class ModpackManager
         }
     }
 
+    private static readonly JsonSerializerOptions _caseInsensitiveOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private ModpackInfo? LoadModpackInfo(string modpackDir)
     {
         var infoPath = Path.Combine(modpackDir, "modpack.json");
@@ -241,7 +319,7 @@ public class ModpackManager
         try
         {
             var json = File.ReadAllText(infoPath);
-            var info = JsonSerializer.Deserialize<ModpackInfo>(json);
+            var info = JsonSerializer.Deserialize<ModpackInfo>(json, _caseInsensitiveOptions);
             if (info != null)
             {
                 info.Path = modpackDir;
@@ -256,12 +334,39 @@ public class ModpackManager
 
     private void SaveModpackInfo(ModpackInfo info)
     {
+        WriteModpackMetadata(info);
+    }
+
+    /// <summary>
+    /// Write modpack metadata to modpack.json, preserving any existing
+    /// non-metadata fields (templates, assets) that other tools may have written.
+    /// </summary>
+    private void WriteModpackMetadata(ModpackInfo info)
+    {
         var infoPath = Path.Combine(info.Path, "modpack.json");
-        var json = JsonSerializer.Serialize(info, new JsonSerializerOptions
+
+        // Read existing manifest to preserve templates/assets fields
+        JsonObject manifest;
+        if (File.Exists(infoPath))
         {
-            WriteIndented = true
-        });
-        File.WriteAllText(infoPath, json);
+            try { manifest = JsonNode.Parse(File.ReadAllText(infoPath))?.AsObject() ?? new JsonObject(); }
+            catch { manifest = new JsonObject(); }
+        }
+        else
+        {
+            manifest = new JsonObject();
+        }
+
+        // Update only metadata fields
+        manifest["Name"] = info.Name;
+        manifest["Author"] = info.Author;
+        manifest["Description"] = info.Description;
+        manifest["Version"] = info.Version;
+        manifest["CreatedDate"] = info.CreatedDate.ToString("o");
+        manifest["ModifiedDate"] = info.ModifiedDate.ToString("o");
+
+        File.WriteAllText(infoPath, manifest.ToJsonString(
+            new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private string SanitizeName(string name)

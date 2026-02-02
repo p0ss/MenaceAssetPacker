@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
@@ -73,7 +72,7 @@ namespace Menace.DataExtractor
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
 
-            RunExtractionAsync();
+            MelonCoroutines.Start(RunExtractionCoroutine());
         }
 
         // Write directly to a file and flush — survives native crashes
@@ -86,19 +85,163 @@ namespace Menace.DataExtractor
             catch { }
         }
 
-        private async void RunExtractionAsync()
+        // Shared state between PrepareExtraction and the phase loops
+        private List<Type> _pendingTemplateTypes;
+        private Dictionary<string, List<UnityEngine.Object>> _pendingObjectsByType;
+
+        private System.Collections.IEnumerator RunExtractionCoroutine()
         {
             LoggerInstance.Msg("Waiting for game to load...");
-            await Task.Delay(8000);
+
+            // Wait ~8 seconds on the main thread (yield each frame)
+            float waited = 0f;
+            while (waited < 8f)
+            {
+                yield return null;
+                waited += Time.deltaTime;
+            }
 
             for (int attempt = 1; attempt <= 60; attempt++)
             {
-                if (TryExtractAllTemplates())
+                if (PrepareExtraction())
                 {
+                    // Extraction is ready — run phases with yields between types
+                    // so the game loop isn't starved
+
+                    // ========== PHASE 1: Primitives ==========
+                    DebugLog("=== PHASE 1: Primitive properties only ===");
+                    var allTypeContexts = new List<TypeContext>();
+                    int phase1Success = 0;
+
+                    foreach (var templateType in _pendingTemplateTypes)
+                    {
+                        if (!_pendingObjectsByType.TryGetValue(templateType.Name, out var objects) || objects.Count == 0)
+                        {
+                            DebugLog($">>> P1 SKIP {templateType.Name} (no instances found)");
+                            continue;
+                        }
+
+                        DebugLog($">>> P1 START {templateType.Name}");
+                        try
+                        {
+                            var typeCtx = ExtractTypePhase1(templateType, objects);
+                            if (typeCtx != null && typeCtx.Instances.Count > 0)
+                            {
+                                allTypeContexts.Add(typeCtx);
+                                var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                                SaveSingleTemplateType(templateType.Name, dataList);
+                                phase1Success++;
+                                DebugLog($"  SAVED {typeCtx.Instances.Count} instances (primitives)");
+                                LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances (primitives)");
+                            }
+                            else
+                            {
+                                DebugLog($"  No instances extracted");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            DebugLog($"  P1 EXCEPTION: {ex.Message}");
+                        }
+                        DebugLog($"<<< P1 END {templateType.Name}");
+
+                        yield return null; // Give game a frame between types
+                    }
+
+                    DebugLog($"=== Phase 1 complete: {phase1Success} types saved ===");
+                    LoggerInstance.Msg($"Phase 1 (primitives): {phase1Success} types saved");
+
+                    // ========== PHASE 2: References ==========
+                    DebugLog("=== PHASE 2: Reference properties ===");
+                    int phase2Success = 0;
+
+                    foreach (var typeCtx in allTypeContexts)
+                    {
+                        DebugLog($">>> P2 START {typeCtx.TemplateType.Name}");
+                        try
+                        {
+                            bool anyRefs = false;
+                            foreach (var inst in typeCtx.Instances)
+                            {
+                                if (FillReferenceProperties(inst, typeCtx.TemplateType))
+                                    anyRefs = true;
+                            }
+
+                            if (anyRefs)
+                            {
+                                var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                                SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
+                                DebugLog($"  UPDATED with references");
+                            }
+                            else
+                            {
+                                DebugLog($"  No reference properties to fill");
+                            }
+                            phase2Success++;
+                        }
+                        catch (Exception ex)
+                        {
+                            DebugLog($"  P2 EXCEPTION: {ex.Message}");
+                        }
+                        DebugLog($"<<< P2 END {typeCtx.TemplateType.Name}");
+
+                        yield return null;
+                    }
+
+                    DebugLog($"=== Phase 2 complete: {phase2Success}/{allTypeContexts.Count} types updated ===");
+                    LoggerInstance.Msg($"Phase 2 (references): {phase2Success}/{allTypeContexts.Count} types updated");
+
+                    // ========== PHASE 3: Fix unknown names ==========
+                    DebugLog("=== PHASE 3: Unity .name for remaining unknown names ===");
+                    int phase3Fixed = 0;
+
+                    foreach (var typeCtx in allTypeContexts)
+                    {
+                        bool anyFixed = false;
+                        foreach (var inst in typeCtx.Instances)
+                        {
+                            if (inst.Name != null && inst.Name.StartsWith("unknown_") && inst.Pointer != IntPtr.Zero)
+                            {
+                                try
+                                {
+                                    var obj = new UnityEngine.Object(inst.Pointer);
+                                    string unityName = obj.name;
+                                    if (!string.IsNullOrEmpty(unityName))
+                                    {
+                                        inst.Name = unityName;
+                                        inst.Data["name"] = unityName;
+                                        anyFixed = true;
+                                        phase3Fixed++;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+
+                        if (anyFixed)
+                        {
+                            var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                            SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
+                        }
+
+                        yield return null;
+                    }
+
+                    DebugLog($"=== Phase 3 complete: fixed {phase3Fixed} names ===");
+                    LoggerInstance.Msg($"Phase 3 (names): fixed {phase3Fixed} unknown names");
+
+                    _hasSaved = phase1Success > 0;
                     LoggerInstance.Msg($"Extraction completed successfully on attempt {attempt}");
-                    return;
+                    yield break;
                 }
-                await Task.Delay(2000);
+
+                // Wait ~2 seconds before retrying
+                float retryWait = 0f;
+                while (retryWait < 2f)
+                {
+                    yield return null;
+                    retryWait += Time.deltaTime;
+                }
             }
 
             LoggerInstance.Warning("Could not extract templates after 60 attempts");
@@ -137,7 +280,140 @@ namespace Menace.DataExtractor
             catch { return null; }
         }
 
-        private bool TryExtractAllTemplates()
+        /// <summary>
+        /// Enumerates an IL2CPP collection returned by DataTemplateLoader.GetAll&lt;T&gt;().
+        /// IL2CPP collections don't implement managed System.Collections.IEnumerable,
+        /// so we use Il2CppInterop's TryCast and reflection-based fallbacks.
+        /// </summary>
+        private List<UnityEngine.Object> EnumerateIl2CppCollection(object collection)
+        {
+            var results = new List<UnityEngine.Object>();
+
+            // Strategy 1: TryCast to Il2CppSystem.Collections.IEnumerable (IL2CPP-level cast)
+            if (collection is Il2CppObjectBase il2cppObj)
+            {
+                try
+                {
+                    var il2cppEnumerable = il2cppObj.TryCast<Il2CppSystem.Collections.IEnumerable>();
+                    if (il2cppEnumerable != null)
+                    {
+                        var enumerator = il2cppEnumerable.GetEnumerator();
+                        while (enumerator.MoveNext())
+                        {
+                            var current = enumerator.Current;
+                            if (current == null) continue;
+                            var unityObj = current.TryCast<UnityEngine.Object>();
+                            if (unityObj != null)
+                                results.Add(unityObj);
+                        }
+                        if (results.Count > 0) return results;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    Il2Cpp IEnumerable strategy failed: {ex.Message}");
+                }
+            }
+
+            // Strategy 2: Reflection-based GetEnumerator on the IL2CPP proxy type
+            try
+            {
+                var collType = collection.GetType();
+                var getEnumeratorMethod = collType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "GetEnumerator" && m.GetParameters().Length == 0);
+
+                if (getEnumeratorMethod != null)
+                {
+                    var enumerator = getEnumeratorMethod.Invoke(collection, null);
+                    if (enumerator != null)
+                    {
+                        var enumType = enumerator.GetType();
+                        var moveNext = enumType.GetMethod("MoveNext",
+                            BindingFlags.Public | BindingFlags.Instance);
+                        var currentProp = enumType.GetProperty("Current",
+                            BindingFlags.Public | BindingFlags.Instance);
+
+                        if (moveNext != null && currentProp != null)
+                        {
+                            while ((bool)moveNext.Invoke(enumerator, null))
+                            {
+                                var item = currentProp.GetValue(enumerator);
+                                AddAsUnityObject(results, item);
+                            }
+                            if (results.Count > 0) return results;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"    Reflection GetEnumerator strategy failed: {ex.Message}");
+            }
+
+            // Strategy 3: Count property + indexer
+            try
+            {
+                var collType = collection.GetType();
+                var countProp = collType.GetProperty("Count",
+                    BindingFlags.Public | BindingFlags.Instance);
+
+                if (countProp != null)
+                {
+                    int count = Convert.ToInt32(countProp.GetValue(collection));
+                    var indexer = collType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                        .FirstOrDefault(p => p.GetIndexParameters().Length == 1);
+
+                    if (indexer != null)
+                    {
+                        for (int i = 0; i < count; i++)
+                        {
+                            var item = indexer.GetValue(collection, new object[] { i });
+                            AddAsUnityObject(results, item);
+                        }
+                        if (results.Count > 0) return results;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"    Count+indexer strategy failed: {ex.Message}");
+            }
+
+            // Strategy 4: managed IEnumerable (last resort)
+            if (collection is System.Collections.IEnumerable managedEnumerable)
+            {
+                foreach (var item in managedEnumerable)
+                    AddAsUnityObject(results, item);
+            }
+
+            return results;
+        }
+
+        private void AddAsUnityObject(List<UnityEngine.Object> results, object item)
+        {
+            if (item == null) return;
+
+            if (item is UnityEngine.Object unityObj)
+            {
+                results.Add(unityObj);
+                return;
+            }
+
+            if (item is Il2CppObjectBase il2cppItem)
+            {
+                var cast = il2cppItem.TryCast<UnityEngine.Object>();
+                if (cast != null)
+                    results.Add(cast);
+            }
+        }
+
+        /// <summary>
+        /// Quick preparation: finds assemblies, enumerates types, loads templates via
+        /// DataTemplateLoader, checks readiness. Stores results in _pendingTemplateTypes
+        /// and _pendingObjectsByType for the phase loops to consume.
+        /// Returns true if ready to extract, false to retry later.
+        /// </summary>
+        private bool PrepareExtraction()
         {
             try
             {
@@ -162,83 +438,85 @@ namespace Menace.DataExtractor
 
                 LoggerInstance.Msg($"Found {templateTypes.Count} template types, extracting...");
 
-                // Clean previous extraction results to avoid stale files from
-                // abstract base types that have no instances (e.g. BaseItemTemplate, MissionTemplate)
+                // Clean previous extraction results
                 CleanOutputDirectory();
 
                 DebugLog($"=== Extraction started: {templateTypes.Count} types ===");
                 for (int i = 0; i < templateTypes.Count; i++)
                     DebugLog($"  [{i}] {templateTypes[i].Name}");
 
-                // ============================================================
-                // Fetch ALL ScriptableObjects in one call (safe — ScriptableObject
-                // is a well-known base type, unlike specific subtypes which can crash)
-                // ============================================================
-                DebugLog("=== FindObjectsOfTypeAll<ScriptableObject>... ===");
-                var allScriptableObjects = Resources.FindObjectsOfTypeAll(
-                    Il2CppType.From(typeof(ScriptableObject)));
+                // Use DataTemplateLoader.GetAll<T>() — the game's own data pipeline.
+                // Replaces FindObjectsOfTypeAll which crashes on Unity 6000.0.63+
+                var loaderType = gameAssembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == "DataTemplateLoader");
 
-                if (allScriptableObjects == null || allScriptableObjects.Length == 0)
+                if (loaderType == null)
                 {
-                    DebugLog("  No ScriptableObjects found");
+                    DebugLog("  DataTemplateLoader not found — cannot extract");
                     return false;
                 }
 
-                DebugLog($"  Found {allScriptableObjects.Length} total ScriptableObjects");
+                var getAllMethod = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "GetAll" && m.IsGenericMethodDefinition);
 
-                // ============================================================
-                // Classify objects by their IL2CPP class name and group by template type
-                // ============================================================
-                DebugLog("=== Classifying objects by IL2CPP class name ===");
+                if (getAllMethod == null)
+                {
+                    DebugLog("  DataTemplateLoader.GetAll<T> not found");
+                    return false;
+                }
+
+                DebugLog("=== Loading templates via DataTemplateLoader.GetAll<T> ===");
                 var objectsByType = new Dictionary<string, List<UnityEngine.Object>>();
                 _il2cppClassPtrCache.Clear();
 
-                for (int i = 0; i < allScriptableObjects.Length; i++)
+                foreach (var templateType in templateTypes)
                 {
-                    var obj = allScriptableObjects[i];
-                    if (obj == null) continue;
-
-                    var il2cppBase = obj as Il2CppObjectBase;
-                    if (il2cppBase == null || il2cppBase.Pointer == IntPtr.Zero) continue;
-
-                    // Get class from object — this is safe here because FindObjectsOfTypeAll
-                    // just returned these objects, so pointers are guaranteed valid right now
-                    IntPtr klass = IntPtr.Zero;
-                    try { klass = IL2CPP.il2cpp_object_get_class(il2cppBase.Pointer); }
-                    catch { continue; }
-                    if (klass == IntPtr.Zero) continue;
-
-                    IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
-                    if (namePtr == IntPtr.Zero) continue;
-                    string className = Marshal.PtrToStringAnsi(namePtr);
-                    if (className == null) continue;
-
-                    // Only keep objects whose class name matches a template type we want
-                    if (!_il2cppNameToType.ContainsKey(className)) continue;
-
-                    // Cache the class pointer per type (only need one — all instances share the same class)
-                    if (!_il2cppClassPtrCache.ContainsKey(className))
-                        _il2cppClassPtrCache[className] = klass;
-
-                    if (!objectsByType.TryGetValue(className, out var list))
+                    try
                     {
-                        list = new List<UnityEngine.Object>();
-                        objectsByType[className] = list;
+                        var getAllGeneric = getAllMethod.MakeGenericMethod(templateType);
+                        var collection = getAllGeneric.Invoke(null, null);
+                        if (collection == null) continue;
+
+                        var objects = EnumerateIl2CppCollection(collection);
+                        if (objects.Count == 0) continue;
+
+                        // Cache IL2CPP class pointer from first valid object
+                        foreach (var obj in objects)
+                        {
+                            if (obj is Il2CppObjectBase il2cppBase && il2cppBase.Pointer != IntPtr.Zero)
+                            {
+                                try
+                                {
+                                    IntPtr klass = IL2CPP.il2cpp_object_get_class(il2cppBase.Pointer);
+                                    if (klass != IntPtr.Zero)
+                                    {
+                                        _il2cppClassPtrCache[templateType.Name] = klass;
+                                        break;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+
+                        objectsByType[templateType.Name] = objects;
                     }
-                    list.Add(obj);
+                    catch (Exception ex)
+                    {
+                        DebugLog($"  GetAll<{templateType.Name}> failed: {ex.InnerException?.Message ?? ex.Message}");
+                    }
                 }
 
-                DebugLog($"  Classified into {objectsByType.Count} template types");
+                DebugLog($"  Loaded {objectsByType.Count} template types via DataTemplateLoader");
                 foreach (var kvp in objectsByType.OrderBy(k => k.Key))
                     DebugLog($"    {kvp.Key}: {kvp.Value.Count} instances");
 
-                // ============================================================
-                // Check if key templates have m_ID populated.
-                // Different template types initialize at different times — some simple types
-                // get m_IsInitialized=true early, but the important ones (items, weapons, etc.)
-                // may still have null m_ID. We specifically check types that derive from
-                // DataTemplate and that the user actually wants to edit.
-                // ============================================================
+                if (objectsByType.Count == 0)
+                {
+                    DebugLog("  No templates loaded yet — will retry");
+                    return false;
+                }
+
+                // Check if key templates have m_ID populated
                 string[] keyTypes = { "WeaponTemplate", "ArmorTemplate", "AccessoryTemplate",
                                       "SkillTemplate", "PerkTemplate", "EntityTemplate" };
                 bool allKeyTypesReady = true;
@@ -267,9 +545,7 @@ namespace Menace.DataExtractor
                         string id = IL2CPP.Il2CppStringToManaged(strPtr);
                         DebugLog($"  {keyType}[0] m_ID={id}");
                         if (string.IsNullOrEmpty(id))
-                        {
                             allKeyTypesReady = false;
-                        }
                     }
                     else
                     {
@@ -284,160 +560,15 @@ namespace Menace.DataExtractor
                     return false;
                 }
 
-                // ============================================================
-                // PHASE 1: Extract primitive properties only (safe, no native crashes)
-                // ============================================================
-                DebugLog("=== PHASE 1: Primitive properties only ===");
-
-                var allTypeContexts = new List<TypeContext>();
-                int phase1Success = 0;
-
-                foreach (var templateType in templateTypes)
-                {
-                    if (!objectsByType.TryGetValue(templateType.Name, out var objects) || objects.Count == 0)
-                    {
-                        DebugLog($">>> P1 SKIP {templateType.Name} (no instances found)");
-                        continue;
-                    }
-
-                    DebugLog($">>> P1 START {templateType.Name}");
-
-                    try
-                    {
-                        var typeCtx = ExtractTypePhase1(templateType, objects);
-                        if (typeCtx != null && typeCtx.Instances.Count > 0)
-                        {
-                            allTypeContexts.Add(typeCtx);
-
-                            // Save immediately — this data is safe on disk now
-                            var dataList = typeCtx.Instances
-                                .Select(i => (object)i.Data).ToList();
-                            SaveSingleTemplateType(templateType.Name, dataList);
-
-                            phase1Success++;
-                            DebugLog($"  SAVED {typeCtx.Instances.Count} instances (primitives)");
-                            LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances (primitives)");
-                        }
-                        else
-                        {
-                            DebugLog($"  No instances extracted");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        DebugLog($"  P1 EXCEPTION: {ex.Message}");
-                    }
-
-                    DebugLog($"<<< P1 END {templateType.Name}");
-                }
-
-                DebugLog($"=== Phase 1 complete: {phase1Success} types saved ===");
-                LoggerInstance.Msg($"Phase 1 (primitives): {phase1Success} types saved");
-
-                // ============================================================
-                // PHASE 2: Fill in reference properties (may crash on some types)
-                // All primitive data is already saved to disk, so a crash here
-                // only loses reference data for the crashing type and beyond.
-                // ============================================================
-                DebugLog("=== PHASE 2: Reference properties ===");
-
-                int phase2Success = 0;
-                foreach (var typeCtx in allTypeContexts)
-                {
-                    DebugLog($">>> P2 START {typeCtx.TemplateType.Name}");
-
-                    try
-                    {
-                        bool anyRefs = false;
-                        foreach (var inst in typeCtx.Instances)
-                        {
-                            if (FillReferenceProperties(inst, typeCtx.TemplateType))
-                                anyRefs = true;
-                        }
-
-                        if (anyRefs)
-                        {
-                            // Re-save with reference data included
-                            var dataList = typeCtx.Instances
-                                .Select(i => (object)i.Data).ToList();
-                            SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
-                            DebugLog($"  UPDATED with references");
-                        }
-                        else
-                        {
-                            DebugLog($"  No reference properties to fill");
-                        }
-
-                        phase2Success++;
-                    }
-                    catch (Exception ex)
-                    {
-                        DebugLog($"  P2 EXCEPTION: {ex.Message}");
-                    }
-
-                    DebugLog($"<<< P2 END {typeCtx.TemplateType.Name}");
-                }
-
-                DebugLog($"=== Phase 2 complete: {phase2Success}/{allTypeContexts.Count} types updated ===");
-                LoggerInstance.Msg($"Phase 2 (references): {phase2Success}/{allTypeContexts.Count} types updated");
-
-                // ============================================================
-                // PHASE 3: Try Unity Object.name for remaining "unknown_N" entries.
-                // This calls into native Unity code which can SIGSEGV on some objects.
-                // ALL data is already saved to disk from Phases 1+2, so a crash here
-                // only loses the name fix — all primitives, localization, and icons are safe.
-                // ============================================================
-                DebugLog("=== PHASE 3: Unity .name for remaining unknown names ===");
-                int phase3Fixed = 0;
-
-                foreach (var typeCtx in allTypeContexts)
-                {
-                    bool anyFixed = false;
-                    foreach (var inst in typeCtx.Instances)
-                    {
-                        if (inst.Name != null && inst.Name.StartsWith("unknown_") && inst.Pointer != IntPtr.Zero)
-                        {
-                            try
-                            {
-                                var obj = new UnityEngine.Object(inst.Pointer);
-                                string unityName = obj.name;
-                                if (!string.IsNullOrEmpty(unityName))
-                                {
-                                    inst.Name = unityName;
-                                    inst.Data["name"] = unityName;
-                                    anyFixed = true;
-                                    phase3Fixed++;
-                                }
-                            }
-                            catch
-                            {
-                                // Managed exception — skip this one, keep going
-                            }
-                        }
-                    }
-
-                    if (anyFixed)
-                    {
-                        var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
-                        SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
-                    }
-                }
-
-                DebugLog($"=== Phase 3 complete: fixed {phase3Fixed} names ===");
-                LoggerInstance.Msg($"Phase 3 (names): fixed {phase3Fixed} unknown names");
-
-                if (phase1Success > 0)
-                {
-                    _hasSaved = true;
-                    return true;
-                }
-
-                return false;
+                // Ready — store for the phase loops
+                _pendingTemplateTypes = templateTypes;
+                _pendingObjectsByType = objectsByType;
+                return true;
             }
             catch (Exception ex)
             {
-                DebugLog($"FATAL: {ex.Message}\n{ex.StackTrace}");
-                LoggerInstance.Error($"Error: {ex.Message}");
+                DebugLog($"PREPARE FATAL: {ex.Message}\n{ex.StackTrace}");
+                LoggerInstance.Error($"PrepareExtraction error: {ex.Message}");
                 return false;
             }
         }
@@ -1009,15 +1140,16 @@ namespace Menace.DataExtractor
                         else if (IsUnityObjectClass(expectedClass))
                         {
                             // Unity Object — check alive using known class, then read name
-                            // NOTE: Do NOT call Unity .name property (SIGSEGV risk even on alive objects).
-                            // Use m_ID for DataTemplate refs; class name for Sprites/AudioClips/etc.
+                            // Uses graduated name-reading: m_ID -> m_Name -> Unity .name
                             if (IsUnityObjectAliveWithClass(refPtr, expectedClass))
                             {
-                                string assetName = ReadObjectNameWithClass(refPtr, expectedClass);
+                                string assetName = ReadUnityAssetNameWithClass(refPtr, expectedClass, className);
                                 if (prop.Name == "Icon")
                                 {
                                     inst.Data["HasIcon"] = true;
-                                    DebugLog($"      -> HasIcon=true");
+                                    if (assetName != null)
+                                        inst.Data["IconAssetName"] = assetName;
+                                    DebugLog($"      -> HasIcon=true, name={assetName ?? "(unknown)"}");
                                 }
                                 else
                                 {
@@ -1141,7 +1273,7 @@ namespace Menace.DataExtractor
         /// <summary>
         /// Read a template object's name (m_ID) using a known class (from metadata).
         /// Only reads m_ID — does NOT call Unity's .name property (which can SIGSEGV).
-        /// For Unity asset names (Sprites etc.), use ReadUnityObjectName separately in Phase 2.
+        /// For Unity asset names (Sprites etc.), use ReadUnityAssetNameWithClass separately.
         /// </summary>
         private string ReadObjectNameWithClass(IntPtr objectPointer, IntPtr klass)
         {
@@ -1168,6 +1300,66 @@ namespace Menace.DataExtractor
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Read a Unity asset's name using multiple strategies:
+        /// 1. m_ID field (for DataTemplate-derived objects)
+        /// 2. m_Name field via IL2CPP metadata (for standard Unity Objects like Sprite, Texture2D)
+        /// 3. Unity .name property as last resort (wrapped in try-catch for SIGSEGV safety)
+        /// </summary>
+        private string ReadUnityAssetNameWithClass(IntPtr objectPointer, IntPtr klass, string className)
+        {
+            // Strategy 1: m_ID (works for DataTemplate-derived objects)
+            string name = ReadObjectNameWithClass(objectPointer, klass);
+            if (!string.IsNullOrEmpty(name))
+                return name;
+
+            // Strategy 2: m_Name field via IL2CPP metadata
+            // Unity Objects store their name in a managed m_Name field in some builds
+            try
+            {
+                IntPtr nameField = FindNativeField(klass, "m_Name");
+                if (nameField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(nameField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string mName = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(mName))
+                            {
+                                DebugLog($"        m_Name strategy: {mName}");
+                                return mName;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        m_Name strategy failed: {ex.Message}");
+            }
+
+            // Strategy 3: Unity .name property (last resort, can SIGSEGV on some objects)
+            try
+            {
+                var obj = new UnityEngine.Object(objectPointer);
+                string unityName = obj.name;
+                if (!string.IsNullOrEmpty(unityName))
+                {
+                    DebugLog($"        Unity .name strategy: {unityName}");
+                    return unityName;
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        Unity .name strategy failed: {ex.Message}");
+            }
+
+            return null;
         }
 
 
@@ -1235,7 +1427,7 @@ namespace Menace.DataExtractor
                         if (elemIsUnityObject)
                         {
                             if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
-                                result.Add(ReadObjectNameWithClass(elemPtr, elemClass) ?? $"({elemClassName})");
+                                result.Add(ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})");
                             else
                                 result.Add(null);
                         }

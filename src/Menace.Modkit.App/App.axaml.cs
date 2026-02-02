@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
@@ -28,8 +29,28 @@ public class App : Application
     if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
     {
       desktop.MainWindow = new MainWindow(_serviceProvider!);
+      desktop.Exit += OnExit;
     }
 
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => KillChildProcesses();
+
     base.OnFrameworkInitializationCompleted();
+  }
+
+  private void OnExit(object? sender, ControlledApplicationLifetimeExitEventArgs e)
+  {
+    KillChildProcesses();
+  }
+
+  private static void KillChildProcesses()
+  {
+    try
+    {
+      foreach (var proc in Process.GetProcessesByName("AssetRipper.GUI.Free"))
+      {
+        try { proc.Kill(); } catch { }
+      }
+    }
+    catch { }
   }
 }
