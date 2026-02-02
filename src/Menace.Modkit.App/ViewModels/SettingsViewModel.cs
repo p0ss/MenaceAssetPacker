@@ -409,6 +409,10 @@ public sealed class SettingsViewModel : ViewModelBase
       if (!await installer.InstallModpackLoaderAsync(s => CleanRedeployStatus = s))
         return;
 
+      CleanRedeployStatus = "Installing CombinedArms...";
+      if (!await installer.InstallCombinedArmsAsync(s => CleanRedeployStatus = s))
+        return;
+
       CleanRedeployStatus = "✓ Clean redeploy complete. Go to Modpacks and click Deploy All to redeploy your mods.";
     }
     catch (Exception ex)

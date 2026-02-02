@@ -16,22 +16,55 @@ public class AppSettings
 
     private AppSettings()
     {
-        // Try EA install first, then fall back to Demo
-        var steamCommon = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".steam", "debian-installation", "steamapps", "common");
+        _gameInstallPath = DetectGameInstallPath();
+    }
 
-        var eaPath = Path.Combine(steamCommon, "Menace");
-        var demoPath = Path.Combine(steamCommon, "Menace Demo");
+    private static string DetectGameInstallPath()
+    {
+        foreach (var steamCommon in GetSteamCommonPaths())
+        {
+            var eaPath = Path.Combine(steamCommon, "Menace");
+            if (Directory.Exists(eaPath))
+                return eaPath;
 
-        if (Directory.Exists(eaPath))
-        {
-            _gameInstallPath = eaPath;
+            var demoPath = Path.Combine(steamCommon, "Menace Demo");
+            if (Directory.Exists(demoPath))
+                return demoPath;
         }
-        else if (Directory.Exists(demoPath))
+
+        return string.Empty;
+    }
+
+    private static string[] GetSteamCommonPaths()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (OperatingSystem.IsWindows())
         {
-            _gameInstallPath = demoPath;
+            return new[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                    "Steam", "steamapps", "common"),
+                Path.Combine("C:", "Program Files (x86)", "Steam", "steamapps", "common"),
+                Path.Combine(home, "Steam", "steamapps", "common"),
+            };
         }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return new[]
+            {
+                Path.Combine(home, "Library", "Application Support", "Steam", "steamapps", "common"),
+            };
+        }
+
+        // Linux
+        return new[]
+        {
+            Path.Combine(home, ".steam", "debian-installation", "steamapps", "common"),
+            Path.Combine(home, ".steam", "steam", "steamapps", "common"),
+            Path.Combine(home, ".local", "share", "Steam", "steamapps", "common"),
+        };
     }
 
     public static AppSettings Instance => _instance ??= new AppSettings();

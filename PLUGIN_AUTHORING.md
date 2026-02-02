@@ -206,13 +206,13 @@ Your plugin DLL references `Menace.ModpackLoader` with `<Private>false</Private>
 
 ## Worked examples
 
-### BalanceMod -- Harmony patches, no GUI
+### PinningMod -- Harmony patches, no GUI
 
-**`examples/BalanceMod-modpack/modpack.json`:**
+**`examples/PinningMod-modpack/modpack.json`:**
 ```json
 {
   "manifestVersion": 2,
-  "name": "BalanceMod",
+  "name": "PinningMod",
   "version": "1.0.0",
   "author": "Menace Modkit",
   "description": "Balance tweaks: always-crawl for pinned units, capped suppression stun duration.",
@@ -220,7 +220,7 @@ Your plugin DLL references `Menace.ModpackLoader` with `<Private>false</Private>
   "patches": {},
   "assets": {},
   "code": {
-    "sources": ["src/BalanceModPlugin.cs"],
+    "sources": ["src/PinningModPlugin.cs"],
     "references": [
       "MelonLoader", "0Harmony", "Il2CppInterop.Runtime",
       "Il2Cppmscorlib", "Assembly-CSharp", "Menace.ModpackLoader"
@@ -231,7 +231,7 @@ Your plugin DLL references `Menace.ModpackLoader` with `<Private>false</Private>
 }
 ```
 
-Key patterns in `BalanceModPlugin.cs`:
+Key patterns in `PinningModPlugin.cs`:
 - Stores `_harmony` from `OnInitialize`, applies patches in `OnSceneLoaded` when scene is `"Tactical"`.
 - Uses `MelonCoroutines.Start()` to delay patch application until types are initialized.
 - Harmony postfix/prefix methods are `public static` on the plugin class itself.

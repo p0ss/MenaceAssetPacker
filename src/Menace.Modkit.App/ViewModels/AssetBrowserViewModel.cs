@@ -18,10 +18,17 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
     // Master copy of all tree nodes (unfiltered)
     private List<AssetTreeNode> _allTreeNodes = new();
-    // Search index: file node -> searchable text
-    private readonly Dictionary<AssetTreeNode, string> _searchIndex = new();
     // Set of relative paths that have staging replacements
     private readonly HashSet<string> _modpackAssetPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    // Tiered search index for ranked results
+    private class SearchEntry
+    {
+        public string Name = "";     // filename
+        public string Path = "";     // parent directory components
+        public string FileType = ""; // file type category
+    }
+    private readonly Dictionary<AssetTreeNode, SearchEntry> _searchEntries = new();
 
     public AssetBrowserViewModel()
     {
@@ -229,7 +236,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     {
         FolderTree.Clear();
         _allTreeNodes.Clear();
-        _searchIndex.Clear();
+        _searchEntries.Clear();
 
         var assetPath = AppSettings.GetEffectiveAssetsPath();
 
@@ -556,18 +563,33 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             return;
         }
 
+        var scores = new Dictionary<AssetTreeNode, int>();
+
         foreach (var node in _allTreeNodes)
         {
-            var filtered = FilterNode(node, query);
+            var filtered = FilterNode(node, query, scores);
             if (filtered != null)
                 FolderTree.Add(filtered);
+        }
+
+        // Sort results by score when there's an active search query
+        if (hasQuery)
+        {
+            foreach (var node in FolderTree)
+                SortByScore(node, scores);
+
+            var sortedRoots = FolderTree.OrderByDescending(n =>
+                scores.TryGetValue(n, out var s) ? s : 0).ToList();
+            FolderTree.Clear();
+            foreach (var n in sortedRoots)
+                FolderTree.Add(n);
         }
 
         // Auto-expand filtered results
         SetExpansionState(FolderTree, true);
     }
 
-    private AssetTreeNode? FilterNode(AssetTreeNode node, string? query)
+    private AssetTreeNode? FilterNode(AssetTreeNode node, string? query, Dictionary<AssetTreeNode, int> scores)
     {
         // File (leaf) node
         if (node.IsFile)
@@ -583,10 +605,12 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             if (query == null)
                 return node;
 
-            if (_searchIndex.TryGetValue(node, out var indexText))
-                return indexText.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
+            var score = ScoreMatch(node, query);
+            if (score < 0)
+                return null;
 
-            return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
+            scores[node] = score;
+            return node;
         }
 
         // Folder name matches query (and not modpack-only) -> include entire subtree
@@ -598,7 +622,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         var matchingChildren = new List<AssetTreeNode>();
         foreach (var child in node.Children)
         {
-            var filtered = FilterNode(child, query);
+            var filtered = FilterNode(child, query, scores);
             if (filtered != null)
                 matchingChildren.Add(filtered);
         }
@@ -649,17 +673,49 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         {
             if (node.IsFile)
             {
-                var sb = new StringBuilder();
-                sb.Append(node.Name);
-                sb.Append(' ');
-                sb.Append(node.FileType);
-                _searchIndex[node] = sb.ToString();
+                var entry = new SearchEntry
+                {
+                    Name = node.Name,
+                    Path = System.IO.Path.GetDirectoryName(node.FullPath) ?? "",
+                    FileType = node.FileType
+                };
+                _searchEntries[node] = entry;
             }
             else
             {
                 BuildSearchIndex(node.Children);
             }
         }
+    }
+
+    private int ScoreMatch(AssetTreeNode node, string query)
+    {
+        if (!_searchEntries.TryGetValue(node, out var entry)) return -1;
+        if (entry.Name.Contains(query, StringComparison.OrdinalIgnoreCase)) return 100;
+        if (entry.Path.Contains(query, StringComparison.OrdinalIgnoreCase)) return 40;
+        if (entry.FileType.Contains(query, StringComparison.OrdinalIgnoreCase)) return 20;
+        return -1;
+    }
+
+    private int SortByScore(AssetTreeNode node, Dictionary<AssetTreeNode, int> scores)
+    {
+        if (node.IsFile)
+            return scores.TryGetValue(node, out var s) ? s : 0;
+
+        int maxChild = 0;
+        foreach (var child in node.Children)
+        {
+            var childScore = SortByScore(child, scores);
+            if (childScore > maxChild) maxChild = childScore;
+        }
+
+        var sorted = node.Children.OrderByDescending(c =>
+            scores.TryGetValue(c, out var s) ? s : 0).ToList();
+        node.Children.Clear();
+        foreach (var c in sorted) node.Children.Add(c);
+
+        scores[node] = maxChild;
+        return maxChild;
     }
 }
 

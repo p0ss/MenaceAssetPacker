@@ -13,7 +13,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Menace.Modkit.Cli", "src\Me
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Menace.DevMode", "src\Menace.DevMode\Menace.DevMode.csproj", "{D3F8A721-5E4B-4C1A-9D2F-8B3E6A7C5D9E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Menace.BalanceMod", "src\Menace.BalanceMod\Menace.BalanceMod.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Menace.PinningMod", "src\Menace.PinningMod\Menace.PinningMod.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Menace.CombinedArms", "src\Menace.CombinedArms\Menace.CombinedArms.csproj", "{B2C3D4E5-F6A7-8901-BCDE-F23456789012}"
 EndProject

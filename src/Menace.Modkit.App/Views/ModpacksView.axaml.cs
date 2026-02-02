@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Data.Converters;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -21,7 +23,7 @@ public class ModpacksView : UserControl
       ColumnDefinitions = new ColumnDefinitions("*,2*")
     };
 
-    // Left: Modpack List + Load Order
+    // Left: Unified Modpack List
     mainGrid.Children.Add(BuildModpackList());
     Grid.SetColumn((Control)mainGrid.Children[0], 0);
 
@@ -36,22 +38,23 @@ public class ModpacksView : UserControl
   {
     var grid = new Grid
     {
-      RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto,Auto,Auto,*,Auto,Auto")
+      RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
+      Margin = new Thickness(16, 16, 12, 16)
     };
 
-    // Title: Staging Modpacks
-    var stagingTitle = new TextBlock
+    // Row 0: Title
+    var title = new TextBlock
     {
-      Text = "Staging Modpacks",
+      Text = "Modpacks",
       FontSize = 14,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White,
       Margin = new Thickness(0, 0, 0, 12)
     };
-    grid.Children.Add(stagingTitle);
-    Grid.SetRow(stagingTitle, 0);
+    grid.Children.Add(title);
+    Grid.SetRow(title, 0);
 
-    // Create New Button
+    // Row 1: Create New Button
     var createButton = new Button
     {
       Content = "+ New Modpack",
@@ -66,221 +69,62 @@ public class ModpacksView : UserControl
     grid.Children.Add(createButton);
     Grid.SetRow(createButton, 1);
 
-    // Staging Modpacks List
-    var stagingList = new ListBox
+    // Row 2: Unified modpack list (star row)
+    var modpackList = new ListBox
     {
       Background = new SolidColorBrush(Color.Parse("#252525")),
       BorderThickness = new Thickness(0),
-      Margin = new Thickness(0, 0, 0, 16)
     };
-    stagingList.Bind(ListBox.ItemsSourceProperty,
-      new Avalonia.Data.Binding("StagingModpacks"));
-    stagingList.Bind(ListBox.SelectedItemProperty,
+    modpackList.Bind(ListBox.ItemsSourceProperty,
+      new Avalonia.Data.Binding("AllModpacks"));
+    modpackList.Bind(ListBox.SelectedItemProperty,
       new Avalonia.Data.Binding("SelectedModpack"));
 
-    stagingList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ModpackItemViewModel>(
+    modpackList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ModpackItemViewModel>(
       (modpack, _) => CreateModpackListItem(modpack));
 
-    grid.Children.Add(stagingList);
-    Grid.SetRow(stagingList, 2);
-
-    // Title: Active Mods
-    var activeTitle = new TextBlock
+    // Drag-and-drop: allow items to be dropped onto the list
+    DragDrop.SetAllowDrop(modpackList, true);
+    modpackList.AddHandler(DragDrop.DragOverEvent, (_, e) =>
     {
-      Text = "Active Mods",
-      FontSize = 14,
-      FontWeight = FontWeight.SemiBold,
-      Foreground = Brushes.White,
-      Margin = new Thickness(0, 0, 0, 12)
-    };
-    grid.Children.Add(activeTitle);
-    Grid.SetRow(activeTitle, 3);
-
-    // Active Mods List
-    var activeList = new ListBox
+      e.DragEffects = e.Data.Contains("ModpackItem")
+        ? DragDropEffects.Move
+        : DragDropEffects.None;
+    });
+    modpackList.AddHandler(DragDrop.DropEvent, (_, e) =>
     {
-      Background = new SolidColorBrush(Color.Parse("#252525")),
-      BorderThickness = new Thickness(0),
-      Margin = new Thickness(0, 0, 0, 4)
-    };
-    activeList.Bind(ListBox.ItemsSourceProperty,
-      new Avalonia.Data.Binding("ActiveMods"));
-    activeList.Bind(ListBox.SelectedItemProperty,
-      new Avalonia.Data.Binding("SelectedActiveMod"));
+      if (e.Data.Get("ModpackItem") is ModpackItemViewModel draggedItem
+          && DataContext is ModpacksViewModel vm)
+      {
+        var targetItem = FindDropTarget(e);
+        if (targetItem != null && targetItem != draggedItem)
+        {
+          var targetIndex = vm.AllModpacks.IndexOf(targetItem);
+          vm.MoveItem(draggedItem, targetIndex);
+        }
+      }
+    });
 
-    activeList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ModpackItemViewModel>(
-      (modpack, _) => CreateModpackListItem(modpack));
+    grid.Children.Add(modpackList);
+    Grid.SetRow(modpackList, 2);
 
-    grid.Children.Add(activeList);
-    Grid.SetRow(activeList, 4);
-
-    // Undeploy button for selected active mod
-    var undeployBtn = new Button
+    // Row 3: Conflict status + Refresh
+    var bottomRow = new Grid
     {
-      Content = "Undeploy Selected",
-      FontSize = 11,
-      Background = new SolidColorBrush(Color.Parse("#4b0606")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 4),
-      HorizontalAlignment = HorizontalAlignment.Stretch,
-      Margin = new Thickness(0, 0, 0, 16)
+      ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+      Margin = new Thickness(0, 6, 0, 0)
     };
-    undeployBtn.Click += (_, _) =>
-    {
-      if (DataContext is ModpacksViewModel vm)
-        vm.UndeploySelectedMod();
-    };
-    grid.Children.Add(undeployBtn);
-    Grid.SetRow(undeployBtn, 5);
 
-    // --- Load Order Section ---
-    var loadOrderTitle = new TextBlock
-    {
-      Text = "Load Order",
-      FontSize = 14,
-      FontWeight = FontWeight.SemiBold,
-      Foreground = Brushes.White,
-      Margin = new Thickness(0, 8, 0, 8)
-    };
-    grid.Children.Add(loadOrderTitle);
-    Grid.SetRow(loadOrderTitle, 6);
-
-    var loadOrderPanel = BuildLoadOrderPanel();
-    grid.Children.Add(loadOrderPanel);
-    Grid.SetRow(loadOrderPanel, 7);
-
-    // Conflict status
     var conflictStatus = new TextBlock
     {
       FontSize = 11,
       Foreground = new SolidColorBrush(Color.Parse("#CCCCCC")),
-      Margin = new Thickness(0, 4, 0, 0)
+      VerticalAlignment = VerticalAlignment.Center
     };
     conflictStatus.Bind(TextBlock.TextProperty,
       new Avalonia.Data.Binding("LoadOrderVM.StatusText"));
-    grid.Children.Add(conflictStatus);
-    Grid.SetRow(conflictStatus, 8);
-
-    return grid;
-  }
-
-  private Control BuildLoadOrderPanel()
-  {
-    var panel = new StackPanel { Spacing = 4 };
-
-    // Load order list with move buttons
-    var loadOrderList = new ListBox
-    {
-      Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-      BorderThickness = new Thickness(0),
-      MaxHeight = 150
-    };
-    loadOrderList.Bind(ListBox.ItemsSourceProperty,
-      new Avalonia.Data.Binding("LoadOrderVM.OrderedModpacks"));
-
-    loadOrderList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<LoadOrderItemViewModel>(
-      (item, _) =>
-      {
-        var stack = new StackPanel
-        {
-          Orientation = Orientation.Horizontal,
-          Spacing = 8,
-          Margin = new Thickness(4, 2)
-        };
-
-        var orderText = new TextBlock
-        {
-          FontSize = 11,
-          Foreground = new SolidColorBrush(Color.Parse("#888888")),
-          VerticalAlignment = VerticalAlignment.Center,
-          Width = 30
-        };
-        orderText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("LoadOrder"));
-        stack.Children.Add(orderText);
-
-        var nameText = new TextBlock
-        {
-          FontSize = 12,
-          Foreground = Brushes.White,
-          VerticalAlignment = VerticalAlignment.Center
-        };
-        nameText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Name"));
-        stack.Children.Add(nameText);
-
-        // Indicators
-        var codeIndicator = new TextBlock
-        {
-          Text = "[code]",
-          FontSize = 10,
-          Foreground = new SolidColorBrush(Color.Parse("#4488CC")),
-          VerticalAlignment = VerticalAlignment.Center
-        };
-        codeIndicator.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("HasCode"));
-        stack.Children.Add(codeIndicator);
-
-        var patchIndicator = new TextBlock
-        {
-          Text = "[patches]",
-          FontSize = 10,
-          Foreground = new SolidColorBrush(Color.Parse("#44CC88")),
-          VerticalAlignment = VerticalAlignment.Center
-        };
-        patchIndicator.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("HasPatches"));
-        stack.Children.Add(patchIndicator);
-
-        return stack;
-      });
-
-    panel.Children.Add(loadOrderList);
-
-    // Move buttons
-    var buttonRow = new StackPanel
-    {
-      Orientation = Orientation.Horizontal,
-      Spacing = 8,
-      Margin = new Thickness(0, 4, 0, 0)
-    };
-
-    var moveUpBtn = new Button
-    {
-      Content = "Move Up",
-      FontSize = 11,
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 4)
-    };
-    moveUpBtn.Click += (_, _) =>
-    {
-      if (DataContext is ModpacksViewModel vm)
-      {
-        var selected = loadOrderList.SelectedItem as LoadOrderItemViewModel;
-        if (selected != null)
-          vm.LoadOrderVM.MoveUp(selected);
-      }
-    };
-    buttonRow.Children.Add(moveUpBtn);
-
-    var moveDownBtn = new Button
-    {
-      Content = "Move Down",
-      FontSize = 11,
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 4)
-    };
-    moveDownBtn.Click += (_, _) =>
-    {
-      if (DataContext is ModpacksViewModel vm)
-      {
-        var selected = loadOrderList.SelectedItem as LoadOrderItemViewModel;
-        if (selected != null)
-          vm.LoadOrderVM.MoveDown(selected);
-      }
-    };
-    buttonRow.Children.Add(moveDownBtn);
+    bottomRow.Children.Add(conflictStatus);
+    Grid.SetColumn(conflictStatus, 0);
 
     var refreshBtn = new Button
     {
@@ -294,60 +138,306 @@ public class ModpacksView : UserControl
     refreshBtn.Click += (_, _) =>
     {
       if (DataContext is ModpacksViewModel vm)
-        vm.LoadOrderVM.Refresh();
+        vm.RefreshModpacks();
     };
-    buttonRow.Children.Add(refreshBtn);
+    bottomRow.Children.Add(refreshBtn);
+    Grid.SetColumn(refreshBtn, 1);
 
-    panel.Children.Add(buttonRow);
+    grid.Children.Add(bottomRow);
+    Grid.SetRow(bottomRow, 3);
 
-    return panel;
+    return grid;
   }
 
   private Control CreateModpackListItem(ModpackItemViewModel modpack)
   {
-    var stack = new StackPanel
+    // Outer: [4px teal indicator] [content]
+    var outerGrid = new Grid
     {
-      Margin = new Thickness(12, 8)
+      ColumnDefinitions = new ColumnDefinitions("4,*"),
+      Margin = new Thickness(0, 1)
     };
 
+    // Teal deployed indicator (left edge)
+    var deployedIndicator = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#0d9488")),
+      CornerRadius = new CornerRadius(2, 0, 0, 2)
+    };
+    deployedIndicator.Bind(Border.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsDeployed"));
+    outerGrid.Children.Add(deployedIndicator);
+    Grid.SetColumn(deployedIndicator, 0);
+
+    // Content: [checkbox] [info...] [arrows] [order#] [grip]
+    var contentGrid = new Grid
+    {
+      ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto"),
+      Margin = new Thickness(8, 4)
+    };
+
+    // Col 0: Functional checkbox
+    var checkbox = new CheckBox
+    {
+      VerticalAlignment = VerticalAlignment.Center,
+      Margin = new Thickness(0, 0, 6, 0),
+    };
+    checkbox.Bind(CheckBox.IsCheckedProperty,
+      new Avalonia.Data.Binding("IsDeployed"));
+    checkbox.Click += async (sender, e) =>
+    {
+      if (sender is CheckBox cb && cb.DataContext is ModpackItemViewModel item)
+      {
+        // Revert visual — let the async operation + refresh set the real state
+        cb.IsChecked = item.IsDeployed;
+        if (DataContext is ModpacksViewModel vm)
+        {
+          vm.SelectedModpack = item;
+          await vm.ToggleDeploySelectedAsync();
+        }
+      }
+    };
+    contentGrid.Children.Add(checkbox);
+    Grid.SetColumn(checkbox, 0);
+
+    // Col 1: Info panel (fills)
+    var infoStack = new StackPanel
+    {
+      Spacing = 1,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+
+    // Name + Version row
     var nameRow = new StackPanel
     {
       Orientation = Orientation.Horizontal,
-      Spacing = 8
+      Spacing = 6
     };
-
     var nameText = new TextBlock
     {
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White,
       FontSize = 13
     };
-    nameText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Name"));
+    nameText.Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("Name"));
     nameRow.Children.Add(nameText);
 
-    // Security status indicator
+    var versionText = new TextBlock
+    {
+      FontSize = 11,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    versionText.Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("VersionDisplay"));
+    nameRow.Children.Add(versionText);
+
+    // [DLL] badge for standalone mods
+    var dllBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#333333")),
+      CornerRadius = new CornerRadius(3),
+      Padding = new Thickness(4, 1),
+      VerticalAlignment = VerticalAlignment.Center,
+      Child = new TextBlock
+      {
+        Text = "DLL",
+        FontSize = 9,
+        Foreground = new SolidColorBrush(Color.Parse("#999999")),
+        FontWeight = FontWeight.SemiBold
+      }
+    };
+    dllBadge.Bind(Border.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsStandalone"));
+    nameRow.Children.Add(dllBadge);
+    infoStack.Children.Add(nameRow);
+
+    // Author + Security Status + Conflict warning row
+    var authorRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8
+    };
+    var authorText = new TextBlock
+    {
+      FontSize = 11,
+      Opacity = 0.6,
+      Foreground = Brushes.White
+    };
+    authorText.Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("Author"));
+    authorRow.Children.Add(authorText);
+
     var securityText = new TextBlock
     {
       FontSize = 10,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
       VerticalAlignment = VerticalAlignment.Center
     };
-    securityText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SecurityStatusDisplay"));
-    securityText.Foreground = new SolidColorBrush(Color.Parse("#888888"));
-    nameRow.Children.Add(securityText);
+    securityText.Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("SecurityStatusDisplay"));
+    authorRow.Children.Add(securityText);
 
-    stack.Children.Add(nameRow);
-
-    var authorText = new TextBlock
+    // Conflict warning badge — amber when deployed, grey when not
+    var conflictBadge = new Border
     {
-      Opacity = 0.6,
-      Foreground = Brushes.White,
-      FontSize = 11
+      CornerRadius = new CornerRadius(3),
+      Padding = new Thickness(4, 1),
+      VerticalAlignment = VerticalAlignment.Center
     };
-    authorText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Author"));
-    stack.Children.Add(authorText);
+    var conflictBadgeText = new TextBlock
+    {
+      Text = "CONFLICT",
+      FontSize = 9,
+      FontWeight = FontWeight.SemiBold
+    };
+    conflictBadge.Child = conflictBadgeText;
+    var conflictBgConverter = new FuncValueConverter<bool, IBrush>(
+      deployed => deployed
+        ? new SolidColorBrush(Color.Parse("#3d2e00"))
+        : new SolidColorBrush(Color.Parse("#333333")));
+    var conflictFgConverter = new FuncValueConverter<bool, IBrush>(
+      deployed => deployed
+        ? new SolidColorBrush(Color.Parse("#c89b3c"))
+        : new SolidColorBrush(Color.Parse("#888888")));
+    conflictBadge.Bind(Border.BackgroundProperty,
+      new Avalonia.Data.Binding("IsDeployed") { Converter = conflictBgConverter });
+    conflictBadgeText.Bind(TextBlock.ForegroundProperty,
+      new Avalonia.Data.Binding("IsDeployed") { Converter = conflictFgConverter });
+    conflictBadge.Bind(Border.IsVisibleProperty,
+      new Avalonia.Data.Binding("HasConflict"));
+    authorRow.Children.Add(conflictBadge);
+    infoStack.Children.Add(authorRow);
 
-    return stack;
+    contentGrid.Children.Add(infoStack);
+    Grid.SetColumn(infoStack, 1);
+
+    // Col 2: Up/Down arrows
+    var arrowStack = new StackPanel
+    {
+      VerticalAlignment = VerticalAlignment.Center,
+      Margin = new Thickness(4, 0)
+    };
+
+    var upArrow = new Button
+    {
+      Content = "\u25B2",
+      FontSize = 8,
+      Padding = new Thickness(4, 1),
+      Background = Brushes.Transparent,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      BorderThickness = new Thickness(0),
+      MinWidth = 0,
+      MinHeight = 0,
+      HorizontalContentAlignment = HorizontalAlignment.Center,
+      Cursor = new Cursor(StandardCursorType.Hand)
+    };
+    upArrow.Click += (sender, e) =>
+    {
+      if ((sender as Button)?.DataContext is ModpackItemViewModel item
+          && DataContext is ModpacksViewModel vm)
+      {
+        vm.MoveItemUp(item);
+      }
+      e.Handled = true;
+    };
+    arrowStack.Children.Add(upArrow);
+
+    var downArrow = new Button
+    {
+      Content = "\u25BC",
+      FontSize = 8,
+      Padding = new Thickness(4, 1),
+      Background = Brushes.Transparent,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      BorderThickness = new Thickness(0),
+      MinWidth = 0,
+      MinHeight = 0,
+      HorizontalContentAlignment = HorizontalAlignment.Center,
+      Cursor = new Cursor(StandardCursorType.Hand)
+    };
+    downArrow.Click += (sender, e) =>
+    {
+      if ((sender as Button)?.DataContext is ModpackItemViewModel item
+          && DataContext is ModpacksViewModel vm)
+      {
+        vm.MoveItemDown(item);
+      }
+      e.Handled = true;
+    };
+    arrowStack.Children.Add(downArrow);
+
+    contentGrid.Children.Add(arrowStack);
+    Grid.SetColumn(arrowStack, 2);
+
+    // Col 3: Load order number
+    var orderText = new TextBlock
+    {
+      FontSize = 11,
+      Foreground = new SolidColorBrush(Color.Parse("#666666")),
+      VerticalAlignment = VerticalAlignment.Center,
+      TextAlignment = TextAlignment.Right,
+      Width = 24,
+      Margin = new Thickness(2, 0)
+    };
+    orderText.Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("LoadOrder"));
+    contentGrid.Children.Add(orderText);
+    Grid.SetColumn(orderText, 3);
+
+    // Col 4: Drag grip — wide touch-friendly handle
+    var gripArea = new Border
+    {
+      MinWidth = 44,
+      MinHeight = 44,
+      Background = Brushes.Transparent,
+      Cursor = new Cursor(StandardCursorType.SizeAll),
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      VerticalAlignment = VerticalAlignment.Stretch,
+      Child = new TextBlock
+      {
+        Text = "\u22EE",
+        FontSize = 18,
+        Foreground = new SolidColorBrush(Color.Parse("#555555")),
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center,
+      }
+    };
+    gripArea.PointerPressed += async (sender, e) =>
+    {
+      if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed
+          && sender is Control ctrl
+          && ctrl.DataContext is ModpackItemViewModel item)
+      {
+        var data = new DataObject();
+        data.Set("ModpackItem", item);
+        await DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
+      }
+    };
+    contentGrid.Children.Add(gripArea);
+    Grid.SetColumn(gripArea, 4);
+
+    outerGrid.Children.Add(contentGrid);
+    Grid.SetColumn(contentGrid, 1);
+
+    return outerGrid;
   }
+
+  private static ModpackItemViewModel? FindDropTarget(DragEventArgs e)
+  {
+    var target = e.Source as Control;
+    while (target != null)
+    {
+      if (target.DataContext is ModpackItemViewModel item)
+        return item;
+      target = target.Parent as Control;
+    }
+    return null;
+  }
+
+  private static readonly FuncValueConverter<bool, bool> InvertBoolConverter =
+    new(v => !v);
 
   private Control BuildModpackDetails()
   {
@@ -361,48 +451,53 @@ public class ModpacksView : UserControl
 
     var mainStack = new StackPanel();
 
+    // --- Editable modpack fields (hidden for standalone) ---
+    var editableSection = new StackPanel();
+    editableSection.Bind(StackPanel.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
+
     // Name field
-    mainStack.Children.Add(CreateLabel("Name"));
+    editableSection.Children.Add(CreateLabel("Name"));
     var nameBox = CreateTextBox();
     nameBox.FontSize = 16;
     nameBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Name") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(nameBox);
+    editableSection.Children.Add(nameBox);
 
     // Author field
-    mainStack.Children.Add(CreateLabel("Author"));
+    editableSection.Children.Add(CreateLabel("Author"));
     var authorBox = CreateTextBox();
     authorBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Author") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(authorBox);
+    editableSection.Children.Add(authorBox);
 
     // Version field
-    mainStack.Children.Add(CreateLabel("Version"));
+    editableSection.Children.Add(CreateLabel("Version"));
     var versionBox = CreateTextBox();
     versionBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Version") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(versionBox);
+    editableSection.Children.Add(versionBox);
 
     // Load Order field
-    mainStack.Children.Add(CreateLabel("Load Order"));
+    editableSection.Children.Add(CreateLabel("Load Order"));
     var loadOrderBox = CreateTextBox();
     loadOrderBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.LoadOrder") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(loadOrderBox);
+    editableSection.Children.Add(loadOrderBox);
 
     // Dependencies field
-    mainStack.Children.Add(CreateLabel("Dependencies (comma-separated)"));
+    editableSection.Children.Add(CreateLabel("Dependencies (comma-separated)"));
     var depsBox = CreateTextBox();
     depsBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.DependenciesText") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(depsBox);
+    editableSection.Children.Add(depsBox);
 
     // Description field
-    mainStack.Children.Add(CreateLabel("Description"));
+    editableSection.Children.Add(CreateLabel("Description"));
     var descBox = CreateTextBox();
     descBox.AcceptsReturn = true;
     descBox.TextWrapping = TextWrapping.Wrap;
     descBox.MinHeight = 80;
     descBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Description") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    mainStack.Children.Add(descBox);
+    editableSection.Children.Add(descBox);
 
     // Security Status display
-    mainStack.Children.Add(CreateLabel("Security Status"));
+    editableSection.Children.Add(CreateLabel("Security Status"));
     var secText = new TextBlock
     {
       Foreground = Brushes.White,
@@ -410,10 +505,68 @@ public class ModpacksView : UserControl
       Margin = new Thickness(0, 0, 0, 16)
     };
     secText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.SecurityStatusDisplay"));
-    mainStack.Children.Add(secText);
+    editableSection.Children.Add(secText);
+
+    // Stats Changes section
+    var statsLabel = CreateLabel("Stats Changes");
+    statsLabel.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasStatsPatches"));
+    editableSection.Children.Add(statsLabel);
+
+    var statsItemsControl = new ItemsControl
+    {
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    statsItemsControl.Bind(ItemsControl.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasStatsPatches"));
+    statsItemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.StatsPatches"));
+    statsItemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<StatsPatchEntry>((entry, _) =>
+    {
+      var btn = new Button
+      {
+        Background = new SolidColorBrush(Color.Parse("#252525")),
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(8, 4),
+        Margin = new Thickness(0, 1),
+        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+      };
+      var stack = new StackPanel();
+      var nameText = new TextBlock
+      {
+        FontSize = 12,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = new SolidColorBrush(Color.Parse("#4FC3F7"))
+      };
+      nameText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DisplayName"));
+      stack.Children.Add(nameText);
+
+      var fieldsText = new TextBlock
+      {
+        FontSize = 10,
+        Opacity = 0.7,
+        Foreground = Brushes.White,
+        TextWrapping = TextWrapping.Wrap
+      };
+      fieldsText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("FieldSummary"));
+      stack.Children.Add(fieldsText);
+
+      btn.Content = stack;
+      btn.Click += (s, e) =>
+      {
+        if (btn.DataContext is StatsPatchEntry patch && DataContext is ModpacksViewModel vm)
+        {
+          var modpackName = vm.SelectedModpack?.Name;
+          if (modpackName != null)
+            vm.NavigateToStatsEntry?.Invoke(modpackName, patch.TemplateType, patch.InstanceName);
+        }
+      };
+      return btn;
+    });
+    editableSection.Children.Add(statsItemsControl);
 
     // Files list
-    mainStack.Children.Add(CreateLabel("Files"));
+    editableSection.Children.Add(CreateLabel("Files"));
     var filesListBox = new ListBox
     {
       Background = new SolidColorBrush(Color.Parse("#252525")),
@@ -426,7 +579,105 @@ public class ModpacksView : UserControl
       Margin = new Thickness(0, 0, 0, 16)
     };
     filesListBox.Bind(ListBox.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.Files"));
-    mainStack.Children.Add(filesListBox);
+    editableSection.Children.Add(filesListBox);
+
+    mainStack.Children.Add(editableSection);
+
+    // --- Read-only standalone section (shown for standalone) ---
+    var standaloneSection = new StackPanel();
+    standaloneSection.Bind(StackPanel.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsStandalone"));
+
+    var standaloneTitle = new TextBlock { FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 4) };
+    standaloneTitle.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Name"));
+    standaloneSection.Children.Add(standaloneTitle);
+
+    var standaloneBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#333333")),
+      CornerRadius = new CornerRadius(3),
+      Padding = new Thickness(6, 2),
+      HorizontalAlignment = HorizontalAlignment.Left,
+      Margin = new Thickness(0, 0, 0, 12),
+      Child = new TextBlock
+      {
+        Text = "Standalone DLL",
+        FontSize = 10,
+        Foreground = new SolidColorBrush(Color.Parse("#999999")),
+        FontWeight = FontWeight.SemiBold
+      }
+    };
+    standaloneSection.Children.Add(standaloneBadge);
+
+    standaloneSection.Children.Add(CreateLabel("Author"));
+    var saAuthor = new TextBlock { Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(0, 0, 0, 12) };
+    saAuthor.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Author"));
+    standaloneSection.Children.Add(saAuthor);
+
+    standaloneSection.Children.Add(CreateLabel("Version"));
+    var saVersion = new TextBlock { Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(0, 0, 0, 12) };
+    saVersion.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.VersionDisplay"));
+    standaloneSection.Children.Add(saVersion);
+
+    standaloneSection.Children.Add(CreateLabel("Description"));
+    var saDesc = new TextBlock
+    {
+      Foreground = Brushes.White,
+      FontSize = 12,
+      TextWrapping = TextWrapping.Wrap,
+      Margin = new Thickness(0, 0, 0, 12)
+    };
+    saDesc.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Description"));
+    standaloneSection.Children.Add(saDesc);
+
+    standaloneSection.Children.Add(CreateLabel("DLL File"));
+    var saDll = new TextBlock
+    {
+      Foreground = new SolidColorBrush(Color.Parse("#BBBBBB")),
+      FontSize = 12,
+      FontFamily = new FontFamily("monospace"),
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    saDll.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.DllFileName"));
+    standaloneSection.Children.Add(saDll);
+
+    // Conflict warning banner — amber when deployed, grey when inactive
+    var conflictBanner = new Border
+    {
+      BorderThickness = new Thickness(1),
+      CornerRadius = new CornerRadius(4),
+      Padding = new Thickness(12, 8),
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    var bannerBgConverter = new FuncValueConverter<bool, IBrush>(
+      deployed => deployed
+        ? new SolidColorBrush(Color.Parse("#2e2400"))
+        : new SolidColorBrush(Color.Parse("#2a2a2a")));
+    var bannerBorderConverter = new FuncValueConverter<bool, IBrush>(
+      deployed => deployed
+        ? new SolidColorBrush(Color.Parse("#c89b3c"))
+        : new SolidColorBrush(Color.Parse("#555555")));
+    var bannerFgConverter = new FuncValueConverter<bool, IBrush>(
+      deployed => deployed
+        ? new SolidColorBrush(Color.Parse("#c89b3c"))
+        : new SolidColorBrush(Color.Parse("#999999")));
+    conflictBanner.Bind(Border.BackgroundProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsDeployed") { Converter = bannerBgConverter });
+    conflictBanner.Bind(Border.BorderBrushProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsDeployed") { Converter = bannerBorderConverter });
+    var conflictText = new TextBlock
+    {
+      FontSize = 12,
+      TextWrapping = TextWrapping.Wrap
+    };
+    conflictText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.ConflictWarning"));
+    conflictText.Bind(TextBlock.ForegroundProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsDeployed") { Converter = bannerFgConverter });
+    conflictBanner.Child = conflictText;
+    conflictBanner.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasConflict"));
+    standaloneSection.Children.Add(conflictBanner);
+
+    mainStack.Children.Add(standaloneSection);
 
     // Per-modpack action buttons
     var buttonPanel = new StackPanel
@@ -436,16 +687,23 @@ public class ModpacksView : UserControl
       Margin = new Thickness(0, 8, 0, 0)
     };
 
-    var deployButton = new Button
+    // Deploy / Undeploy toggle button
+    var deployToggleButton = new Button
     {
-      Content = "Deploy to Game",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
       Foreground = Brushes.White,
       BorderThickness = new Thickness(0),
       Padding = new Thickness(16, 8)
     };
-    deployButton.Click += OnDeployClick;
-    buttonPanel.Children.Add(deployButton);
+    deployToggleButton.Bind(Button.ContentProperty,
+      new Avalonia.Data.Binding("DeployToggleText"));
+    var deployBgConverter = new FuncValueConverter<string, IBrush>(
+      text => text == "Undeploy"
+        ? new SolidColorBrush(Color.Parse("#4b0606"))
+        : new SolidColorBrush(Color.Parse("#064b48")));
+    deployToggleButton.Bind(Button.BackgroundProperty,
+      new Avalonia.Data.Binding("DeployToggleText") { Converter = deployBgConverter });
+    deployToggleButton.Click += OnToggleDeployClick;
+    buttonPanel.Children.Add(deployToggleButton);
 
     var exportButton = new Button
     {
@@ -456,6 +714,9 @@ public class ModpacksView : UserControl
       Padding = new Thickness(16, 8)
     };
     exportButton.Click += OnExportClick;
+    // Hide Export for standalone mods
+    exportButton.Bind(Button.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
     buttonPanel.Children.Add(exportButton);
 
     var deleteButton = new Button
@@ -471,6 +732,9 @@ public class ModpacksView : UserControl
       if (DataContext is ModpacksViewModel vm)
         vm.DeleteSelectedModpack();
     };
+    // Hide Delete for standalone mods
+    deleteButton.Bind(Button.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
     buttonPanel.Children.Add(deleteButton);
 
     mainStack.Children.Add(buttonPanel);
@@ -556,11 +820,11 @@ public class ModpacksView : UserControl
     Margin = new Thickness(0, 0, 0, 16)
   };
 
-  private async void OnDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  private async void OnToggleDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
     if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null && !vm.IsDeploying)
     {
-      await vm.DeploySingleAsync();
+      await vm.ToggleDeploySelectedAsync();
     }
   }
 

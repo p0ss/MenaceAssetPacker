@@ -22,6 +22,13 @@ public sealed class MainViewModel : ViewModelBase
     ShowCodeEditor = ReactiveCommand.Create(() => Navigate(CodeEditor, "Code"));
     ShowSettings = ReactiveCommand.Create(() => Navigate(Settings, "Settings"));
 
+    // Wire up cross-tab navigation: modpacks → stats editor
+    Modpacks.NavigateToStatsEntry = (modpackName, templateType, instanceName) =>
+    {
+      Navigate(StatsEditor, "Stats Editor");
+      StatsEditor.NavigateToEntry(modpackName, templateType, instanceName);
+    };
+
     Navigate(Modpacks, "Modpacks");
   }
 
@@ -63,5 +70,9 @@ public sealed class MainViewModel : ViewModelBase
   {
     SelectedViewModel = target;
     CurrentSectionTitle = title;
+
+    // Refresh stats patches when switching to modpacks tab
+    if (target == Modpacks)
+      Modpacks.SelectedModpack?.RefreshStatsPatches();
   }
 }

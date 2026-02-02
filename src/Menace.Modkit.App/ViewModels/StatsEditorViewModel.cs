@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -23,6 +24,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
     private readonly Dictionary<string, Dictionary<string, object?>> _pendingChanges = new();
     private readonly Dictionary<string, Dictionary<string, object?>> _stagingOverrides = new();
 
+    // Cache: template type name -> sorted list of instance names
+    private readonly Dictionary<string, List<string>> _templateInstanceNamesCache = new();
+
     public StatsEditorViewModel()
     {
         _modpackManager = new ModpackManager();
@@ -46,6 +50,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         ShowVanillaDataWarning = false;
         _dataLoader = new DataTemplateLoader(_modpackManager.VanillaDataPath);
+        _templateInstanceNamesCache.Clear();
 
         // Load asset references from game install
         var gameInstallPath = _modpackManager.GetGameInstallPath();
@@ -188,7 +193,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (string.IsNullOrEmpty(_currentModpackName))
             return;
 
-        var statsDir = Path.Combine(_modpackManager.StagingBasePath, _currentModpackName, "stats");
+        var statsDir = Path.Combine(_modpackManager.ResolveStagingDir(_currentModpackName), "stats");
         if (!Directory.Exists(statsDir))
             return;
 
@@ -294,6 +299,38 @@ public sealed class StatsEditorViewModel : ViewModelBase
         return null;
     }
 
+    /// <summary>
+    /// Navigate to a specific template instance. Sets the modpack, then finds and
+    /// selects the matching tree node.
+    /// </summary>
+    public void NavigateToEntry(string modpackName, string templateType, string instanceName)
+    {
+        // Set modpack if needed
+        if (_currentModpackName != modpackName)
+            CurrentModpackName = modpackName;
+
+        // Search all tree nodes for a matching leaf
+        var target = FindNode(_allTreeNodes, templateType, instanceName);
+        if (target != null)
+            SelectedNode = target;
+    }
+
+    private TreeNodeViewModel? FindNode(IEnumerable<TreeNodeViewModel> nodes, string templateType, string instanceName)
+    {
+        foreach (var node in nodes)
+        {
+            if (!node.IsCategory && node.Template is DynamicDataTemplate dyn
+                && dyn.TemplateTypeName == templateType
+                && node.Template.Name == instanceName)
+                return node;
+
+            var found = FindNode(node.Children, templateType, instanceName);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
     public void UpdateModifiedProperty(string fieldName, string text)
     {
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
@@ -322,6 +359,73 @@ public sealed class StatsEditorViewModel : ViewModelBase
         }
 
         _modifiedProperties[fieldName] = text;
+    }
+
+    /// <summary>
+    /// Returns the element type name if the field is a template reference collection
+    /// for the currently selected template, null otherwise.
+    /// </summary>
+    public string? GetTemplateRefElementType(string fieldName)
+    {
+        if (_selectedNode?.Template is not DynamicDataTemplate dyn)
+            return null;
+        var templateTypeName = dyn.TemplateTypeName ?? "";
+        if (!_schemaService.IsLoaded || string.IsNullOrEmpty(templateTypeName))
+            return null;
+        if (!_schemaService.IsTemplateRefCollection(templateTypeName, fieldName))
+            return null;
+        var meta = _schemaService.GetFieldMetadata(templateTypeName, fieldName);
+        if (meta == null || string.IsNullOrEmpty(meta.ElementType))
+            return null;
+        return meta.ElementType;
+    }
+
+    /// <summary>
+    /// Returns all instance names for a given template type, sorted. Cached per session.
+    /// </summary>
+    public List<string> GetTemplateInstanceNames(string templateTypeName)
+    {
+        if (_templateInstanceNamesCache.TryGetValue(templateTypeName, out var cached))
+            return cached;
+
+        var names = new List<string>();
+        if (_dataLoader != null)
+        {
+            var templates = _dataLoader.LoadTemplatesGeneric(templateTypeName);
+            foreach (var t in templates)
+            {
+                if (!string.IsNullOrEmpty(t.Name))
+                    names.Add(t.Name);
+            }
+            names.Sort(StringComparer.Ordinal);
+        }
+
+        _templateInstanceNamesCache[templateTypeName] = names;
+        return names;
+    }
+
+    /// <summary>
+    /// Replaces a collection field's value with a new list of strings.
+    /// Stores as a JsonElement array so it integrates with the existing save pipeline.
+    /// </summary>
+    public void UpdateCollectionProperty(string fieldName, List<string> items)
+    {
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
+            return;
+
+        var sb = new StringBuilder();
+        sb.Append('[');
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append('"');
+            sb.Append(items[i].Replace("\\", "\\\\").Replace("\"", "\\\""));
+            sb.Append('"');
+        }
+        sb.Append(']');
+
+        using var doc = JsonDocument.Parse(sb.ToString());
+        _modifiedProperties[fieldName] = doc.RootElement.Clone();
     }
 
     public void SaveToStaging()
@@ -515,6 +619,18 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
                             result[property.Name] = assetValue;
                             continue;
+                        }
+                    }
+
+                    // Check if this is an enum field — resolve int to name
+                    if (_schemaService.IsLoaded)
+                    {
+                        var fieldMeta = _schemaService.GetFieldMetadata(templateTypeName, property.Name);
+                        if (fieldMeta?.Category == "enum" && value is long enumIntVal)
+                        {
+                            var enumName = _schemaService.ResolveEnumName(fieldMeta.Type, (int)enumIntVal);
+                            if (enumName != null)
+                                value = $"{enumName} ({enumIntVal})";
                         }
                     }
 

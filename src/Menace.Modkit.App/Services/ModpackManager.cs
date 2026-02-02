@@ -23,6 +23,8 @@ public class ModpackManager
             "MenaceModkit", "staging");
 
         EnsureDirectoriesExist();
+        SeedBundledRuntimeDlls();
+        SeedBundledModpacks();
     }
 
     public string StagingBasePath => _stagingBasePath;
@@ -166,15 +168,43 @@ public class ModpackManager
         return File.Exists(path) ? path : null;
     }
 
+    /// <summary>
+    /// Resolve a modpack display name to its staging directory path.
+    /// The directory name may differ from the manifest Name field
+    /// (e.g. dir "DevMode-modpack" → manifest name "DevMode").
+    /// Falls back to using the name directly if no match is found.
+    /// </summary>
+    public string ResolveStagingDir(string modpackName)
+    {
+        // Fast path: directory name matches manifest name
+        var direct = Path.Combine(_stagingBasePath, modpackName);
+        if (Directory.Exists(direct))
+            return direct;
+
+        // Scan staging directories for a manifest whose Name matches
+        if (Directory.Exists(_stagingBasePath))
+        {
+            foreach (var dir in Directory.GetDirectories(_stagingBasePath))
+            {
+                var manifest = LoadManifest(dir);
+                if (manifest != null && string.Equals(manifest.Name, modpackName, StringComparison.OrdinalIgnoreCase))
+                    return dir;
+            }
+        }
+
+        // Nothing found — return the direct path (will be created on write)
+        return direct;
+    }
+
     public string? GetStagingTemplatePath(string modpackName, string templateType)
     {
-        var path = Path.Combine(_stagingBasePath, modpackName, "stats", $"{templateType}.json");
+        var path = Path.Combine(ResolveStagingDir(modpackName), "stats", $"{templateType}.json");
         return File.Exists(path) ? path : null;
     }
 
     public void SaveStagingTemplate(string modpackName, string templateType, string jsonContent)
     {
-        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var modpackDir = ResolveStagingDir(modpackName);
         var statsDir = Path.Combine(modpackDir, "stats");
         Directory.CreateDirectory(statsDir);
 
@@ -190,7 +220,7 @@ public class ModpackManager
 
     public void SaveStagingAsset(string modpackName, string relativePath, string sourceFile)
     {
-        var assetDir = Path.Combine(_stagingBasePath, modpackName, "assets");
+        var assetDir = Path.Combine(ResolveStagingDir(modpackName), "assets");
         var destPath = Path.Combine(assetDir, relativePath);
         var destDir = Path.GetDirectoryName(destPath);
         if (!string.IsNullOrEmpty(destDir))
@@ -200,20 +230,20 @@ public class ModpackManager
 
     public string? GetStagingAssetPath(string modpackName, string relativePath)
     {
-        var path = Path.Combine(_stagingBasePath, modpackName, "assets", relativePath);
+        var path = Path.Combine(ResolveStagingDir(modpackName), "assets", relativePath);
         return File.Exists(path) ? path : null;
     }
 
     public void RemoveStagingAsset(string modpackName, string relativePath)
     {
-        var path = Path.Combine(_stagingBasePath, modpackName, "assets", relativePath);
+        var path = Path.Combine(ResolveStagingDir(modpackName), "assets", relativePath);
         if (File.Exists(path))
             File.Delete(path);
     }
 
     public List<string> GetStagingAssetPaths(string modpackName)
     {
-        var assetsDir = Path.Combine(_stagingBasePath, modpackName, "assets");
+        var assetsDir = Path.Combine(ResolveStagingDir(modpackName), "assets");
         if (!Directory.Exists(assetsDir))
             return new List<string>();
 
@@ -231,12 +261,13 @@ public class ModpackManager
     /// </summary>
     public List<string> GetStagingSources(string modpackName)
     {
-        var srcDir = Path.Combine(_stagingBasePath, modpackName, "src");
+        var modpackDir = ResolveStagingDir(modpackName);
+        var srcDir = Path.Combine(modpackDir, "src");
         if (!Directory.Exists(srcDir))
             return new List<string>();
 
         return Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories)
-            .Select(f => Path.GetRelativePath(Path.Combine(_stagingBasePath, modpackName), f))
+            .Select(f => Path.GetRelativePath(modpackDir, f))
             .ToList();
     }
 
@@ -245,7 +276,7 @@ public class ModpackManager
     /// </summary>
     public void SaveStagingSource(string modpackName, string relativePath, string content)
     {
-        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var modpackDir = ResolveStagingDir(modpackName);
         var fullPath = Path.Combine(modpackDir, relativePath);
         var dir = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrEmpty(dir))
@@ -261,7 +292,7 @@ public class ModpackManager
     /// </summary>
     public void AddStagingSource(string modpackName, string relativePath)
     {
-        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var modpackDir = ResolveStagingDir(modpackName);
         var fullPath = Path.Combine(modpackDir, relativePath);
 
         if (File.Exists(fullPath))
@@ -283,7 +314,7 @@ public class ModpackManager
     /// </summary>
     public void RemoveStagingSource(string modpackName, string relativePath)
     {
-        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var modpackDir = ResolveStagingDir(modpackName);
         var fullPath = Path.Combine(modpackDir, relativePath);
         if (File.Exists(fullPath))
             File.Delete(fullPath);
@@ -297,7 +328,7 @@ public class ModpackManager
     /// </summary>
     public string? ReadStagingSource(string modpackName, string relativePath)
     {
-        var fullPath = Path.Combine(_stagingBasePath, modpackName, relativePath);
+        var fullPath = Path.Combine(ResolveStagingDir(modpackName), relativePath);
         return File.Exists(fullPath) ? File.ReadAllText(fullPath) : null;
     }
 
@@ -311,8 +342,8 @@ public class ModpackManager
         if (string.IsNullOrEmpty(ModsBasePath))
             throw new InvalidOperationException("Game install path not set");
 
-        var stagingPath = Path.Combine(_stagingBasePath, modpackName);
-        var modsPath = Path.Combine(ModsBasePath, modpackName);
+        var stagingPath = ResolveStagingDir(modpackName);
+        var modsPath = Path.Combine(ModsBasePath, Path.GetFileName(stagingPath));
 
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
@@ -323,7 +354,7 @@ public class ModpackManager
 
     public void ExportModpack(string modpackName, string exportPath)
     {
-        var stagingPath = Path.Combine(_stagingBasePath, modpackName);
+        var stagingPath = ResolveStagingDir(modpackName);
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
 
@@ -524,6 +555,120 @@ public class ModpackManager
 
         if (!string.IsNullOrEmpty(ModsBasePath))
             Directory.CreateDirectory(ModsBasePath);
+    }
+
+    /// <summary>
+    /// Infrastructure DLL directories under third_party/bundled/ that should be
+    /// copied into the runtime/ directory for automatic deployment with modpacks.
+    /// </summary>
+    private static readonly string[] BundledRuntimeDllDirs = { "DataExtractor", "ModpackLoader", "CombinedArms" };
+
+    /// <summary>
+    /// Copies bundled infrastructure DLLs into the runtime/ directory so they are
+    /// automatically deployed alongside modpacks by DeployRuntimeDlls.
+    /// Only overwrites when the bundled copy differs (size check).
+    /// </summary>
+    private void SeedBundledRuntimeDlls()
+    {
+        var bundledBase = Path.Combine(AppContext.BaseDirectory, "third_party", "bundled");
+        foreach (var dirName in BundledRuntimeDllDirs)
+        {
+            var srcDir = Path.Combine(bundledBase, dirName);
+            if (!Directory.Exists(srcDir)) continue;
+
+            foreach (var srcFile in Directory.GetFiles(srcDir, "*.dll"))
+            {
+                var destFile = Path.Combine(RuntimeDllsPath, Path.GetFileName(srcFile));
+                bool needsCopy = !File.Exists(destFile);
+                if (!needsCopy)
+                {
+                    var srcInfo = new FileInfo(srcFile);
+                    var destInfo = new FileInfo(destFile);
+                    needsCopy = srcInfo.Length != destInfo.Length;
+                }
+                if (needsCopy)
+                    File.Copy(srcFile, destFile, true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Copies bundled modpacks from third_party/bundled/modpacks/ into the staging
+    /// directory if they don't already exist there.
+    /// </summary>
+    private void SeedBundledModpacks()
+    {
+        var bundledDir = Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", "modpacks");
+        if (!Directory.Exists(bundledDir))
+            return;
+
+        foreach (var modpackDir in Directory.GetDirectories(bundledDir))
+        {
+            var dirName = Path.GetFileName(modpackDir);
+            var targetDir = Path.Combine(_stagingBasePath, dirName);
+
+            if (!Directory.Exists(targetDir))
+            {
+                CopyDirectory(modpackDir, targetDir);
+                continue;
+            }
+
+            // Update existing staging copy: overwrite files where the bundled
+            // version is newer, so source fixes propagate without requiring
+            // the user to delete their staging directory.
+            UpdateDirectoryFromBundled(modpackDir, targetDir);
+        }
+    }
+
+    /// <summary>
+    /// Copy files from bundled source to staging where the bundled file is newer.
+    /// Does not delete files the user may have added to staging.
+    /// When any source file is updated, deletes the build/ cache to force recompilation.
+    /// </summary>
+    private void UpdateDirectoryFromBundled(string sourceDir, string destDir)
+    {
+        bool anyUpdated = false;
+        UpdateDirectoryFromBundledCore(sourceDir, destDir, ref anyUpdated);
+
+        if (anyUpdated)
+        {
+            // Source files changed — delete stale build cache so next deploy recompiles
+            var buildDir = Path.Combine(destDir, "build");
+            if (Directory.Exists(buildDir))
+            {
+                try { Directory.Delete(buildDir, true); } catch { }
+            }
+        }
+    }
+
+    private void UpdateDirectoryFromBundledCore(string sourceDir, string destDir, ref bool anyUpdated)
+    {
+        Directory.CreateDirectory(destDir);
+        foreach (var sourceFile in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(sourceFile));
+            if (!File.Exists(destFile) || !FilesAreEqual(sourceFile, destFile))
+            {
+                File.Copy(sourceFile, destFile, true);
+                anyUpdated = true;
+            }
+        }
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        {
+            // Don't descend into build/ — that's output, not source
+            if (Path.GetFileName(subDir).Equals("build", StringComparison.OrdinalIgnoreCase))
+                continue;
+            UpdateDirectoryFromBundledCore(subDir, Path.Combine(destDir, Path.GetFileName(subDir)), ref anyUpdated);
+        }
+    }
+
+    private static bool FilesAreEqual(string path1, string path2)
+    {
+        var info1 = new FileInfo(path1);
+        var info2 = new FileInfo(path2);
+        if (info1.Length != info2.Length)
+            return false;
+        return File.ReadAllBytes(path1).AsSpan().SequenceEqual(File.ReadAllBytes(path2));
     }
 
     private string SanitizeName(string name)

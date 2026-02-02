@@ -604,7 +604,18 @@ public class StatsEditorView : UserControl
           return fieldStack;
 
         case System.Text.Json.JsonValueKind.Array:
-          // Array - show as editable JSON text for full-replacement patching
+          // Check if this is a template reference collection
+          if (DataContext is StatsEditorViewModel arrVm)
+          {
+            var elementType = arrVm.GetTemplateRefElementType(name);
+            if (elementType != null)
+            {
+              fieldStack.Children.Add(CreateTemplateRefListControl(name, jsonElement, elementType, isEditable));
+              return fieldStack;
+            }
+          }
+
+          // Non-template array - show as editable JSON text for full-replacement patching
           var arrayText = jsonElement.GetRawText();
           if (isEditable)
           {
@@ -864,6 +875,155 @@ public class StatsEditorView : UserControl
       "GameObject" => Color.Parse("#5A5A20"),
       _ => Color.Parse("#3E3E3E"),
     };
+  }
+
+  private Control CreateTemplateRefListControl(string fieldName, System.Text.Json.JsonElement jsonElement, string elementType, bool isEditable)
+  {
+    var vm = DataContext as StatsEditorViewModel;
+    var items = new System.Collections.Generic.List<string>();
+    foreach (var el in jsonElement.EnumerateArray())
+    {
+      var s = el.ValueKind == System.Text.Json.JsonValueKind.String ? el.GetString() : el.GetRawText();
+      if (!string.IsNullOrEmpty(s))
+        items.Add(s);
+    }
+
+    var outerPanel = new StackPanel { Spacing = 4 };
+    var itemsPanel = new StackPanel { Spacing = 0 };
+
+    void RebuildItemsPanel()
+    {
+      itemsPanel.Children.Clear();
+      if (items.Count == 0)
+      {
+        itemsPanel.Children.Add(new TextBlock
+        {
+          Text = "(empty)",
+          Foreground = new SolidColorBrush(Color.Parse("#888888")),
+          FontStyle = FontStyle.Italic,
+          FontSize = 12,
+          Padding = new Thickness(8, 4)
+        });
+        return;
+      }
+      for (int i = 0; i < items.Count; i++)
+      {
+        var idx = i;
+        var rowBg = i % 2 == 0
+          ? new SolidColorBrush(Color.Parse("#1E1E1E"))
+          : new SolidColorBrush(Color.Parse("#252525"));
+
+        var row = new Grid
+        {
+          ColumnDefinitions = isEditable
+            ? new ColumnDefinitions("*,Auto")
+            : new ColumnDefinitions("*"),
+          Background = rowBg
+        };
+
+        var nameBlock = new TextBlock
+        {
+          Text = items[idx],
+          Foreground = Brushes.White,
+          FontSize = 12,
+          Padding = new Thickness(8, 4),
+          VerticalAlignment = VerticalAlignment.Center,
+          TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        row.Children.Add(nameBlock);
+        Grid.SetColumn(nameBlock, 0);
+
+        if (isEditable)
+        {
+          var removeBtn = new Button
+          {
+            Content = "\u2715",
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.Parse("#CC4444")),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 2),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+          };
+          removeBtn.Click += (_, _) =>
+          {
+            items.RemoveAt(idx);
+            RebuildItemsPanel();
+            SyncCollectionToViewModel(fieldName, items);
+          };
+          row.Children.Add(removeBtn);
+          Grid.SetColumn(removeBtn, 1);
+        }
+
+        itemsPanel.Children.Add(row);
+      }
+    }
+
+    RebuildItemsPanel();
+    outerPanel.Children.Add(itemsPanel);
+
+    if (isEditable && vm != null)
+    {
+      var instanceNames = vm.GetTemplateInstanceNames(elementType);
+
+      var addRow = new Grid
+      {
+        ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+        Margin = new Thickness(0, 4, 0, 0)
+      };
+
+      var autoComplete = new AutoCompleteBox
+      {
+        Watermark = $"Add {elementType}...",
+        ItemsSource = instanceNames,
+        FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
+        MinimumPrefixLength = 0,
+        Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+        BorderThickness = new Thickness(1),
+        FontSize = 12,
+        MinWidth = 100
+      };
+      addRow.Children.Add(autoComplete);
+      Grid.SetColumn(autoComplete, 0);
+
+      var addBtn = new Button
+      {
+        Content = "+",
+        Background = new SolidColorBrush(Color.Parse("#064b48")),
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(10, 4),
+        FontSize = 14,
+        Margin = new Thickness(4, 0, 0, 0),
+        VerticalAlignment = VerticalAlignment.Center
+      };
+      addBtn.Click += (_, _) =>
+      {
+        var selected = autoComplete.Text;
+        if (!string.IsNullOrWhiteSpace(selected) && !items.Contains(selected))
+        {
+          items.Add(selected);
+          RebuildItemsPanel();
+          SyncCollectionToViewModel(fieldName, items);
+          autoComplete.Text = "";
+        }
+      };
+      addRow.Children.Add(addBtn);
+      Grid.SetColumn(addBtn, 1);
+
+      outerPanel.Children.Add(addRow);
+    }
+
+    return outerPanel;
+  }
+
+  private void SyncCollectionToViewModel(string fieldName, System.Collections.Generic.List<string> items)
+  {
+    if (DataContext is StatsEditorViewModel vm)
+      vm.UpdateCollectionProperty(fieldName, items);
   }
 
   private void OnEditableTextBoxChanged(object? sender, TextChangedEventArgs e)

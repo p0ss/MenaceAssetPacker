@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MelonLoader;
 using UnityEngine;
 
@@ -115,14 +116,31 @@ public static class AssetReplacer
         if (textureReplacements.Count == 0)
             return 0;
 
+        MelonLogger.Msg($"  Searching for {textureReplacements.Count} texture replacement(s)...");
+
         try
         {
             var il2cppType = Il2CppType.From(typeof(Texture2D));
             var allTextures = Resources.FindObjectsOfTypeAll(il2cppType);
             if (allTextures == null || allTextures.Length == 0)
+            {
+                MelonLogger.Warning("  FindObjectsOfTypeAll(Texture2D) returned 0 objects");
                 return 0;
+            }
+
+            MelonLogger.Msg($"  Found {allTextures.Length} Texture2D objects in memory");
+
+            // Build a secondary lookup: filename-only → replacement
+            // Handles cases where the game texture's .name includes path components
+            // e.g. "ui/textures/backgrounds/title_bg_02" should still match "title_bg_02"
+            var byFilename = new Dictionary<string, Replacement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in textureReplacements)
+                byFilename[r.AssetName] = r;
 
             int replaced = 0;
+            var unmatchedNames = new HashSet<string>(
+                textureReplacements.Select(r => r.AssetName), StringComparer.OrdinalIgnoreCase);
+
             for (int i = 0; i < allTextures.Length; i++)
             {
                 var obj = allTextures[i];
@@ -131,10 +149,23 @@ public static class AssetReplacer
                 var texName = obj.name;
                 if (string.IsNullOrEmpty(texName)) continue;
 
-                if (!_replacements.TryGetValue(texName, out var replacement))
+                // Try direct match first (most textures use filename-only names)
+                if (!byFilename.TryGetValue(texName, out var replacement))
+                {
+                    // Fallback: extract filename from path-style names
+                    // e.g. "ui/textures/backgrounds/title_bg_02" → "title_bg_02"
+                    var lastSep = texName.LastIndexOfAny(new[] { '/', '\\' });
+                    if (lastSep >= 0)
+                    {
+                        var nameOnly = texName.Substring(lastSep + 1);
+                        byFilename.TryGetValue(nameOnly, out replacement);
+                    }
+                }
+
+                if (replacement == null || replacement.Kind != AssetKind.Texture)
                     continue;
-                if (replacement.Kind != AssetKind.Texture)
-                    continue;
+
+                unmatchedNames.Remove(replacement.AssetName);
 
                 try
                 {
@@ -142,15 +173,80 @@ public static class AssetReplacer
                     if (tex == null) continue;
 
                     var bytes = GetOrLoadBytes(replacement.DiskPath);
-                    if (bytes == null) continue;
+                    if (bytes == null)
+                    {
+                        MelonLogger.Warning($"  Could not read replacement file: {replacement.DiskPath}");
+                        continue;
+                    }
 
-                    ImageConversion.LoadImage(tex, bytes);
-                    replaced++;
-                    MelonLogger.Msg($"  Replaced texture: {texName}");
+                    MelonLogger.Msg($"  Applying texture replacement: '{texName}' ({tex.width}x{tex.height}, {tex.format}) ← {bytes.Length} bytes");
+
+                    // Explicit Il2Cpp array conversion for reliability
+                    var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+                    bool success = ImageConversion.LoadImage(tex, il2cppBytes);
+
+                    if (success)
+                    {
+                        replaced++;
+                        MelonLogger.Msg($"  Replaced texture: {texName} → now {tex.width}x{tex.height}");
+                    }
+                    else
+                    {
+                        MelonLogger.Warning($"  ImageConversion.LoadImage FAILED for '{texName}' — texture may be read-only or compressed");
+                    }
                 }
                 catch (Exception ex)
                 {
                     MelonLogger.Error($"  Failed to replace texture {texName}: {ex.Message}");
+                }
+            }
+
+            // Log unmatched replacements to help diagnose name mismatches
+            if (unmatchedNames.Count > 0)
+            {
+                MelonLogger.Warning($"  {unmatchedNames.Count} texture replacement(s) found NO matching game texture:");
+                foreach (var name in unmatchedNames)
+                    MelonLogger.Warning($"    No match for: '{name}'");
+
+                // Dump a sample of actual texture names to help debug
+                MelonLogger.Msg("  Sample of game texture names (first 30):");
+                int dumped = 0;
+                for (int i = 0; i < allTextures.Length && dumped < 30; i++)
+                {
+                    var obj = allTextures[i];
+                    if (obj == null) continue;
+                    var n = obj.name;
+                    if (string.IsNullOrEmpty(n)) continue;
+                    // Only dump names that look potentially relevant (contain keywords from unmatched)
+                    foreach (var unmatched in unmatchedNames)
+                    {
+                        if (n.Contains(unmatched, StringComparison.OrdinalIgnoreCase) ||
+                            unmatched.Contains(n, StringComparison.OrdinalIgnoreCase) ||
+                            n.Contains("bg", StringComparison.OrdinalIgnoreCase) ||
+                            n.Contains("title", StringComparison.OrdinalIgnoreCase) ||
+                            n.Contains("loading", StringComparison.OrdinalIgnoreCase) ||
+                            n.Contains("background", StringComparison.OrdinalIgnoreCase))
+                        {
+                            MelonLogger.Msg($"    [{i}] '{n}'");
+                            dumped++;
+                            break;
+                        }
+                    }
+                }
+                if (dumped == 0)
+                {
+                    // Just dump the first 20 names regardless
+                    MelonLogger.Msg("  First 20 texture names:");
+                    dumped = 0;
+                    for (int i = 0; i < allTextures.Length && dumped < 20; i++)
+                    {
+                        var obj = allTextures[i];
+                        if (obj == null) continue;
+                        var n = obj.name;
+                        if (string.IsNullOrEmpty(n)) continue;
+                        MelonLogger.Msg($"    [{i}] '{n}'");
+                        dumped++;
+                    }
                 }
             }
 
@@ -709,7 +805,12 @@ public static class AssetReplacer
         {
             var bytes = File.ReadAllBytes(filePath);
             var texture = new Texture2D(2, 2);
-            ImageConversion.LoadImage(texture, bytes);
+            var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+            if (!ImageConversion.LoadImage(texture, il2cppBytes))
+            {
+                MelonLogger.Warning($"ImageConversion.LoadImage failed for: {filePath}");
+                return null;
+            }
             return texture;
         }
         catch (Exception ex)

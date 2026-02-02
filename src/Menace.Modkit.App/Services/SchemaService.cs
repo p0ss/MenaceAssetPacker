@@ -14,6 +14,8 @@ public class SchemaService
     private readonly Dictionary<string, Dictionary<string, FieldMeta>> _fieldsByTemplate = new(StringComparer.Ordinal);
     // templateTypeName -> full inheritance chain (base → derived)
     private readonly Dictionary<string, List<string>> _inheritanceChains = new(StringComparer.Ordinal);
+    // enumTypeName -> { intValue -> name }
+    private readonly Dictionary<string, Dictionary<int, string>> _enumsByType = new(StringComparer.Ordinal);
     private bool _isLoaded;
 
     public class FieldMeta
@@ -22,6 +24,7 @@ public class SchemaService
         public string Type { get; set; } = "";
         public string Category { get; set; } = "";
         public string Offset { get; set; } = "";
+        public string ElementType { get; set; } = "";
     }
 
     /// <summary>
@@ -32,6 +35,7 @@ public class SchemaService
     {
         _fieldsByTemplate.Clear();
         _inheritanceChains.Clear();
+        _enumsByType.Clear();
         _isLoaded = false;
 
         if (!File.Exists(schemaJsonPath))
@@ -64,13 +68,15 @@ public class SchemaService
                         var type = field.GetProperty("type").GetString() ?? "";
                         var offset = field.TryGetProperty("offset", out var o) ? o.GetString() ?? "" : "";
                         var category = field.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
+                        var elementType = field.TryGetProperty("element_type", out var et) ? et.GetString() ?? "" : "";
 
                         fieldDict[name] = new FieldMeta
                         {
                             Name = name,
                             Type = type,
                             Category = category,
-                            Offset = offset
+                            Offset = offset,
+                            ElementType = elementType
                         };
                     }
                 }
@@ -108,6 +114,25 @@ public class SchemaService
                     _inheritanceChains[prop.Name] = chain;
                 }
                 Console.WriteLine($"[SchemaService] Loaded {_inheritanceChains.Count} inheritance chains");
+            }
+
+            // Parse enum definitions
+            if (doc.RootElement.TryGetProperty("enums", out var enums))
+            {
+                foreach (var enumProp in enums.EnumerateObject())
+                {
+                    if (enumProp.Value.TryGetProperty("values", out var values))
+                    {
+                        var valueToName = new Dictionary<int, string>();
+                        foreach (var v in values.EnumerateObject())
+                        {
+                            if (v.Value.TryGetInt32(out var intVal))
+                                valueToName[intVal] = v.Name;
+                        }
+                        _enumsByType[enumProp.Name] = valueToName;
+                    }
+                }
+                Console.WriteLine($"[SchemaService] Loaded {_enumsByType.Count} enum types");
             }
 
             _isLoaded = true;
@@ -206,6 +231,32 @@ public class SchemaService
     {
         var meta = GetFieldMetadata(templateTypeName, fieldName);
         return meta?.Category == "unity_asset";
+    }
+
+    /// <summary>
+    /// Check if a field is a collection of template references (e.g. SkillTemplate[], TagTemplate[]).
+    /// Returns true only if the element_type itself is a known template type with loadable instances.
+    /// </summary>
+    public bool IsTemplateRefCollection(string templateTypeName, string fieldName)
+    {
+        var meta = GetFieldMetadata(templateTypeName, fieldName);
+        if (meta == null || meta.Category != "collection" || string.IsNullOrEmpty(meta.ElementType))
+            return false;
+        return _fieldsByTemplate.ContainsKey(meta.ElementType);
+    }
+
+    /// <summary>
+    /// Resolve an enum integer value to its name, given the enum type name from the schema.
+    /// Returns null if the enum type or value is not found.
+    /// </summary>
+    public string? ResolveEnumName(string enumTypeName, int value)
+    {
+        if (_enumsByType.TryGetValue(enumTypeName, out var values))
+        {
+            if (values.TryGetValue(value, out var name))
+                return name;
+        }
+        return null;
     }
 
     public bool IsLoaded => _isLoaded;

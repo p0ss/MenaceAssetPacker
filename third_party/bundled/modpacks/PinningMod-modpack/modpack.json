@@ -1,0 +1,34 @@
+{
+  "manifestVersion": 2,
+  "name": "Pinning Mod",
+  "version": "1.0.0",
+  "author": "Menace Modkit",
+  "description": "Balance tweaks: always-crawl for pinned units, capped suppression stun duration.",
+  "createdDate": "0001-01-01T00:00:00",
+  "modifiedDate": "2026-02-02T21:02:54.0640162+11:00",
+  "loadOrder": 20,
+  "dependencies": [],
+  "code": {
+    "sources": ["src/PinningModPlugin.cs"],
+    "references": [
+      "MelonLoader",
+      "0Harmony",
+      "Il2CppInterop.Runtime",
+      "Il2Cppmscorlib",
+      "Assembly-CSharp",
+      "Menace.ModpackLoader"
+    ],
+    "prebuiltDlls": [],
+    "hasAnySources": true,
+    "hasAnyPrebuilt": false,
+    "hasAnyCode": true
+  },
+  "patches": {},
+  "bundles": [],
+  "assets": {},
+  "securityStatus": "SourceVerified",
+  "hasCode": true,
+  "hasPatches": false,
+  "hasBundles": false,
+  "hasAssets": false
+}

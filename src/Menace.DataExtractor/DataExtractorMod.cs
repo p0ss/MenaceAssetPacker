@@ -11,14 +11,14 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.1.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.3.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "4.1.0";
+        private const string ExtractorVersion = "4.3.0";
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -72,7 +72,7 @@ namespace Menace.DataExtractor
             _tryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("Menace Data Extractor v4.1.0 (Full Direct-Read + List extraction)");
+            LoggerInstance.Msg("Menace Data Extractor v4.2.0 (Full Direct-Read + List extraction)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
 
@@ -920,6 +920,20 @@ namespace Menace.DataExtractor
 
                 IntPtr addr = objectPointer + (int)offset;
 
+                // Check IL2CPP native type to catch float/double mismatches
+                // IL2CppInterop sometimes maps float fields to double properties
+                IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
+                if (fieldType != IntPtr.Zero)
+                {
+                    int nativeType = IL2CPP.il2cpp_type_get_type(fieldType);
+                    // IL2CPP says float (R4) but IL2CppInterop reflected type says double — trust IL2CPP
+                    if (nativeType == 11 && propType == typeof(double))
+                        return BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(addr)), 0);
+                    // IL2CPP says double (R8) but reflected type says float — trust IL2CPP
+                    if (nativeType == 12 && propType == typeof(float))
+                        return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+                }
+
                 // Primitive types — direct Marshal reads
                 if (propType == typeof(int))
                     return Marshal.ReadInt32(addr);
@@ -1246,6 +1260,21 @@ namespace Menace.DataExtractor
                                         inst.Data["IconAssetName"] = assetName;
                                     DebugLog($"      -> HasIcon=true, name={assetName ?? "(unknown)"}");
                                 }
+                                else if (ShouldExtractTemplateInline(className))
+                                {
+                                    // Template type not extracted standalone — include field data inline
+                                    var nested = ReadNestedObjectDirect(refPtr, expectedClass, className, 0);
+                                    if (nested is Dictionary<string, object> nestedDict)
+                                    {
+                                        nestedDict["name"] = assetName ?? className;
+                                        inst.Data[prop.Name] = nestedDict;
+                                    }
+                                    else
+                                    {
+                                        inst.Data[prop.Name] = assetName ?? $"({className})";
+                                    }
+                                    DebugLog($"      -> inline template ({className})");
+                                }
                                 else
                                 {
                                     inst.Data[prop.Name] = assetName ?? $"({className})";
@@ -1310,7 +1339,10 @@ namespace Menace.DataExtractor
                 if (pName == "Object") break;
                 parent = IL2CPP.il2cpp_class_get_parent(parent);
             }
-            return false;
+            // Heuristic fallback: class has _size and _items fields (List<T> memory layout)
+            IntPtr sizeField = IL2CPP.il2cpp_class_get_field_from_name(klass, "_size");
+            IntPtr itemsField = IL2CPP.il2cpp_class_get_field_from_name(klass, "_items");
+            return sizeField != IntPtr.Zero && itemsField != IntPtr.Zero;
         }
 
         /// <summary>
@@ -1394,6 +1426,7 @@ namespace Menace.DataExtractor
                     bool elemIsUnityObject = IsUnityObjectClass(elemClass);
                     bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
                     bool elemIsList = IsIl2CppListClass(elemClassName, elemClass);
+                    bool extractInline = elemIsUnityObject && ShouldExtractTemplateInline(elemClassName);
 
                     for (int i = 0; i < size; i++)
                     {
@@ -1407,7 +1440,20 @@ namespace Menace.DataExtractor
                         if (elemIsUnityObject)
                         {
                             if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
-                                result.Add(ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})");
+                            {
+                                string assetName = ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})";
+                                if (extractInline && depth < 2)
+                                {
+                                    var nested = ReadNestedObjectDirect(elemPtr, elemClass, elemClassName, depth + 1);
+                                    if (nested is Dictionary<string, object> nestedDict)
+                                    {
+                                        nestedDict["name"] = assetName;
+                                        result.Add(nestedDict);
+                                        continue;
+                                    }
+                                }
+                                result.Add(assetName);
+                            }
                             else
                                 result.Add(null);
                         }
@@ -1659,6 +1705,8 @@ namespace Menace.DataExtractor
                     bool elemIsUnityObject = IsUnityObjectClass(elemClass);
                     bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
 
+                    bool extractInline = elemIsUnityObject && ShouldExtractTemplateInline(elemClassName);
+
                     for (int i = 0; i < length; i++)
                     {
                         IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
@@ -1671,7 +1719,21 @@ namespace Menace.DataExtractor
                         if (elemIsUnityObject)
                         {
                             if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
-                                result.Add(ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})");
+                            {
+                                string assetName = ReadUnityAssetNameWithClass(elemPtr, elemClass, elemClassName) ?? $"({elemClassName})";
+                                // For template types not extracted standalone, include field data
+                                if (extractInline && depth < 2)
+                                {
+                                    var nested = ReadNestedObjectDirect(elemPtr, elemClass, elemClassName, depth + 1);
+                                    if (nested is Dictionary<string, object> nestedDict)
+                                    {
+                                        nestedDict["name"] = assetName;
+                                        result.Add(nestedDict);
+                                        continue;
+                                    }
+                                }
+                                result.Add(assetName);
+                            }
                             else
                                 result.Add(null);
                         }
@@ -1782,6 +1844,22 @@ namespace Menace.DataExtractor
             }
             catch { }
             return false;
+        }
+
+        /// <summary>
+        /// Check if a Unity Object class is a game template type that should have its fields
+        /// extracted inline (rather than just its name) when encountered as a reference.
+        /// Returns true for template types that are NOT already extracted as standalone entries.
+        /// </summary>
+        private bool ShouldExtractTemplateInline(string className)
+        {
+            // Only applies to types we recognize as template types
+            if (!_il2cppNameToType.ContainsKey(className))
+                return false;
+            // If the type IS loaded as standalone entries, keep name-only references
+            if (_pendingObjectsByType != null && _pendingObjectsByType.TryGetValue(className, out var objects) && objects.Count > 0)
+                return false;
+            return true;
         }
 
         /// <summary>
@@ -1947,6 +2025,9 @@ namespace Menace.DataExtractor
                             11 => ReadFloat(addr),                       // IL2CPP_TYPE_R4
                             12 => BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr)), // IL2CPP_TYPE_R8
                             14 => ReadIl2CppStringAt(addr),              // IL2CPP_TYPE_STRING
+                            17 => ReadValueTypeField(addr, fieldType),   // IL2CPP_TYPE_VALUETYPE (enums + structs)
+                            18 => ReadNestedRefField(addr, fieldType, depth), // IL2CPP_TYPE_CLASS
+                            29 => ReadNestedArrayField(addr, fieldType, depth), // IL2CPP_TYPE_SZARRAY
                             _ => null
                         };
 
@@ -1965,6 +2046,79 @@ namespace Menace.DataExtractor
             {
                 return $"({className})";
             }
+        }
+
+        /// <summary>
+        /// Read a value type field (enum or struct) from a nested object.
+        /// Enums are read as their underlying int value; structs are skipped.
+        /// </summary>
+        private object ReadValueTypeField(IntPtr addr, IntPtr fieldType)
+        {
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_class_from_type(fieldType);
+                if (klass == IntPtr.Zero) return null;
+
+                // Check if it's an enum by looking for the standard "value__" field
+                IntPtr valueField = IL2CPP.il2cpp_class_get_field_from_name(klass, "value__");
+                if (valueField != IntPtr.Zero)
+                {
+                    // It's an enum — read as int32 (covers most enums)
+                    return Marshal.ReadInt32(addr);
+                }
+
+                // For other value types (structs), skip for now
+                return null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Read a class/object reference field from a nested object.
+        /// Handles Unity Object references (returns asset name) and nested objects.
+        /// </summary>
+        private object ReadNestedRefField(IntPtr addr, IntPtr fieldType, int depth)
+        {
+            try
+            {
+                if (depth > 2) return null;
+                IntPtr refPtr = Marshal.ReadIntPtr(addr);
+                if (refPtr == IntPtr.Zero) return null;
+
+                IntPtr expectedClass = IL2CPP.il2cpp_class_from_type(fieldType);
+                if (expectedClass == IntPtr.Zero) return null;
+
+                string className = GetClassNameSafe(expectedClass);
+
+                if (IsUnityObjectClass(expectedClass))
+                {
+                    if (IsUnityObjectAliveWithClass(refPtr, expectedClass))
+                        return ReadUnityAssetNameWithClass(refPtr, expectedClass, className);
+                    return null;
+                }
+
+                // Handle IL2CPP List<T> — extract as array instead of flat object
+                if (IsIl2CppListClass(className, expectedClass))
+                    return ReadIl2CppListDirect(refPtr, expectedClass, depth + 1);
+
+                return ReadNestedObjectDirect(refPtr, expectedClass, className, depth + 1);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Read an array field (SZARRAY) from a nested object.
+        /// </summary>
+        private object ReadNestedArrayField(IntPtr addr, IntPtr fieldType, int depth)
+        {
+            try
+            {
+                if (depth > 2) return null;
+                IntPtr arrayPtr = Marshal.ReadIntPtr(addr);
+                if (arrayPtr == IntPtr.Zero) return null;
+                return ReadArrayFromFieldMetadata(arrayPtr, fieldType, depth + 1);
+            }
+            catch { return null; }
         }
 
         /// <summary>

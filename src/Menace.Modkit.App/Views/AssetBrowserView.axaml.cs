@@ -153,6 +153,7 @@ public class AssetBrowserView : UserControl
         {
             if (e.Container is TreeViewItem tvi && tvi.DataContext is AssetTreeNode nodeVm)
             {
+                tvi.IsExpanded = nodeVm.IsExpanded;
                 tvi.Bind(TreeViewItem.IsExpandedProperty,
                     new Avalonia.Data.Binding("IsExpanded")
                     {

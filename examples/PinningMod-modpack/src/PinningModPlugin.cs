@@ -7,9 +7,9 @@ using Il2CppInterop.Runtime.InteropTypes;
 using MelonLoader;
 using Menace.ModpackLoader;
 
-namespace Menace.BalanceMod;
+namespace Menace.PinningMod;
 
-public class BalanceModPlugin : IModpackPlugin
+public class PinningModPlugin : IModpackPlugin
 {
     private static MelonLogger.Instance Log;
     private HarmonyLib.Harmony _harmony;
@@ -23,7 +23,7 @@ public class BalanceModPlugin : IModpackPlugin
     {
         Log = logger;
         _harmony = harmony;
-        Log.Msg("Menace Balance Mod v1.0.0");
+        Log.Msg("Pinning Mod v1.0.0");
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName)
@@ -61,7 +61,7 @@ public class BalanceModPlugin : IModpackPlugin
         PatchSuppressionRoundStart(gameAssembly);
 
         _patchesApplied = true;
-        Log.Msg("All balance patches applied");
+        Log.Msg("All pinning patches applied");
     }
 
     private void PatchCrawlEnabled(Assembly gameAssembly)
@@ -87,7 +87,7 @@ public class BalanceModPlugin : IModpackPlugin
         try
         {
             _harmony.Patch(method,
-                postfix: new HarmonyMethod(typeof(BalanceModPlugin),
+                postfix: new HarmonyMethod(typeof(PinningModPlugin),
                     nameof(CrawlIsEnabled_Postfix)));
             Log.Msg("Patched CrawlHandler.IsEnabled()");
         }
@@ -132,7 +132,7 @@ public class BalanceModPlugin : IModpackPlugin
             try
             {
                 _harmony.Patch(stateChangedMethod,
-                    postfix: new HarmonyMethod(typeof(BalanceModPlugin),
+                    postfix: new HarmonyMethod(typeof(PinningModPlugin),
                         nameof(OnSuppressionStateChanged_Postfix)));
                 Log.Msg("Patched SuppressionHandler.OnSuppressionStateChanged()");
             }
@@ -166,7 +166,7 @@ public class BalanceModPlugin : IModpackPlugin
         try
         {
             _harmony.Patch(method,
-                prefix: new HarmonyMethod(typeof(BalanceModPlugin),
+                prefix: new HarmonyMethod(typeof(PinningModPlugin),
                     nameof(OnRoundStart_Prefix)));
             Log.Msg("Patched SuppressionHandler.OnRoundStart()");
         }
@@ -180,10 +180,10 @@ public class BalanceModPlugin : IModpackPlugin
 
     public static void CrawlIsEnabled_Postfix(ref bool __result)
     {
+        // IsEnabled() is polled per-unit per-frame — never log here
         if (!__result)
         {
             __result = true;
-            Log?.Msg("[CrawlPatch] Crawl re-enabled for pinned unit");
         }
     }
 

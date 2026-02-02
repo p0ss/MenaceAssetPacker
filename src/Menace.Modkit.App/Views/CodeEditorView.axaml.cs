@@ -144,11 +144,13 @@ public class CodeEditorView : UserControl
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
             MaxHeight = 250,
-            Margin = new Thickness(4)
+            Margin = new Thickness(4),
+            ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         modTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("ModSourceTree"));
         modTree.ItemTemplate = CreateCodeTreeTemplate();
         modTree.SelectionChanged += OnTreeSelectionChanged;
+        modTree.ContainerPrepared += OnTreeContainerPrepared;
         stack.Children.Add(modTree);
 
         // Separator
@@ -175,11 +177,13 @@ public class CodeEditorView : UserControl
         {
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
-            Margin = new Thickness(4)
+            Margin = new Thickness(4),
+            ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         vanillaTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("VanillaCodeTree"));
         vanillaTree.ItemTemplate = CreateCodeTreeTemplate();
         vanillaTree.SelectionChanged += OnTreeSelectionChanged;
+        vanillaTree.ContainerPrepared += OnTreeContainerPrepared;
         stack.Children.Add(vanillaTree);
 
         var scrollViewer = new ScrollViewer
@@ -398,5 +402,18 @@ public class CodeEditorView : UserControl
     {
         if (DataContext is CodeEditorViewModel vm)
             vm.RemoveFile();
+    }
+
+    private void OnTreeContainerPrepared(object? sender, Avalonia.Controls.ContainerPreparedEventArgs e)
+    {
+        if (e.Container is TreeViewItem tvi && tvi.DataContext is CodeTreeNode nodeVm)
+        {
+            tvi.IsExpanded = nodeVm.IsExpanded;
+            tvi.Bind(TreeViewItem.IsExpandedProperty,
+                new Avalonia.Data.Binding("IsExpanded")
+                {
+                    Mode = Avalonia.Data.BindingMode.TwoWay
+                });
+        }
     }
 }

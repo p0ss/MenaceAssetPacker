@@ -1,6 +1,6 @@
 {
   "manifestVersion": 2,
-  "name": "BalanceMod",
+  "name": "PinningMod",
   "version": "1.0.0",
   "author": "Menace Modkit",
   "description": "Balance tweaks: always-crawl for pinned units, capped suppression stun duration.",
@@ -8,7 +8,7 @@
   "patches": {},
   "assets": {},
   "code": {
-    "sources": ["src/BalanceModPlugin.cs"],
+    "sources": ["src/PinningModPlugin.cs"],
     "references": [
       "MelonLoader",
       "0Harmony",

@@ -1,0 +1,14 @@
+{
+  "enemy.pirate_scavengers": {
+    "ElementsMin": 7,
+    "ElementsMax": 9
+  },
+  "enemy.pirate_chaingun_team": {
+    "ElementsMin": 5,
+    "ElementsMax": 5
+  },
+  "enemy.pirate_flamethrower_team": {
+    "ElementsMin": 6,
+    "ElementsMax": 6
+  }
+}

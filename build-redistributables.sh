@@ -82,6 +82,29 @@ mkdir -p dist/gui-win-x64/third_party/bundled/ModpackLoader
 cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-linux-x64/third_party/bundled/ModpackLoader/
 cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-win-x64/third_party/bundled/ModpackLoader/
 
+# Build CombinedArms mod
+echo ""
+echo "📦 Building CombinedArms Mod..."
+$DOTNET build src/Menace.CombinedArms -c Release -o dist/CombinedArms
+
+# Update source tree bundled copy
+mkdir -p third_party/bundled/CombinedArms
+cp dist/CombinedArms/Menace.CombinedArms.dll third_party/bundled/CombinedArms/
+
+# Bundle CombinedArms with GUI builds
+echo "  → Bundling CombinedArms with GUI builds..."
+mkdir -p dist/gui-linux-x64/third_party/bundled/CombinedArms
+mkdir -p dist/gui-win-x64/third_party/bundled/CombinedArms
+cp dist/CombinedArms/Menace.CombinedArms.dll dist/gui-linux-x64/third_party/bundled/CombinedArms/
+cp dist/CombinedArms/Menace.CombinedArms.dll dist/gui-win-x64/third_party/bundled/CombinedArms/
+
+# Re-copy modpack sources to dist (picks up any source fixes made after initial build)
+echo "  → Refreshing bundled modpack sources in dist..."
+if [ -d "third_party/bundled/modpacks" ]; then
+  cp -r third_party/bundled/modpacks/* dist/gui-linux-x64/third_party/bundled/modpacks/
+  cp -r third_party/bundled/modpacks/* dist/gui-win-x64/third_party/bundled/modpacks/
+fi
+
 # Build CLI for each platform
 echo ""
 echo "📦 Building CLI Tool..."

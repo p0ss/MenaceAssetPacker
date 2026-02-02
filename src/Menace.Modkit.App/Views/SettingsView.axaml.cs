@@ -114,7 +114,7 @@ public class SettingsView : UserControl
 
     deployStack.Children.Add(new TextBlock
     {
-      Text = "Wipe the game's Mods folder and install fresh runtime dependencies (MelonLoader, DataExtractor, ModpackLoader). After clean redeploy, go to Modpacks and click Deploy All to redeploy your mods.",
+      Text = "Wipe the game's Mods folder and install fresh runtime dependencies (MelonLoader, DataExtractor, ModpackLoader, CombinedArms). After clean redeploy, go to Modpacks and click Deploy All to redeploy your mods.",
       Opacity = 0.7,
       Foreground = Brushes.White,
       TextWrapping = TextWrapping.Wrap

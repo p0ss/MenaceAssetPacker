@@ -26,11 +26,18 @@ public class CombinedArmsMod : MelonMod
     private static IntPtr _cachedAttackKlass = IntPtr.Zero;
     private static IntPtr _cachedAIFactionKlass = IntPtr.Zero;
 
-    // First-invocation diagnostic flags
+    // First-invocation diagnostic flags (hook fired)
     private static bool _loggedFirstTurnStart;
     private static bool _loggedFirstScoreMult;
     private static bool _loggedFirstExecute;
     private static bool _loggedFirstTileScores;
+
+    // First-effect diagnostic flags (hook actually modified a value)
+    private static bool _loggedFirstSequencingEffect;
+    private static bool _loggedFirstFocusFireEffect;
+    private static bool _loggedFirstCofEffect;
+    private static bool _loggedFirstDepthEffect;
+    private static bool _loggedFirstExecuteTrack;
 
     // ═══════════════════════════════════════════════════════
     //  Dynamic IL2CPP offset cache
@@ -78,6 +85,7 @@ public class CombinedArmsMod : MelonMod
     // Il2Cpp Dictionary<K,V> internals
     private static uint _off_Dict_entries;
     private static uint _off_Dict_count;
+    private static int _dictEntrySize; // Actual inline entry stride from IL2CPP metadata
 
     // Feature availability flags — set false if critical offsets are missing
     private static bool _sequencingAvailable;
@@ -415,7 +423,7 @@ public class CombinedArmsMod : MelonMod
                         _off_Dict_entries = ResolveOffset(concreteDictClass, "_entries", "Dict<Tile,TileScore>");
                         _off_Dict_count = ResolveOffset(concreteDictClass, "_count", "Dict<Tile,TileScore>");
 
-                        // Diagnostic: verify dictionary entry struct size
+                        // Resolve actual dictionary entry struct size from IL2CPP metadata
                         try
                         {
                             IntPtr entriesField2 = IL2CPP.il2cpp_class_get_field_from_name(concreteDictClass, "_entries");
@@ -429,17 +437,31 @@ public class CombinedArmsMod : MelonMod
                                     if (entryClass != IntPtr.Zero)
                                     {
                                         int entryInstanceSize = (int)IL2CPP.il2cpp_class_instance_size(entryClass);
+                                        // Value types inline in arrays don't have the object header (2*IntPtr)
+                                        _dictEntrySize = entryInstanceSize - IntPtr.Size * 2;
                                         int expectedInline = 4 + 4 + IntPtr.Size + IntPtr.Size;
-                                        Log?.Msg($"[CombinedArms] Dict Entry: instanceSize={entryInstanceSize} " +
-                                                 $"expectedInline={expectedInline} " +
-                                                 $"(inline = instanceSize - {IntPtr.Size * 2} = {entryInstanceSize - IntPtr.Size * 2})");
+                                        Log?.Msg($"[CombinedArms] Dict Entry: resolved stride={_dictEntrySize} " +
+                                                 $"expected={expectedInline} " +
+                                                 $"(instanceSize={entryInstanceSize})");
+                                        if (_dictEntrySize < expectedInline)
+                                        {
+                                            Log?.Error($"[CombinedArms] Dict entry size too small ({_dictEntrySize} < {expectedInline}) " +
+                                                       $"— disabling dictionary iteration to prevent crash");
+                                            _dictEntrySize = 0;
+                                        }
+                                        else if (_dictEntrySize != expectedInline)
+                                        {
+                                            Log?.Warning($"[CombinedArms] Dict entry has padding: " +
+                                                         $"stride={_dictEntrySize} vs expected={expectedInline}. " +
+                                                         $"Using resolved stride.");
+                                        }
                                     }
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            Log?.Warning($"[CombinedArms] Dict entry size check failed: {ex.Message}");
+                            Log?.Warning($"[CombinedArms] Dict entry size resolution failed: {ex.Message}");
                         }
                     }
                 }
@@ -478,7 +500,8 @@ public class CombinedArmsMod : MelonMod
             _off_Agent_m_Tiles != 0 &&
             _off_TileScore_UtilityScore != 0 &&
             _off_Dict_entries != 0 &&
-            _off_Dict_count != 0;
+            _off_Dict_count != 0 &&
+            _dictEntrySize > 0;
 
         _formationDepthAvailable =
             _off_Agent_m_Faction != 0 &&
@@ -487,6 +510,7 @@ public class CombinedArmsMod : MelonMod
             _off_TileScore_UtilityScore != 0 &&
             _off_Dict_entries != 0 &&
             _off_Dict_count != 0 &&
+            _dictEntrySize > 0 &&
             _off_AIFaction_m_Opponents != 0 &&
             _off_Opponent_Actor != 0 &&
             _off_List_items != 0 &&
@@ -632,10 +656,6 @@ public class CombinedArmsMod : MelonMod
             // Hook 5: Archive positions before reset
             state.ArchivePositions();
             state.Reset();
-
-            if (CoordinationState.Config.VerboseLogging)
-                Log?.Msg($"[CombinedArms] Turn start for faction {factionIndex}, " +
-                         $"previous positions: {state.PreviousTurnAllyPositions.Count}");
         }
         catch (Exception ex)
         {
@@ -701,14 +721,20 @@ public class CombinedArmsMod : MelonMod
                     if (isSuppressor)
                     {
                         __result *= config.SuppressorPriorityBoost;
-                        if (config.VerboseLogging)
-                            Log?.Msg($"[CombinedArms] Suppressor boost: {config.SuppressorPriorityBoost}x");
+                        if (!_loggedFirstSequencingEffect)
+                        {
+                            _loggedFirstSequencingEffect = true;
+                            Log?.Msg($"[CombinedArms] Sequencing ACTIVE — suppressor boost {config.SuppressorPriorityBoost}x applied");
+                        }
                     }
                     else if (isDamageDealer)
                     {
                         __result *= config.DamageDealerPenalty;
-                        if (config.VerboseLogging)
-                            Log?.Msg($"[CombinedArms] Damage dealer penalty: {config.DamageDealerPenalty}x");
+                        if (!_loggedFirstSequencingEffect)
+                        {
+                            _loggedFirstSequencingEffect = true;
+                            Log?.Msg($"[CombinedArms] Sequencing ACTIVE — damage dealer penalty {config.DamageDealerPenalty}x applied");
+                        }
                     }
                 }
             }
@@ -723,8 +749,11 @@ public class CombinedArmsMod : MelonMod
                     if (targetsEngagedTile)
                     {
                         __result *= config.FocusFirePickingBoost;
-                        if (config.VerboseLogging)
-                            Log?.Msg($"[CombinedArms] Focus fire boost: {config.FocusFirePickingBoost}x");
+                        if (!_loggedFirstFocusFireEffect)
+                        {
+                            _loggedFirstFocusFireEffect = true;
+                            Log?.Msg($"[CombinedArms] Focus Fire ACTIVE — picking boost {config.FocusFirePickingBoost}x applied");
+                        }
                     }
                 }
             }
@@ -863,11 +892,11 @@ public class CombinedArmsMod : MelonMod
 
             state.CompletedActions.Add(action);
 
-            if (CoordinationState.Config.VerboseLogging)
-                Log?.Msg($"[CombinedArms] Agent executed: goal={action.BehaviorGoal} " +
-                         $"tile=({action.TileX},{action.TileZ}) " +
-                         $"faction={factionIndex} " +
-                         $"totalActions={state.CompletedActions.Count}");
+            if (!_loggedFirstExecuteTrack)
+            {
+                _loggedFirstExecuteTrack = true;
+                Log?.Msg($"[CombinedArms] Execution Tracking ACTIVE — recording agent actions (faction {factionIndex})");
+            }
         }
         catch (Exception ex)
         {
@@ -948,9 +977,11 @@ public class CombinedArmsMod : MelonMod
 
                 IterateTileScoresAndApplyCoF(tilesPtr, centroidX, centroidZ, config);
 
-                if (config.VerboseLogging)
-                    Log?.Msg($"[CombinedArms] CoF applied: centroid=({centroidX:F1},{centroidZ:F1}) " +
-                             $"allies={allyCount} faction={factionIndex}");
+                if (!_loggedFirstCofEffect)
+                {
+                    _loggedFirstCofEffect = true;
+                    Log?.Msg($"[CombinedArms] Center of Forces ACTIVE — centroid=({centroidX:F1},{centroidZ:F1}) allies={allyCount}");
+                }
             }
 
             // ── Formation Depth ──
@@ -965,14 +996,11 @@ public class CombinedArmsMod : MelonMod
                     IterateTileScoresAndApplyFormationDepth(
                         tilesPtr, state.DepthCache, band, config);
 
-                    if (config.VerboseLogging)
+                    if (!_loggedFirstDepthEffect)
                     {
+                        _loggedFirstDepthEffect = true;
                         var c = state.DepthCache.EnemyCentroids[0];
-                        Log?.Msg($"[CombinedArms] Depth applied: band={band} " +
-                                 $"enemyCentroid=({c.x:F1},{c.z:F1}) " +
-                                 $"edges=[{state.DepthCache.BandEdges[0]:F1},{state.DepthCache.BandEdges[1]:F1}," +
-                                 $"{state.DepthCache.BandEdges[2]:F1},{state.DepthCache.BandEdges[3]:F1}] " +
-                                 $"faction={factionIndex}");
+                        Log?.Msg($"[CombinedArms] Formation Depth ACTIVE — band={band} enemyCentroid=({c.x:F1},{c.z:F1})");
                     }
                 }
             }
@@ -991,7 +1019,7 @@ public class CombinedArmsMod : MelonMod
             IntPtr entriesArrayPtr = Marshal.ReadIntPtr(dictPtr + (int)_off_Dict_entries);
             int count = Marshal.ReadInt32(dictPtr + (int)_off_Dict_count);
 
-            if (entriesArrayPtr == IntPtr.Zero || count <= 0) return;
+            if (entriesArrayPtr == IntPtr.Zero || count <= 0 || _dictEntrySize <= 0) return;
             if (count > 200) count = 200;
 
             // Validate against IL2CPP array max_length (at offset 3*IntPtr in array header)
@@ -1003,9 +1031,8 @@ public class CombinedArmsMod : MelonMod
             // Il2CppArray header: 2*IntPtr (obj header) + IntPtr (bounds) + IntPtr (length padded)
             int arrayHeaderSize = IntPtr.Size * 4;
 
-            // Entry struct for Dictionary<Tile, TileScore> (both reference types):
-            // int hashCode (4) + int next (4) + IntPtr key + IntPtr value
-            int entrySize = 4 + 4 + IntPtr.Size + IntPtr.Size;
+            // Entry stride resolved from IL2CPP metadata at startup
+            int entrySize = _dictEntrySize;
 
             for (int i = 0; i < count; i++)
             {
@@ -1198,7 +1225,7 @@ public class CombinedArmsMod : MelonMod
             IntPtr entriesArrayPtr = Marshal.ReadIntPtr(dictPtr + (int)_off_Dict_entries);
             int count = Marshal.ReadInt32(dictPtr + (int)_off_Dict_count);
 
-            if (entriesArrayPtr == IntPtr.Zero || count <= 0) return;
+            if (entriesArrayPtr == IntPtr.Zero || count <= 0 || _dictEntrySize <= 0) return;
             if (count > 200) count = 200;
 
             // Validate against IL2CPP array max_length
@@ -1208,7 +1235,7 @@ public class CombinedArmsMod : MelonMod
             if (count <= 0) return;
 
             int arrayHeaderSize = IntPtr.Size * 4;
-            int entrySize = 4 + 4 + IntPtr.Size + IntPtr.Size;
+            int entrySize = _dictEntrySize;
 
             for (int i = 0; i < count; i++)
             {

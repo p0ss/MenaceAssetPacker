@@ -12,7 +12,7 @@ public class PluginManifestTests
     private const string SourceCodeManifestJson = """
         {
             "manifestVersion": 2,
-            "name": "BalanceMod",
+            "name": "PinningMod",
             "version": "1.0.0",
             "author": "Menace Modkit",
             "description": "Balance tweaks",
@@ -20,7 +20,7 @@ public class PluginManifestTests
             "patches": {},
             "assets": {},
             "code": {
-                "sources": ["src/BalanceModPlugin.cs"],
+                "sources": ["src/PinningModPlugin.cs"],
                 "references": ["MelonLoader", "0Harmony", "Il2CppInterop.Runtime", "Menace.ModpackLoader"],
                 "prebuiltDlls": []
             },
@@ -36,7 +36,7 @@ public class PluginManifestTests
         Assert.NotNull(mirror.Code);
         Assert.NotNull(mirror.Code!.Sources);
         Assert.Single(mirror.Code.Sources!);
-        Assert.Equal("src/BalanceModPlugin.cs", mirror.Code.Sources![0]);
+        Assert.Equal("src/PinningModPlugin.cs", mirror.Code.Sources![0]);
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class PluginManifestTests
         var mirror = JsonConvert.DeserializeObject<RuntimeModpackMirror>(SourceCodeManifestJson)!;
 
         Assert.Equal(2, mirror.ManifestVersion);
-        Assert.Equal("BalanceMod", mirror.Name);
+        Assert.Equal("PinningMod", mirror.Name);
         Assert.Equal("1.0.0", mirror.Version);
         Assert.Equal("Menace Modkit", mirror.Author);
         Assert.Equal(50, mirror.LoadOrder);

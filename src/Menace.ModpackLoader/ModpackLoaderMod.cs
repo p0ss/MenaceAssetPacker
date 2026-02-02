@@ -334,8 +334,10 @@ public partial class ModpackLoaderMod : MelonMod
 
     private System.Collections.IEnumerator ApplyAssetReplacementsDelayed(string sceneName)
     {
-        // Wait a few frames for textures to finish loading
-        for (int i = 0; i < 10; i++)
+        LoggerInstance.Msg($"Asset replacement queued for scene: {sceneName} ({AssetReplacer.RegisteredCount} disk, {BundleLoader.LoadedAssetCount} bundle)");
+
+        // Wait frames for textures to finish loading
+        for (int i = 0; i < 15; i++)
             yield return null;
 
         LoggerInstance.Msg($"Applying asset replacements for scene: {sceneName}");
