@@ -36,5 +36,9 @@
       <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Menace.ModpackLoader">
+      <HintPath>../Menace.ModpackLoader/bin/Release/net6.0/Menace.ModpackLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

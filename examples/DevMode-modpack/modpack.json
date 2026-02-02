@@ -1,0 +1,28 @@
+{
+  "manifestVersion": 2,
+  "name": "DevMode",
+  "version": "1.0.0",
+  "author": "Menace Modkit",
+  "description": "In-game developer tools: cheats, god mode, entity spawning, delete, IMGUI overlay.",
+  "loadOrder": 10,
+  "patches": {},
+  "assets": {},
+  "code": {
+    "sources": ["src/DevModePlugin.cs"],
+    "references": [
+      "MelonLoader",
+      "0Harmony",
+      "Il2CppInterop.Runtime",
+      "Il2CppInterop.Common",
+      "Il2Cppmscorlib",
+      "Assembly-CSharp",
+      "UnityEngine.CoreModule",
+      "UnityEngine.InputLegacyModule",
+      "UnityEngine.IMGUIModule",
+      "UnityEngine.TextRenderingModule",
+      "Menace.ModpackLoader"
+    ],
+    "prebuiltDlls": []
+  },
+  "securityStatus": "SourceVerified"
+}

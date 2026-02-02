@@ -1,174 +1,147 @@
 # Menace Modkit
 
-A modkit for extracting and modifying game data from MENACE Demo (Unity IL2CPP).
+A modding toolkit for [Menace](https://store.steampowered.com/app/2546040/Menace/) (Unity IL2CPP). Provides a desktop GUI for creating, editing, and deploying modpacks — including stat tweaks, asset replacements, texture swaps, and custom C# code — without touching game files directly.
 
-## Overview
+## What It Does
 
-This modkit provides two main capabilities:
-1. **Data Extraction** - Extract ScriptableObject templates to JSON files
-2. **Stat Modification** - Load modified JSON data back into the game at runtime
+- **Stats Editor** — Browse and edit game templates (weapons, armor, entities, accessories) with side-by-side vanilla comparison
+- **Asset Browser** — Browse extracted game assets (textures, meshes, audio, prefabs) and set up replacements
+- **Code Editor** — Write C# mod code with in-app compilation, security scanning, and DLL packaging
+- **Modpack Management** — Create, version, and organize modpacks with dependency tracking and load ordering
+- **One-Click Deploy** — Compile and deploy modpacks to the game's Mods/ folder, with automatic bundle generation
+- **Conflict Detection** — Identifies overlapping modifications across modpacks before deployment
+
+## Getting Started
+
+### Requirements
+
+- .NET 9+ SDK (for the desktop app)
+- Menace or Menace Demo installed via Steam
+- Linux or Windows
+
+### Quick Start
+
+```bash
+# Build the desktop app
+dotnet build src/Menace.Modkit.App
+
+# Run it
+dotnet run --project src/Menace.Modkit.App
+```
+
+On first launch the app will:
+1. Detect your game installation
+2. Install MelonLoader (the IL2CPP mod framework) if needed
+3. Deploy the DataExtractor mod to pull vanilla template data from the game
+4. Prompt you to launch the game once so templates can be extracted
+
+After that, the Stats Editor, Asset Browser, and Code Editor are all functional.
+
+### Building Redistributables
+
+```bash
+# Produces self-contained builds for Linux and Windows under dist/
+./build-redistributables.sh
+```
+
+This creates:
+- `dist/gui-linux-x64/` — Linux GUI with bundled dependencies
+- `dist/gui-win-x64/` — Windows GUI with bundled dependencies
 
 ## Projects
 
-### Menace.DataExtractor
+| Project | Description |
+|---------|-------------|
+| **Menace.Modkit.App** | Avalonia desktop GUI — stats editor, asset browser, code editor, modpack manager |
+| **Menace.Modkit.Core** | Shared library — asset bundle compilation, type trees, patch merging |
+| **Menace.ModpackLoader** | MelonLoader runtime mod — loads modpacks into the game at launch |
+| **Menace.Modkit.Tests** | Test suite (xUnit) — manifest roundtrips, patch merging, conflict detection, security scanning |
 
-Extracts game templates using direct IL2CPP memory reading.
+## Modpack Structure
 
-**Supported Templates:**
-- WeaponTemplate (damage, range, accuracy, penetration)
-- ArmorTemplate (armor, durability, stat bonuses)
-- AccessoryTemplate (same structure as armor)
-- EntityTemplate (unit stats, elements, army cost, properties)
+A modpack is a directory with a `modpack.json` manifest:
 
-**Output:** `~/.steam/debian-installation/steamapps/common/Menace Demo/UserData/ExtractedData/*.json`
-
-### Menace.StatModifier
-
-Loads modified template data from JSON and applies runtime patches using Harmony.
-
-**Modified Data Path:** `~/.steam/debian-installation/steamapps/common/Menace Demo/UserData/ModifiedData/*.json`
-
-## MVP Modding Workflow
-
-### 1. Extract Data
-
-Build and deploy the DataExtractor mod:
-```bash
-dotnet build src/Menace.DataExtractor
-cp src/Menace.DataExtractor/bin/Debug/net6.0/Menace.DataExtractor.dll \
-   ~/.steam/debian-installation/steamapps/common/Menace\ Demo/Mods/
+```
+MyModpack/
+  modpack.json          # Manifest (name, author, version, load order, dependencies)
+  stats/                # Template data patches (JSON)
+    WeaponTemplate.json
+    EntityTemplate.json
+  assets/               # Asset replacements (textures, etc.)
+    textures/
+  src/                  # C# source files (compiled to DLL on deploy)
+    MyMod.cs
+  build/                # Compiled output (generated)
+    MyModpack.dll
 ```
 
-Launch the game once to extract templates. Check:
-```
-~/.steam/debian-installation/steamapps/common/Menace Demo/UserData/ExtractedData/
-```
+### Manifest Fields
 
-### 2. Modify Data
-
-Copy extracted JSON to ModifiedData directory:
-```bash
-mkdir -p ~/.steam/debian-installation/steamapps/common/Menace\ Demo/UserData/ModifiedData
-cp ~/.steam/debian-installation/steamapps/common/Menace\ Demo/UserData/ExtractedData/WeaponTemplate.json \
-   ~/.steam/debian-installation/steamapps/common/Menace\ Demo/UserData/ModifiedData/
-```
-
-Edit the JSON file to change stats. Example:
 ```json
-[
-  {
-    "name": "mod_weapon.heavy.cannon_long",
-    "MinRange": 1,
-    "IdealRange": 7,
-    "MaxRange": 11,
-    "AccuracyBonus": 0.0,
-    "AccuracyDropoff": -5.0,
-    "Damage": 999.0,
-    "DamageDropoff": -1.5,
-    "ArmorPenetration": 500.0,
-    "ArmorPenetrationDropoff": -2.0
-  }
-]
-```
-
-**Important:** Only include templates you want to modify. The mod will fall back to original values for anything not in ModifiedData.
-
-### 3. Apply Modifications
-
-Build and deploy the StatModifier mod:
-```bash
-dotnet build src/Menace.StatModifier
-cp src/Menace.StatModifier/bin/Debug/net6.0/Menace.StatModifier.dll \
-   ~/.steam/debian-installation/steamapps/common/Menace\ Demo/Mods/
-```
-
-Launch the game. The StatModifier will:
-1. Load modified JSON files
-2. Apply Harmony patches to property getters
-3. Return modified values when game code reads template properties
-
-Check the MelonLoader log for confirmation:
-```bash
-tail -f ~/.steam/debian-installation/steamapps/common/Menace\ Demo/MelonLoader/Latest.log
-```
-
-You should see:
-```
-Menace Stat Modifier v1.0.0
-Loaded 1 modified templates:
-  - 1 weapons
-  - 0 armor
-  - 0 accessories
-  - 0 entities
-✓ Applied Harmony patches
-```
-
-### 4. Test In-Game
-
-Start a battle with units using modified weapons/armor to see your changes in effect.
-
-## Technical Details
-
-### Direct Memory Reading
-
-The DataExtractor uses IL2CPP memory offsets from the dump file to read ScriptableObject fields directly:
-
-```csharp
-// Example: WeaponTemplate.Damage at offset 0x150
-data["Damage"] = BitConverter.ToSingle(
-    BitConverter.GetBytes(Marshal.ReadInt32(obj.Pointer + 0x150)), 0);
-```
-
-This approach avoids IL2CPP casting/construction which causes thread blocking under Proton/Wine.
-
-### Harmony Patching
-
-The StatModifier patches property getters with Prefix patches:
-
-```csharp
-[HarmonyPatch("WeaponTemplate", "get_Damage")]
-[HarmonyPrefix]
-public static bool GetDamage(UnityEngine.Object __instance, ref float __result)
 {
-    if (StatModifierMod.TryGetModifiedWeapon(__instance.name, out var data) && data["Damage"] != null)
-    {
-        __result = data["Damage"].Value<float>();
-        return false; // Skip original method
-    }
-    return true; // Run original method
+  "manifestVersion": 2,
+  "name": "My Modpack",
+  "version": "1.0.0",
+  "author": "Modder",
+  "description": "What this modpack changes",
+  "loadOrder": 100,
+  "dependencies": ["SomeOtherMod>=1.0"],
+  "patches": { },
+  "assets": { },
+  "code": { "sources": ["src/MyMod.cs"], "references": [], "prebuiltDlls": [] },
+  "bundles": [],
+  "securityStatus": "Unreviewed"
 }
 ```
 
-## Building
+Patches use a `templateType -> instanceName -> fieldName -> value` structure. Lower `loadOrder` values load first; conflicts resolve last-wins.
 
-Requirements:
-- .NET 6.0 SDK
-- MelonLoader installed in game directory
-- IL2CPP assemblies from game
+## How Deployment Works
 
-```bash
-dotnet build
+```
+Staging modpacks (in app)
+    |
+    v
+DeployManager merges patches across all active modpacks
+    |
+    +--> BundleCompiler: patches -> UnityFS .bundle file
+    +--> TextureBundler: images -> textures/ dir + manifest
+    +--> CompilationService: .cs sources -> DLL
+    |
+    v
+Deployed to game's Mods/ folder with runtime manifest
+    |
+    v
+Game launches with MelonLoader
+    |
+    v
+ModpackLoader discovers modpack.json files
+    +--> Loads .bundle files via AssetBundle.LoadFromFile()
+    +--> Applies template patches via IL2CPP reflection
+    +--> Loads compiled DLLs
 ```
 
-## Troubleshooting
+The app tracks deployment state so it can clean up old files and detect when staging modpacks have changed since the last deploy.
 
-**Game crashes on launch:**
-- Check MelonLoader log for errors
-- Ensure Harmony patches aren't conflicting with other mods
-- Verify JSON syntax in ModifiedData files
+## Architecture
 
-**Stats not changing:**
-- Verify template names match exactly (case-sensitive)
-- Check that field names match extracted JSON
-- Ensure StatModifier loaded after DataExtractor in MelonLoader
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical breakdown including system diagrams, data flow, and component responsibilities.
 
-**Extraction returns empty data:**
-- Check IL2CPP offsets match your game version
-- Verify game is fully loaded before extraction attempts
+Key libraries:
+- **Avalonia** — Cross-platform desktop UI
+- **AssetsTools.NET** — Unity asset reading/writing and bundle compilation
+- **Roslyn** — C# compilation for mod code
+- **MelonLoader** — IL2CPP mod injection at runtime
+- **Harmony** — Runtime method patching
 
-## Future Enhancements
+## Running Tests
 
-- Add support for more template types (perks, skills, effects, vehicles)
-- Support for nested EntityProperties modifications
-- Adding new templates (requires asset bundle creation)
-- GUI tool for editing templates
+```bash
+dotnet test tests/Menace.Modkit.Tests
+```
+
+Covers manifest serialization, V1-to-V2 migration, patch merging, conflict detection, dependency parsing, deploy state tracking, security scanning, and runtime manifest compatibility.
+
+## License
+
+This project is not yet released under a formal license. All rights reserved.

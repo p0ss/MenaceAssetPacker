@@ -4,31 +4,28 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Menace.Modkit.App.Models;
 
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
-/// Manages modpack staging, vanilla data, and active mods
+/// Manages modpack staging, vanilla data, and active mods.
+/// Uses ModpackManifest (v2) internally; auto-migrates legacy v1 manifests on load.
 /// </summary>
 public class ModpackManager
 {
-    private readonly string _vanillaDataPath;
     private readonly string _stagingBasePath;
-    private readonly string _modsBasePath;
 
     public ModpackManager()
     {
-        // Staging area for work-in-progress mods (always in Documents)
         _stagingBasePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "MenaceModkit", "staging");
 
-        // Game paths will be computed from AppSettings
-        _vanillaDataPath = string.Empty;
-        _modsBasePath = string.Empty;
-
         EnsureDirectoriesExist();
     }
+
+    public string StagingBasePath => _stagingBasePath;
 
     public string VanillaDataPath
     {
@@ -37,12 +34,9 @@ public class ModpackManager
             var gameInstallPath = AppSettings.Instance.GameInstallPath;
             if (string.IsNullOrEmpty(gameInstallPath))
                 return string.Empty;
-
             return Path.Combine(gameInstallPath, "UserData", "ExtractedData");
         }
     }
-
-    public string StagingBasePath => _stagingBasePath;
 
     public string ModsBasePath
     {
@@ -51,22 +45,12 @@ public class ModpackManager
             var gameInstallPath = AppSettings.Instance.GameInstallPath;
             if (string.IsNullOrEmpty(gameInstallPath))
                 return string.Empty;
-
             return Path.Combine(gameInstallPath, "Mods");
         }
     }
 
-    /// <summary>
-    /// Get the game install path
-    /// </summary>
-    public string GetGameInstallPath()
-    {
-        return AppSettings.Instance.GameInstallPath;
-    }
+    public string GetGameInstallPath() => AppSettings.Instance.GameInstallPath;
 
-    /// <summary>
-    /// Check if vanilla data exists
-    /// </summary>
     public bool HasVanillaData()
     {
         return !string.IsNullOrEmpty(VanillaDataPath) &&
@@ -74,45 +58,52 @@ public class ModpackManager
                Directory.GetFiles(VanillaDataPath, "*.json").Any();
     }
 
-    /// <summary>
-    /// Get all staging modpacks
-    /// </summary>
-    public List<ModpackInfo> GetStagingModpacks()
+    // ---------------------------------------------------------------
+    // Modpack CRUD
+    // ---------------------------------------------------------------
+
+    public List<ModpackManifest> GetStagingModpacks()
     {
         if (!Directory.Exists(_stagingBasePath))
-            return new List<ModpackInfo>();
+            return new List<ModpackManifest>();
 
         return Directory.GetDirectories(_stagingBasePath)
-            .Select(dir => LoadModpackInfo(dir))
-            .Where(info => info != null)
+            .Select(dir => LoadManifest(dir))
+            .Where(m => m != null)
             .ToList()!;
     }
 
-    /// <summary>
-    /// Get all active mods
-    /// </summary>
-    public List<ModpackInfo> GetActiveMods()
+    public List<ModpackManifest> GetActiveMods()
     {
         if (string.IsNullOrEmpty(ModsBasePath) || !Directory.Exists(ModsBasePath))
-            return new List<ModpackInfo>();
+            return new List<ModpackManifest>();
 
         return Directory.GetDirectories(ModsBasePath)
-            .Select(dir => LoadModpackInfo(dir))
-            .Where(info => info != null)
+            .Select(dir => LoadManifest(dir))
+            .Where(m => m != null)
             .ToList()!;
     }
 
     /// <summary>
-    /// Create a new modpack in staging
+    /// Get active modpacks ordered by LoadOrder (ascending), then by name.
     /// </summary>
-    public ModpackInfo CreateModpack(string name, string author, string description)
+    public List<ModpackManifest> GetOrderedActiveModpacks()
+    {
+        return GetActiveMods()
+            .OrderBy(m => m.LoadOrder)
+            .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public ModpackManifest CreateModpack(string name, string author, string description)
     {
         var modpackDir = Path.Combine(_stagingBasePath, SanitizeName(name));
         Directory.CreateDirectory(modpackDir);
         Directory.CreateDirectory(Path.Combine(modpackDir, "stats"));
         Directory.CreateDirectory(Path.Combine(modpackDir, "assets"));
+        Directory.CreateDirectory(Path.Combine(modpackDir, "src"));
 
-        var info = new ModpackInfo
+        var manifest = new ModpackManifest
         {
             Name = name,
             Author = author,
@@ -123,34 +114,57 @@ public class ModpackManager
             Path = modpackDir
         };
 
-        SaveModpackInfo(info);
-        return info;
+        manifest.SaveToFile();
+        return manifest;
     }
 
     /// <summary>
-    /// Get vanilla template data
+    /// Delete a staging modpack entirely.
     /// </summary>
+    public bool DeleteStagingModpack(string modpackName)
+    {
+        var dir = Path.Combine(_stagingBasePath, modpackName);
+        if (!Directory.Exists(dir))
+            return false;
+
+        Directory.Delete(dir, true);
+        return true;
+    }
+
+    /// <summary>
+    /// Remove a single deployed mod from the game's Mods/ folder.
+    /// </summary>
+    public bool UndeployMod(string modpackName)
+    {
+        if (string.IsNullOrEmpty(ModsBasePath))
+            return false;
+
+        var dir = Path.Combine(ModsBasePath, modpackName);
+        if (!Directory.Exists(dir))
+            return false;
+
+        Directory.Delete(dir, true);
+        return true;
+    }
+
+    // ---------------------------------------------------------------
+    // Template / stats operations
+    // ---------------------------------------------------------------
+
     public string? GetVanillaTemplatePath(string templateType)
     {
         if (string.IsNullOrEmpty(VanillaDataPath))
             return null;
-
         var path = Path.Combine(VanillaDataPath, $"{templateType}.json");
         return File.Exists(path) ? path : null;
     }
 
-    /// <summary>
-    /// Get staging template data for a modpack
-    /// </summary>
     public string? GetStagingTemplatePath(string modpackName, string templateType)
     {
         var path = Path.Combine(_stagingBasePath, modpackName, "stats", $"{templateType}.json");
         return File.Exists(path) ? path : null;
     }
 
-    /// <summary>
-    /// Save modified template to staging
-    /// </summary>
     public void SaveStagingTemplate(string modpackName, string templateType, string jsonContent)
     {
         var modpackDir = Path.Combine(_stagingBasePath, modpackName);
@@ -160,20 +174,131 @@ public class ModpackManager
         var path = Path.Combine(statsDir, $"{templateType}.json");
         File.WriteAllText(path, jsonContent);
 
-        // Update modpack modified date
-        var info = LoadModpackInfo(modpackDir);
-        if (info != null)
-        {
-            info.ModifiedDate = DateTime.Now;
-            SaveModpackInfo(info);
-        }
+        TouchModified(modpackDir);
+    }
+
+    // ---------------------------------------------------------------
+    // Asset operations
+    // ---------------------------------------------------------------
+
+    public void SaveStagingAsset(string modpackName, string relativePath, string sourceFile)
+    {
+        var assetDir = Path.Combine(_stagingBasePath, modpackName, "assets");
+        var destPath = Path.Combine(assetDir, relativePath);
+        var destDir = Path.GetDirectoryName(destPath);
+        if (!string.IsNullOrEmpty(destDir))
+            Directory.CreateDirectory(destDir);
+        File.Copy(sourceFile, destPath, true);
+    }
+
+    public string? GetStagingAssetPath(string modpackName, string relativePath)
+    {
+        var path = Path.Combine(_stagingBasePath, modpackName, "assets", relativePath);
+        return File.Exists(path) ? path : null;
+    }
+
+    public void RemoveStagingAsset(string modpackName, string relativePath)
+    {
+        var path = Path.Combine(_stagingBasePath, modpackName, "assets", relativePath);
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+
+    public List<string> GetStagingAssetPaths(string modpackName)
+    {
+        var assetsDir = Path.Combine(_stagingBasePath, modpackName, "assets");
+        if (!Directory.Exists(assetsDir))
+            return new List<string>();
+
+        return Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(assetsDir, f))
+            .ToList();
+    }
+
+    // ---------------------------------------------------------------
+    // Source code operations (Phase 0 + Phase 3)
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// Get all .cs source file paths (relative to modpack root) in a staging modpack.
+    /// </summary>
+    public List<string> GetStagingSources(string modpackName)
+    {
+        var srcDir = Path.Combine(_stagingBasePath, modpackName, "src");
+        if (!Directory.Exists(srcDir))
+            return new List<string>();
+
+        return Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(Path.Combine(_stagingBasePath, modpackName), f))
+            .ToList();
     }
 
     /// <summary>
-    /// Deploy modpack to active mods (copy staging to Mods folder).
-    /// Builds a runtime-compatible modpack.json that merges metadata,
-    /// stats/*.json template overrides, and asset entries.
+    /// Save a source file to the modpack's src/ directory.
     /// </summary>
+    public void SaveStagingSource(string modpackName, string relativePath, string content)
+    {
+        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var fullPath = Path.Combine(modpackDir, relativePath);
+        var dir = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+
+        File.WriteAllText(fullPath, content);
+        SyncSourceManifest(modpackDir);
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Add a new source file (creates it with a template).
+    /// </summary>
+    public void AddStagingSource(string modpackName, string relativePath)
+    {
+        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var fullPath = Path.Combine(modpackDir, relativePath);
+
+        if (File.Exists(fullPath))
+            return;
+
+        var dir = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+
+        var className = Path.GetFileNameWithoutExtension(relativePath);
+        File.WriteAllText(fullPath, $"using MelonLoader;\n\nnamespace {SanitizeName(modpackName)};\n\npublic class {className}\n{{\n}}\n");
+
+        SyncSourceManifest(modpackDir);
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Remove a source file from a staging modpack.
+    /// </summary>
+    public void RemoveStagingSource(string modpackName, string relativePath)
+    {
+        var modpackDir = Path.Combine(_stagingBasePath, modpackName);
+        var fullPath = Path.Combine(modpackDir, relativePath);
+        if (File.Exists(fullPath))
+            File.Delete(fullPath);
+
+        SyncSourceManifest(modpackDir);
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Read the content of a source file.
+    /// </summary>
+    public string? ReadStagingSource(string modpackName, string relativePath)
+    {
+        var fullPath = Path.Combine(_stagingBasePath, modpackName, relativePath);
+        return File.Exists(fullPath) ? File.ReadAllText(fullPath) : null;
+    }
+
+    // ---------------------------------------------------------------
+    // Deploy (legacy single-modpack deploy — kept for backward compat,
+    // Phase 2 introduces DeployManager for the full pipeline)
+    // ---------------------------------------------------------------
+
     public void DeployModpack(string modpackName)
     {
         if (string.IsNullOrEmpty(ModsBasePath))
@@ -185,146 +310,59 @@ public class ModpackManager
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
 
-        // Copy entire staging directory to mods
         CopyDirectory(stagingPath, modsPath);
-
-        // Overwrite the deployed modpack.json with a runtime-compatible manifest
         BuildRuntimeManifest(stagingPath, modsPath);
     }
 
-    /// <summary>
-    /// Builds a modpack.json in the deploy directory that the runtime ModpackLoader can read.
-    /// The loader expects lowercase keys: name, version, author, templates, assets.
-    /// Templates are merged from stats/*.json files and any existing manifest entries.
-    /// </summary>
-    private void BuildRuntimeManifest(string stagingPath, string deployPath)
-    {
-        var info = LoadModpackInfo(stagingPath);
-
-        var manifest = new JsonObject
-        {
-            ["name"] = info?.Name ?? System.IO.Path.GetFileName(stagingPath),
-            ["version"] = info?.Version ?? "1.0.0",
-            ["author"] = info?.Author ?? "Unknown"
-        };
-
-        // Collect template overrides from stats/*.json files
-        var templates = new JsonObject();
-        var statsDir = System.IO.Path.Combine(stagingPath, "stats");
-        if (Directory.Exists(statsDir))
-        {
-            foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
-            {
-                var templateType = System.IO.Path.GetFileNameWithoutExtension(statsFile);
-                try
-                {
-                    var node = JsonNode.Parse(File.ReadAllText(statsFile));
-                    if (node != null)
-                        templates[templateType] = node;
-                }
-                catch { /* skip malformed files */ }
-            }
-        }
-
-        // Also merge any templates/assets already in the staging manifest (e.g. from AssetBrowser)
-        JsonObject? assets = null;
-        var stagingManifestPath = System.IO.Path.Combine(stagingPath, "modpack.json");
-        if (File.Exists(stagingManifestPath))
-        {
-            try
-            {
-                var existing = JsonNode.Parse(File.ReadAllText(stagingManifestPath))?.AsObject();
-                if (existing != null)
-                {
-                    // Merge templates from manifest (stats/ files take priority)
-                    var existingTemplates = (existing["templates"] ?? existing["Templates"]) as JsonObject;
-                    if (existingTemplates != null)
-                    {
-                        foreach (var kvp in existingTemplates)
-                        {
-                            if (!templates.ContainsKey(kvp.Key) && kvp.Value != null)
-                                templates[kvp.Key] = JsonNode.Parse(kvp.Value.ToJsonString());
-                        }
-                    }
-
-                    // Preserve asset entries
-                    var existingAssets = (existing["assets"] ?? existing["Assets"]) as JsonObject;
-                    if (existingAssets != null)
-                        assets = JsonNode.Parse(existingAssets.ToJsonString())?.AsObject();
-                }
-            }
-            catch { }
-        }
-
-        manifest["templates"] = templates;
-        manifest["assets"] = assets ?? new JsonObject();
-
-        var deployManifestPath = System.IO.Path.Combine(deployPath, "modpack.json");
-        File.WriteAllText(deployManifestPath, manifest.ToJsonString(
-            new JsonSerializerOptions { WriteIndented = true }));
-    }
-
-    /// <summary>
-    /// Export modpack as a distributable package
-    /// </summary>
     public void ExportModpack(string modpackName, string exportPath)
     {
         var stagingPath = Path.Combine(_stagingBasePath, modpackName);
-
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
 
-        // Create zip/tar archive
         var archivePath = Path.Combine(exportPath, $"{modpackName}.zip");
         System.IO.Compression.ZipFile.CreateFromDirectory(stagingPath, archivePath);
     }
 
+    // ---------------------------------------------------------------
+    // Manifest persistence
+    // ---------------------------------------------------------------
+
+    public void UpdateModpackMetadata(ModpackManifest manifest)
+    {
+        manifest.ModifiedDate = DateTime.Now;
+        manifest.SaveToFile();
+    }
+
     /// <summary>
-    /// Update modpack metadata (save manifest), preserving existing templates/assets fields
+    /// Persist load-order values to a central config file alongside staging.
     /// </summary>
-    public void UpdateModpackMetadata(ModpackInfo modpack)
+    public void SaveLoadOrder(List<(string modpackName, int order)> ordering)
     {
-        WriteModpackMetadata(modpack);
-    }
-
-    private void EnsureDirectoriesExist()
-    {
-        // Always create staging directory (it's in Documents, always valid)
-        Directory.CreateDirectory(_stagingBasePath);
-
-        // Only create game directories if game path is set
-        if (!string.IsNullOrEmpty(VanillaDataPath))
+        foreach (var (modpackName, order) in ordering)
         {
-            Directory.CreateDirectory(VanillaDataPath);
-        }
-
-        if (!string.IsNullOrEmpty(ModsBasePath))
-        {
-            Directory.CreateDirectory(ModsBasePath);
+            var dir = Path.Combine(_stagingBasePath, modpackName);
+            var manifest = LoadManifest(dir);
+            if (manifest != null)
+            {
+                manifest.LoadOrder = order;
+                manifest.SaveToFile();
+            }
         }
     }
 
-    private static readonly JsonSerializerOptions _caseInsensitiveOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    // ---------------------------------------------------------------
+    // Internal helpers
+    // ---------------------------------------------------------------
 
-    private ModpackInfo? LoadModpackInfo(string modpackDir)
+    private ModpackManifest? LoadManifest(string modpackDir)
     {
         var infoPath = Path.Combine(modpackDir, "modpack.json");
-
-        if (!File.Exists(infoPath))
-            return null;
-
         try
         {
-            var json = File.ReadAllText(infoPath);
-            var info = JsonSerializer.Deserialize<ModpackInfo>(json, _caseInsensitiveOptions);
-            if (info != null)
-            {
-                info.Path = modpackDir;
-            }
-            return info;
+            var manifest = ModpackManifest.LoadFromFile(infoPath);
+            manifest.Path = modpackDir;
+            return manifest;
         }
         catch
         {
@@ -332,41 +370,138 @@ public class ModpackManager
         }
     }
 
-    private void SaveModpackInfo(ModpackInfo info)
-    {
-        WriteModpackMetadata(info);
-    }
-
     /// <summary>
-    /// Write modpack metadata to modpack.json, preserving any existing
-    /// non-metadata fields (templates, assets) that other tools may have written.
+    /// Synchronize the manifest's Code.Sources list with the actual files in src/.
     /// </summary>
-    private void WriteModpackMetadata(ModpackInfo info)
+    private void SyncSourceManifest(string modpackDir)
     {
-        var infoPath = Path.Combine(info.Path, "modpack.json");
+        var manifest = LoadManifest(modpackDir);
+        if (manifest == null) return;
 
-        // Read existing manifest to preserve templates/assets fields
-        JsonObject manifest;
-        if (File.Exists(infoPath))
+        var srcDir = Path.Combine(modpackDir, "src");
+        if (Directory.Exists(srcDir))
         {
-            try { manifest = JsonNode.Parse(File.ReadAllText(infoPath))?.AsObject() ?? new JsonObject(); }
-            catch { manifest = new JsonObject(); }
+            manifest.Code.Sources = Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+                .Select(f => Path.GetRelativePath(modpackDir, f))
+                .ToList();
         }
         else
         {
-            manifest = new JsonObject();
+            manifest.Code.Sources.Clear();
         }
 
-        // Update only metadata fields
-        manifest["Name"] = info.Name;
-        manifest["Author"] = info.Author;
-        manifest["Description"] = info.Description;
-        manifest["Version"] = info.Version;
-        manifest["CreatedDate"] = info.CreatedDate.ToString("o");
-        manifest["ModifiedDate"] = info.ModifiedDate.ToString("o");
+        manifest.SaveToFile();
+    }
 
-        File.WriteAllText(infoPath, manifest.ToJsonString(
+    private void TouchModified(string modpackDir)
+    {
+        var manifest = LoadManifest(modpackDir);
+        if (manifest != null)
+        {
+            manifest.ModifiedDate = DateTime.Now;
+            manifest.SaveToFile();
+        }
+    }
+
+    /// <summary>
+    /// Builds a modpack.json in the deploy directory that the runtime ModpackLoader can read.
+    /// Produces a hybrid manifest: v2 fields for new loaders, plus legacy "templates" for v1 loaders.
+    /// </summary>
+    private void BuildRuntimeManifest(string stagingPath, string deployPath)
+    {
+        var manifest = LoadManifest(stagingPath);
+
+        var runtimeObj = new JsonObject
+        {
+            ["manifestVersion"] = 2,
+            ["name"] = manifest?.Name ?? Path.GetFileName(stagingPath),
+            ["version"] = manifest?.Version ?? "1.0.0",
+            ["author"] = manifest?.Author ?? "Unknown",
+            ["loadOrder"] = manifest?.LoadOrder ?? 100
+        };
+
+        // Collect template overrides from stats/*.json → build "patches" and legacy "templates"
+        var patches = new JsonObject();
+        var legacyTemplates = new JsonObject();
+        var statsDir = Path.Combine(stagingPath, "stats");
+        if (Directory.Exists(statsDir))
+        {
+            foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
+            {
+                var templateType = Path.GetFileNameWithoutExtension(statsFile);
+                try
+                {
+                    var node = JsonNode.Parse(File.ReadAllText(statsFile));
+                    if (node != null)
+                    {
+                        patches[templateType] = JsonNode.Parse(node.ToJsonString());
+                        legacyTemplates[templateType] = node;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // Merge existing manifest patches
+        if (manifest?.Patches != null)
+        {
+            var patchJson = JsonSerializer.Serialize(manifest.Patches);
+            var patchNode = JsonNode.Parse(patchJson)?.AsObject();
+            if (patchNode != null)
+            {
+                foreach (var kvp in patchNode)
+                {
+                    if (!patches.ContainsKey(kvp.Key) && kvp.Value != null)
+                        patches[kvp.Key] = JsonNode.Parse(kvp.Value.ToJsonString());
+                }
+            }
+        }
+
+        // Assets
+        JsonObject? assetsObj = null;
+        if (manifest?.Assets != null && manifest.Assets.Count > 0)
+        {
+            assetsObj = new JsonObject();
+            foreach (var kvp in manifest.Assets)
+                assetsObj[kvp.Key] = kvp.Value;
+        }
+
+        runtimeObj["patches"] = patches;
+        runtimeObj["templates"] = legacyTemplates;  // backward compat for v1 loader
+        runtimeObj["assets"] = assetsObj ?? new JsonObject();
+
+        // Code info
+        if (manifest?.Code != null && manifest.Code.HasAnyCode)
+        {
+            var codeObj = new JsonObject();
+            codeObj["sources"] = new JsonArray(manifest.Code.Sources.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray());
+            codeObj["references"] = new JsonArray(manifest.Code.References.Select(r => (JsonNode)JsonValue.Create(r)!).ToArray());
+            codeObj["prebuiltDlls"] = new JsonArray(manifest.Code.PrebuiltDlls.Select(d => (JsonNode)JsonValue.Create(d)!).ToArray());
+            runtimeObj["code"] = codeObj;
+        }
+
+        // Bundles
+        if (manifest?.Bundles != null && manifest.Bundles.Count > 0)
+        {
+            runtimeObj["bundles"] = new JsonArray(manifest.Bundles.Select(b => (JsonNode)JsonValue.Create(b)!).ToArray());
+        }
+
+        runtimeObj["securityStatus"] = manifest?.SecurityStatus.ToString() ?? "Unreviewed";
+
+        var deployManifestPath = Path.Combine(deployPath, "modpack.json");
+        File.WriteAllText(deployManifestPath, runtimeObj.ToJsonString(
             new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void EnsureDirectoriesExist()
+    {
+        Directory.CreateDirectory(_stagingBasePath);
+
+        if (!string.IsNullOrEmpty(VanillaDataPath))
+            Directory.CreateDirectory(VanillaDataPath);
+
+        if (!string.IsNullOrEmpty(ModsBasePath))
+            Directory.CreateDirectory(ModsBasePath);
     }
 
     private string SanitizeName(string name)
@@ -378,31 +513,15 @@ public class ModpackManager
     private void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
-
         foreach (var file in Directory.GetFiles(sourceDir))
         {
             var destFile = Path.Combine(destDir, Path.GetFileName(file));
             File.Copy(file, destFile, true);
         }
-
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
             var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
             CopyDirectory(dir, destSubDir);
         }
     }
-}
-
-/// <summary>
-/// Metadata for a modpack
-/// </summary>
-public class ModpackInfo
-{
-    public string Name { get; set; } = string.Empty;
-    public string Author { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-    public string Version { get; set; } = "1.0.0";
-    public DateTime CreatedDate { get; set; }
-    public DateTime ModifiedDate { get; set; }
-    public string Path { get; set; } = string.Empty;
 }

@@ -8,6 +8,12 @@ using Newtonsoft.Json.Linq;
 
 namespace Menace.ModpackLoader;
 
+/// <summary>
+/// Template injection via IL2CPP reflection.
+/// Used as a fallback for modpacks that don't have compiled asset bundles.
+/// Once the bundle compiler (Phase 5) produces real asset bundles, this path
+/// becomes unnecessary — bundles apply template changes via Unity's native deserialization.
+/// </summary>
 public partial class ModpackLoaderMod
 {
     private static readonly MethodInfo TryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");

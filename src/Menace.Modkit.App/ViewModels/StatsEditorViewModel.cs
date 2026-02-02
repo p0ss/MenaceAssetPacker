@@ -592,6 +592,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
     // Search index: leaf node → concatenated searchable text
     private readonly Dictionary<TreeNodeViewModel, string> _searchIndex = new();
 
+    private bool _showModpackOnly;
+    public bool ShowModpackOnly
+    {
+        get => _showModpackOnly;
+        set
+        {
+            if (_showModpackOnly != value)
+            {
+                this.RaiseAndSetIfChanged(ref _showModpackOnly, value);
+                ApplySearchFilter();
+            }
+        }
+    }
+
     private string _searchText = string.Empty;
     public string SearchText
     {
@@ -610,14 +624,16 @@ public sealed class StatsEditorViewModel : ViewModelBase
     {
         TreeNodes.Clear();
 
-        if (string.IsNullOrWhiteSpace(_searchText))
+        var hasQuery = !string.IsNullOrWhiteSpace(_searchText);
+        var query = hasQuery ? _searchText.Trim() : null;
+
+        if (!hasQuery && !_showModpackOnly)
         {
             foreach (var node in _allTreeNodes)
                 TreeNodes.Add(node);
             return;
         }
 
-        var query = _searchText.Trim();
         foreach (var node in _allTreeNodes)
         {
             var filtered = FilterNode(node, query);
@@ -625,7 +641,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 TreeNodes.Add(filtered);
         }
 
-        // Auto-expand search results so matches are visible
+        // Auto-expand filtered results so matches are visible
         SetExpansionState(TreeNodes, true);
     }
 
@@ -651,18 +667,30 @@ public sealed class StatsEditorViewModel : ViewModelBase
         }
     }
 
-    private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string query)
+    private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string? query)
     {
-        // Leaf node: check search index
+        // Leaf node
         if (!node.IsCategory)
         {
+            // Modpack-only filter: exclude items without modpack changes
+            if (_showModpackOnly)
+            {
+                var key = node.Template != null ? GetTemplateKey(node.Template) : null;
+                if (key == null || (!_stagingOverrides.ContainsKey(key) && !_pendingChanges.ContainsKey(key)))
+                    return null;
+            }
+
+            if (query == null)
+                return node;
+
             if (_searchIndex.TryGetValue(node, out var indexText))
                 return indexText.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
             return node.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ? node : null;
         }
 
-        // Category name matches → include entire subtree
-        if (node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+        // Category name matches query (and not modpack-only) → include entire subtree
+        if (query != null && !_showModpackOnly &&
+            node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
             return node;
 
         // Otherwise check children recursively

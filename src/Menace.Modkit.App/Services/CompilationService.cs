@@ -1,0 +1,161 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Menace.Modkit.App.Models;
+
+namespace Menace.Modkit.App.Services;
+
+/// <summary>
+/// Compiles modpack C# source files into a DLL using Roslyn.
+/// Targets net6.0 (MelonLoader's runtime), not the modkit's own framework.
+/// </summary>
+public class CompilationService
+{
+    private readonly SecurityScanner _securityScanner = new();
+
+    /// <summary>
+    /// Compile a modpack's source code into a DLL.
+    /// </summary>
+    public async Task<CompilationResult> CompileModpackAsync(
+        ModpackManifest manifest,
+        CancellationToken ct = default)
+    {
+        var result = new CompilationResult();
+
+        if (!manifest.Code.HasAnySources)
+        {
+            result.Success = false;
+            result.Diagnostics.Add(new CompilationDiagnostic
+            {
+                Severity = Models.DiagnosticSeverity.Error,
+                Message = "No source files to compile"
+            });
+            return result;
+        }
+
+        return await Task.Run(() => CompileCore(manifest, result), ct);
+    }
+
+    private CompilationResult CompileCore(ModpackManifest manifest, CompilationResult result)
+    {
+        var modpackDir = manifest.Path;
+
+        // Collect source files (absolute paths)
+        var sourceFiles = manifest.Code.Sources
+            .Select(s => Path.Combine(modpackDir, s))
+            .Where(File.Exists)
+            .ToList();
+
+        if (sourceFiles.Count == 0)
+        {
+            result.Success = false;
+            result.Diagnostics.Add(new CompilationDiagnostic
+            {
+                Severity = Models.DiagnosticSeverity.Error,
+                Message = "No source files found on disk"
+            });
+            return result;
+        }
+
+        // Security scan
+        result.SecurityWarnings = _securityScanner.ScanSources(sourceFiles);
+
+        // Parse source files
+        var syntaxTrees = new List<SyntaxTree>();
+        foreach (var file in sourceFiles)
+        {
+            try
+            {
+                var source = File.ReadAllText(file);
+                var tree = CSharpSyntaxTree.ParseText(
+                    source,
+                    CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.CSharp10),
+                    path: file);
+                syntaxTrees.Add(tree);
+            }
+            catch (Exception ex)
+            {
+                result.Diagnostics.Add(new CompilationDiagnostic
+                {
+                    Severity = Models.DiagnosticSeverity.Error,
+                    Message = $"Failed to parse: {ex.Message}",
+                    File = Path.GetFileName(file)
+                });
+            }
+        }
+
+        if (syntaxTrees.Count == 0)
+        {
+            result.Success = false;
+            return result;
+        }
+
+        // Resolve references
+        var gameInstallPath = AppSettings.Instance.GameInstallPath;
+        var resolver = new ReferenceResolver(gameInstallPath);
+        var references = resolver.ResolveReferences(manifest.Code.References);
+
+        // Sanitize assembly name
+        var assemblyName = SanitizeAssemblyName(manifest.Name);
+
+        // Create compilation
+        var compilation = CSharpCompilation.Create(
+            assemblyName,
+            syntaxTrees,
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+                .WithOptimizationLevel(OptimizationLevel.Release)
+                .WithPlatform(Platform.AnyCpu));
+
+        // Output path
+        var buildDir = Path.Combine(modpackDir, "build");
+        Directory.CreateDirectory(buildDir);
+        var outputPath = Path.Combine(buildDir, $"{assemblyName}.dll");
+
+        // Emit
+        using var stream = new FileStream(outputPath, FileMode.Create);
+        var emitResult = compilation.Emit(stream);
+
+        // Convert diagnostics
+        foreach (var diag in emitResult.Diagnostics)
+        {
+            if (diag.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Hidden)
+                continue;
+
+            var location = diag.Location.GetMappedLineSpan();
+            result.Diagnostics.Add(new CompilationDiagnostic
+            {
+                Severity = diag.Severity switch
+                {
+                    Microsoft.CodeAnalysis.DiagnosticSeverity.Error => Models.DiagnosticSeverity.Error,
+                    Microsoft.CodeAnalysis.DiagnosticSeverity.Warning => Models.DiagnosticSeverity.Warning,
+                    _ => Models.DiagnosticSeverity.Info
+                },
+                Message = diag.GetMessage(),
+                File = location.HasMappedPath ? Path.GetFileName(location.Path) : null,
+                Line = location.StartLinePosition.Line + 1,
+                Column = location.StartLinePosition.Character + 1
+            });
+        }
+
+        result.Success = emitResult.Success;
+        if (emitResult.Success)
+        {
+            result.OutputDllPath = outputPath;
+        }
+
+        return result;
+    }
+
+    private static string SanitizeAssemblyName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = string.Join("_", name.Split(invalid, StringSplitOptions.RemoveEmptyEntries));
+        return sanitized.Replace(" ", "_").Replace(".", "_");
+    }
+}

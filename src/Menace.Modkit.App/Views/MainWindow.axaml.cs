@@ -89,6 +89,7 @@ public class MainWindow : Window
     stack.Children.Add(CreateTabButton("Modpacks", () => Navigate(_viewModel.Modpacks)));
     stack.Children.Add(CreateTabButton("Stats", () => Navigate(_viewModel.StatsEditor)));
     stack.Children.Add(CreateTabButton("Assets", () => Navigate(_viewModel.AssetBrowser)));
+    stack.Children.Add(CreateTabButton("Code", () => Navigate(_viewModel.CodeEditor)));
     stack.Children.Add(CreateTabButton("Settings", () => Navigate(_viewModel.Settings)));
 
     border.Child = stack;
@@ -129,6 +130,8 @@ public class MainWindow : Window
       _viewModel.ShowAssetBrowser.Execute().Subscribe();
     else if (viewModel == _viewModel.StatsEditor)
       _viewModel.ShowStatsEditor.Execute().Subscribe();
+    else if (viewModel == _viewModel.CodeEditor)
+      _viewModel.ShowCodeEditor.Execute().Subscribe();
     else if (viewModel == _viewModel.Settings)
       _viewModel.ShowSettings.Execute().Subscribe();
   }

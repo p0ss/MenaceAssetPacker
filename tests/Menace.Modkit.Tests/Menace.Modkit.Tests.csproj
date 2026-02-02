@@ -6,10 +6,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />
+    <ProjectReference Include="..\..\src\Menace.Modkit.App\Menace.Modkit.App.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

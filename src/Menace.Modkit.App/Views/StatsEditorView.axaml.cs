@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -301,6 +302,23 @@ public class StatsEditorView : UserControl
         vm.CollapseAll();
     };
     buttonPanel.Children.Add(collapseAllButton);
+
+    var modpackOnlyToggle = new ToggleButton
+    {
+      Content = "Modpack Only",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(1),
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(10, 4),
+      FontSize = 11
+    };
+    modpackOnlyToggle.Bind(ToggleButton.IsCheckedProperty,
+      new Avalonia.Data.Binding("ShowModpackOnly")
+      {
+        Mode = Avalonia.Data.BindingMode.TwoWay
+      });
+    buttonPanel.Children.Add(modpackOnlyToggle);
 
     grid.Children.Add(buttonPanel);
     Grid.SetRow(buttonPanel, 1);

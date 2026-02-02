@@ -8,7 +8,10 @@ using UnityEngine;
 namespace Menace.ModpackLoader;
 
 /// <summary>
-/// Harmony patches for intercepting Unity asset loading and injecting modpack assets
+/// Harmony patches for intercepting Unity asset loading and injecting modpack assets.
+/// Used as a fallback for modpacks without compiled asset bundles.
+/// When bundles are available, asset replacement is handled natively via AssetBundle.LoadFromFile
+/// and this interception path is not needed.
 /// </summary>
 public static class AssetInjectionPatches
 {

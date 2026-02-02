@@ -36,6 +36,10 @@
       <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Il2Cppmscorlib.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.AssetBundleModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>

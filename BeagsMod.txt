@@ -1,0 +1,79 @@
+CURRENT CHANGES IN PLAY TODAY:
+
+ALIENS:
+Small Spiderlings:
+Min squadsize upped from 5 to 9
+Jump Attack AP cost reduced from 40 to 20
+
+Young Warriors:
+Min/max squadsize upped from 2-3 to 3-6
+Stab Attack AP cost reduced from 40 to 30
+
+Stingers:
+Min/max squadsize upped from 4-6 to 9
+
+PIRATES:
+
+Making Pirates more challenging as a disorganised mob without expecting them to be a strategic combined arms force
+
+**BOARDING COMMANDOS**
+enemy.pirate_boarding_commandos
+//HARDMODE: Squadsize from 4 to 6//
+//ElementsMax 4 -> 6//
+//ElementsMin 4 -> 6//
+
+armor.pirate_boarding_commando_armor_jetsuit
+**Discipline: 0 -> 10**
+
+active.pirate_jetpack
+**ActionPointCost: 80 -> 60** Devs did this already its vanilla now ^^
+
+Buff breaching SMGs to 7/3 repetitions
+active.fire_pdw_tier_1_burst
+**Repetitions up from 5 -> 7**
+active.fire_pdw_tier_1_tap_fire
+**Repetitions up from 2 -> 3**
+
+**PIRATE SCAVENGERS**
+enemy.pirate_scavengers
+**Normal: Squadsize from 5-7 to 7-9**
+//HARDMODE://
+//ElementsMax 7 -> 9//
+//ElementsMin 5 -> 9//
+
+armor.pirate_tier1_scavenger_armor_enemy
+**Discipline: 0 -> 10**
+
+weapon.pirate_assault_rifle
+**AccuracyBonus: 0 -> -10** 
+**Suppression: 1.6 -> 2** devs already buffed it to 3 ^^ based
+active.fire_pirate_assault_rifle
+**RepetitionDelay: 0.4 -> 0.3**
+**Repetitions: 3 -> 5**
+
+**CHAINGUN TEAM**
+Enemy.pirate_chaingun_team
+Elements Min Max increased from 3-3 to 5-5
+
+armor.pirate_tier1_chaingun_armor
+**Concealment: 0 -> 2**
+
+Chaingun: specialweapon.pirate_light_chaingun 
+**+ Suppression up from 7 to 8**
+**+ Armor damage up from 7 to 10**
+Range up from 7 to 8?
+
+active.pirate_infantry_chaingun_salvo
+**+ Repetitions up from 7 to 10**
+
+**EMP TEAM**
+armor.pirate_tier1_EMP_armor
+**Concealment: 0 -> 2**
+Would like to give them Battle Rifles but can't, would give them more people then
+Rename to "Pirate Hunters?"
+
+**FLAMER TEAM**
+enemy.pirate_flamethrower_team
+**ElementsMax: 3 -> 6**
+**ElementsMin: 3 -> 6**
+Would like to give them more armor but can't yet

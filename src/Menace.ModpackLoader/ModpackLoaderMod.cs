@@ -10,7 +10,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", "1.0.0", "Menace Modkit")]
+[assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", "2.0.0", "Menace Modkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.ModpackLoader;
@@ -23,17 +23,30 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg("Menace Modpack Loader initialized");
+        LoggerInstance.Msg("Menace Modpack Loader v2.0 initialized");
         LoadModpacks();
+        DllLoader.InitializeAllPlugins();
     }
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
+        DllLoader.NotifySceneLoaded(buildIndex, sceneName);
+
         if (!_templatesLoaded && sceneName == "MainMenu")
         {
             LoggerInstance.Msg("MainMenu loaded, waiting for templates...");
             MelonCoroutines.Start(WaitForTemplatesAndApply());
         }
+    }
+
+    public override void OnUpdate()
+    {
+        DllLoader.NotifyUpdate();
+    }
+
+    public override void OnGUI()
+    {
+        DllLoader.NotifyOnGUI();
     }
 
     private System.Collections.IEnumerator WaitForTemplatesAndApply()
@@ -60,10 +73,29 @@ public partial class ModpackLoaderMod : MelonMod
 
         LoggerInstance.Msg($"Loading modpacks from: {modsPath}");
 
-        // Look for modpack.json files in subdirectories
         var modpackFiles = Directory.GetFiles(modsPath, "modpack.json", SearchOption.AllDirectories);
 
+        // Sort by load order (parse manifestVersion to determine format)
+        var modpackEntries = new List<(string file, int order, int version)>();
+
         foreach (var modpackFile in modpackFiles)
+        {
+            try
+            {
+                var json = File.ReadAllText(modpackFile);
+                var obj = JObject.Parse(json);
+                var manifestVersion = obj.Value<int?>("manifestVersion") ?? 1;
+                var loadOrder = obj.Value<int?>("loadOrder") ?? 100;
+                modpackEntries.Add((modpackFile, loadOrder, manifestVersion));
+            }
+            catch
+            {
+                modpackEntries.Add((modpackFile, 100, 1));
+            }
+        }
+
+        // Load in order
+        foreach (var (modpackFile, _, manifestVersion) in modpackEntries.OrderBy(e => e.order))
         {
             try
             {
@@ -74,10 +106,20 @@ public partial class ModpackLoaderMod : MelonMod
                 if (modpack != null)
                 {
                     modpack.DirectoryPath = modpackDir;
+                    modpack.ManifestVersion = manifestVersion;
                     _loadedModpacks[modpack.Name] = modpack;
-                    LoggerInstance.Msg($"✓ Loaded modpack: {modpack.Name} v{modpack.Version}");
 
-                    // Load asset replacements
+                    var vLabel = manifestVersion >= 2 ? "v2" : "v1 (legacy)";
+                    LoggerInstance.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");
+
+                    // V2: Load bundles and DLLs
+                    if (manifestVersion >= 2 && !string.IsNullOrEmpty(modpackDir))
+                    {
+                        BundleLoader.LoadBundles(modpackDir, modpack.Name);
+                        DllLoader.LoadModDlls(modpackDir, modpack.Name, modpack.SecurityStatus ?? "Unreviewed");
+                    }
+
+                    // Load asset replacements (both V1 and V2)
                     if (modpack.Assets != null)
                     {
                         LoadModpackAssets(modpack);
@@ -105,7 +147,6 @@ public partial class ModpackLoaderMod : MelonMod
                 var fullPath = Path.Combine(modpack.DirectoryPath, replacementFile);
                 if (File.Exists(fullPath))
                 {
-                    // For now, just register the path. We'll load textures on demand.
                     _assetReplacements[assetPath] = null;
                     LoggerInstance.Msg($"  Registered asset replacement: {assetPath}");
                 }
@@ -129,17 +170,100 @@ public partial class ModpackLoaderMod : MelonMod
             return;
         }
 
-        // Find all template objects
-        foreach (var modpack in _loadedModpacks.Values)
+        foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
         {
-            if (modpack.Templates == null || modpack.Templates.Count == 0)
+            // V2 modpacks with bundles: assets are already loaded via AssetBundle.LoadFromFile
+            // V2 bundles override templates via Unity's native deserialization — no reflection needed.
+            // However, V2 "patches" still need the legacy template injection path for now,
+            // until the full bundle compiler (Phase 5) produces real asset bundles.
+
+            // Use "patches" for V2, "templates" for V1
+            var hasPatches = modpack.Patches != null && modpack.Patches.Count > 0;
+            var hasTemplates = modpack.Templates != null && modpack.Templates.Count > 0;
+
+            if (!hasPatches && !hasTemplates)
             {
                 LoggerInstance.Msg($"Modpack '{modpack.Name}' has no template modifications");
                 continue;
             }
 
             LoggerInstance.Msg($"Applying modpack: {modpack.Name}");
-            ApplyModpackTemplates(modpack);
+
+            if (hasPatches && modpack.ManifestVersion >= 2)
+            {
+                // V2 patches use the same runtime reflection approach for now
+                // Convert patches format to legacy templates format for applying
+                ApplyModpackPatches(modpack);
+            }
+            else if (hasTemplates)
+            {
+                // V1 legacy path
+                ApplyModpackTemplates(modpack);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Apply V2-format patches (same field-level injection as V1, different JSON structure).
+    /// </summary>
+    private void ApplyModpackPatches(Modpack modpack)
+    {
+        // V2 "patches" has the same structure as V1 "templates":
+        // templateType → instanceName → field → value
+        // We reuse the same application logic.
+        if (modpack.Patches == null) return;
+
+        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+
+        if (gameAssembly == null)
+        {
+            LoggerInstance.Error("Assembly-CSharp not found, cannot apply patches");
+            return;
+        }
+
+        foreach (var (templateTypeName, templateInstances) in modpack.Patches)
+        {
+            try
+            {
+                var templateType = gameAssembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == templateTypeName && !t.IsAbstract);
+
+                if (templateType == null)
+                {
+                    LoggerInstance.Warning($"  Template type '{templateTypeName}' not found");
+                    continue;
+                }
+
+                var il2cppType = Il2CppType.From(templateType);
+                var objects = Resources.FindObjectsOfTypeAll(il2cppType);
+
+                if (objects == null || objects.Length == 0)
+                {
+                    LoggerInstance.Warning($"  No {templateTypeName} instances found");
+                    continue;
+                }
+
+                int appliedCount = 0;
+                foreach (var obj in objects)
+                {
+                    if (obj == null) continue;
+                    var templateName = obj.name;
+                    if (templateInstances.ContainsKey(templateName))
+                    {
+                        var modifications = templateInstances[templateName];
+                        ApplyTemplateModifications(obj, templateType, modifications);
+                        appliedCount++;
+                    }
+                }
+
+                if (appliedCount > 0)
+                    LoggerInstance.Msg($"  Applied patches to {appliedCount} {templateTypeName} instance(s)");
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Error($"  Failed to apply patches to {templateTypeName}: {ex.Message}");
+            }
         }
     }
 
@@ -158,7 +282,6 @@ public partial class ModpackLoaderMod : MelonMod
         {
             try
             {
-                // Find the proxy type from Assembly-CSharp
                 var templateType = gameAssembly.GetTypes()
                     .FirstOrDefault(t => t.Name == templateTypeName && !t.IsAbstract);
 
@@ -168,7 +291,6 @@ public partial class ModpackLoaderMod : MelonMod
                     continue;
                 }
 
-                // Find all instances of this specific type
                 var il2cppType = Il2CppType.From(templateType);
                 var objects = Resources.FindObjectsOfTypeAll(il2cppType);
 
@@ -208,6 +330,9 @@ public partial class ModpackLoaderMod : MelonMod
 
 public class Modpack
 {
+    [JsonProperty("manifestVersion")]
+    public int ManifestVersion { get; set; } = 1;
+
     [JsonProperty("name")]
     public string Name { get; set; }
 
@@ -217,11 +342,29 @@ public class Modpack
     [JsonProperty("author")]
     public string Author { get; set; }
 
+    [JsonProperty("loadOrder")]
+    public int LoadOrder { get; set; } = 100;
+
+    /// <summary>
+    /// V1 format: template modifications
+    /// </summary>
     [JsonProperty("templates")]
     public Dictionary<string, Dictionary<string, Dictionary<string, object>>> Templates { get; set; }
 
+    /// <summary>
+    /// V2 format: data patches (same structure as templates, preferred in V2)
+    /// </summary>
+    [JsonProperty("patches")]
+    public Dictionary<string, Dictionary<string, Dictionary<string, object>>> Patches { get; set; }
+
     [JsonProperty("assets")]
     public Dictionary<string, string> Assets { get; set; }
+
+    [JsonProperty("bundles")]
+    public List<string> Bundles { get; set; }
+
+    [JsonProperty("securityStatus")]
+    public string SecurityStatus { get; set; }
 
     [JsonIgnore]
     public string DirectoryPath { get; set; }
