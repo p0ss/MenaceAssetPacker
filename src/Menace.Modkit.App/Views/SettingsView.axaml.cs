@@ -30,6 +30,44 @@ public class SettingsView : UserControl
       Foreground = Brushes.White
     });
 
+    // Component Versions
+    var versionsBorder = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(24)
+    };
+
+    var versionsStack = new StackPanel { Spacing = 16 };
+
+    versionsStack.Children.Add(new TextBlock
+    {
+      Text = "Component Versions",
+      FontSize = 16,
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White
+    });
+
+    versionsStack.Children.Add(new TextBlock
+    {
+      Text = "Bundled dependency versions tracked by the modkit",
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap
+    });
+
+    var versionsText = new TextBlock
+    {
+      Foreground = Brushes.White,
+      FontSize = 13,
+      TextWrapping = TextWrapping.Wrap
+    };
+    versionsText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DependencyVersionsText"));
+    versionsStack.Children.Add(versionsText);
+
+    versionsBorder.Child = versionsStack;
+    stack.Children.Add(versionsBorder);
+
     // Game Installation Settings
     var installBorder = new Border
     {
@@ -114,7 +152,7 @@ public class SettingsView : UserControl
 
     deployStack.Children.Add(new TextBlock
     {
-      Text = "Wipe the game's Mods folder and install fresh runtime dependencies (MelonLoader, DataExtractor, ModpackLoader, CombinedArms). After clean redeploy, go to Modpacks and click Deploy All to redeploy your mods.",
+      Text = "Wipe the game's Mods folder and install fresh runtime dependencies (MelonLoader, DataExtractor, ModpackLoader). After clean redeploy, go to Modpacks and click Deploy All to redeploy your mods.",
       Opacity = 0.7,
       Foreground = Brushes.White,
       TextWrapping = TextWrapping.Wrap

@@ -6,6 +6,9 @@ using System.Reflection;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using MelonLoader;
+using Menace.SDK;
+using Menace.SDK.Internal;
+using Menace.SDK.Repl;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -21,21 +24,50 @@ public partial class ModpackLoaderMod : MelonMod
     private readonly HashSet<string> _registeredAssetPaths = new();
     private bool _templatesLoaded = false;
 
+    // Tracks which modpack+templateType combos have been successfully patched,
+    // so we don't double-apply when retrying on later scenes.
+    private readonly HashSet<string> _appliedPatchKeys = new();
+
     public override void OnInitializeMelon()
     {
         LoggerInstance.Msg("Menace Modpack Loader v2.0 initialized");
+
+        // Initialize SDK subsystems
+        OffsetCache.Initialize();
+        DevConsole.Initialize();
+        InitializeRepl();
+
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
+
+        // Emit startup banner to Player.log for game dev triage
+        PlayerLog("========================================");
+        PlayerLog("THIS GAME SESSION IS RUNNING MODDED");
+        PlayerLog("Menace Modpack Loader v2.0.0");
+        PlayerLog($"Loaded {_loadedModpacks.Count} modpack(s):");
+        foreach (var mp in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
+            PlayerLog($"  - {mp.Name} v{mp.Version} by {mp.Author ?? "Unknown"} (order: {mp.LoadOrder})");
+        PlayerLog($"Bundles: {BundleLoader.LoadedBundleCount} ({BundleLoader.LoadedAssetCount} assets)");
+        PlayerLog($"Mod DLLs: {DllLoader.GetLoadedAssemblies().Count}");
+        var pluginSummary = DllLoader.GetPluginSummary();
+        if (pluginSummary != null)
+            PlayerLog($"Modpack plugins: {pluginSummary}");
+        PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
+        PlayerLog("========================================");
     }
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
+        GameState.NotifySceneLoaded(sceneName);
+        GameQuery.ClearCache();
         DllLoader.NotifySceneLoaded(buildIndex, sceneName);
 
+        // Retry template patches on every scene until all types are found.
+        // Some builds (e.g. EA) load templates in later scenes, not the title screen.
         if (!_templatesLoaded)
         {
-            LoggerInstance.Msg($"First scene '{sceneName}' loaded, waiting for templates...");
-            MelonCoroutines.Start(WaitForTemplatesAndApply());
+            LoggerInstance.Msg($"Scene '{sceneName}' loaded, attempting template patches...");
+            MelonCoroutines.Start(WaitForTemplatesAndApply(sceneName));
         }
 
         // Apply asset replacements after every scene load (assets get reloaded per scene)
@@ -47,15 +79,19 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnUpdate()
     {
+        GameState.ProcessUpdate();
+        DevConsole.Update();
         DllLoader.NotifyUpdate();
     }
 
     public override void OnGUI()
     {
+        DevConsole.Draw();
+        ErrorNotification.Draw();
         DllLoader.NotifyOnGUI();
     }
 
-    private System.Collections.IEnumerator WaitForTemplatesAndApply()
+    private System.Collections.IEnumerator WaitForTemplatesAndApply(string sceneName)
     {
         // Wait a few frames for the game to initialize templates
         for (int i = 0; i < 30; i++)
@@ -63,9 +99,19 @@ public partial class ModpackLoaderMod : MelonMod
             yield return null;
         }
 
-        LoggerInstance.Msg("Applying modpack modifications...");
-        ApplyAllModpacks();
-        _templatesLoaded = true;
+        LoggerInstance.Msg($"Applying modpack modifications (scene: {sceneName})...");
+        var allApplied = ApplyAllModpacks();
+
+        if (allApplied)
+        {
+            LoggerInstance.Msg("All template patches applied successfully.");
+            _templatesLoaded = true;
+            PlayerLog("All template patches applied successfully");
+        }
+        else
+        {
+            LoggerInstance.Msg("Some template types not yet loaded — will retry on next scene.");
+        }
     }
 
     private void LoadModpacks()
@@ -169,124 +215,97 @@ public partial class ModpackLoaderMod : MelonMod
         }
     }
 
-    private void ApplyAllModpacks()
+    /// <summary>
+    /// Apply all modpack template patches. Returns true if all template types were found
+    /// and patched, false if some types had no instances (need to retry on later scene).
+    /// </summary>
+    private bool ApplyAllModpacks()
     {
         if (_loadedModpacks.Count == 0)
         {
             LoggerInstance.Msg("No modpacks to apply");
-            return;
+            return true;
         }
+
+        var allSucceeded = true;
 
         foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
         {
-            // V2 modpacks with bundles: assets are already loaded via AssetBundle.LoadFromFile
-            // V2 bundles override templates via Unity's native deserialization — no reflection needed.
-            // However, V2 "patches" still need the legacy template injection path for now,
-            // until the full bundle compiler (Phase 5) produces real asset bundles.
-
+            var hasClones = modpack.Clones != null && modpack.Clones.Count > 0;
             // Use "patches" for V2, "templates" for V1
             var hasPatches = modpack.Patches != null && modpack.Patches.Count > 0;
             var hasTemplates = modpack.Templates != null && modpack.Templates.Count > 0;
 
-            if (!hasPatches && !hasTemplates)
-            {
-                LoggerInstance.Msg($"Modpack '{modpack.Name}' has no template modifications");
+            if (!hasClones && !hasPatches && !hasTemplates)
                 continue;
-            }
 
             LoggerInstance.Msg($"Applying modpack: {modpack.Name}");
 
+            // Apply clones BEFORE patches so cloned templates exist when patches run
+            if (hasClones)
+            {
+                if (!ApplyClones(modpack))
+                    allSucceeded = false;
+            }
+
+            bool success;
             if (hasPatches && modpack.ManifestVersion >= 2)
             {
-                // V2 patches use the same runtime reflection approach for now
-                // Convert patches format to legacy templates format for applying
-                ApplyModpackPatches(modpack);
+                success = ApplyModpackPatches(modpack);
             }
             else if (hasTemplates)
             {
-                // V1 legacy path
-                ApplyModpackTemplates(modpack);
+                success = ApplyModpackTemplates(modpack);
             }
+            else
+            {
+                success = true;
+            }
+
+            if (!success)
+                allSucceeded = false;
         }
+
+        if (_appliedPatchKeys.Count > 0)
+        {
+            var patchedTypes = _appliedPatchKeys.Select(k => k.Split(':').Last()).Distinct();
+            PlayerLog($"Template types patched: {string.Join(", ", patchedTypes)}");
+        }
+
+        return allSucceeded;
     }
 
     /// <summary>
-    /// Apply V2-format patches (same field-level injection as V1, different JSON structure).
+    /// Apply template modifications from a dictionary of templateType → instances → fields.
+    /// Tracks success per modpack+type via _appliedPatchKeys to avoid double-patching on retry.
+    /// Returns true if all template types had instances, false if some were missing.
     /// </summary>
-    private void ApplyModpackPatches(Modpack modpack)
+    private bool ApplyTemplateData(
+        Modpack modpack,
+        Dictionary<string, Dictionary<string, Dictionary<string, object>>> data,
+        string label)
     {
-        // V2 "patches" has the same structure as V1 "templates":
-        // templateType → instanceName → field → value
-        // We reuse the same application logic.
-        if (modpack.Patches == null) return;
+        if (data == null) return true;
 
         var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
         if (gameAssembly == null)
         {
-            LoggerInstance.Error("Assembly-CSharp not found, cannot apply patches");
-            return;
+            LoggerInstance.Error($"Assembly-CSharp not found, cannot apply {label}");
+            return false;
         }
 
-        foreach (var (templateTypeName, templateInstances) in modpack.Patches)
+        var allFound = true;
+
+        foreach (var (templateTypeName, templateInstances) in data)
         {
-            try
-            {
-                var templateType = gameAssembly.GetTypes()
-                    .FirstOrDefault(t => t.Name == templateTypeName && !t.IsAbstract);
+            var patchKey = $"{modpack.Name}:{templateTypeName}";
 
-                if (templateType == null)
-                {
-                    LoggerInstance.Warning($"  Template type '{templateTypeName}' not found");
-                    continue;
-                }
+            // Skip types we've already successfully patched
+            if (_appliedPatchKeys.Contains(patchKey))
+                continue;
 
-                var il2cppType = Il2CppType.From(templateType);
-                var objects = Resources.FindObjectsOfTypeAll(il2cppType);
-
-                if (objects == null || objects.Length == 0)
-                {
-                    LoggerInstance.Warning($"  No {templateTypeName} instances found");
-                    continue;
-                }
-
-                int appliedCount = 0;
-                foreach (var obj in objects)
-                {
-                    if (obj == null) continue;
-                    var templateName = obj.name;
-                    if (templateInstances.ContainsKey(templateName))
-                    {
-                        var modifications = templateInstances[templateName];
-                        ApplyTemplateModifications(obj, templateType, modifications);
-                        appliedCount++;
-                    }
-                }
-
-                if (appliedCount > 0)
-                    LoggerInstance.Msg($"  Applied patches to {appliedCount} {templateTypeName} instance(s)");
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Error($"  Failed to apply patches to {templateTypeName}: {ex.Message}");
-            }
-        }
-    }
-
-    private void ApplyModpackTemplates(Modpack modpack)
-    {
-        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-
-        if (gameAssembly == null)
-        {
-            LoggerInstance.Error("Assembly-CSharp not found, cannot apply modpack");
-            return;
-        }
-
-        foreach (var (templateTypeName, templateInstances) in modpack.Templates)
-        {
             try
             {
                 var templateType = gameAssembly.GetTypes()
@@ -295,6 +314,7 @@ public partial class ModpackLoaderMod : MelonMod
                 if (templateType == null)
                 {
                     LoggerInstance.Warning($"  Template type '{templateTypeName}' not found in Assembly-CSharp");
+                    allFound = false;
                     continue;
                 }
 
@@ -303,7 +323,8 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (objects == null || objects.Length == 0)
                 {
-                    LoggerInstance.Warning($"  No {templateTypeName} instances found in game");
+                    LoggerInstance.Warning($"  No {templateTypeName} instances found — will retry on next scene");
+                    allFound = false;
                     continue;
                 }
 
@@ -322,14 +343,33 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (appliedCount > 0)
                 {
-                    LoggerInstance.Msg($"  Applied modifications to {appliedCount} {templateTypeName} instance(s)");
+                    LoggerInstance.Msg($"  Applied {label} to {appliedCount} {templateTypeName} instance(s)");
+                    _appliedPatchKeys.Add(patchKey);
                 }
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"  Failed to apply modifications to {templateTypeName}: {ex.Message}");
+                LoggerInstance.Error($"  Failed to apply {label} to {templateTypeName}: {ex.Message}");
             }
         }
+
+        return allFound;
+    }
+
+    /// <summary>
+    /// Apply V2-format patches. Returns true if all template types were found.
+    /// </summary>
+    private bool ApplyModpackPatches(Modpack modpack)
+    {
+        return ApplyTemplateData(modpack, modpack.Patches, "patches");
+    }
+
+    /// <summary>
+    /// Apply V1-format template modifications. Returns true if all template types were found.
+    /// </summary>
+    private bool ApplyModpackTemplates(Modpack modpack)
+    {
+        return ApplyTemplateData(modpack, modpack.Templates, "modifications");
     }
 
     private System.Collections.IEnumerator ApplyAssetReplacementsDelayed(string sceneName)
@@ -342,9 +382,32 @@ public partial class ModpackLoaderMod : MelonMod
 
         LoggerInstance.Msg($"Applying asset replacements for scene: {sceneName}");
         AssetReplacer.ApplyAllReplacements();
+        PlayerLog($"Asset replacements applied for scene: {sceneName}");
     }
 
     // ApplyTemplateModifications is implemented in TemplateInjection.cs (partial class)
+
+    private void InitializeRepl()
+    {
+        try
+        {
+            var resolver = new RuntimeReferenceResolver();
+            var refs = resolver.ResolveAll();
+            var compiler = new RuntimeCompiler(refs);
+            var evaluator = new ConsoleEvaluator(compiler);
+            ReplPanel.Initialize(evaluator);
+            LoggerInstance.Msg($"REPL initialized with {refs.Count} references");
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"REPL initialization failed (Roslyn may not be available): {ex.Message}");
+        }
+    }
+
+    private static void PlayerLog(string message)
+    {
+        UnityEngine.Debug.Log($"[MODDED] {message}");
+    }
 }
 
 public class Modpack
@@ -384,6 +447,12 @@ public class Modpack
 
     [JsonProperty("securityStatus")]
     public string SecurityStatus { get; set; }
+
+    /// <summary>
+    /// Clone definitions: templateType → { newName → sourceName }
+    /// </summary>
+    [JsonProperty("clones")]
+    public Dictionary<string, Dictionary<string, string>> Clones { get; set; }
 
     [JsonIgnore]
     public string DirectoryPath { get; set; }

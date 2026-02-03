@@ -28,7 +28,7 @@ Output: menu.json with structure like:
 
 Usage:
   python build_template_hierarchy.py
-  python build_template_hierarchy.py --from-schema schema.json
+  python build_template_hierarchy.py --from-schema generated/schema.json
 """
 
 import argparse

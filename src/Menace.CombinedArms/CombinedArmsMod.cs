@@ -78,6 +78,11 @@ public class CombinedArmsMod : MelonMod
     // TileScore
     private static uint _off_TileScore_UtilityScore;
 
+    // UnityEngine.Object — m_CachedPtr is the native C++ object pointer.
+    // When a Unity object is destroyed, m_CachedPtr is set to IntPtr.Zero.
+    // Checking this prevents native crashes from accessing destroyed objects.
+    private static uint _off_Object_m_CachedPtr;
+
     // Il2Cpp List<T> internals (resolved from Il2CppSystem metadata)
     private static uint _off_List_items;
     private static uint _off_List_size;
@@ -104,6 +109,11 @@ public class CombinedArmsMod : MelonMod
                 $"FocusFire={CoordinationState.Config.EnableFocusFire} " +
                 $"CoF={CoordinationState.Config.EnableCenterOfForces} " +
                 $"Depth={CoordinationState.Config.EnableFormationDepth}");
+        PlayerLog("Combined Arms v1.0.0 active");
+        PlayerLog($"  Sequencing={CoordinationState.Config.EnableAgentSequencing} " +
+                  $"FocusFire={CoordinationState.Config.EnableFocusFire} " +
+                  $"CoF={CoordinationState.Config.EnableCenterOfForces} " +
+                  $"Depth={CoordinationState.Config.EnableFormationDepth}");
     }
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
@@ -229,7 +239,7 @@ public class CombinedArmsMod : MelonMod
     /// Uses IL2CPP.GetIl2CppClass which queries the runtime by assembly/namespace/name,
     /// bypassing managed proxy type resolution entirely.
     /// </summary>
-    private static IntPtr GetIl2CppClass(string fullTypeName)
+    private static IntPtr GetIl2CppClass(string fullTypeName, string assemblyHint = "Assembly-CSharp")
     {
         try
         {
@@ -239,7 +249,7 @@ public class CombinedArmsMod : MelonMod
             string className = lastDot >= 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
 
             // Query IL2CPP metadata directly — no managed type resolution needed
-            IntPtr klass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", namespaceName, className);
+            IntPtr klass = IL2CPP.GetIl2CppClass(assemblyHint + ".dll", namespaceName, className);
             if (klass != IntPtr.Zero)
             {
                 Log?.Msg($"[CombinedArms] Resolved {namespaceName}.{className} → 0x{klass.ToInt64():X}");
@@ -247,14 +257,14 @@ public class CombinedArmsMod : MelonMod
             }
 
             // Try without .dll suffix
-            klass = IL2CPP.GetIl2CppClass("Assembly-CSharp", namespaceName, className);
+            klass = IL2CPP.GetIl2CppClass(assemblyHint, namespaceName, className);
             if (klass != IntPtr.Zero)
             {
                 Log?.Msg($"[CombinedArms] Resolved {namespaceName}.{className} → 0x{klass.ToInt64():X}");
                 return klass;
             }
 
-            Log?.Warning($"[CombinedArms] IL2CPP class '{fullTypeName}' not found in Assembly-CSharp");
+            Log?.Warning($"[CombinedArms] IL2CPP class '{fullTypeName}' not found in {assemblyHint}");
         }
         catch (Exception ex)
         {
@@ -326,6 +336,10 @@ public class CombinedArmsMod : MelonMod
                 $"Sequencing={_sequencingAvailable} FocusFire={_focusFireAvailable} " +
                 $"Tracking={_executionTrackingAvailable} CoF={_cofAvailable} " +
                 $"Depth={_formationDepthAvailable}");
+        PlayerLog($"Combined Arms Harmony patches active — " +
+                  $"Sequencing={_sequencingAvailable} FocusFire={_focusFireAvailable} " +
+                  $"Tracking={_executionTrackingAvailable} CoF={_cofAvailable} " +
+                  $"Depth={_formationDepthAvailable}");
     }
 
     private void ResolveAllOffsets()
@@ -386,6 +400,16 @@ public class CombinedArmsMod : MelonMod
         IntPtr tileScoreClass = GetIl2CppClass("Menace.Tactical.AI.Data.TileScore");
         if (tileScoreClass != IntPtr.Zero)
             _off_TileScore_UtilityScore = ResolveOffset(tileScoreClass, "UtilityScore", "TileScore");
+
+        // ── UnityEngine.Object.m_CachedPtr ──
+        // This is the native C++ object pointer. Zero means the object was Destroy()'d.
+        // Checking this before accessing .transform prevents native AccessViolation crashes
+        // that .NET 6 CoreCLR cannot catch with try/catch.
+        IntPtr unityObjectClass = GetIl2CppClass("UnityEngine.Object", "UnityEngine.CoreModule");
+        if (unityObjectClass != IntPtr.Zero)
+            _off_Object_m_CachedPtr = ResolveOffset(unityObjectClass, "m_CachedPtr", "UnityEngine.Object");
+        else
+            Log?.Warning("[CombinedArms] UnityEngine.Object class not found — destroyed-object guard disabled");
 
         // ── Il2Cpp collection internals (resolve from concrete generic fields) ──
         // Open generic types (List`1, Dictionary`2) have offset 0 for all fields.
@@ -914,6 +938,9 @@ public class CombinedArmsMod : MelonMod
             IntPtr klass = IL2CPP.il2cpp_object_get_class(actorPtr);
             if (klass == IntPtr.Zero) return (0, 0);
 
+            // Check native object is alive — destroyed objects crash on .transform access
+            if (!IsNativeObjectAlive(actorPtr)) return (0, 0);
+
             // Actor extends MonoBehaviour → Component — use Unity interop for transform
             var actorComponent = new UnityEngine.Component(actorPtr);
             var transform = actorComponent.transform;
@@ -1050,6 +1077,9 @@ public class CombinedArmsMod : MelonMod
                 IntPtr tileKlass = IL2CPP.il2cpp_object_get_class(tilePtr);
                 if (tileKlass == IntPtr.Zero) continue;
 
+                // Check native object is alive — destroyed tiles crash on .transform access
+                if (!IsNativeObjectAlive(tilePtr)) continue;
+
                 float tileX, tileZ;
                 try
                 {
@@ -1143,6 +1173,9 @@ public class CombinedArmsMod : MelonMod
                 // Validate actor is a valid IL2CPP object before creating Component wrapper
                 IntPtr actorKlass = IL2CPP.il2cpp_object_get_class(actorPtr);
                 if (actorKlass == IntPtr.Zero) continue;
+
+                // Check native object is alive — destroyed actors crash on .transform access
+                if (!IsNativeObjectAlive(actorPtr)) continue;
 
                 try
                 {
@@ -1253,6 +1286,9 @@ public class CombinedArmsMod : MelonMod
                 IntPtr tileKlass = IL2CPP.il2cpp_object_get_class(tilePtr);
                 if (tileKlass == IntPtr.Zero) continue;
 
+                // Check native object is alive — destroyed tiles crash on .transform access
+                if (!IsNativeObjectAlive(tilePtr)) continue;
+
                 float tileX, tileZ;
                 try
                 {
@@ -1291,6 +1327,34 @@ public class CombinedArmsMod : MelonMod
     // ═══════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Check if the native C++ object backing an IL2CPP pointer is still alive.
+    /// When Unity Destroy()s an object, m_CachedPtr is set to IntPtr.Zero.
+    /// Accessing properties (e.g. .transform) on a destroyed object causes an
+    /// AccessViolationException that .NET 6 CoreCLR cannot catch — instant crash.
+    /// Returns true if alive or if the guard offset wasn't resolved (fail-open).
+    /// </summary>
+    private static bool IsNativeObjectAlive(IntPtr il2cppObjPtr)
+    {
+        if (il2cppObjPtr == IntPtr.Zero) return false;
+        if (_off_Object_m_CachedPtr == 0) return true; // Guard not available, fail-open
+
+        try
+        {
+            IntPtr cachedPtr = Marshal.ReadIntPtr(il2cppObjPtr + (int)_off_Object_m_CachedPtr);
+            return cachedPtr != IntPtr.Zero;
+        }
+        catch
+        {
+            return false; // Can't read memory — treat as dead
+        }
+    }
+
+    private static void PlayerLog(string message)
+    {
+        UnityEngine.Debug.Log($"[MODDED] {message}");
+    }
 
     private static float ReadFloat(IntPtr addr)
     {

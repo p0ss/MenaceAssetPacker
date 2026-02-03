@@ -6,8 +6,8 @@ Checks template coverage, instance naming, field coverage, type correctness,
 and cross-references. Outputs a PASS/WARN/FAIL report.
 
 Usage:
-  python validate_extraction.py --schema schema.json --data /path/to/ExtractedData
-  python validate_extraction.py --schema schema.json  # uses default game data path
+  python validate_extraction.py --schema generated/schema.json --data /path/to/ExtractedData
+  python validate_extraction.py --schema generated/schema.json  # uses default game data path
 """
 
 import argparse

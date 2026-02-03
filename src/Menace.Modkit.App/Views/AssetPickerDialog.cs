@@ -14,11 +14,14 @@ namespace Menace.Modkit.App.Views;
 /// <summary>
 /// Modal dialog for browsing and selecting assets from AssetRipper output,
 /// filtered by asset type (Sprite, Texture2D, etc.).
+/// Optionally supports importing new assets into a modpack.
 /// Returns the selected asset file path, or null if cancelled.
 /// </summary>
 public class AssetPickerDialog : Window
 {
     private readonly string _assetType;
+    private readonly string? _modpackName;
+    private readonly ModpackManager? _modpackManager;
     private readonly ListBox _assetListBox;
     private readonly TextBox _searchBox;
     private readonly Image _previewImage;
@@ -31,11 +34,14 @@ public class AssetPickerDialog : Window
         public string Name { get; set; } = "";
         public string FilePath { get; set; } = "";
         public string RelativePath { get; set; } = "";
+        public bool IsModpackAsset { get; set; }
     }
 
-    public AssetPickerDialog(string assetType)
+    public AssetPickerDialog(string assetType, string? modpackName = null, ModpackManager? modpackManager = null)
     {
         _assetType = assetType;
+        _modpackName = modpackName;
+        _modpackManager = modpackManager;
         Title = $"Select {assetType} Asset";
         Width = 700;
         Height = 500;
@@ -74,16 +80,39 @@ public class AssetPickerDialog : Window
         };
         _assetListBox.SelectionChanged += OnAssetSelectionChanged;
 
-        // Custom item template
+        // Custom item template with modpack badge
         _assetListBox.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<AssetItem>((item, _) =>
         {
             var panel = new StackPanel { Spacing = 2, Margin = new Thickness(4, 2) };
-            panel.Children.Add(new TextBlock
+
+            var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            nameRow.Children.Add(new TextBlock
             {
                 Text = item.Name,
                 Foreground = Brushes.White,
                 FontSize = 12
             });
+
+            if (item.IsModpackAsset)
+            {
+                var badge = new Border
+                {
+                    Background = new SolidColorBrush(Color.Parse("#064b48")),
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(4, 1),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                badge.Child = new TextBlock
+                {
+                    Text = "modpack",
+                    Foreground = Brushes.White,
+                    FontSize = 9,
+                    FontWeight = FontWeight.SemiBold
+                };
+                nameRow.Children.Add(badge);
+            }
+
+            panel.Children.Add(nameRow);
             panel.Children.Add(new TextBlock
             {
                 Text = item.RelativePath,
@@ -154,6 +183,23 @@ public class AssetPickerDialog : Window
             Margin = new Thickness(0, 12, 0, 0)
         };
 
+        // "Import New..." button (only when modpack context is available)
+        if (_modpackName != null && _modpackManager != null)
+        {
+            var importButton = new Button
+            {
+                Content = "Import New...",
+                Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(1),
+                BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
+                Padding = new Thickness(24, 8),
+                FontSize = 13
+            };
+            importButton.Click += OnImportNewClick;
+            buttonRow.Children.Add(importButton);
+        }
+
         var okButton = new Button
         {
             Content = "Select",
@@ -190,7 +236,77 @@ public class AssetPickerDialog : Window
         Content = mainGrid;
 
         // Load assets
-        LoadAssets();
+        try
+        {
+            LoadAssets();
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"AssetPickerDialog.LoadAssets failed: {ex}");
+            _statusText.Text = $"Error loading assets: {ex.Message}";
+        }
+    }
+
+    private async void OnImportNewClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_modpackName == null || _modpackManager == null)
+            return;
+
+        try
+        {
+            // Build file filter from asset type extensions
+            var extensions = GetExtensionsForType(_assetType)
+                .Select(ext => ext.TrimStart('*', '.'))
+                .ToList();
+
+            var dialog = new OpenFileDialog
+            {
+                Title = $"Import {_assetType} asset",
+                Filters = new List<FileDialogFilter>
+                {
+                    new FileDialogFilter { Name = $"{_assetType} Files", Extensions = extensions },
+                    new FileDialogFilter { Name = "All Files", Extensions = { "*" } }
+                }
+            };
+
+            var files = await dialog.ShowAsync(this);
+            if (files == null || files.Length == 0)
+                return;
+
+            var sourceFile = files[0];
+            var fileName = Path.GetFileName(sourceFile);
+            var relativePath = Path.Combine("Assets", _assetType, fileName);
+
+            // Copy to modpack staging
+            _modpackManager.SaveStagingAsset(_modpackName, relativePath, sourceFile);
+
+            // Register in manifest
+            _modpackManager.RegisterAssetInManifest(_modpackName, relativePath);
+
+            // Build the full destination path for display and selection
+            var destPath = Path.Combine(
+                _modpackManager.ResolveStagingDir(_modpackName), "assets", relativePath);
+
+            // Add to asset list
+            var newItem = new AssetItem
+            {
+                Name = Path.GetFileNameWithoutExtension(sourceFile),
+                FilePath = destPath,
+                RelativePath = relativePath,
+                IsModpackAsset = true
+            };
+            _allAssets.Add(newItem);
+
+            // Refresh filtered list and select the new item
+            ApplyFilter();
+            _assetListBox.SelectedItem = newItem;
+            _statusText.Text = $"Imported {fileName} into modpack";
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"AssetPickerDialog.OnImportNewClick failed: {ex}");
+            _statusText.Text = $"Import failed: {ex.Message}";
+        }
     }
 
     private void LoadAssets()
@@ -198,37 +314,61 @@ public class AssetPickerDialog : Window
         _allAssets.Clear();
 
         var assetOutputPath = GetAssetOutputPath();
-        if (assetOutputPath == null)
+        if (assetOutputPath != null)
+        {
+            // Search in the specific asset type directory
+            var typeDir = Path.Combine(assetOutputPath, "Assets", _assetType);
+            if (Directory.Exists(typeDir))
+            {
+                ScanDirectory(typeDir, assetOutputPath);
+            }
+
+            // Also check common alternative locations
+            if (_assetType == "Sprite" || _assetType == "Texture2D")
+            {
+                var resourcesDir = Path.Combine(assetOutputPath, "Assets", "Resources");
+                if (Directory.Exists(resourcesDir))
+                    ScanDirectory(resourcesDir, assetOutputPath, "*.png");
+            }
+        }
+
+        // Scan modpack staging assets
+        if (_modpackName != null && _modpackManager != null)
+        {
+            try
+            {
+                var stagingDir = _modpackManager.ResolveStagingDir(_modpackName);
+                var stagingAssetsRoot = Path.Combine(stagingDir, "assets");
+                var stagingTypeDir = Path.Combine(stagingAssetsRoot, "Assets", _assetType);
+                if (Directory.Exists(stagingTypeDir))
+                {
+                    ScanDirectory(stagingTypeDir, stagingAssetsRoot, isModpack: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                ModkitLog.Error($"AssetPickerDialog: Error scanning modpack staging assets: {ex}");
+            }
+        }
+
+        if (_allAssets.Count == 0 && assetOutputPath == null)
         {
             _statusText.Text = "No extracted assets found.";
             return;
         }
 
-        // Search in the specific asset type directory
-        var typeDir = Path.Combine(assetOutputPath, "Assets", _assetType);
-        if (Directory.Exists(typeDir))
-        {
-            ScanDirectory(typeDir, assetOutputPath);
-        }
-
-        // Also check common alternative locations
-        if (_assetType == "Sprite" || _assetType == "Texture2D")
-        {
-            // Sprites and Textures may be under Resources or other paths
-            var resourcesDir = Path.Combine(assetOutputPath, "Assets", "Resources");
-            if (Directory.Exists(resourcesDir))
-                ScanDirectory(resourcesDir, assetOutputPath, "*.png");
-        }
-
-        // Sort by name
-        _allAssets = _allAssets.OrderBy(a => a.Name).ToList();
+        // Sort: modpack assets first, then by name
+        _allAssets = _allAssets
+            .OrderByDescending(a => a.IsModpackAsset)
+            .ThenBy(a => a.Name)
+            .ToList();
 
         _filteredAssets = new List<AssetItem>(_allAssets);
         _assetListBox.ItemsSource = _filteredAssets;
         _statusText.Text = $"{_allAssets.Count} {_assetType} assets found";
     }
 
-    private void ScanDirectory(string directory, string rootPath, string? pattern = null)
+    private void ScanDirectory(string directory, string rootPath, string? pattern = null, bool isModpack = false)
     {
         try
         {
@@ -251,7 +391,8 @@ public class AssetPickerDialog : Window
                     {
                         Name = name,
                         FilePath = file,
-                        RelativePath = relativePath
+                        RelativePath = relativePath,
+                        IsModpackAsset = isModpack
                     });
                 }
             }
@@ -282,6 +423,11 @@ public class AssetPickerDialog : Window
     }
 
     private void OnSearchTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
     {
         var query = _searchBox.Text?.Trim() ?? "";
 

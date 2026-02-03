@@ -150,38 +150,6 @@ public class ModLoaderInstaller
         }
     }
 
-    public async Task<bool> InstallCombinedArmsAsync(Action<string>? progressCallback = null)
-    {
-        try
-        {
-            progressCallback?.Invoke("Installing CombinedArms mod...");
-
-            var combinedArmsDll = Path.Combine(
-                AppContext.BaseDirectory,
-                "third_party", "bundled", "CombinedArms", "Menace.CombinedArms.dll");
-
-            if (!File.Exists(combinedArmsDll))
-            {
-                progressCallback?.Invoke("❌ Bundled CombinedArms.dll not found");
-                return false;
-            }
-
-            var modsFolder = Path.Combine(_gameInstallPath, "Mods");
-            Directory.CreateDirectory(modsFolder);
-
-            var targetPath = Path.Combine(modsFolder, "Menace.CombinedArms.dll");
-            File.Copy(combinedArmsDll, targetPath, overwrite: true);
-
-            progressCallback?.Invoke("✓ CombinedArms mod installed successfully");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            progressCallback?.Invoke($"❌ Error installing CombinedArms: {ex.Message}");
-            return false;
-        }
-    }
-
     public async Task CleanModsDirectoryAsync(Action<string>? progressCallback = null)
     {
         var modsFolder = Path.Combine(_gameInstallPath, "Mods");

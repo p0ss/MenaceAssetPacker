@@ -25,13 +25,20 @@ public class AppSettings
         {
             var eaPath = Path.Combine(steamCommon, "Menace");
             if (Directory.Exists(eaPath))
+            {
+                ModkitLog.Info($"Detected game install: {eaPath}");
                 return eaPath;
+            }
 
             var demoPath = Path.Combine(steamCommon, "Menace Demo");
             if (Directory.Exists(demoPath))
+            {
+                ModkitLog.Info($"Detected game install: {demoPath}");
                 return demoPath;
+            }
         }
 
+        ModkitLog.Warn("Game install path not auto-detected. Set it manually in Settings.");
         return string.Empty;
     }
 
@@ -45,7 +52,9 @@ public class AppSettings
             {
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
                     "Steam", "steamapps", "common"),
-                Path.Combine("C:", "Program Files (x86)", "Steam", "steamapps", "common"),
+                @"C:\Program Files (x86)\Steam\steamapps\common",
+                @"D:\SteamLibrary\steamapps\common",
+                @"E:\SteamLibrary\steamapps\common",
                 Path.Combine(home, "Steam", "steamapps", "common"),
             };
         }

@@ -24,6 +24,18 @@ public sealed class StatsEditorViewModel : ViewModelBase
     private readonly Dictionary<string, Dictionary<string, object?>> _pendingChanges = new();
     private readonly Dictionary<string, Dictionary<string, object?>> _stagingOverrides = new();
 
+    // Clone tracking: compositeKey ("TemplateType/newName") → sourceName
+    private readonly Dictionary<string, string> _cloneDefinitions = new();
+
+    // Tracks which fields the user explicitly edited in the current selection.
+    // Only these fields are checked for diffs on flush, preventing false diffs
+    // from TextChanged events during rendering or type mismatches.
+    private readonly HashSet<string> _userEditedFields = new();
+
+    // Flag to suppress UpdateModifiedProperty during initial render
+    // (TextBoxes fire TextChanged when created, which would create false diffs)
+    private bool _suppressPropertyUpdates;
+
     // Cache: template type name -> sorted list of instance names
     private readonly Dictionary<string, List<string>> _templateInstanceNamesCache = new();
 
@@ -37,6 +49,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         LoadData();
     }
+
+    public ModpackManager ModpackManager => _modpackManager;
 
     public void LoadData()
     {
@@ -156,13 +170,6 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         // Convert template to dictionary of properties
         var properties = ConvertTemplateToProperties(node.Template);
-        VanillaProperties = properties;
-
-        Console.WriteLine($"[DEBUG] OnNodeSelected: Set VanillaProperties with {properties.Count} items");
-        if (properties.Count > 0)
-        {
-            Console.WriteLine($"[DEBUG] First 3 properties: {string.Join(", ", properties.Take(3).Select(kvp => $"{kvp.Key}={kvp.Value}"))}");
-        }
 
         // Build modified properties: vanilla → staging overrides → pending changes
         var modified = new Dictionary<string, object?>(properties);
@@ -183,15 +190,36 @@ public sealed class StatsEditorViewModel : ViewModelBase
             }
         }
 
+        // Suppress TextChanged events during initial render of the property panels
+        // (TextBoxes fire TextChanged when created with their initial text, which
+        // would convert all values to strings and create false diffs)
+        _suppressPropertyUpdates = true;
+        VanillaProperties = properties;
         ModifiedProperties = modified;
+        _suppressPropertyUpdates = false;
     }
 
     private void LoadStagingOverrides()
     {
         _stagingOverrides.Clear();
+        _cloneDefinitions.Clear();
 
         if (string.IsNullOrEmpty(_currentModpackName))
             return;
+
+        // Load clone definitions
+        var clones = _modpackManager.LoadStagingClones(_currentModpackName);
+        foreach (var (templateType, cloneMap) in clones)
+        {
+            foreach (var (newName, sourceName) in cloneMap)
+            {
+                var compositeKey = $"{templateType}/{newName}";
+                _cloneDefinitions[compositeKey] = sourceName;
+            }
+        }
+
+        // Insert cloned templates into the tree
+        LoadCloneTemplatesIntoTree();
 
         var statsDir = Path.Combine(_modpackManager.ResolveStagingDir(_currentModpackName), "stats");
         if (!Directory.Exists(statsDir))
@@ -215,7 +243,14 @@ public sealed class StatsEditorViewModel : ViewModelBase
                     {
                         foreach (var fieldProp in instanceProp.Value.EnumerateObject())
                         {
-                            diffs[fieldProp.Name] = ConvertJsonElementToValue(fieldProp.Value);
+                            var val = ConvertJsonElementToValue(fieldProp.Value);
+
+                            // Skip empty-string values — these are corrupted booleans
+                            // (or other fields) from a previous save bug.
+                            if (val is string s && s.Length == 0)
+                                continue;
+
+                            diffs[fieldProp.Name] = val;
                         }
                     }
 
@@ -229,7 +264,73 @@ public sealed class StatsEditorViewModel : ViewModelBase
             }
         }
 
-        Console.WriteLine($"[DEBUG] Loaded {_stagingOverrides.Count} staging override entries for modpack '{_currentModpackName}'");
+        Console.WriteLine($"[DEBUG] Loaded {_stagingOverrides.Count} staging override entries, {_cloneDefinitions.Count} clone(s) for modpack '{_currentModpackName}'");
+    }
+
+    /// <summary>
+    /// For each clone definition, create a virtual DynamicDataTemplate from the source's JSON
+    /// and insert it into the tree so it appears alongside real templates.
+    /// </summary>
+    private void LoadCloneTemplatesIntoTree()
+    {
+        if (_dataLoader == null || _cloneDefinitions.Count == 0)
+            return;
+
+        foreach (var (compositeKey, sourceName) in _cloneDefinitions)
+        {
+            var slash = compositeKey.IndexOf('/');
+            if (slash < 0) continue;
+            var templateType = compositeKey[..slash];
+            var newName = compositeKey[(slash + 1)..];
+
+            // Skip if already in tree
+            if (FindNode(_allTreeNodes, templateType, newName) != null)
+                continue;
+
+            // Find the source template to copy its JSON
+            var sourceNode = FindNode(_allTreeNodes, templateType, sourceName);
+            if (sourceNode?.Template is not DynamicDataTemplate sourceDyn)
+                continue;
+
+            // Create clone template from source JSON with new name
+            var sourceJson = sourceDyn.GetJsonElement();
+            var jsonString = sourceJson.GetRawText();
+
+            using var doc = System.Text.Json.JsonDocument.Parse(jsonString);
+            var writer = new MemoryStream();
+            using (var jsonWriter = new System.Text.Json.Utf8JsonWriter(writer))
+            {
+                jsonWriter.WriteStartObject();
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.Name == "name")
+                        jsonWriter.WriteString("name", newName);
+                    else
+                        prop.WriteTo(jsonWriter);
+                }
+                jsonWriter.WriteEndObject();
+            }
+
+            var newJsonString = Encoding.UTF8.GetString(writer.ToArray());
+            using var newDoc = System.Text.Json.JsonDocument.Parse(newJsonString);
+            var cloneTemplate = new DynamicDataTemplate(newName, newDoc.RootElement.Clone(), templateType);
+
+            var cloneLeaf = new TreeNodeViewModel
+            {
+                Name = FormatNodeName(newName.Split('.').Last()),
+                IsCategory = false,
+                Template = cloneTemplate
+            };
+
+            // Insert near source in the tree
+            if (InsertCloneInTree(_allTreeNodes, sourceNode, cloneLeaf))
+            {
+                BuildSearchIndex(new[] { cloneLeaf });
+            }
+        }
+
+        // Refresh the displayed nodes
+        ApplySearchFilter();
     }
 
     private void FlushCurrentEdits()
@@ -241,20 +342,27 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (key == null)
             return;
 
+        // Only check fields the user explicitly edited in this session.
+        // This prevents false diffs from type mismatches, TextChanged events
+        // during render, or stale staging values after data re-extraction.
         var diffs = new Dictionary<string, object?>();
-        foreach (var kvp in _modifiedProperties)
+        foreach (var fieldName in _userEditedFields)
         {
-            if (!_vanillaProperties.TryGetValue(kvp.Key, out var vanillaVal))
+            if (!_modifiedProperties.TryGetValue(fieldName, out var modVal))
+                continue;
+            if (!_vanillaProperties.TryGetValue(fieldName, out var vanillaVal))
                 continue;
 
-            if (!ValuesEqual(vanillaVal, kvp.Value))
-                diffs[kvp.Key] = kvp.Value;
+            if (!ValuesEqual(vanillaVal, modVal))
+                diffs[fieldName] = modVal;
         }
 
         if (diffs.Count > 0)
             _pendingChanges[key] = diffs;
         else
             _pendingChanges.Remove(key);
+
+        _userEditedFields.Clear();
     }
 
     private static bool ValuesEqual(object? vanilla, object? modified)
@@ -280,6 +388,12 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
             return vanilla.ToString() == modStr;
         }
+
+        // Cross-type numeric comparison (long vs double from JSON int/float differences)
+        if (vanilla is long vl && modified is double md)
+            return (double)vl == md;
+        if (vanilla is double vd && modified is long ml)
+            return vd == (double)ml;
 
         // JsonElement comparison by raw text
         if (vanilla is JsonElement vanEl && modified is JsonElement modEl)
@@ -331,10 +445,31 @@ public sealed class StatsEditorViewModel : ViewModelBase
         return null;
     }
 
-    public void UpdateModifiedProperty(string fieldName, string text)
+    public void UpdateModifiedBoolProperty(string fieldName, bool value)
     {
+        if (_suppressPropertyUpdates)
+            return;
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
             return;
+
+        _userEditedFields.Add(fieldName);
+        _modifiedProperties[fieldName] = value;
+    }
+
+    public void UpdateModifiedProperty(string fieldName, string text)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
+            return;
+
+        // Boolean fields must only be updated via UpdateModifiedBoolProperty (from CheckBox).
+        // Reject string overwrites — these come from spurious TextChanged events during render
+        // and would corrupt the bool to an empty string.
+        if (_modifiedProperties[fieldName] is bool)
+            return;
+
+        _userEditedFields.Add(fieldName);
 
         // If the vanilla value is an array, try to parse the edited text back as JSON array
         if (_vanillaProperties != null
@@ -413,6 +548,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
             return;
 
+        _userEditedFields.Add(fieldName);
+
         var sb = new StringBuilder();
         sb.Append('[');
         for (int i = 0; i < items.Count; i++)
@@ -489,7 +626,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 var instanceObj = new JsonObject();
                 foreach (var fieldKvp in instanceKvp.Value)
                 {
-                    instanceObj[fieldKvp.Key] = ConvertToJsonNode(fieldKvp.Value, typeKvp.Key, instanceKvp.Key, fieldKvp.Key);
+                    var node = ConvertToJsonNode(fieldKvp.Value, typeKvp.Key, instanceKvp.Key, fieldKvp.Key);
+                    if (node != null)
+                        instanceObj[fieldKvp.Key] = node;
                 }
                 root[instanceKvp.Key] = instanceObj;
             }
@@ -512,7 +651,149 @@ public sealed class StatsEditorViewModel : ViewModelBase
         }
         _pendingChanges.Clear();
 
+        // Persist clone definitions
+        SaveCloneDefinitions();
+
         SaveStatus = $"Saved {fileCount} template file(s) to '{_currentModpackName}'";
+    }
+
+    private void SaveCloneDefinitions()
+    {
+        if (string.IsNullOrEmpty(_currentModpackName))
+            return;
+
+        // Group clone definitions by template type
+        var byType = new Dictionary<string, Dictionary<string, string>>();
+        foreach (var (compositeKey, sourceName) in _cloneDefinitions)
+        {
+            var slash = compositeKey.IndexOf('/');
+            if (slash < 0) continue;
+            var templateType = compositeKey[..slash];
+            var newName = compositeKey[(slash + 1)..];
+
+            if (!byType.TryGetValue(templateType, out var dict))
+            {
+                dict = new Dictionary<string, string>();
+                byType[templateType] = dict;
+            }
+            dict[newName] = sourceName;
+        }
+
+        foreach (var (templateType, clones) in byType)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(clones,
+                new JsonSerializerOptions { WriteIndented = true });
+            _modpackManager.SaveStagingClones(_currentModpackName, templateType, json);
+        }
+    }
+
+    /// <summary>
+    /// Clone the currently selected template with a new name.
+    /// Creates a virtual DynamicDataTemplate from the source's JSON data,
+    /// adds it to the tree, and registers it as a clone.
+    /// </summary>
+    public bool CloneTemplate(string newName)
+    {
+        if (_selectedNode?.Template is not DynamicDataTemplate sourceDyn)
+            return false;
+
+        var templateTypeName = sourceDyn.TemplateTypeName;
+        if (string.IsNullOrEmpty(templateTypeName))
+            return false;
+
+        var compositeKey = $"{templateTypeName}/{newName}";
+
+        // Check if this name already exists
+        if (_cloneDefinitions.ContainsKey(compositeKey))
+            return false;
+
+        // Check existing templates
+        var existingNode = FindNode(_allTreeNodes, templateTypeName, newName);
+        if (existingNode != null)
+            return false;
+
+        // Create a new DynamicDataTemplate from the source's JSON, but with the new name
+        var sourceJson = sourceDyn.GetJsonElement();
+        var jsonString = sourceJson.GetRawText();
+
+        // Replace the "name" field in the JSON with the new name
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonString);
+        var writer = new System.IO.MemoryStream();
+        using (var jsonWriter = new System.Text.Json.Utf8JsonWriter(writer))
+        {
+            jsonWriter.WriteStartObject();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.Name == "name")
+                    jsonWriter.WriteString("name", newName);
+                else
+                    prop.WriteTo(jsonWriter);
+            }
+            jsonWriter.WriteEndObject();
+        }
+
+        var newJsonString = System.Text.Encoding.UTF8.GetString(writer.ToArray());
+        using var newDoc = System.Text.Json.JsonDocument.Parse(newJsonString);
+        var newTemplate = new DynamicDataTemplate(newName, newDoc.RootElement.Clone(), templateTypeName);
+
+        // Register clone definition
+        _cloneDefinitions[compositeKey] = sourceDyn.Name;
+
+        // Add to tree: find the parent category of the source and add the clone as a sibling
+        var cloneLeaf = new TreeNodeViewModel
+        {
+            Name = FormatNodeName(newName.Split('.').Last()),
+            IsCategory = false,
+            Template = newTemplate
+        };
+
+        // Find the source node's parent in the tree and add the clone there
+        if (InsertCloneInTree(_allTreeNodes, _selectedNode, cloneLeaf))
+        {
+            // Rebuild search index for new node
+            _searchEntries.Remove(cloneLeaf); // clear if stale
+            BuildSearchIndex(new[] { cloneLeaf });
+        }
+
+        // Refresh the filtered view
+        ApplySearchFilter();
+
+        // Select the new clone
+        var found = FindNode(TreeNodes.ToList(), templateTypeName, newName);
+        if (found != null)
+            SelectedNode = found;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the given composite key represents a clone (vs a vanilla template).
+    /// </summary>
+    public bool IsClone(string compositeKey)
+    {
+        return _cloneDefinitions.ContainsKey(compositeKey);
+    }
+
+    private bool InsertCloneInTree(IEnumerable<TreeNodeViewModel> nodes, TreeNodeViewModel sourceNode, TreeNodeViewModel cloneNode)
+    {
+        foreach (var node in nodes)
+        {
+            if (!node.IsCategory)
+                continue;
+
+            // Check if the source node is a direct child
+            var idx = node.Children.IndexOf(sourceNode);
+            if (idx >= 0)
+            {
+                node.Children.Insert(idx + 1, cloneNode);
+                return true;
+            }
+
+            // Recurse into children
+            if (InsertCloneInTree(node.Children, sourceNode, cloneNode))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -551,7 +832,13 @@ public sealed class StatsEditorViewModel : ViewModelBase
             {
                 if (bool.TryParse(str, out var b))
                     return JsonValue.Create(b);
+                // Empty/unparseable string for a boolean field — drop it
+                return null;
             }
+
+            // Drop empty strings that aren't genuinely string fields (likely corrupted)
+            if (str.Length == 0 && vanillaValue != null && vanillaValue is not string)
+                return null;
 
             // Default: keep as string
             return JsonValue.Create(str);
@@ -590,6 +877,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
                     // Convert JsonElement to appropriate type
                     object? value = ConvertJsonElementToValue(property.Value);
+
+                    // Flatten nested objects with dotted keys (one level deep).
+                    // E.g., Properties.HitpointsPerElement, AIRole.Move, etc.
+                    // This prevents collisions between nested sub-field names and
+                    // top-level field names (e.g., AnimatorTemplate.name vs name).
+                    if (property.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var subProp in property.Value.EnumerateObject())
+                        {
+                            var qualifiedKey = $"{property.Name}.{subProp.Name}";
+                            result[qualifiedKey] = ConvertJsonElementToValue(subProp.Value);
+                        }
+                        continue;
+                    }
 
                     // Check if this is a unity_asset field via schema
                     if (_schemaService.IsLoaded && _schemaService.IsAssetField(templateTypeName, property.Name))

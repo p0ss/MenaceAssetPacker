@@ -14,7 +14,11 @@ obj/
 
 # Dotnet CLI first-run cache
 .dotnet_cli/
-.dontet9
+.dotnet/
+.dotnet9/
+
+# Python
+__pycache__/
 
 # Avalonia asset cache
 *.axaml.cs~

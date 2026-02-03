@@ -7,7 +7,7 @@ with offset-based extraction for all template types.
 
 Usage:
   python generate_all_templates.py
-  python generate_all_templates.py --from-schema schema.json
+  python generate_all_templates.py --from-schema generated/schema.json
 """
 
 import argparse
@@ -320,7 +320,7 @@ def main():
     output.append("}")
 
     # Write the generated code
-    output_file = Path('generated_extraction_code.cs')
+    output_file = Path('generated/generated_extraction_code.cs')
     with open(output_file, 'w') as f:
         f.write('\n'.join(output))
 

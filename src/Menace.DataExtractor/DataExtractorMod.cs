@@ -11,14 +11,14 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.3.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.6.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "4.3.0";
+        private const string ExtractorVersion = "4.6.0";
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -72,9 +72,10 @@ namespace Menace.DataExtractor
             _tryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg("Menace Data Extractor v4.2.0 (Full Direct-Read + List extraction)");
+            LoggerInstance.Msg($"Menace Data Extractor v{ExtractorVersion} (Full Direct-Read + List extraction)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
+            PlayerLog($"Data Extractor v{ExtractorVersion} active");
 
             // Check if extraction can be skipped (game data unchanged)
             var currentFingerprint = ComputeGameFingerprint(rootDir);
@@ -601,6 +602,86 @@ namespace Menace.DataExtractor
                     }
                 }
 
+                // Fallback: ConversationTemplate uses its own loader, not DataTemplateLoader
+                if (!objectsByType.ContainsKey("ConversationTemplate"))
+                {
+                    try
+                    {
+                        var convType = templateTypes.FirstOrDefault(t => t.Name == "ConversationTemplate");
+                        if (convType != null)
+                        {
+                            List<UnityEngine.Object> convObjects = null;
+
+                            // Strategy 1: ConversationTemplate.LoadAllUncached()
+                            var loadMethod = convType.GetMethod("LoadAllUncached",
+                                BindingFlags.Public | BindingFlags.Static);
+                            if (loadMethod != null)
+                            {
+                                try
+                                {
+                                    var loadResult = loadMethod.Invoke(null, null);
+                                    if (loadResult != null)
+                                        convObjects = EnumerateIl2CppCollection(loadResult);
+                                }
+                                catch (Exception ex)
+                                {
+                                    DebugLog($"  ConversationTemplate.LoadAllUncached failed: {ex.InnerException?.Message ?? ex.Message}");
+                                }
+                            }
+
+                            // Strategy 2: Resources.FindObjectsOfTypeAll<ConversationTemplate>()
+                            if (convObjects == null || convObjects.Count == 0)
+                            {
+                                try
+                                {
+                                    var findMethod = typeof(Resources).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                                        .FirstOrDefault(m => m.Name == "FindObjectsOfTypeAll" && m.IsGenericMethodDefinition);
+                                    if (findMethod != null)
+                                    {
+                                        var findGeneric = findMethod.MakeGenericMethod(convType);
+                                        var findResult = findGeneric.Invoke(null, null);
+                                        if (findResult != null)
+                                            convObjects = EnumerateIl2CppCollection(findResult);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    DebugLog($"  ConversationTemplate FindObjectsOfTypeAll failed: {ex.InnerException?.Message ?? ex.Message}");
+                                }
+                            }
+
+                            if (convObjects != null && convObjects.Count > 0)
+                            {
+                                objectsByType["ConversationTemplate"] = convObjects;
+                                // Cache class pointer
+                                foreach (var obj in convObjects)
+                                {
+                                    if (obj is Il2CppObjectBase il2cppBase &&
+                                        il2cppBase.Pointer != IntPtr.Zero)
+                                    {
+                                        try
+                                        {
+                                            IntPtr klass = IL2CPP.il2cpp_object_get_class(
+                                                il2cppBase.Pointer);
+                                            if (klass != IntPtr.Zero)
+                                            {
+                                                _il2cppClassPtrCache["ConversationTemplate"] = klass;
+                                                break;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                DebugLog($"  ConversationTemplate: {convObjects.Count} instances (via fallback loader)");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugLog($"  ConversationTemplate fallback failed: {ex.InnerException?.Message ?? ex.Message}");
+                    }
+                }
+
                 DebugLog($"  Loaded {objectsByType.Count} template types via DataTemplateLoader");
                 foreach (var kvp in objectsByType.OrderBy(k => k.Key))
                     DebugLog($"    {kvp.Key}: {kvp.Value.Count} instances");
@@ -725,6 +806,27 @@ namespace Menace.DataExtractor
                         {
                             instCtx.Name = idStr;
                             instCtx.Data["name"] = idStr;
+                        }
+                        // Fallback for types without m_ID (e.g. ConversationTemplate):
+                        // try Path field, then Unity Object.name
+                        else if (instCtx.Data.TryGetValue("Path", out var pathVal) && pathVal is string pathStr && !string.IsNullOrEmpty(pathStr))
+                        {
+                            instCtx.Name = pathStr;
+                            instCtx.Data["name"] = pathStr;
+                        }
+                        else if (instCtx.Name != null && instCtx.Name.StartsWith("unknown_") && instCtx.Pointer != IntPtr.Zero)
+                        {
+                            try
+                            {
+                                var nameObj = new UnityEngine.Object(instCtx.Pointer);
+                                string unityName = nameObj.name;
+                                if (!string.IsNullOrEmpty(unityName))
+                                {
+                                    instCtx.Name = unityName;
+                                    instCtx.Data["name"] = unityName;
+                                }
+                            }
+                            catch { }
                         }
                         typeCtx.Instances.Add(instCtx);
                     }
@@ -929,9 +1031,10 @@ namespace Menace.DataExtractor
                     // IL2CPP says float (R4) but IL2CppInterop reflected type says double — trust IL2CPP
                     if (nativeType == 11 && propType == typeof(double))
                         return BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(addr)), 0);
-                    // IL2CPP says double (R8) but reflected type says float — trust IL2CPP
+                    // IL2CPP says double (R8) but reflected type says float — trust C# type,
+                    // read 4 bytes as float. IL2CPP metadata misreports float fields as R8.
                     if (nativeType == 12 && propType == typeof(float))
-                        return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+                        return ReadFloat(addr);
                 }
 
                 // Primitive types — direct Marshal reads
@@ -954,7 +1057,7 @@ namespace Menace.DataExtractor
                 if (propType == typeof(ulong))
                     return (long)(ulong)Marshal.ReadInt64(addr);
                 if (propType == typeof(double))
-                    return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+                    return ReadDoubleValidated(addr);
 
                 // String — read the Il2CppString pointer, then convert
                 if (propType == typeof(string))
@@ -1069,6 +1172,27 @@ namespace Menace.DataExtractor
         private static float ReadFloat(IntPtr addr)
         {
             return BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(addr)), 0);
+        }
+
+        /// <summary>
+        /// Read a double from memory with validation.
+        /// IL2CPP metadata sometimes reports float fields as R8 (double). When this happens,
+        /// reading 8 bytes produces corrupted doubles (e.g. float 1.0 → 5.26E-315, 0.0078125, etc.).
+        /// Detect these invalid values and re-read as 4-byte float instead.
+        /// </summary>
+        private static object ReadDoubleValidated(IntPtr addr)
+        {
+            double d = BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
+            if (d == 0.0) return d;
+            // Subnormal, NaN, or Infinity doubles are never valid game data
+            if (!double.IsNormal(d))
+                return (double)ReadFloat(addr);
+            // Extremely small normal doubles (< 1e-100) are also almost certainly
+            // corrupted floats — game stat values never use such magnitudes.
+            // E.g. 7.748E-304 = float(1.0) + 4 adjacent bytes read as 8-byte double
+            if (Math.Abs(d) < 1e-100)
+                return (double)ReadFloat(addr);
+            return d;
         }
 
         /// <summary>
@@ -1465,6 +1589,12 @@ namespace Menace.DataExtractor
                         {
                             result.Add(ReadIl2CppListDirect(elemPtr, elemClass, depth + 1));
                         }
+                        else if (elemClassName == "String")
+                        {
+                            // IL2CPP String — read directly, don't walk fields
+                            string str = IL2CPP.Il2CppStringToManaged(elemPtr);
+                            result.Add(str);
+                        }
                         else
                         {
                             result.Add(ReadNestedObjectDirect(elemPtr, elemClass, elemClassName, depth + 1));
@@ -1569,6 +1699,7 @@ namespace Menace.DataExtractor
         {
             try
             {
+                // Strategy 1: m_ID (standard DataTemplate path)
                 IntPtr idField = FindNativeField(klass, "m_ID");
                 if (idField != IntPtr.Zero)
                 {
@@ -1584,6 +1715,24 @@ namespace Menace.DataExtractor
                         }
                     }
                 }
+
+                // Strategy 2: Path field (ConversationTemplate's localization base key)
+                IntPtr pathField = FindNativeField(klass, "Path");
+                if (pathField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(pathField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objectPointer + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string path = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(path))
+                                return path;
+                        }
+                    }
+                }
+
                 return null;
             }
             catch
@@ -1740,6 +1889,12 @@ namespace Menace.DataExtractor
                         else if (elemIsLocalization)
                         {
                             result.Add(ReadLocalizedStringWithClass(elemPtr, elemClass) ?? "");
+                        }
+                        else if (elemClassName == "String")
+                        {
+                            // IL2CPP String — read directly, don't walk fields
+                            string str = IL2CPP.Il2CppStringToManaged(elemPtr);
+                            result.Add(str);
                         }
                         else
                         {
@@ -1979,7 +2134,32 @@ namespace Menace.DataExtractor
             {
                 var result = new Dictionary<string, object>();
 
-                // Iterate all fields of this class (and parent classes)
+                // Pass 1: Collect all instance field offsets (sorted) so we can detect
+                // R8 (double) fields that are actually R4 (float) in memory.
+                // IL2CPP metadata sometimes reports float fields as double;
+                // we detect this by checking the gap to the next field: if < 8, it's R4.
+                var offsetSet = new HashSet<uint>();
+                {
+                    IntPtr wk = klass;
+                    while (wk != IntPtr.Zero)
+                    {
+                        IntPtr it = IntPtr.Zero;
+                        IntPtr f;
+                        while ((f = IL2CPP.il2cpp_class_get_fields(wk, ref it)) != IntPtr.Zero)
+                        {
+                            IntPtr ft = IL2CPP.il2cpp_field_get_type(f);
+                            if (ft == IntPtr.Zero) continue;
+                            uint fa = IL2CPP.il2cpp_type_get_attrs(ft);
+                            if ((fa & 0x10) != 0) continue; // skip static
+                            uint fo = IL2CPP.il2cpp_field_get_offset(f);
+                            if (fo != 0) offsetSet.Add(fo);
+                        }
+                        wk = IL2CPP.il2cpp_class_get_parent(wk);
+                    }
+                }
+                var sortedOffsets = offsetSet.OrderBy(x => x).ToArray();
+
+                // Pass 2: Read field values
                 IntPtr walkKlass = klass;
                 while (walkKlass != IntPtr.Zero)
                 {
@@ -1999,16 +2179,35 @@ namespace Menace.DataExtractor
                         string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
                         if (string.IsNullOrEmpty(fieldName)) continue;
 
+                        // Skip fields already read from a more-derived class
+                        if (result.ContainsKey(fieldName)) continue;
+
                         uint fieldOffset = IL2CPP.il2cpp_field_get_offset(field);
                         if (fieldOffset == 0) continue;
 
                         IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
                         if (fieldType == IntPtr.Zero) continue;
 
+                        // Skip static fields — their offsets are in the static data area, not the object
+                        uint fieldAttrs = IL2CPP.il2cpp_type_get_attrs(fieldType);
+                        if ((fieldAttrs & 0x10) != 0) continue; // FIELD_ATTRIBUTE_STATIC
+
                         int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
                         IntPtr addr = objPtr + (int)fieldOffset;
 
-                        if (doLog) DebugLog($"        [nested]   {fieldName} typeEnum={typeEnum} offset={fieldOffset}");
+                        // Detect R8 (double) fields that are actually R4 (float) in memory:
+                        // Find the gap to the next field; if < 8 bytes, this can't be a double.
+                        bool r8IsActuallyR4 = false;
+                        if (typeEnum == 12)
+                        {
+                            // Binary search for the next offset after fieldOffset
+                            int idx = Array.BinarySearch(sortedOffsets, fieldOffset);
+                            if (idx < 0) idx = ~idx; else idx++;
+                            uint gap = idx < sortedOffsets.Length ? sortedOffsets[idx] - fieldOffset : 8;
+                            r8IsActuallyR4 = gap < 8;
+                        }
+
+                        if (doLog) DebugLog($"        [nested]   {fieldName} typeEnum={typeEnum} offset={fieldOffset}{(r8IsActuallyR4 ? " (R8→R4)" : "")}");
 
                         object value = typeEnum switch
                         {
@@ -2023,7 +2222,7 @@ namespace Menace.DataExtractor
                             9 => Marshal.ReadInt64(addr),                // IL2CPP_TYPE_I8
                             10 => (long)(ulong)Marshal.ReadInt64(addr),  // IL2CPP_TYPE_U8
                             11 => ReadFloat(addr),                       // IL2CPP_TYPE_R4
-                            12 => BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr)), // IL2CPP_TYPE_R8
+                            12 => r8IsActuallyR4 ? (object)(double)ReadFloat(addr) : ReadDoubleValidated(addr),
                             14 => ReadIl2CppStringAt(addr),              // IL2CPP_TYPE_STRING
                             17 => ReadValueTypeField(addr, fieldType),   // IL2CPP_TYPE_VALUETYPE (enums + structs)
                             18 => ReadNestedRefField(addr, fieldType, depth), // IL2CPP_TYPE_CLASS
@@ -2229,6 +2428,11 @@ namespace Menace.DataExtractor
             {
                 LoggerInstance.Warning("Extraction did not complete before quit");
             }
+        }
+
+        private static void PlayerLog(string message)
+        {
+            UnityEngine.Debug.Log($"[MODDED] {message}");
         }
     }
 }

@@ -109,6 +109,7 @@ public class ModpackManager
         var modpackDir = Path.Combine(_stagingBasePath, SanitizeName(name));
         Directory.CreateDirectory(modpackDir);
         Directory.CreateDirectory(Path.Combine(modpackDir, "stats"));
+        Directory.CreateDirectory(Path.Combine(modpackDir, "clones"));
         Directory.CreateDirectory(Path.Combine(modpackDir, "assets"));
         Directory.CreateDirectory(Path.Combine(modpackDir, "src"));
 
@@ -215,6 +216,54 @@ public class ModpackManager
     }
 
     // ---------------------------------------------------------------
+    // Clone operations
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// Save clone definitions for a specific template type.
+    /// JSON format: { "newName": "sourceName", ... }
+    /// </summary>
+    public void SaveStagingClones(string modpackName, string templateType, string jsonContent)
+    {
+        var modpackDir = ResolveStagingDir(modpackName);
+        var clonesDir = Path.Combine(modpackDir, "clones");
+        Directory.CreateDirectory(clonesDir);
+
+        var path = Path.Combine(clonesDir, $"{templateType}.json");
+        File.WriteAllText(path, jsonContent);
+
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Load all clone definitions from a staging modpack.
+    /// Returns templateType → { newName → sourceName }
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> LoadStagingClones(string modpackName)
+    {
+        var result = new Dictionary<string, Dictionary<string, string>>();
+        var clonesDir = Path.Combine(ResolveStagingDir(modpackName), "clones");
+
+        if (!Directory.Exists(clonesDir))
+            return result;
+
+        foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
+        {
+            var templateType = Path.GetFileNameWithoutExtension(file);
+            try
+            {
+                var json = File.ReadAllText(file);
+                var clones = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                if (clones != null && clones.Count > 0)
+                    result[templateType] = clones;
+            }
+            catch { }
+        }
+
+        return result;
+    }
+
+    // ---------------------------------------------------------------
     // Asset operations
     // ---------------------------------------------------------------
 
@@ -232,6 +281,16 @@ public class ModpackManager
     {
         var path = Path.Combine(ResolveStagingDir(modpackName), "assets", relativePath);
         return File.Exists(path) ? path : null;
+    }
+
+    public void RegisterAssetInManifest(string modpackName, string relativePath)
+    {
+        var modpackDir = ResolveStagingDir(modpackName);
+        var manifest = LoadManifest(modpackDir);
+        if (manifest == null) return;
+
+        manifest.Assets[relativePath] = Path.Combine("assets", relativePath);
+        manifest.SaveToFile();
     }
 
     public void RemoveStagingAsset(string modpackName, string relativePath)
@@ -495,18 +554,48 @@ public class ModpackManager
             }
         }
 
-        // Assets
-        JsonObject? assetsObj = null;
+        // Assets: start from manifest entries, then scan for unregistered files
+        var assetsObj = new JsonObject();
         if (manifest?.Assets != null && manifest.Assets.Count > 0)
         {
-            assetsObj = new JsonObject();
             foreach (var kvp in manifest.Assets)
                 assetsObj[kvp.Key] = kvp.Value;
         }
 
+        // Fallback scan: pick up any files in assets/ not already in the manifest
+        var assetsDir = Path.Combine(stagingPath, "assets");
+        if (Directory.Exists(assetsDir))
+        {
+            foreach (var file in Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories))
+            {
+                var relPath = Path.GetRelativePath(assetsDir, file);
+                if (!assetsObj.ContainsKey(relPath))
+                    assetsObj[relPath] = Path.Combine("assets", relPath);
+            }
+        }
+
+        // Clones
+        var clones = new JsonObject();
+        var clonesDir = Path.Combine(stagingPath, "clones");
+        if (Directory.Exists(clonesDir))
+        {
+            foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
+            {
+                var templateType = Path.GetFileNameWithoutExtension(file);
+                try
+                {
+                    var node = JsonNode.Parse(File.ReadAllText(file));
+                    if (node != null)
+                        clones[templateType] = node;
+                }
+                catch { }
+            }
+        }
+
+        runtimeObj["clones"] = clones;
         runtimeObj["patches"] = patches;
         runtimeObj["templates"] = legacyTemplates;  // backward compat for v1 loader
-        runtimeObj["assets"] = assetsObj ?? new JsonObject();
+        runtimeObj["assets"] = assetsObj;
 
         // Code info
         if (manifest?.Code != null && manifest.Code.HasAnyCode)
@@ -561,7 +650,7 @@ public class ModpackManager
     /// Infrastructure DLL directories under third_party/bundled/ that should be
     /// copied into the runtime/ directory for automatic deployment with modpacks.
     /// </summary>
-    private static readonly string[] BundledRuntimeDllDirs = { "DataExtractor", "ModpackLoader", "CombinedArms" };
+    private static readonly string[] BundledRuntimeDllDirs = { "DataExtractor", "ModpackLoader" };
 
     /// <summary>
     /// Copies bundled infrastructure DLLs into the runtime/ directory so they are

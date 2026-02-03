@@ -530,18 +530,27 @@ public class DeployManager
         runtimeObj["patches"] = patches;
         runtimeObj["templates"] = legacyTemplates; // v1 backward compat
 
-        // Assets
+        // Assets: start from manifest entries, then scan for unregistered files
+        var assetsObj = new JsonObject();
         if (modpack.Assets.Count > 0)
         {
-            var assetsObj = new JsonObject();
             foreach (var kvp in modpack.Assets)
                 assetsObj[kvp.Key] = kvp.Value;
-            runtimeObj["assets"] = assetsObj;
         }
-        else
+
+        // Fallback scan: pick up any files in assets/ not already in the manifest
+        var assetsDir = Path.Combine(modpack.Path, "assets");
+        if (Directory.Exists(assetsDir))
         {
-            runtimeObj["assets"] = new JsonObject();
+            foreach (var file in Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories))
+            {
+                var relPath = Path.GetRelativePath(assetsDir, file);
+                if (!assetsObj.ContainsKey(relPath))
+                    assetsObj[relPath] = Path.Combine("assets", relPath);
+            }
         }
+
+        runtimeObj["assets"] = assetsObj;
 
         // Code
         if (modpack.Code.HasAnyCode)

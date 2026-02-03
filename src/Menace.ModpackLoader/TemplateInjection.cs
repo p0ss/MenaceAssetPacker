@@ -194,6 +194,72 @@ public partial class ModpackLoaderMod
             if (ReadOnlyProperties.Contains(fieldName))
                 continue;
 
+            // Handle dotted paths (e.g., "Properties.HitpointsPerElement")
+            // by navigating to the nested object and setting the sub-field.
+            var dotIdx = fieldName.IndexOf('.');
+            if (dotIdx > 0)
+            {
+                var parentFieldName = fieldName[..dotIdx];
+                var childFieldName = fieldName[(dotIdx + 1)..];
+
+                if (!propertyMap.TryGetValue(parentFieldName, out var parentProp))
+                {
+                    LoggerInstance.Warning($"    {obj.name}: parent property '{parentFieldName}' not found on {templateType.Name}");
+                    continue;
+                }
+
+                try
+                {
+                    var parentObj = parentProp.GetValue(castObj);
+                    if (parentObj == null)
+                    {
+                        LoggerInstance.Warning($"    {obj.name}.{parentFieldName} is null, cannot set '{childFieldName}'");
+                        continue;
+                    }
+
+                    var childProp = parentObj.GetType().GetProperty(childFieldName,
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (childProp == null || !childProp.CanWrite)
+                    {
+                        LoggerInstance.Warning($"    {obj.name}: property '{childFieldName}' not found on {parentObj.GetType().Name}");
+                        continue;
+                    }
+
+                    if (rawValue is JArray nestedJArray)
+                    {
+                        var kind = ClassifyCollectionType(childProp.PropertyType, out _);
+                        if (kind != CollectionKind.None)
+                        {
+                            if (TryApplyCollectionValue(parentObj, childProp, nestedJArray))
+                                appliedCount++;
+                            continue;
+                        }
+                    }
+
+                    // Incremental list operations via JObject with $op
+                    if (rawValue is JObject nestedJObj)
+                    {
+                        var nestedKind = ClassifyCollectionType(childProp.PropertyType, out var nestedElType);
+                        if (nestedKind == CollectionKind.Il2CppList && nestedElType != null)
+                        {
+                            if (TryApplyIncrementalList(parentObj, childProp, nestedJObj, nestedElType))
+                                appliedCount++;
+                            continue;
+                        }
+                    }
+
+                    var nestedConverted = ConvertToPropertyType(rawValue, childProp.PropertyType);
+                    childProp.SetValue(parentObj, nestedConverted);
+                    appliedCount++;
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex.InnerException ?? ex;
+                    LoggerInstance.Error($"    {obj.name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
+                }
+                continue;
+            }
+
             if (!propertyMap.TryGetValue(fieldName, out var prop))
             {
                 LoggerInstance.Warning($"    {obj.name}: property '{fieldName}' not found on {templateType.Name}");
@@ -209,6 +275,18 @@ public partial class ModpackLoaderMod
                     if (kind != CollectionKind.None)
                     {
                         if (TryApplyCollectionValue(castObj, prop, jArray))
+                            appliedCount++;
+                        continue;
+                    }
+                }
+
+                // Incremental list operations: JObject with $remove/$update/$append
+                if (rawValue is JObject jObj)
+                {
+                    var collKind = ClassifyCollectionType(prop.PropertyType, out var elType);
+                    if (collKind == CollectionKind.Il2CppList && elType != null)
+                    {
+                        if (TryApplyIncrementalList(castObj, prop, jObj, elType))
                             appliedCount++;
                         continue;
                     }
@@ -343,8 +421,16 @@ public partial class ModpackLoaderMod
         var list = prop.GetValue(castObj);
         if (list == null)
         {
-            LoggerInstance.Warning($"    {prop.Name}: IL2CPP List is null, skipping");
-            return false;
+            try
+            {
+                list = Activator.CreateInstance(prop.PropertyType);
+                prop.SetValue(castObj, list);
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
+                return false;
+            }
         }
 
         var listType = list.GetType();
@@ -464,7 +550,263 @@ public partial class ModpackLoaderMod
         if (targetType == typeof(long)) return token.Value<long>();
         if (targetType == typeof(string)) return token.Value<string>();
 
+        // UnityEngine.Object references: resolve by name from string
+        if (token.Type == JTokenType.String && typeof(UnityEngine.Object).IsAssignableFrom(targetType))
+        {
+            var name = token.Value<string>();
+            if (name != null)
+            {
+                var lookup = BuildNameLookup(targetType);
+                if (lookup.TryGetValue(name, out var resolved))
+                {
+                    var castMethod = TryCastMethod.MakeGenericMethod(targetType);
+                    return castMethod.Invoke(resolved, null);
+                }
+                LoggerInstance.Warning($"    Could not resolve '{name}' as {targetType.Name}");
+            }
+            return null;
+        }
+
+        // IL2CPP object construction from JObject
+        if (token is JObject jObj && IsIl2CppType(targetType))
+            return CreateIl2CppObject(targetType, jObj);
+
         // For complex types, fall back to conversion
         return token.ToObject(targetType);
+    }
+
+    /// <summary>
+    /// Constructs a new IL2CPP proxy object from a JObject and recursively sets its properties.
+    /// </summary>
+    private object CreateIl2CppObject(Type targetType, JObject jObj, Type skipType = null)
+    {
+        object newObj;
+        try
+        {
+            newObj = Activator.CreateInstance(targetType);
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"    Failed to construct {targetType.Name}: {ex.Message}");
+            return null;
+        }
+
+        ApplyFieldOverrides(newObj, jObj, skipType);
+        return newObj;
+    }
+
+    /// <summary>
+    /// Sets individual fields on an existing IL2CPP object from a JObject.
+    /// Used by both $update incremental operations and CreateIl2CppObject.
+    /// </summary>
+    private void ApplyFieldOverrides(object target, JObject overrides, Type skipType = null)
+    {
+        var targetType = target.GetType();
+
+        // Build property map (walk inheritance chain)
+        var propertyMap = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+        var currentType = targetType;
+        while (currentType != null && currentType.Name != "Object" &&
+               currentType != typeof(Il2CppObjectBase))
+        {
+            var props = currentType.GetProperties(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            foreach (var prop in props)
+            {
+                if (prop.CanWrite && prop.CanRead && !propertyMap.ContainsKey(prop.Name))
+                    propertyMap[prop.Name] = prop;
+            }
+            currentType = currentType.BaseType;
+        }
+
+        foreach (var kvp in overrides)
+        {
+            var fieldName = kvp.Key;
+            var value = kvp.Value;
+
+            if (ReadOnlyProperties.Contains(fieldName))
+                continue;
+
+            if (!propertyMap.TryGetValue(fieldName, out var prop))
+            {
+                LoggerInstance.Warning($"    {targetType.Name}: property '{fieldName}' not found");
+                continue;
+            }
+
+            // Skip back-references to avoid circular construction
+            if (skipType != null && prop.PropertyType.IsAssignableFrom(skipType))
+                continue;
+
+            try
+            {
+                // Handle collection properties specially
+                var kind = ClassifyCollectionType(prop.PropertyType, out var elType);
+                if (kind != CollectionKind.None && elType != null)
+                {
+                    if (value is JArray arr)
+                    {
+                        // Ensure IL2CPP list exists before full replacement
+                        if (kind == CollectionKind.Il2CppList)
+                            EnsureListExists(target, prop);
+                        TryApplyCollectionValue(target, prop, arr);
+                    }
+                    else if (value is JObject collOps && kind == CollectionKind.Il2CppList)
+                    {
+                        EnsureListExists(target, prop);
+                        TryApplyIncrementalList(target, prop, collOps, elType);
+                    }
+                    continue;
+                }
+
+                // For everything else, use ConvertJTokenToType which handles:
+                // - Primitives, enums, strings
+                // - UnityEngine.Object references (resolved by name)
+                // - Nested IL2CPP objects (recursive construction)
+                var converted = ConvertJTokenToType(value, prop.PropertyType);
+                prop.SetValue(target, converted);
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                LoggerInstance.Warning($"    {targetType.Name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ensures an IL2CPP List property is non-null, constructing a new instance if needed.
+    /// </summary>
+    private void EnsureListExists(object owner, PropertyInfo prop)
+    {
+        var existing = prop.GetValue(owner);
+        if (existing != null) return;
+
+        try
+        {
+            var newList = Activator.CreateInstance(prop.PropertyType);
+            prop.SetValue(owner, newList);
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"    {prop.Name}: failed to construct list: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Applies incremental list operations ($remove, $update, $append) to an IL2CPP List.
+    /// Operations are applied in order: remove → update → append.
+    /// </summary>
+    private bool TryApplyIncrementalList(object castObj, PropertyInfo prop, JObject ops, Type elementType)
+    {
+        var list = prop.GetValue(castObj);
+        if (list == null)
+        {
+            try
+            {
+                list = Activator.CreateInstance(prop.PropertyType);
+                prop.SetValue(castObj, list);
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        var listType = list.GetType();
+        var countProp = listType.GetProperty("Count");
+        var getItem = listType.GetMethod("get_Item");
+        var removeAt = listType.GetMethod("RemoveAt");
+        var addMethod = listType.GetMethod("Add");
+
+        if (countProp == null || getItem == null)
+        {
+            LoggerInstance.Warning($"    {prop.Name}: List missing Count or get_Item");
+            return false;
+        }
+
+        int opCount = 0;
+
+        // $remove — remove elements by index (highest-first to preserve positions)
+        if (ops.TryGetValue("$remove", out var removeToken) && removeToken is JArray removeIndices)
+        {
+            if (removeAt == null)
+            {
+                LoggerInstance.Warning($"    {prop.Name}: List has no RemoveAt method");
+            }
+            else
+            {
+                var indices = removeIndices.Select(t => t.Value<int>()).OrderByDescending(i => i).ToList();
+                var count = (int)countProp.GetValue(list);
+                foreach (var idx in indices)
+                {
+                    if (idx >= 0 && idx < count)
+                    {
+                        removeAt.Invoke(list, new object[] { idx });
+                        count--;
+                        opCount++;
+                    }
+                    else
+                    {
+                        LoggerInstance.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={count})");
+                    }
+                }
+            }
+        }
+
+        // $update — modify fields on existing elements at specific indices
+        if (ops.TryGetValue("$update", out var updateToken) && updateToken is JObject updates)
+        {
+            var count = (int)countProp.GetValue(list);
+            foreach (var kvp in updates)
+            {
+                if (!int.TryParse(kvp.Key, out var idx))
+                {
+                    LoggerInstance.Warning($"    {prop.Name}.$update: invalid index '{kvp.Key}'");
+                    continue;
+                }
+                if (idx < 0 || idx >= count)
+                {
+                    LoggerInstance.Warning($"    {prop.Name}.$update: index {idx} out of range (count={count})");
+                    continue;
+                }
+                if (kvp.Value is not JObject fieldOverrides)
+                {
+                    LoggerInstance.Warning($"    {prop.Name}.$update[{idx}]: expected object");
+                    continue;
+                }
+
+                var element = getItem.Invoke(list, new object[] { idx });
+                if (element != null)
+                {
+                    ApplyFieldOverrides(element, fieldOverrides);
+                    opCount++;
+                }
+            }
+        }
+
+        // $append — add new elements at the end
+        if (ops.TryGetValue("$append", out var appendToken) && appendToken is JArray appendItems)
+        {
+            if (addMethod == null)
+            {
+                LoggerInstance.Warning($"    {prop.Name}: List has no Add method");
+            }
+            else
+            {
+                foreach (var item in appendItems)
+                {
+                    var converted = ConvertJTokenToType(item, elementType);
+                    if (converted != null)
+                    {
+                        addMethod.Invoke(list, new[] { converted });
+                        opCount++;
+                    }
+                }
+            }
+        }
+
+        LoggerInstance.Msg($"    {prop.Name}: applied {opCount} incremental ops on List<{elementType.Name}>");
+        return opCount > 0;
     }
 }

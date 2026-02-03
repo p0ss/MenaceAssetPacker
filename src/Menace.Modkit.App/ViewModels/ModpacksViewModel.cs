@@ -71,8 +71,7 @@ public sealed class ModpacksViewModel : ViewModelBase
     private static readonly HashSet<string> InfrastructureDlls = new(StringComparer.OrdinalIgnoreCase)
     {
         "Menace.DataExtractor.dll",
-        "Menace.ModpackLoader.dll",
-        "Menace.CombinedArms.dll"
+        "Menace.ModpackLoader.dll"
     };
 
     /// <summary>

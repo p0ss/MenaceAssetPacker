@@ -30,4 +30,10 @@ public interface IModpackPlugin
     /// Default no-op — only override if your plugin draws IMGUI elements.
     /// </summary>
     void OnGUI() { }
+
+    /// <summary>
+    /// Called when the plugin is being unloaded (e.g., hot-reload or shutdown).
+    /// Default no-op — override to clean up resources, unpatch harmony, etc.
+    /// </summary>
+    void OnUnload() { }
 }

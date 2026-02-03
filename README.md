@@ -10,12 +10,13 @@ A modding toolkit for [Menace](https://store.steampowered.com/app/2546040/Menace
 - **Modpack Management** — Create, version, and organize modpacks with dependency tracking and load ordering
 - **One-Click Deploy** — Compile and deploy modpacks to the game's Mods/ folder, with automatic bundle generation
 - **Conflict Detection** — Identifies overlapping modifications across modpacks before deployment
+- **Runtime SDK** — In-game API for IL2CPP type resolution, object access, collections, error handling, and a Roslyn REPL ([docs](docs/wiki/index.md))
 
 ## Getting Started
 
 ### Requirements
 
-- .NET 9+ SDK (for the desktop app)
+- .NET 10+ SDK (for the desktop app)
 - Menace or Menace Demo installed via Steam
 - Linux or Windows
 
@@ -54,8 +55,14 @@ This creates:
 |---------|-------------|
 | **Menace.Modkit.App** | Avalonia desktop GUI — stats editor, asset browser, code editor, modpack manager |
 | **Menace.Modkit.Core** | Shared library — asset bundle compilation, type trees, patch merging |
+| **Menace.Modkit.Cli** | Command-line tool for building typetree caches from game installations |
 | **Menace.ModpackLoader** | MelonLoader runtime mod — loads modpacks into the game at launch |
+| **Menace.DataExtractor** | MelonLoader mod — extracts game template data and IL2CPP metadata to JSON |
+| **Menace.CombinedArms** | IModpackPlugin — AI coordination (focus fire, formations, sequencing) |
+| **Menace.DevMode** | IModpackPlugin — in-game dev tools (unit spawning, god mode, entity deletion) |
+| **Menace.PinningMod** | IModpackPlugin — suppression mechanics tweaks (crawling, stun cap) |
 | **Menace.Modkit.Tests** | Test suite (xUnit) — manifest roundtrips, patch merging, conflict detection, security scanning |
+| **Menace.ModpackLoader.Tests** | Test suite (xUnit) — SDK API coverage (GameType, GameObj, GameState, ModError, collections, REPL compiler) |
 
 ## Modpack Structure
 
@@ -137,11 +144,13 @@ Key libraries:
 ## Running Tests
 
 ```bash
+# App tests — manifests, patch merging, conflict detection, security scanning
 dotnet test tests/Menace.Modkit.Tests
-```
 
-Covers manifest serialization, V1-to-V2 migration, patch merging, conflict detection, dependency parsing, deploy state tracking, security scanning, and runtime manifest compatibility.
+# SDK tests — GameType, GameObj, GameState, ModError, collections, REPL compiler
+dotnet test tests/Menace.ModpackLoader.Tests
+```
 
 ## License
 
-This project is not yet released under a formal license. All rights reserved.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).

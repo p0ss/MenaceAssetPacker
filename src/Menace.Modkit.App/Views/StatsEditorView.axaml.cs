@@ -434,6 +434,19 @@ public class StatsEditorView : UserControl
     saveButton.Click += OnSaveClick;
     toolbar.Children.Add(saveButton);
 
+    var cloneButton = new Button
+    {
+      Content = "Clone",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(1),
+      BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
+      Padding = new Thickness(16, 6),
+      FontSize = 12
+    };
+    cloneButton.Click += OnCloneClick;
+    toolbar.Children.Add(cloneButton);
+
     var statusText = new TextBlock
     {
       Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
@@ -539,6 +552,123 @@ public class StatsEditorView : UserControl
     }
   }
 
+  private async void OnCloneClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    if (DataContext is not StatsEditorViewModel vm)
+      return;
+
+    if (vm.SelectedNode?.Template == null)
+    {
+      vm.SaveStatus = "Select a template to clone";
+      return;
+    }
+
+    if (string.IsNullOrEmpty(vm.CurrentModpackName))
+    {
+      vm.SaveStatus = "Select a modpack first";
+      return;
+    }
+
+    // Show a simple dialog to get the clone name
+    var dialog = new Window
+    {
+      Title = "Clone Template",
+      Width = 450,
+      Height = 180,
+      WindowStartupLocation = WindowStartupLocation.CenterOwner,
+      Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+      CanResize = false
+    };
+
+    var panel = new StackPanel
+    {
+      Margin = new Thickness(24),
+      Spacing = 12
+    };
+
+    panel.Children.Add(new TextBlock
+    {
+      Text = $"Clone '{vm.SelectedNode.Template.Name}'",
+      Foreground = Brushes.White,
+      FontSize = 14,
+      FontWeight = FontWeight.SemiBold
+    });
+
+    panel.Children.Add(new TextBlock
+    {
+      Text = "Enter a name for the new template (e.g. enemy.pirate_scavengers_elite):",
+      Foreground = Brushes.White,
+      Opacity = 0.8,
+      FontSize = 12
+    });
+
+    var nameInput = new TextBox
+    {
+      Text = vm.SelectedNode.Template.Name + "_clone",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      BorderThickness = new Thickness(1),
+      Padding = new Thickness(8, 6),
+      FontSize = 12
+    };
+    panel.Children.Add(nameInput);
+
+    var buttonRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      HorizontalAlignment = HorizontalAlignment.Right
+    };
+
+    var cancelBtn = new Button
+    {
+      Content = "Cancel",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(1),
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(16, 6),
+      FontSize = 12
+    };
+    cancelBtn.Click += (_, _) => dialog.Close();
+    buttonRow.Children.Add(cancelBtn);
+
+    var okBtn = new Button
+    {
+      Content = "Clone",
+      Background = new SolidColorBrush(Color.Parse("#064b48")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(16, 6),
+      FontSize = 12
+    };
+    okBtn.Click += (_, _) =>
+    {
+      var newName = nameInput.Text?.Trim();
+      if (string.IsNullOrEmpty(newName))
+        return;
+
+      if (vm.CloneTemplate(newName))
+      {
+        vm.SaveStatus = $"Cloned template as '{newName}'";
+        dialog.Close();
+      }
+      else
+      {
+        vm.SaveStatus = $"Clone failed — name '{newName}' may already exist";
+      }
+    };
+    buttonRow.Children.Add(okBtn);
+
+    panel.Children.Add(buttonRow);
+    dialog.Content = panel;
+
+    var topLevel = TopLevel.GetTopLevel(this);
+    if (topLevel is Window parentWindow)
+      await dialog.ShowDialog(parentWindow);
+  }
+
   private Avalonia.Controls.Templates.IDataTemplate CreatePropertyGridTemplate(bool isEditable)
   {
     return new Avalonia.Controls.Templates.FuncDataTemplate<System.Collections.Generic.Dictionary<string, object?>>((props, _) =>
@@ -553,12 +683,43 @@ public class StatsEditorView : UserControl
         };
       }
 
-      var panel = new StackPanel { Spacing = 12 };
+      var panel = new StackPanel { Spacing = 12, Margin = new Thickness(0, 0, 0, 24) };
+
+      string? currentGroup = null;
+      StackPanel? groupPanel = null;
 
       foreach (var kvp in props)
       {
-        var fieldControl = CreatePropertyField(kvp.Key, kvp.Value, isEditable, 0);
-        panel.Children.Add(fieldControl);
+        var dotIdx = kvp.Key.IndexOf('.');
+        if (dotIdx > 0)
+        {
+          var prefix = kvp.Key[..dotIdx];
+          if (prefix != currentGroup)
+          {
+            currentGroup = prefix;
+            // Section header for the nested object group
+            var header = new TextBlock
+            {
+              Text = prefix,
+              FontSize = 13,
+              FontWeight = FontWeight.SemiBold,
+              Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+              Margin = new Thickness(0, 8, 0, 4)
+            };
+            panel.Children.Add(header);
+            groupPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 0, 0, 0) };
+            panel.Children.Add(groupPanel);
+          }
+          var fieldControl = CreatePropertyField(kvp.Key, kvp.Value, isEditable, 0);
+          groupPanel!.Children.Add(fieldControl);
+        }
+        else
+        {
+          currentGroup = null;
+          groupPanel = null;
+          var fieldControl = CreatePropertyField(kvp.Key, kvp.Value, isEditable, 0);
+          panel.Children.Add(fieldControl);
+        }
       }
 
       return panel;
@@ -569,10 +730,11 @@ public class StatsEditorView : UserControl
   {
     var fieldStack = new StackPanel { Spacing = 4, Margin = new Thickness(indent * 16, 0, 0, 0) };
 
-    // Property label
+    // Property label (show just sub-field name for dotted keys)
+    var displayName = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
     var label = new TextBlock
     {
-      Text = name,
+      Text = displayName,
       Foreground = Brushes.White,
       Opacity = 0.8,
       FontSize = 11,
@@ -593,11 +755,12 @@ public class StatsEditorView : UserControl
       switch (jsonElement.ValueKind)
       {
         case System.Text.Json.JsonValueKind.Object:
-          // Nested object - render as indented group
+          // Deeply nested object (2+ levels) — render read-only.
+          // First-level nested objects are flattened to dotted keys in the ViewModel.
           var nestedPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 0, 0) };
           foreach (var prop in jsonElement.EnumerateObject())
           {
-            var nestedField = CreatePropertyField(prop.Name, prop.Value, isEditable, 0);
+            var nestedField = CreatePropertyField(prop.Name, prop.Value, false, 0);
             nestedPanel.Children.Add(nestedField);
           }
           fieldStack.Children.Add(nestedPanel);
@@ -660,8 +823,8 @@ public class StatsEditorView : UserControl
           {
             System.Text.Json.JsonValueKind.String => jsonElement.GetString(),
             System.Text.Json.JsonValueKind.Number => jsonElement.GetDouble().ToString(),
-            System.Text.Json.JsonValueKind.True => "true",
-            System.Text.Json.JsonValueKind.False => "false",
+            System.Text.Json.JsonValueKind.True => (object)true,
+            System.Text.Json.JsonValueKind.False => (object)false,
             System.Text.Json.JsonValueKind.Null => "null",
             _ => jsonElement.ToString()
           };
@@ -669,7 +832,40 @@ public class StatsEditorView : UserControl
       }
     }
 
-    // Property value (primitive types)
+    // Coerce string booleans back to bool (can happen from staging overrides)
+    if (value is string strBool && bool.TryParse(strBool, out var parsedBool))
+      value = parsedBool;
+
+    // Boolean fields: render as CheckBox instead of TextBox to avoid string conversion issues
+    if (value is bool boolVal)
+    {
+      var checkBox = new CheckBox
+      {
+        IsChecked = boolVal,
+        IsEnabled = isEditable,
+        Content = boolVal ? "True" : "False",
+        Foreground = Brushes.White,
+        FontSize = 12,
+        Tag = name,
+        Margin = new Thickness(0, 2)
+      };
+      if (isEditable)
+      {
+        checkBox.IsCheckedChanged += (s, _) =>
+        {
+          if (s is CheckBox cb && cb.Tag is string fieldName && DataContext is StatsEditorViewModel vm)
+          {
+            var isChecked = cb.IsChecked ?? false;
+            cb.Content = isChecked ? "True" : "False";
+            vm.UpdateModifiedBoolProperty(fieldName, isChecked);
+          }
+        };
+      }
+      fieldStack.Children.Add(checkBox);
+      return fieldStack;
+    }
+
+    // Property value (other primitive types)
     if (isEditable)
     {
       var textBox = new TextBox
@@ -812,24 +1008,33 @@ public class StatsEditorView : UserControl
       };
       browseButton.Click += async (_, _) =>
       {
-        if (DataContext is StatsEditorViewModel vm)
+        try
         {
-          var dialog = new AssetPickerDialog(assetValue.AssetType);
-          var topLevel = TopLevel.GetTopLevel(this);
-          if (topLevel is Window window)
+          if (DataContext is StatsEditorViewModel vm)
           {
-            var result = await dialog.ShowDialog<string?>(window);
-            if (result != null)
+            var modpackName = vm.CurrentModpackName;
+            var modpackMgr = vm.ModpackManager;
+            var dialog = new AssetPickerDialog(assetValue.AssetType, modpackName, modpackMgr);
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is Window window)
             {
-              // Update the asset value
-              assetValue.AssetName = System.IO.Path.GetFileNameWithoutExtension(result);
-              assetValue.AssetFilePath = result;
-              assetValue.ThumbnailPath = result;
-              nameText.Text = assetValue.DisplayText;
-              nameText.Foreground = Brushes.White;
-              nameText.FontStyle = FontStyle.Normal;
+              var result = await dialog.ShowDialog<string?>(window);
+              if (result != null)
+              {
+                // Update the asset value
+                assetValue.AssetName = System.IO.Path.GetFileNameWithoutExtension(result);
+                assetValue.AssetFilePath = result;
+                assetValue.ThumbnailPath = result;
+                nameText.Text = assetValue.DisplayText;
+                nameText.Foreground = Brushes.White;
+                nameText.FontStyle = FontStyle.Normal;
+              }
             }
           }
+        }
+        catch (System.Exception ex)
+        {
+          Services.ModkitLog.Error($"AssetPickerDialog browse failed: {ex}");
         }
       };
       buttonRow.Children.Add(browseButton);

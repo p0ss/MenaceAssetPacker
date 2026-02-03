@@ -100,7 +100,10 @@ public static class AssetReplacer
         total += ApplyBundleReplacements();
 
         if (total > 0)
+        {
             MelonLogger.Msg($"Asset replacement complete: {total} asset(s) replaced");
+            UnityEngine.Debug.Log($"[MODDED] Assets replaced in scene: {total}");
+        }
     }
 
     // ------------------------------------------------------------------

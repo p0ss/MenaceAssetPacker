@@ -33,9 +33,18 @@
     </None>
   </ItemGroup>
 
+  <!-- Copy dependency version manifest -->
+  <ItemGroup>
+    <None Include="..\..\third_party\versions.json">
+      <Link>third_party\versions.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- Schema file for field metadata (asset type detection) -->
   <ItemGroup>
-    <None Include="..\..\schema.json">
+    <None Include="..\..\generated\schema.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>

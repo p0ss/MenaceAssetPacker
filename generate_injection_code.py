@@ -7,7 +7,7 @@ allowing modified template data to be written back into IL2CPP memory.
 
 Usage:
   python generate_injection_code.py
-  python generate_injection_code.py --from-schema schema.json
+  python generate_injection_code.py --from-schema generated/schema.json
 """
 
 import argparse
@@ -205,7 +205,7 @@ def main():
         print(f"Loading templates from schema: {schema_path}")
         templates = load_templates_from_schema(schema_path)
     else:
-        extraction_file = Path('generated_extraction_code.cs')
+        extraction_file = Path('generated/generated_extraction_code.cs')
 
         if not extraction_file.exists():
             print(f"Error: {extraction_file} not found")
@@ -224,7 +224,7 @@ def main():
     print("Generating injection code...")
     injection_code = generate_injection_method(templates)
 
-    output_file = Path('generated_injection_code.cs')
+    output_file = Path('generated/generated_injection_code.cs')
     with open(output_file, 'w') as f:
         f.write(injection_code)
 

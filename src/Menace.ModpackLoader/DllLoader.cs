@@ -22,6 +22,7 @@ public static class DllLoader
         public string ModpackName { get; }
         public string TypeName { get; }
         public HarmonyLib.Harmony Harmony { get; }
+        public string ModId => $"{ModpackName}.{TypeName}";
 
         public PluginInstance(IModpackPlugin plugin, string modpackName, string typeName, HarmonyLib.Harmony harmony)
         {
@@ -187,7 +188,34 @@ public static class DllLoader
     }
 
     /// <summary>
+    /// Forward unload notification to all plugins (e.g., for hot-reload or shutdown).
+    /// </summary>
+    public static void NotifyUnload()
+    {
+        foreach (var p in _loadedPlugins)
+        {
+            try
+            {
+                p.Plugin.OnUnload();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnUnload failed: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
     /// Get all loaded mod assemblies.
     /// </summary>
     public static IReadOnlyList<Assembly> GetLoadedAssemblies() => _loadedAssemblies.AsReadOnly();
+
+    /// <summary>
+    /// Get a comma-separated summary of loaded plugin type names, or null if none.
+    /// </summary>
+    public static string GetPluginSummary()
+    {
+        if (_loadedPlugins.Count == 0) return null;
+        return string.Join(", ", _loadedPlugins.Select(p => p.TypeName));
+    }
 }

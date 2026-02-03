@@ -8,8 +8,8 @@ structs, and relationships.
 
 Usage:
   python generate_schema.py [dump_path] [output_path]
-  python generate_schema.py                                    # defaults: il2cpp_dump/dump.cs -> schema.json
-  python generate_schema.py il2cpp_dump/dump.cs schema.json
+  python generate_schema.py                                                # defaults: il2cpp_dump/dump.cs -> generated/schema.json
+  python generate_schema.py il2cpp_dump/dump.cs generated/schema.json
 """
 
 import argparse
@@ -390,8 +390,8 @@ def main():
         description="Generate schema.json from IL2CPP dump.cs")
     parser.add_argument("dump_path", nargs="?", default="il2cpp_dump/dump.cs",
                         help="Path to dump.cs (default: il2cpp_dump/dump.cs)")
-    parser.add_argument("output_path", nargs="?", default="schema.json",
-                        help="Output path (default: schema.json)")
+    parser.add_argument("output_path", nargs="?", default="generated/schema.json",
+                        help="Output path (default: generated/schema.json)")
     args = parser.parse_args()
 
     dump_path = Path(args.dump_path)

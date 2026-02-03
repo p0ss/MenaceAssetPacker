@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Menace.ModpackLoader.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="MelonLoader">
       <HintPath>/home/poss/Documents/Code/Menace/Vanilla/MelonLoader/MelonLoader.dll</HintPath>
       <Private>false</Private>
@@ -44,6 +48,18 @@
       <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.AudioModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
@@ -52,6 +68,7 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
   </ItemGroup>
 
 </Project>

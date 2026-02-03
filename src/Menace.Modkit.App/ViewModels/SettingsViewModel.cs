@@ -1,8 +1,11 @@
 using ReactiveUI;
 using System;
 using System.IO;
+using System.Linq;
 using System.Reactive;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.Core.Models;
 
@@ -15,6 +18,7 @@ public sealed class SettingsViewModel : ViewModelBase
   private string _cacheStatus = "Calculating...";
   private string _cleanRedeployStatus = string.Empty;
   private bool _isCleanRedeploying;
+  private string _dependencyVersionsText = string.Empty;
 
   public SettingsViewModel(IServiceProvider serviceProvider)
   {
@@ -22,6 +26,7 @@ public sealed class SettingsViewModel : ViewModelBase
     ValidateInstallPath();
     ValidateAssetsPath();
     UpdateCacheStatus();
+    LoadDependencyVersions();
 
     // Commands
     ViewCacheDetailsCommand = ReactiveCommand.Create(ViewCacheDetails);
@@ -185,6 +190,12 @@ public sealed class SettingsViewModel : ViewModelBase
     private set => this.RaiseAndSetIfChanged(ref _isCleanRedeploying, value);
   }
 
+  public string DependencyVersionsText
+  {
+    get => _dependencyVersionsText;
+    private set => this.RaiseAndSetIfChanged(ref _dependencyVersionsText, value);
+  }
+
   // Commands
   public ReactiveCommand<Unit, Unit> ViewCacheDetailsCommand { get; }
   public ReactiveCommand<Unit, Unit> ClearCacheCommand { get; }
@@ -303,6 +314,35 @@ public sealed class SettingsViewModel : ViewModelBase
     }
   }
 
+  private void LoadDependencyVersions()
+  {
+    try
+    {
+      var path = Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json");
+      if (!File.Exists(path))
+      {
+        DependencyVersionsText = "versions.json not found";
+        return;
+      }
+
+      var json = File.ReadAllText(path);
+      var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+      var versions = JsonSerializer.Deserialize<DependencyVersions>(json, options);
+      if (versions?.Dependencies == null || versions.Dependencies.Count == 0)
+      {
+        DependencyVersionsText = "No dependency info available";
+        return;
+      }
+
+      DependencyVersionsText = string.Join(" | ",
+        versions.Dependencies.Select(kv => $"{kv.Key} v{kv.Value.Version}"));
+    }
+    catch
+    {
+      DependencyVersionsText = "Error reading version info";
+    }
+  }
+
   private void ViewCacheDetails()
   {
     // TODO: Show detailed cache information dialog
@@ -407,10 +447,6 @@ public sealed class SettingsViewModel : ViewModelBase
 
       CleanRedeployStatus = "Installing ModpackLoader...";
       if (!await installer.InstallModpackLoaderAsync(s => CleanRedeployStatus = s))
-        return;
-
-      CleanRedeployStatus = "Installing CombinedArms...";
-      if (!await installer.InstallCombinedArmsAsync(s => CleanRedeployStatus = s))
         return;
 
       CleanRedeployStatus = "✓ Clean redeploy complete. Go to Modpacks and click Deploy All to redeploy your mods.";

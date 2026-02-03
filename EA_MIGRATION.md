@@ -29,7 +29,7 @@ python generate_schema.py il2cpp_dump_ea/dump.cs schema_ea.json
 ### 3. Diff schemas to identify changes
 
 ```bash
-python diff_schemas.py schema.json schema_ea.json
+python diff_schemas.py generated/schema.json schema_ea.json
 ```
 
 Review the output. Pay attention to:
@@ -43,7 +43,7 @@ Review the output. Pay attention to:
 python generate_all_templates.py --from-schema schema_ea.json
 ```
 
-This regenerates `generated_extraction_code.cs` with the new offsets.
+This regenerates `generated/generated_extraction_code.cs` with the new offsets.
 
 Optionally regenerate injection code:
 
@@ -96,8 +96,8 @@ If the schema diff shows changes to `KeyBindPlayerSettingTemplate` or `TacticalS
 ### 10. Commit the new schema
 
 ```bash
-cp schema_ea.json schema.json
-git add schema.json generated_extraction_code.cs generated_injection_code.cs
+cp schema_ea.json generated/schema.json
+git add generated/schema.json generated/generated_extraction_code.cs generated/generated_injection_code.cs
 git commit -m "update schema and extraction code for EA build"
 ```
 
@@ -105,7 +105,7 @@ git commit -m "update schema and extraction code for EA build"
 
 | Script | Purpose |
 |--------|---------|
-| `generate_schema.py` | Parse dump.cs → schema.json |
+| `generate_schema.py` | Parse dump.cs → generated/schema.json |
 | `diff_schemas.py` | Compare two schemas |
 | `generate_all_templates.py` | Schema/dump → extraction C# code |
 | `generate_injection_code.py` | Extraction code → injection C# code |
