@@ -26,7 +26,7 @@ __pycache__/
 # Misc
 *.DS_Store
 
-# AssetRipper logs
-third_party/bundled/AssetRipper/*.log
-third_party/bundled/AssetRipper/compile_time.txt
+# Bundled third-party binaries (downloaded at build time, see third_party/versions.json)
+third_party/bundled/AssetRipper/
+third_party/bundled/MelonLoader/
 
