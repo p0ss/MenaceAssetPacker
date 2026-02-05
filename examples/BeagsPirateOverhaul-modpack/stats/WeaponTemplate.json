@@ -1,9 +1,0 @@
-{
-  "weapon.pirate_assault_rifle": {
-    "AccuracyBonus": -10.0
-  },
-  "specialweapon.pirate_light_chaingun": {
-    "Suppression": 8.0,
-    "DamageToArmorDurability": 10.0
-  }
-}

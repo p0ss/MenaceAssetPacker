@@ -190,7 +190,7 @@ public class ModpacksView : UserControl
       {
         // Revert visual — let the async operation + refresh set the real state
         cb.IsChecked = item.IsDeployed;
-        if (DataContext is ModpacksViewModel vm)
+        if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
         {
           vm.SelectedModpack = item;
           await vm.ToggleDeploySelectedAsync();
@@ -694,14 +694,33 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
       Padding = new Thickness(16, 8)
     };
-    deployToggleButton.Bind(Button.ContentProperty,
-      new Avalonia.Data.Binding("DeployToggleText"));
+    var deployToggleContentConverter = new FuncValueConverter<bool, string>(
+      deploying => deploying ? "Deploying\u2026" : null!);
+    // Show "Deploying..." when busy, otherwise the normal toggle text
+    var deployToggleContentBinding = new Avalonia.Data.MultiBinding
+    {
+      Converter = new FuncMultiValueConverter<object, string>(values =>
+      {
+        var vals = values.ToList();
+        var isDeploying = vals.Count > 0 && vals[0] is bool b && b;
+        var toggleText = vals.Count > 1 ? vals[1] as string ?? "" : "";
+        return isDeploying ? "Deploying\u2026" : toggleText;
+      }),
+      Bindings =
+      {
+        new Avalonia.Data.Binding("IsDeploying"),
+        new Avalonia.Data.Binding("DeployToggleText")
+      }
+    };
+    deployToggleButton.Bind(Button.ContentProperty, deployToggleContentBinding);
     var deployBgConverter = new FuncValueConverter<string, IBrush>(
       text => text == "Undeploy"
         ? new SolidColorBrush(Color.Parse("#4b0606"))
         : new SolidColorBrush(Color.Parse("#064b48")));
     deployToggleButton.Bind(Button.BackgroundProperty,
       new Avalonia.Data.Binding("DeployToggleText") { Converter = deployBgConverter });
+    deployToggleButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     deployToggleButton.Click += OnToggleDeployClick;
     buttonPanel.Children.Add(deployToggleButton);
 
@@ -714,6 +733,8 @@ public class ModpacksView : UserControl
       Padding = new Thickness(16, 8)
     };
     exportButton.Click += OnExportClick;
+    exportButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     // Hide Export for standalone mods
     exportButton.Bind(Button.IsVisibleProperty,
       new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
@@ -732,6 +753,8 @@ public class ModpacksView : UserControl
       if (DataContext is ModpacksViewModel vm)
         vm.DeleteSelectedModpack();
     };
+    deleteButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     // Hide Delete for standalone mods
     deleteButton.Bind(Button.IsVisibleProperty,
       new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
@@ -765,6 +788,8 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
       Padding = new Thickness(20, 8)
     };
+    deployAllButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     deployAllButton.Click += OnDeployAllClick;
     globalButtonPanel.Children.Add(deployAllButton);
 
@@ -776,6 +801,8 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
       Padding = new Thickness(20, 8)
     };
+    undeployAllButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     undeployAllButton.Click += OnUndeployAllClick;
     globalButtonPanel.Children.Add(undeployAllButton);
 
@@ -822,65 +849,100 @@ public class ModpacksView : UserControl
 
   private async void OnToggleDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null && !vm.IsDeploying)
+    try
     {
-      await vm.ToggleDeploySelectedAsync();
+      if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null && !vm.IsDeploying)
+      {
+        await vm.ToggleDeploySelectedAsync();
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Deploy toggle failed: {ex.Message}");
     }
   }
 
   private async void OnExportClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
+    try
     {
-      var topLevel = TopLevel.GetTopLevel(this);
-      if (topLevel == null) return;
-
-      var storageProvider = topLevel.StorageProvider;
-      var result = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+      if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
       {
-        Title = "Export Modpack",
-        SuggestedFileName = $"{vm.SelectedModpack.Name}.zip",
-        FileTypeChoices = new[]
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var storageProvider = topLevel.StorageProvider;
+        var result = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-          new FilePickerFileType("ZIP Archive") { Patterns = new[] { "*.zip" } }
-        }
-      });
+          Title = "Export Modpack",
+          SuggestedFileName = $"{vm.SelectedModpack.Name}.zip",
+          FileTypeChoices = new[]
+          {
+            new FilePickerFileType("ZIP Archive") { Patterns = new[] { "*.zip" } }
+          }
+        });
 
-      if (result != null)
-      {
-        vm.SelectedModpack.Export(result.Path.LocalPath);
+        if (result != null)
+        {
+          vm.SelectedModpack.Export(result.Path.LocalPath);
+        }
       }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Export failed: {ex.Message}");
     }
   }
 
   private async void OnDeployAllClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
+    try
     {
-      await vm.DeployAllAsync();
+      if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
+      {
+        await vm.DeployAllAsync();
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Deploy all failed: {ex.Message}");
     }
   }
 
   private async void OnUndeployAllClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
+    try
     {
-      await vm.UndeployAllAsync();
+      if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
+      {
+        await vm.UndeployAllAsync();
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Undeploy all failed: {ex.Message}");
     }
   }
 
   private async void ShowCreateDialog()
   {
-    if (DataContext is ModpacksViewModel vm)
+    try
     {
-      var dialog = new CreateModpackDialog();
-      var topLevel = TopLevel.GetTopLevel(this);
-      if (topLevel is Window window)
+      if (DataContext is ModpacksViewModel vm)
       {
-        var result = await dialog.ShowDialog<CreateModpackResult?>(window);
-        if (result != null)
-          vm.CreateNewModpack(result.Name, result.Author, result.Description);
+        var dialog = new CreateModpackDialog();
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is Window window)
+        {
+          var result = await dialog.ShowDialog<CreateModpackResult?>(window);
+          if (result != null)
+            vm.CreateNewModpack(result.Name, result.Author, result.Description);
+        }
       }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Create dialog failed: {ex.Message}");
     }
   }
 }

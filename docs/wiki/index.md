@@ -177,8 +177,8 @@ Built-in panels:
 Plugins can add their own panels:
 
 ```csharp
-DevConsole.RegisterPanel("My Panel", () =>
+DevConsole.RegisterPanel("My Panel", (Rect area) =>
 {
-    GUILayout.Label("Hello from my custom panel");
+    GUI.Label(new Rect(area.x, area.y, area.width, 18), "Hello from my custom panel");
 });
 ```

@@ -96,6 +96,17 @@ if [ -d "third_party/bundled/modpacks" ]; then
   cp -r third_party/bundled/modpacks/* dist/gui-win-x64/third_party/bundled/modpacks/
 fi
 
+# Copy tools (doctor scripts, etc.)
+echo "  → Copying tools..."
+mkdir -p dist/gui-linux-x64/tools
+mkdir -p dist/gui-win-x64/tools
+cp tools/doctor.sh dist/gui-linux-x64/tools/
+cp tools/doctor.ps1 dist/gui-win-x64/tools/
+cp tools/doctor.bat dist/gui-win-x64/tools/
+# Also include Windows scripts in Linux build for dual-boot users
+cp tools/doctor.ps1 dist/gui-linux-x64/tools/
+cp tools/doctor.bat dist/gui-linux-x64/tools/
+
 # Build CLI for each platform
 echo ""
 echo "📦 Building CLI Tool..."

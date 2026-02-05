@@ -40,7 +40,7 @@ public class SchemaService
 
         if (!File.Exists(schemaJsonPath))
         {
-            Console.WriteLine($"[SchemaService] Schema not found at {schemaJsonPath}");
+            ModkitLog.Info($"[SchemaService] Schema not found at {schemaJsonPath}");
             return;
         }
 
@@ -51,7 +51,7 @@ public class SchemaService
 
             if (!doc.RootElement.TryGetProperty("templates", out var templates))
             {
-                Console.WriteLine("[SchemaService] No 'templates' section in schema.json");
+                ModkitLog.Warn("[SchemaService] No 'templates' section in schema.json");
                 return;
             }
 
@@ -113,7 +113,7 @@ public class SchemaService
                     }
                     _inheritanceChains[prop.Name] = chain;
                 }
-                Console.WriteLine($"[SchemaService] Loaded {_inheritanceChains.Count} inheritance chains");
+                ModkitLog.Info($"[SchemaService] Loaded {_inheritanceChains.Count} inheritance chains");
             }
 
             // Parse enum definitions
@@ -132,15 +132,15 @@ public class SchemaService
                         _enumsByType[enumProp.Name] = valueToName;
                     }
                 }
-                Console.WriteLine($"[SchemaService] Loaded {_enumsByType.Count} enum types");
+                ModkitLog.Info($"[SchemaService] Loaded {_enumsByType.Count} enum types");
             }
 
             _isLoaded = true;
-            Console.WriteLine($"[SchemaService] Loaded {_fieldsByTemplate.Count} template types");
+            ModkitLog.Info($"[SchemaService] Loaded {_fieldsByTemplate.Count} template types");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SchemaService] Failed to load schema: {ex.Message}");
+            ModkitLog.Error($"[SchemaService] Failed to load schema: {ex.Message}");
         }
     }
 

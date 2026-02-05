@@ -195,7 +195,7 @@ public class AssetRipperService
             if (fileCount > 0)
             {
                 // Update manifest to record successful extraction
-                SaveAssetRipManifest(gameInstallPath);
+                await SaveAssetRipManifestAsync(gameInstallPath);
                 progressCallback?.Invoke($"Asset extraction completed! Extracted {fileCount} files.");
                 return true;
             }
@@ -530,7 +530,7 @@ public class AssetRipperService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AssetRipperService] Change detection failed: {ex.Message}");
+            ModkitLog.Warn($"[AssetRipperService] Change detection failed: {ex.Message}");
         }
 
         return false;
@@ -539,7 +539,7 @@ public class AssetRipperService
     /// <summary>
     /// Save manifest after successful extraction so future runs can detect changes.
     /// </summary>
-    private void SaveAssetRipManifest(string gameInstallPath)
+    private async Task SaveAssetRipManifestAsync(string gameInstallPath)
     {
         try
         {
@@ -550,7 +550,7 @@ public class AssetRipperService
             ExtractionManifest manifest;
             if (File.Exists(manifestPath))
             {
-                var json = File.ReadAllText(manifestPath);
+                var json = await File.ReadAllTextAsync(manifestPath);
                 manifest = JsonSerializer.Deserialize<ExtractionManifest>(json) ?? new ExtractionManifest();
             }
             else
@@ -561,14 +561,14 @@ public class AssetRipperService
             // Update asset rip fields
             manifest.AssetRipTimestamp = DateTime.UtcNow;
             manifest.CachedAssetsPath = OutputPath;
-            manifest.GameAssemblyHash = ComputeGameAssemblyHash(gameInstallPath).GetAwaiter().GetResult();
+            manifest.GameAssemblyHash = await ComputeGameAssemblyHash(gameInstallPath);
 
             var updatedJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(manifestPath, updatedJson);
+            await File.WriteAllTextAsync(manifestPath, updatedJson);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AssetRipperService] Failed to save manifest: {ex.Message}");
+            ModkitLog.Warn($"[AssetRipperService] Failed to save manifest: {ex.Message}");
         }
     }
 

@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 2,
+  "name": "Combined Arms",
+  "version": "1.0.0",
+  "author": "Menace Modkit",
+  "description": "AI coordination: agent sequencing, focus fire, center of forces, formation depth.",
+  "loadOrder": 50,
+  "code": {
+    "sources": [
+      "src/CombinedArmsPlugin.cs",
+      "src/CoordinationState.cs"
+    ],
+    "references": [
+      "MelonLoader",
+      "0Harmony",
+      "Il2CppInterop.Runtime",
+      "Il2Cppmscorlib",
+      "Assembly-CSharp",
+      "UnityEngine.CoreModule",
+      "UnityEngine.InputLegacyModule",
+      "Menace.ModpackLoader"
+    ]
+  },
+  "securityStatus": "SourceVerified"
+}

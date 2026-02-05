@@ -222,10 +222,12 @@ The log buffer holds the most recent 200 entries with timestamps.
 Register your own panels in the DevConsole:
 
 ```csharp
-DevConsole.RegisterPanel("My Debug", () =>
+DevConsole.RegisterPanel("My Debug", (Rect area) =>
 {
-    GUILayout.Label("Custom debug info here");
-    if (GUILayout.Button("Do something"))
+    float y = area.y;
+    GUI.Label(new Rect(area.x, y, area.width, 18), "Custom debug info here");
+    y += 20;
+    if (GUI.Button(new Rect(area.x, y, 120, 22), "Do something"))
     {
         // your action
     }
@@ -238,7 +240,7 @@ Remove a custom panel:
 DevConsole.RemovePanel("My Debug");
 ```
 
-Panel draw callbacks receive no arguments and should use `GUILayout` for layout.
+Panel draw callbacks receive a `Rect` parameter defining the content area and should use raw `GUI.*` calls (not `GUILayout`) for positioning. `GUILayout` methods are unavailable in IL2CPP builds.
 
 ---
 

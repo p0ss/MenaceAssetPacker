@@ -33,7 +33,7 @@ namespace Menace.Modkit.App.Services
 
                 if (!File.Exists(referencesPath))
                 {
-                    Console.WriteLine($"AssetReferences.json not found at {referencesPath}");
+                    ModkitLog.Info($"AssetReferences.json not found at {referencesPath}");
                     return;
                 }
 
@@ -46,12 +46,12 @@ namespace Menace.Modkit.App.Services
                         .GroupBy(r => r.InstanceId)
                         .ToDictionary(g => g.Key, g => g.First());
                     _isLoaded = true;
-                    Console.WriteLine($"Loaded {_references.Count} asset references");
+                    ModkitLog.Info($"Loaded {_references.Count} asset references");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to load asset references: {ex.Message}");
+                ModkitLog.Warn($"Failed to load asset references: {ex.Message}");
             }
         }
 

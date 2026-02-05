@@ -399,7 +399,7 @@ public class AssetPickerDialog : Window
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AssetPickerDialog] Error scanning {directory}: {ex.Message}");
+            Services.ModkitLog.Warn($"[AssetPickerDialog] Error scanning {directory}: {ex.Message}");
         }
     }
 

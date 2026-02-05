@@ -607,18 +607,14 @@ public class DeployManager
                 if (needsCopy)
                 {
                     File.Copy(sourcePath, destPath, true);
-                    Console.WriteLine($"[DeployManager] Deployed runtime DLL: {fileName}");
-                }
-                else
-                {
-                    Console.WriteLine($"[DeployManager] Runtime DLL up to date: {fileName}");
+                    ModkitLog.Info($"[DeployManager] Deployed runtime DLL: {fileName}");
                 }
 
                 files.Add(fileName);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DeployManager] Failed to deploy {fileName}: {ex.Message}");
+                ModkitLog.Warn($"[DeployManager] Failed to deploy {fileName}: {ex.Message}");
             }
         }
 

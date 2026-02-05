@@ -179,9 +179,16 @@ public class StatsEditorView : UserControl
 
   private async void OnAutoSetupClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is StatsEditorViewModel vm)
+    try
     {
-      await vm.AutoSetupAsync();
+      if (DataContext is StatsEditorViewModel vm)
+      {
+        await vm.AutoSetupAsync();
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Auto setup failed: {ex.Message}");
     }
   }
 
@@ -195,9 +202,16 @@ public class StatsEditorView : UserControl
 
   private async void OnLaunchGameClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is StatsEditorViewModel vm)
+    try
     {
-      await vm.LaunchGameToUpdateDataAsync();
+      if (DataContext is StatsEditorViewModel vm)
+      {
+        await vm.LaunchGameToUpdateDataAsync();
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Launch game failed: {ex.Message}");
     }
   }
 
@@ -447,6 +461,26 @@ public class StatsEditorView : UserControl
     cloneButton.Click += OnCloneClick;
     toolbar.Children.Add(cloneButton);
 
+    var reloadButton = new Button
+    {
+      Content = "Reload Data",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(1),
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(16, 6),
+      FontSize = 12
+    };
+    reloadButton.Click += (_, _) =>
+    {
+      if (DataContext is StatsEditorViewModel vm)
+      {
+        vm.LoadData();
+        vm.SaveStatus = "Data reloaded";
+      }
+    };
+    toolbar.Children.Add(reloadButton);
+
     var statusText = new TextBlock
     {
       Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
@@ -554,20 +588,22 @@ public class StatsEditorView : UserControl
 
   private async void OnCloneClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
-    if (DataContext is not StatsEditorViewModel vm)
-      return;
-
-    if (vm.SelectedNode?.Template == null)
+    try
     {
-      vm.SaveStatus = "Select a template to clone";
-      return;
-    }
+      if (DataContext is not StatsEditorViewModel vm)
+        return;
 
-    if (string.IsNullOrEmpty(vm.CurrentModpackName))
-    {
-      vm.SaveStatus = "Select a modpack first";
-      return;
-    }
+      if (vm.SelectedNode?.Template == null)
+      {
+        vm.SaveStatus = "Select a template to clone";
+        return;
+      }
+
+      if (string.IsNullOrEmpty(vm.CurrentModpackName))
+      {
+        vm.SaveStatus = "Select a modpack first";
+        return;
+      }
 
     // Show a simple dialog to get the clone name
     var dialog = new Window
@@ -667,6 +703,11 @@ public class StatsEditorView : UserControl
     var topLevel = TopLevel.GetTopLevel(this);
     if (topLevel is Window parentWindow)
       await dialog.ShowDialog(parentWindow);
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Clone template failed: {ex.Message}");
+    }
   }
 
   private Avalonia.Controls.Templates.IDataTemplate CreatePropertyGridTemplate(bool isEditable)
@@ -778,44 +819,27 @@ public class StatsEditorView : UserControl
             }
           }
 
-          // Non-template array - show as editable JSON text for full-replacement patching
-          var arrayText = jsonElement.GetRawText();
-          if (isEditable)
+          // Check if array elements are objects — render as expandable groups
+          if (ArrayContainsObjects(jsonElement))
           {
-            var textBox = new TextBox
-            {
-              Text = arrayText,
-              Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-              Foreground = Brushes.White,
-              BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-              BorderThickness = new Thickness(1),
-              Padding = new Thickness(8, 6),
-              FontSize = 12,
-              TextWrapping = TextWrapping.Wrap,
-              AcceptsReturn = true,
-              MinHeight = 48,
-              Tag = name
-            };
-            textBox.TextChanged += OnEditableTextBoxChanged;
-            fieldStack.Children.Add(textBox);
+            fieldStack.Children.Add(CreateObjectArrayControl(name, jsonElement, isEditable));
+            return fieldStack;
           }
-          else
+
+          // Non-template array — render as individual rows with serialized node detection
           {
-            var valueBox = new TextBox
-            {
-              Text = arrayText,
-              Background = Brushes.Transparent,
-              Foreground = Brushes.White,
-              BorderThickness = new Thickness(0),
-              Padding = new Thickness(8, 6),
-              FontSize = 12,
-              IsReadOnly = true,
-              TextWrapping = TextWrapping.Wrap,
-              Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Arrow)
-            };
-            fieldStack.Children.Add(valueBox);
+            var dummyElement = new System.Collections.Generic.Dictionary<string, object?> { { name, jsonElement.Clone() } };
+            fieldStack.Children.Add(CreatePrimitiveArrayControl(
+              name, jsonElement, dummyElement, isEditable, () =>
+              {
+                if (DataContext is StatsEditorViewModel primVm && dummyElement.TryGetValue(name, out var val))
+                {
+                  if (val is System.Text.Json.JsonElement je2)
+                    primVm.UpdateComplexArrayProperty(name, je2.GetRawText());
+                }
+              }));
+            return fieldStack;
           }
-          return fieldStack;
 
         default:
           // Extract the actual primitive value from JsonElement
@@ -1223,6 +1247,984 @@ public class StatsEditorView : UserControl
     }
 
     return outerPanel;
+  }
+
+  private static bool ArrayContainsObjects(System.Text.Json.JsonElement arrayElement)
+  {
+    foreach (var el in arrayElement.EnumerateArray())
+      return el.ValueKind == System.Text.Json.JsonValueKind.Object;
+    return false;
+  }
+
+  private Control CreateObjectArrayControl(string fieldName, System.Text.Json.JsonElement arrayElement, bool isEditable)
+  {
+    return CreateObjectArrayControlCore(arrayElement, isEditable, json =>
+    {
+      if (DataContext is StatsEditorViewModel vm)
+        vm.UpdateComplexArrayProperty(fieldName, json);
+    });
+  }
+
+  private Control CreateObjectArrayControlCore(
+    System.Text.Json.JsonElement arrayElement,
+    bool isEditable,
+    System.Action<string> onChanged)
+  {
+    var elements = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object?>>();
+    foreach (var el in arrayElement.EnumerateArray())
+    {
+      if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+      var dict = new System.Collections.Generic.Dictionary<string, object?>();
+      foreach (var prop in el.EnumerateObject())
+        dict[prop.Name] = prop.Value.Clone();
+      elements.Add(dict);
+    }
+
+    var outerPanel = new StackPanel { Spacing = 2 };
+    var countLabel = new TextBlock
+    {
+      Text = $"({elements.Count} entries)",
+      Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+      FontSize = 10,
+      Margin = new Thickness(0, 0, 0, 4)
+    };
+    outerPanel.Children.Add(countLabel);
+
+    var itemsPanel = new StackPanel { Spacing = 2 };
+    var initialized = false;
+
+    void SyncToViewModel()
+    {
+      if (!initialized || !isEditable) return;
+      var json = SerializeElementList(elements);
+      onChanged(json);
+    }
+
+    void RebuildItemsPanel()
+    {
+      var wasInit = initialized;
+      initialized = false;
+      itemsPanel.Children.Clear();
+      countLabel.Text = $"({elements.Count} entries)";
+
+      for (int i = 0; i < elements.Count; i++)
+      {
+        var idx = i;
+        var element = elements[idx];
+
+        // Check if this is a small element with only primitive fields — render inline
+        bool isSmallElement = element.Count <= 2 && element.Values.All(v =>
+          v is not System.Text.Json.JsonElement je ||
+          (je.ValueKind != System.Text.Json.JsonValueKind.Array &&
+           je.ValueKind != System.Text.Json.JsonValueKind.Object));
+
+        if (isSmallElement)
+        {
+          var inlineGrid = new Grid
+          {
+            ColumnDefinitions = isEditable
+              ? new ColumnDefinitions("Auto,*,Auto")
+              : new ColumnDefinitions("Auto,*"),
+            Background = new SolidColorBrush(Color.Parse("#252525")),
+            Margin = new Thickness(0, 1)
+          };
+
+          var indexLabel = new TextBlock
+          {
+            Text = $"[{idx}]",
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 4)
+          };
+          inlineGrid.Children.Add(indexLabel);
+          Grid.SetColumn(indexLabel, 0);
+
+          var fieldsRow = new StackPanel
+          {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 4)
+          };
+          foreach (var kvp in element.ToList())
+          {
+            fieldsRow.Children.Add(new TextBlock
+            {
+              Text = kvp.Key + ":",
+              Foreground = Brushes.White,
+              Opacity = 0.7,
+              FontSize = 12,
+              VerticalAlignment = VerticalAlignment.Center
+            });
+
+            object? fv = kvp.Value;
+            if (fv is System.Text.Json.JsonElement fje)
+            {
+              fv = fje.ValueKind switch
+              {
+                System.Text.Json.JsonValueKind.String => fje.GetString(),
+                System.Text.Json.JsonValueKind.Number => fje.TryGetInt64(out var fl) ? (object)fl : fje.GetDouble(),
+                System.Text.Json.JsonValueKind.True => (object)true,
+                System.Text.Json.JsonValueKind.False => (object)false,
+                _ => fje.GetRawText()
+              };
+            }
+
+            if (isEditable)
+            {
+              var fieldName = kvp.Key;
+              var origVal = fv;
+              var tb = new TextBox
+              {
+                Text = fv?.ToString() ?? "",
+                Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+                Foreground = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(6, 3),
+                FontSize = 12,
+                MinWidth = 60
+              };
+              tb.TextChanged += (_, _) =>
+              {
+                var text = tb.Text ?? "";
+                if (origVal is long)
+                  element[fieldName] = long.TryParse(text, out var l) ? l : (object)text;
+                else if (origVal is double)
+                  element[fieldName] = double.TryParse(text, out var d) ? d : (object)text;
+                else
+                  element[fieldName] = text;
+                SyncToViewModel();
+              };
+              fieldsRow.Children.Add(tb);
+            }
+            else
+            {
+              fieldsRow.Children.Add(new TextBlock
+              {
+                Text = fv?.ToString() ?? "null",
+                Foreground = Brushes.White,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+              });
+            }
+          }
+          inlineGrid.Children.Add(fieldsRow);
+          Grid.SetColumn(fieldsRow, 1);
+
+          if (isEditable)
+          {
+            var removeBtn = new Button
+            {
+              Content = "\u2715",
+              Background = Brushes.Transparent,
+              Foreground = new SolidColorBrush(Color.Parse("#CC4444")),
+              BorderThickness = new Thickness(0),
+              Padding = new Thickness(6, 2),
+              FontSize = 12,
+              VerticalAlignment = VerticalAlignment.Center,
+              Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+            };
+            removeBtn.Click += (_, _) =>
+            {
+              elements.RemoveAt(idx);
+              RebuildItemsPanel();
+              SyncToViewModel();
+            };
+            inlineGrid.Children.Add(removeBtn);
+            Grid.SetColumn(removeBtn, 2);
+          }
+
+          itemsPanel.Children.Add(inlineGrid);
+          continue;
+        }
+
+        // Larger elements: use collapsible Expander
+        var summary = BuildElementSummary(element, idx);
+
+        var headerGrid = new Grid
+        {
+          ColumnDefinitions = isEditable
+            ? new ColumnDefinitions("*,Auto")
+            : new ColumnDefinitions("*")
+        };
+
+        var summaryText = new TextBlock
+        {
+          Text = summary,
+          Foreground = Brushes.White,
+          FontSize = 12,
+          VerticalAlignment = VerticalAlignment.Center,
+          TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        headerGrid.Children.Add(summaryText);
+        Grid.SetColumn(summaryText, 0);
+
+        if (isEditable)
+        {
+          var removeBtn = new Button
+          {
+            Content = "\u2715",
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.Parse("#CC4444")),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 2),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+          };
+          removeBtn.Click += (_, _) =>
+          {
+            elements.RemoveAt(idx);
+            RebuildItemsPanel();
+            SyncToViewModel();
+          };
+          headerGrid.Children.Add(removeBtn);
+          Grid.SetColumn(removeBtn, 1);
+        }
+
+        var expander = new Expander
+        {
+          Header = headerGrid,
+          IsExpanded = false,
+          Margin = new Thickness(0, 1),
+          Padding = new Thickness(0),
+          Background = new SolidColorBrush(Color.Parse("#252525")),
+          BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+          BorderThickness = new Thickness(1)
+        };
+
+        var bodyPanel = new StackPanel { Spacing = 8, Margin = new Thickness(12, 8, 0, 8) };
+        foreach (var kvp in element.ToList())
+        {
+          bodyPanel.Children.Add(CreateObjectFieldControl(
+            kvp.Key, kvp.Value, element, isEditable, SyncToViewModel));
+        }
+
+        expander.Content = bodyPanel;
+        itemsPanel.Children.Add(expander);
+      }
+
+      initialized = wasInit;
+    }
+
+    RebuildItemsPanel();
+    outerPanel.Children.Add(itemsPanel);
+
+    if (isEditable)
+    {
+      var addBtn = new Button
+      {
+        Content = "+ Add Entry",
+        Background = new SolidColorBrush(Color.Parse("#064b48")),
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(10, 6),
+        FontSize = 11,
+        Margin = new Thickness(0, 4, 0, 0),
+        HorizontalAlignment = HorizontalAlignment.Left
+      };
+      addBtn.Click += (_, _) =>
+      {
+        var newElement = new System.Collections.Generic.Dictionary<string, object?>();
+        if (elements.Count > 0)
+        {
+          foreach (var kvp in elements[^1])
+            newElement[kvp.Key] = kvp.Value;
+        }
+        elements.Add(newElement);
+        RebuildItemsPanel();
+        SyncToViewModel();
+      };
+      outerPanel.Children.Add(addBtn);
+    }
+
+    initialized = true;
+    return outerPanel;
+  }
+
+  private Control CreateObjectFieldControl(
+    string propName,
+    object? propValue,
+    System.Collections.Generic.Dictionary<string, object?> element,
+    bool isEditable,
+    System.Action syncToViewModel)
+  {
+    var fieldStack = new StackPanel { Spacing = 4 };
+
+    var label = new TextBlock
+    {
+      Text = propName,
+      Foreground = Brushes.White,
+      Opacity = 0.8,
+      FontSize = 11,
+      FontWeight = FontWeight.SemiBold
+    };
+    fieldStack.Children.Add(label);
+
+    if (propValue is System.Text.Json.JsonElement je)
+    {
+      switch (je.ValueKind)
+      {
+        case System.Text.Json.JsonValueKind.Array:
+          if (ArrayContainsObjects(je))
+          {
+            fieldStack.Children.Add(CreateObjectArrayControlCore(je, isEditable, json =>
+            {
+              try
+              {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                element[propName] = doc.RootElement.Clone();
+              }
+              catch { }
+              syncToViewModel();
+            }));
+            return fieldStack;
+          }
+
+          // Non-object array — render as individual rows
+          fieldStack.Children.Add(CreatePrimitiveArrayControl(
+            propName, je, element, isEditable, syncToViewModel));
+          return fieldStack;
+
+        case System.Text.Json.JsonValueKind.Object:
+          var nestedDict = new System.Collections.Generic.Dictionary<string, object?>();
+          foreach (var prop in je.EnumerateObject())
+            nestedDict[prop.Name] = prop.Value.Clone();
+          var nestedPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 0, 0) };
+          foreach (var nkvp in nestedDict.ToList())
+          {
+            nestedPanel.Children.Add(CreateObjectFieldControl(
+              nkvp.Key, nkvp.Value, nestedDict, isEditable, () =>
+              {
+                element[propName] = SerializeDict(nestedDict);
+                syncToViewModel();
+              }));
+          }
+          fieldStack.Children.Add(nestedPanel);
+          return fieldStack;
+
+        default:
+          propValue = je.ValueKind switch
+          {
+            System.Text.Json.JsonValueKind.String => je.GetString(),
+            System.Text.Json.JsonValueKind.Number => je.TryGetInt64(out var l) ? (object)l : je.GetDouble(),
+            System.Text.Json.JsonValueKind.True => (object)true,
+            System.Text.Json.JsonValueKind.False => (object)false,
+            System.Text.Json.JsonValueKind.Null => null,
+            _ => je.GetRawText()
+          };
+          break;
+      }
+    }
+
+    // Coerce string booleans
+    if (propValue is string strBool && bool.TryParse(strBool, out var parsedBool))
+      propValue = parsedBool;
+
+    // Boolean
+    if (propValue is bool boolVal)
+    {
+      var checkBox = new CheckBox
+      {
+        IsChecked = boolVal,
+        IsEnabled = isEditable,
+        Content = boolVal ? "True" : "False",
+        Foreground = Brushes.White,
+        FontSize = 12,
+        Margin = new Thickness(0, 2)
+      };
+      if (isEditable)
+      {
+        checkBox.IsCheckedChanged += (s, _) =>
+        {
+          if (s is CheckBox cb)
+          {
+            var isChecked = cb.IsChecked ?? false;
+            cb.Content = isChecked ? "True" : "False";
+            element[propName] = isChecked;
+            syncToViewModel();
+          }
+        };
+      }
+      fieldStack.Children.Add(checkBox);
+      return fieldStack;
+    }
+
+    // String field named "Template" — AutoCompleteBox with entity names
+    if (isEditable && propName.Equals("Template", System.StringComparison.OrdinalIgnoreCase) && propValue is string)
+    {
+      var vm = DataContext as StatsEditorViewModel;
+      var instanceNames = vm?.GetTemplateInstanceNames("EntityTemplate")
+        ?? new System.Collections.Generic.List<string>();
+
+      var autoComplete = new AutoCompleteBox
+      {
+        Text = propValue?.ToString() ?? "",
+        ItemsSource = instanceNames,
+        FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
+        MinimumPrefixLength = 0,
+        Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+        BorderThickness = new Thickness(1),
+        FontSize = 12
+      };
+      autoComplete.GetObservable(AutoCompleteBox.TextProperty)
+        .Subscribe(text =>
+        {
+          element[propName] = text ?? "";
+          syncToViewModel();
+        });
+      fieldStack.Children.Add(autoComplete);
+      return fieldStack;
+    }
+
+    // Other primitives
+    if (isEditable)
+    {
+      var textBox = new TextBox
+      {
+        Text = propValue?.ToString() ?? "",
+        Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+        BorderThickness = new Thickness(1),
+        Padding = new Thickness(8, 6),
+        FontSize = 12
+      };
+      var originalValue = propValue;
+      textBox.TextChanged += (_, _) =>
+      {
+        var text = textBox.Text ?? "";
+        if (originalValue is long)
+          element[propName] = long.TryParse(text, out var l) ? l : (object)text;
+        else if (originalValue is double)
+          element[propName] = double.TryParse(text, out var d) ? d : (object)text;
+        else
+          element[propName] = text;
+        syncToViewModel();
+      };
+      fieldStack.Children.Add(textBox);
+    }
+    else
+    {
+      fieldStack.Children.Add(new TextBox
+      {
+        Text = propValue?.ToString() ?? "null",
+        Background = Brushes.Transparent,
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(8, 6),
+        FontSize = 12,
+        IsReadOnly = true,
+        TextWrapping = TextWrapping.Wrap,
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Arrow)
+      });
+    }
+
+    return fieldStack;
+  }
+
+  private Control CreatePrimitiveArrayControl(
+    string propName,
+    System.Text.Json.JsonElement arrayElement,
+    System.Collections.Generic.Dictionary<string, object?> element,
+    bool isEditable,
+    System.Action syncToViewModel)
+  {
+    var items = new System.Collections.Generic.List<string>();
+    foreach (var el in arrayElement.EnumerateArray())
+    {
+      items.Add(el.ValueKind == System.Text.Json.JsonValueKind.String
+        ? el.GetString() ?? ""
+        : el.GetRawText());
+    }
+
+    var outerPanel = new StackPanel { Spacing = 0 };
+    var itemsPanel = new StackPanel { Spacing = 0 };
+
+    void SyncItems()
+    {
+      // Determine if original was all strings to preserve type
+      bool allStrings = true;
+      foreach (var el in arrayElement.EnumerateArray())
+      {
+        if (el.ValueKind != System.Text.Json.JsonValueKind.String)
+        { allStrings = false; break; }
+      }
+
+      using var ms = new System.IO.MemoryStream();
+      using (var writer = new System.Text.Json.Utf8JsonWriter(ms))
+      {
+        writer.WriteStartArray();
+        foreach (var item in items)
+        {
+          if (allStrings)
+            writer.WriteStringValue(item);
+          else
+          {
+            // Try to write as raw JSON for non-string items
+            try
+            {
+              using var doc = System.Text.Json.JsonDocument.Parse(item);
+              doc.RootElement.WriteTo(writer);
+            }
+            catch
+            {
+              writer.WriteStringValue(item);
+            }
+          }
+        }
+        writer.WriteEndArray();
+      }
+      using var doc2 = System.Text.Json.JsonDocument.Parse(ms.ToArray());
+      element[propName] = doc2.RootElement.Clone();
+      syncToViewModel();
+    }
+
+    void RebuildItems()
+    {
+      itemsPanel.Children.Clear();
+      if (items.Count == 0)
+      {
+        itemsPanel.Children.Add(new TextBlock
+        {
+          Text = "(empty)",
+          Foreground = new SolidColorBrush(Color.Parse("#888888")),
+          FontStyle = FontStyle.Italic,
+          FontSize = 12,
+          Padding = new Thickness(8, 4)
+        });
+        return;
+      }
+
+      for (int i = 0; i < items.Count; i++)
+      {
+        var idx = i;
+        var rowBg = i % 2 == 0
+          ? new SolidColorBrush(Color.Parse("#1E1E1E"))
+          : new SolidColorBrush(Color.Parse("#252525"));
+
+        // Try structured rendering for "Type|{json}" serialized nodes
+        var nodeControl = TryCreateSerializedNodeControl(
+          items[idx], isEditable, newValue => { items[idx] = newValue; SyncItems(); });
+        if (nodeControl != null)
+        {
+          var nodeContainer = new Border
+          {
+            Background = rowBg,
+            Padding = new Thickness(4, 2),
+            Margin = new Thickness(0, 1)
+          };
+          if (isEditable)
+          {
+            var nodeRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            nodeRow.Children.Add(nodeControl);
+            Grid.SetColumn(nodeControl, 0);
+            var removeBtn = new Button
+            {
+              Content = "\u2715",
+              Background = Brushes.Transparent,
+              Foreground = new SolidColorBrush(Color.Parse("#CC4444")),
+              BorderThickness = new Thickness(0),
+              Padding = new Thickness(6, 2),
+              FontSize = 12,
+              VerticalAlignment = VerticalAlignment.Top,
+              Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+            };
+            removeBtn.Click += (_, _) =>
+            {
+              items.RemoveAt(idx);
+              RebuildItems();
+              SyncItems();
+            };
+            nodeRow.Children.Add(removeBtn);
+            Grid.SetColumn(removeBtn, 1);
+            nodeContainer.Child = nodeRow;
+          }
+          else
+          {
+            nodeContainer.Child = nodeControl;
+          }
+          itemsPanel.Children.Add(nodeContainer);
+          continue;
+        }
+
+        // Plain text rendering
+        if (isEditable)
+        {
+          var row = new Grid
+          {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Background = rowBg
+          };
+          var textBox = new TextBox
+          {
+            Text = items[idx],
+            Background = Brushes.Transparent,
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(8, 4),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap
+          };
+          textBox.LostFocus += (_, _) =>
+          {
+            items[idx] = textBox.Text ?? "";
+            SyncItems();
+          };
+          row.Children.Add(textBox);
+          Grid.SetColumn(textBox, 0);
+
+          var removeBtn = new Button
+          {
+            Content = "\u2715",
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.Parse("#CC4444")),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 2),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+          };
+          removeBtn.Click += (_, _) =>
+          {
+            items.RemoveAt(idx);
+            RebuildItems();
+            SyncItems();
+          };
+          row.Children.Add(removeBtn);
+          Grid.SetColumn(removeBtn, 1);
+
+          itemsPanel.Children.Add(row);
+        }
+        else
+        {
+          itemsPanel.Children.Add(new TextBlock
+          {
+            Text = items[idx],
+            Foreground = Brushes.White,
+            FontSize = 12,
+            Padding = new Thickness(8, 4),
+            TextWrapping = TextWrapping.Wrap,
+            Background = rowBg
+          });
+        }
+      }
+    }
+
+    RebuildItems();
+    outerPanel.Children.Add(itemsPanel);
+
+    if (isEditable)
+    {
+      var addBtn = new Button
+      {
+        Content = "+ Add",
+        Background = new SolidColorBrush(Color.Parse("#064b48")),
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(10, 4),
+        FontSize = 11,
+        Margin = new Thickness(0, 4, 0, 0),
+        HorizontalAlignment = HorizontalAlignment.Left
+      };
+      addBtn.Click += (_, _) =>
+      {
+        items.Add("");
+        RebuildItems();
+        SyncItems();
+      };
+      outerPanel.Children.Add(addBtn);
+    }
+
+    return outerPanel;
+  }
+
+  /// <summary>
+  /// Tries to parse a "Type|{json}" serialized node string and render it as structured fields.
+  /// Returns null if the string doesn't match the pattern.
+  /// </summary>
+  private Control? TryCreateSerializedNodeControl(
+    string value,
+    bool isEditable,
+    System.Action<string> onChanged)
+  {
+    var pipeIdx = value.IndexOf('|');
+    if (pipeIdx <= 0 || pipeIdx >= value.Length - 1)
+      return null;
+
+    var typeName = value[..pipeIdx];
+    foreach (var c in typeName)
+      if (!char.IsLetterOrDigit(c) && c != '_')
+        return null;
+
+    var jsonPart = value[(pipeIdx + 1)..];
+    System.Text.Json.JsonElement bodyElement;
+    try
+    {
+      using var doc = System.Text.Json.JsonDocument.Parse(jsonPart);
+      bodyElement = doc.RootElement.Clone();
+    }
+    catch
+    {
+      return null;
+    }
+
+    if (bodyElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+      return null;
+
+    var fields = new System.Collections.Generic.Dictionary<string, object?>();
+    foreach (var prop in bodyElement.EnumerateObject())
+      fields[prop.Name] = prop.Value.Clone();
+
+    var nodeInit = false;
+
+    void SyncNode()
+    {
+      if (!nodeInit) return;
+      var serialized = SerializeDict(fields);
+      var reconstructed = typeName + "|" + serialized.GetRawText();
+      onChanged(reconstructed);
+    }
+
+    var panel = new StackPanel { Spacing = 2 };
+
+    // Type badge
+    var badgeColor = typeName switch
+    {
+      "SAY" => "#2D6A4F",
+      "VARIATION" => "#4A3068",
+      "EMPTY" => "#3E3E3E",
+      _ => "#3A5A80"
+    };
+    var badge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse(badgeColor)),
+      CornerRadius = new CornerRadius(3),
+      Padding = new Thickness(6, 2),
+      HorizontalAlignment = HorizontalAlignment.Left,
+      Margin = new Thickness(0, 2, 0, 0)
+    };
+    badge.Child = new TextBlock
+    {
+      Text = typeName,
+      Foreground = Brushes.White,
+      FontSize = 10,
+      FontWeight = FontWeight.SemiBold
+    };
+    panel.Children.Add(badge);
+
+    if (fields.Count > 0)
+    {
+      var fieldsPanel = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 0) };
+      foreach (var kvp in fields.ToList())
+      {
+        fieldsPanel.Children.Add(CreateObjectFieldControl(
+          kvp.Key, kvp.Value, fields, isEditable, SyncNode));
+      }
+      panel.Children.Add(fieldsPanel);
+    }
+
+    nodeInit = true;
+    return panel;
+  }
+
+  private static string BuildElementSummary(
+    System.Collections.Generic.Dictionary<string, object?> element, int index)
+  {
+    var parts = new System.Collections.Generic.List<string>();
+    var skipNames = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+      { "Guid", "Id", "Uid" };
+    var priorityNames = new[] { "Text", "Name", "Template", "Title", "Description" };
+
+    // First pass: priority fields (Text, Name, etc.)
+    foreach (var pn in priorityNames)
+    {
+      if (parts.Count >= 2) break;
+      if (element.TryGetValue(pn, out var pv) && pv is System.Text.Json.JsonElement pje
+          && (pje.ValueKind == System.Text.Json.JsonValueKind.String
+              || pje.ValueKind == System.Text.Json.JsonValueKind.Number))
+      {
+        var text = pje.ValueKind == System.Text.Json.JsonValueKind.String
+          ? pje.GetString() ?? "" : pje.ToString();
+        if (text.Length > 50) text = text[..47] + "...";
+        parts.Add(text);
+      }
+    }
+
+    // Second pass: other primitive fields, skipping Guid/Id
+    foreach (var kvp in element)
+    {
+      if (parts.Count >= 3) break;
+      if (skipNames.Contains(kvp.Key)) continue;
+      if (Array.Exists(priorityNames, n => n.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase)))
+        continue;
+      if (kvp.Value is System.Text.Json.JsonElement je)
+      {
+        if (je.ValueKind == System.Text.Json.JsonValueKind.Array
+            || je.ValueKind == System.Text.Json.JsonValueKind.Object)
+          continue;
+        var str = je.ToString();
+        if (str.Length > 30) str = str[..27] + "...";
+        parts.Add($"{kvp.Key}: {str}");
+      }
+    }
+
+    // If still empty, try to extract text from serialized nodes in array fields
+    if (parts.Count == 0)
+    {
+      foreach (var kvp in element)
+      {
+        if (kvp.Value is System.Text.Json.JsonElement je
+            && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+          var extracted = TryExtractTextFromSerializedNodes(je);
+          if (extracted != null)
+          {
+            parts.Add(extracted);
+            break;
+          }
+        }
+      }
+    }
+
+    // Last resort: include Guid/Id if nothing else
+    if (parts.Count == 0)
+    {
+      foreach (var kvp in element)
+      {
+        if (parts.Count >= 1) break;
+        if (kvp.Value is System.Text.Json.JsonElement je
+            && je.ValueKind != System.Text.Json.JsonValueKind.Array
+            && je.ValueKind != System.Text.Json.JsonValueKind.Object)
+          parts.Add($"{kvp.Key}: {je}");
+      }
+    }
+
+    var summary = parts.Count > 0 ? string.Join(", ", parts) : "";
+    return $"[{index}] {summary}";
+  }
+
+  /// <summary>
+  /// Tries to extract human-readable text from serialized node strings (Type|{json} format)
+  /// within a JSON array. Recurses through VARIATION → Variations → m_SerializedNodes → SAY → Text.
+  /// </summary>
+  private static string? TryExtractTextFromSerializedNodes(System.Text.Json.JsonElement arrayElement)
+  {
+    foreach (var el in arrayElement.EnumerateArray())
+    {
+      if (el.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+      var str = el.GetString();
+      if (str == null) continue;
+      var pipeIdx = str.IndexOf('|');
+      if (pipeIdx <= 0 || pipeIdx >= str.Length - 1) continue;
+
+      var typeName = str[..pipeIdx];
+      var jsonPart = str[(pipeIdx + 1)..];
+      try
+      {
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonPart);
+        var root = doc.RootElement;
+
+        // Direct Text field (SAY nodes)
+        if (root.TryGetProperty("Text", out var textProp)
+            && textProp.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+          var text = textProp.GetString() ?? "";
+          if (text.Length > 50) text = text[..47] + "...";
+          return $"{typeName}: \"{text}\"";
+        }
+
+        // Recurse: VARIATION → Variations[] → m_SerializedNodes[]
+        if (root.TryGetProperty("Variations", out var vars)
+            && vars.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+          foreach (var v in vars.EnumerateArray())
+          {
+            if (v.TryGetProperty("m_SerializedNodes", out var nodes)
+                && nodes.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+              var nested = TryExtractTextFromSerializedNodes(nodes);
+              if (nested != null)
+                return $"{typeName} > {nested}";
+            }
+          }
+        }
+      }
+      catch { }
+    }
+    return null;
+  }
+
+  private static string SerializeElementList(
+    System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object?>> elements)
+  {
+    using var ms = new System.IO.MemoryStream();
+    using (var writer = new System.Text.Json.Utf8JsonWriter(ms))
+    {
+      writer.WriteStartArray();
+      foreach (var element in elements)
+      {
+        writer.WriteStartObject();
+        foreach (var kvp in element)
+        {
+          writer.WritePropertyName(kvp.Key);
+          WriteJsonValue(writer, kvp.Value);
+        }
+        writer.WriteEndObject();
+      }
+      writer.WriteEndArray();
+    }
+    return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+  }
+
+  private static System.Text.Json.JsonElement SerializeDict(
+    System.Collections.Generic.Dictionary<string, object?> dict)
+  {
+    using var ms = new System.IO.MemoryStream();
+    using (var writer = new System.Text.Json.Utf8JsonWriter(ms))
+    {
+      writer.WriteStartObject();
+      foreach (var kvp in dict)
+      {
+        writer.WritePropertyName(kvp.Key);
+        WriteJsonValue(writer, kvp.Value);
+      }
+      writer.WriteEndObject();
+    }
+    using var doc = System.Text.Json.JsonDocument.Parse(ms.ToArray());
+    return doc.RootElement.Clone();
+  }
+
+  private static void WriteJsonValue(System.Text.Json.Utf8JsonWriter writer, object? value)
+  {
+    switch (value)
+    {
+      case null:
+        writer.WriteNullValue();
+        break;
+      case System.Text.Json.JsonElement je:
+        je.WriteTo(writer);
+        break;
+      case bool b:
+        writer.WriteBooleanValue(b);
+        break;
+      case long l:
+        writer.WriteNumberValue(l);
+        break;
+      case double d:
+        writer.WriteNumberValue(d);
+        break;
+      case string s:
+        writer.WriteStringValue(s);
+        break;
+      default:
+        writer.WriteStringValue(value.ToString());
+        break;
+    }
   }
 
   private void SyncCollectionToViewModel(string fieldName, System.Collections.Generic.List<string> items)

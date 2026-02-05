@@ -182,6 +182,139 @@ public class SettingsView : UserControl
     deployBorder.Child = deployStack;
     stack.Children.Add(deployBorder);
 
+    // Logs section
+    var logsBorder = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(24)
+    };
+
+    var logsStack = new StackPanel { Spacing = 16 };
+
+    logsStack.Children.Add(new TextBlock
+    {
+      Text = "Logs",
+      FontSize = 16,
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White
+    });
+
+    logsStack.Children.Add(new TextBlock
+    {
+      Text = "Quick access to log files for troubleshooting. Share these when reporting issues.",
+      Opacity = 0.7,
+      Foreground = Brushes.White,
+      TextWrapping = TextWrapping.Wrap
+    });
+
+    // Modkit Log
+    var modkitLogStack = new StackPanel { Spacing = 4 };
+    modkitLogStack.Children.Add(new TextBlock
+    {
+      Text = "Modkit Log",
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White,
+      FontSize = 13
+    });
+
+    var modkitLogPathText = new TextBlock
+    {
+      Opacity = 0.6,
+      Foreground = Brushes.White,
+      FontSize = 11,
+      TextWrapping = TextWrapping.Wrap
+    };
+    modkitLogPathText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("ModkitLogPath"));
+    modkitLogStack.Children.Add(modkitLogPathText);
+
+    var modkitLogButtons = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      Margin = new Thickness(0, 4, 0, 0)
+    };
+
+    var openModkitLogButton = new Button
+    {
+      Content = "Open Log",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(12, 6)
+    };
+    openModkitLogButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenModkitLogCommand"));
+    modkitLogButtons.Children.Add(openModkitLogButton);
+
+    var openModkitFolderButton = new Button
+    {
+      Content = "Open Folder",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(12, 6)
+    };
+    openModkitFolderButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenModkitLogFolderCommand"));
+    modkitLogButtons.Children.Add(openModkitFolderButton);
+
+    modkitLogStack.Children.Add(modkitLogButtons);
+    logsStack.Children.Add(modkitLogStack);
+
+    // MelonLoader Log
+    var mlLogStack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 12, 0, 0) };
+    mlLogStack.Children.Add(new TextBlock
+    {
+      Text = "MelonLoader Log",
+      FontWeight = FontWeight.SemiBold,
+      Foreground = Brushes.White,
+      FontSize = 13
+    });
+
+    var mlLogPathText = new TextBlock
+    {
+      Opacity = 0.6,
+      Foreground = Brushes.White,
+      FontSize = 11,
+      TextWrapping = TextWrapping.Wrap
+    };
+    mlLogPathText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("MelonLoaderLogPath"));
+    mlLogStack.Children.Add(mlLogPathText);
+
+    var mlLogButtons = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      Margin = new Thickness(0, 4, 0, 0)
+    };
+
+    var openMlLogButton = new Button
+    {
+      Content = "Open Log",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(12, 6)
+    };
+    openMlLogButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenMelonLoaderLogCommand"));
+    mlLogButtons.Children.Add(openMlLogButton);
+
+    var openMlFolderButton = new Button
+    {
+      Content = "Open Folder",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+      Padding = new Thickness(12, 6)
+    };
+    openMlFolderButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenMelonLoaderLogFolderCommand"));
+    mlLogButtons.Children.Add(openMlFolderButton);
+
+    mlLogStack.Children.Add(mlLogButtons);
+    logsStack.Children.Add(mlLogStack);
+
+    logsBorder.Child = logsStack;
+    stack.Children.Add(logsBorder);
+
     // Extracted Assets Directory
     var assetsBorder = new Border
     {

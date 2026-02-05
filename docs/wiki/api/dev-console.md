@@ -23,12 +23,12 @@ Whether the console is currently visible. Can be set programmatically. Toggled b
 ### RegisterPanel
 
 ```csharp
-public static void RegisterPanel(string name, Action drawCallback)
+public static void RegisterPanel(string name, Action<Rect> drawCallback)
 ```
 
-Register a custom panel in the console. The `drawCallback` is invoked during `OnGUI` when the panel's tab is active. If a panel with the same name already exists, its callback is replaced.
+Register a custom panel in the console. The `drawCallback` is invoked during `OnGUI` when the panel's tab is active, receiving the content `Rect` where the panel should draw. If a panel with the same name already exists, its callback is replaced.
 
-The callback should use `GUILayout` calls to draw its content. Exceptions in the callback are caught and displayed as an error message in the panel area.
+The callback should use raw `GUI.*` calls (not `GUILayout`) to draw its content, using the provided `Rect` for positioning. `GUILayout` methods are unavailable in IL2CPP builds due to method unstripping failures. Exceptions in the callback are caught and displayed as an error message in the panel area.
 
 ### RemovePanel
 
@@ -72,21 +72,52 @@ Append a timestamped message to the Log panel. The log buffer holds up to 200 me
 
 ## Built-in Panels
 
-The console initializes with five built-in panels:
+The console initializes with five built-in panels, displayed in this order:
 
-### Errors
+### Battle Log
 
-Displays all entries from `ModError.RecentErrors` in reverse chronological order (newest first). Entries are color-coded by severity: red for errors/fatal, yellow for warnings, blue for info. Includes a text filter by mod ID and a Clear button.
+Displays combat events captured from the game's DevCombatLog system via Harmony patches. Events include:
 
-Duplicate errors show an occurrence count suffix (e.g., `(x5)`).
+- **Hits** (green) - successful attacks with damage dealt
+- **Misses** (red) - failed attack rolls
+- **Suppression** (yellow) - suppression applied to units
+- **Morale** (orange) - morale state changes
+- **Armor Penetration** (blue-gray) - armor piercing results
+- **Deaths** (white, bold) - unit deaths
+- **Skills** (light blue) - skill/ability usage
+
+Each entry shows a timestamp and detailed information (hit chance, roll, damage, etc.). Use the filter toggles to show/hide specific event types. The Clear button empties the log.
 
 ### Log
 
-A scrollable list of messages added via `DevConsole.Log()`. Each entry is prefixed with a timestamp in `HH:mm:ss` format.
+A unified panel showing both `ModError` entries and `DevConsole.Log()` messages in chronological order. Entries are color-coded by severity:
+
+- **Errors/Fatal** (red)
+- **Warnings** (yellow)
+- **Info** (blue)
+
+Severity filter toggles (Err/Warn/Info) control which entries are visible. Per-mod filter toggles appear when multiple mods have logged errors. The Clear button empties both the error list and log buffer.
+
+Duplicate errors show an occurrence count suffix (e.g., `(x5)`).
+
+### Console
+
+A command-line interface for executing SDK commands and C# expressions. Type `help` to see available commands:
+
+- `find <type>` - List all instances of a type
+- `findbyname <type> <name>` - Find instance by name
+- `inspect <type> <name>` - Find and inspect an object
+- `templates <type>` - List all templates of a type
+- `template <type> <name>` - Inspect a specific template
+- `scene` - Show current scene name
+- `errors [modId]` - Show recent errors
+- `clear` - Clear console output
+
+If a command is not recognized and Roslyn is available, the input is evaluated as a C# expression. Use arrow keys to navigate command history.
 
 ### Inspector
 
-Displays detailed information about a `GameObj` set via `DevConsole.Inspect()`:
+Displays detailed information about a `GameObj` set via `DevConsole.Inspect()` or the `inspect` command:
 
 - Type name and Unity object name
 - Pointer address
@@ -98,10 +129,6 @@ Properties that throw on read display `<error reading>`. Values longer than 120 
 ### Watch
 
 Displays all watch expressions added via `DevConsole.Watch()`. Each watch shows its label and the current return value of the getter function. Each watch has an `X` button to remove it.
-
-### REPL
-
-An interactive C# evaluation panel. See [REPL](repl.md) for details. This panel is registered by the REPL subsystem during initialization and is only available when Roslyn is present.
 
 ## Examples
 
@@ -136,10 +163,12 @@ DevConsole.Watch("Agent Count", () => GameQuery.FindAll("Agent").Length.ToString
 ### Registering a custom panel
 
 ```csharp
-DevConsole.RegisterPanel("My Mod", () =>
+DevConsole.RegisterPanel("My Mod", (Rect area) =>
 {
-    GUILayout.Label("Custom mod panel");
-    if (GUILayout.Button("Heal All"))
+    float y = area.y;
+    GUI.Label(new Rect(area.x, y, area.width, 18), "Custom mod panel");
+    y += 20;
+    if (GUI.Button(new Rect(area.x, y, 100, 22), "Heal All"))
     {
         foreach (var agent in GameQuery.FindAll("Agent"))
             agent.WriteInt("health", 100);

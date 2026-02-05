@@ -1,5 +1,6 @@
 using MelonLoader;
 using Menace.ModpackLoader;
+using Menace.SDK;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,7 +19,6 @@ public class DevModePlugin : IModpackPlugin
     private bool _devModeReady;
     private bool _sceneSeen;
     private bool _cheatsEnabled;
-    private bool _showUI;
     private bool _earlyDiagDone;
     private int _updateCount;
     private string _statusMessage = "";
@@ -51,21 +51,14 @@ public class DevModePlugin : IModpackPlugin
     private readonly List<string> _entityActorTypes = new();
     private int _selectedEntityIndex;
 
-    // GUI
-    private GUIStyle _boxStyle;
-    private GUIStyle _headerStyle;
-    private GUIStyle _labelStyle;
-    private GUIStyle _entityStyle;
-    private GUIStyle _factionStyle;
-    private GUIStyle _statusStyle;
-    private GUIStyle _helpStyle;
-    private bool _stylesInitialized;
+    // GUI colors (applied via content strings, not GUIStyle — avoids IL2CPP unstripping issues)
 
     public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
     {
         _log = logger;
         _harmony = harmony;
         _log.Msg("Menace Dev Mode v1.0.0");
+        DevConsole.RegisterPanel("Dev Mode", DrawDevModePanel);
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName)
@@ -143,7 +136,6 @@ public class DevModePlugin : IModpackPlugin
         TryLoadEntityTemplates(gameAssembly);
 
         _devModeReady = true;
-        _showUI = true;
         return true;
     }
 
@@ -817,10 +809,7 @@ public class DevModePlugin : IModpackPlugin
 
         try
         {
-            if (Input.GetKeyDown(KeyCode.BackQuote))
-                _showUI = !_showUI;
-
-            if (!_showUI) return;
+            if (!DevConsole.IsVisible) return;
 
             if (Input.GetKeyDown(KeyCode.RightBracket))
             {
@@ -930,114 +919,104 @@ public class DevModePlugin : IModpackPlugin
         }
     }
 
-    // ==================== In-Game GUI ====================
+    // ==================== DevConsole Panel ====================
 
-    private void InitStyles()
+    private const float LH = 22f;   // line height — enough for font size 13 + padding
+    private const float BH = 24f;   // button height
+    private const float BW = 32f;   // small nav button width
+
+    private void DrawDevModePanel(Rect area)
     {
-        if (_stylesInitialized) return;
-        _stylesInitialized = true;
+        float cx = area.x;
+        float cy = area.y;
+        float cw = area.width;
 
-        var bgTex = new Texture2D(1, 1);
-        bgTex.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.85f));
-        bgTex.Apply();
-
-        _boxStyle = new GUIStyle(GUI.skin.box)
+        if (!_devModeReady)
         {
-            normal = { background = bgTex, textColor = Color.white },
-            padding = new RectOffset(10, 10, 8, 8),
-        };
+            GUI.Label(new Rect(cx, cy, cw, LH), "Dev Mode loading...");
+            return;
+        }
 
-        _headerStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 15,
-            fontStyle = FontStyle.Bold,
-            normal = { textColor = new Color(1f, 0.8f, 0.2f) },
-            alignment = TextAnchor.MiddleCenter,
-        };
+        GUI.Label(new Rect(cx, cy, cw, LH), $"Cheats: {(_cheatsEnabled ? "ON" : "OFF")}");
+        cy += LH + 2;
 
-        _factionStyle = new GUIStyle(GUI.skin.label)
+        if (_entityTemplates.Count > 0 && _factions.Count > 0)
         {
-            fontSize = 13,
-            fontStyle = FontStyle.Bold,
-            normal = { textColor = new Color(1f, 0.4f, 0.4f) },
-        };
+            // --- Faction row: [<] FactionName [>] ---
+            float btnX = cx;
+            if (GUI.Button(new Rect(btnX, cy, BW, BH), "<"))
+            {
+                _selectedFactionIndex = (_selectedFactionIndex - 1 + _factions.Count) % _factions.Count;
+                SetStatus("");
+            }
+            btnX += BW + 4;
 
-        _labelStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 12,
-            normal = { textColor = new Color(0.7f, 0.7f, 0.7f) },
-        };
+            var faction = _factions[_selectedFactionIndex];
+            GUI.Label(new Rect(btnX, cy + 2, cw - BW * 2 - 12, LH), $"Faction: {faction.Name}");
 
-        _entityStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 14,
-            fontStyle = FontStyle.Bold,
-            normal = { textColor = Color.white },
-        };
+            if (GUI.Button(new Rect(cx + cw - BW, cy, BW, BH), ">"))
+            {
+                _selectedFactionIndex = (_selectedFactionIndex + 1) % _factions.Count;
+                SetStatus("");
+            }
+            cy += BH + 4;
 
-        _statusStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 12,
-            fontStyle = FontStyle.Italic,
-            normal = { textColor = new Color(0.5f, 1f, 0.5f) },
-        };
+            // --- Unit row: [<] UnitName [>] ---
+            btnX = cx;
+            if (GUI.Button(new Rect(btnX, cy, BW, BH), "<"))
+            {
+                _selectedEntityIndex = (_selectedEntityIndex - 1 + _entityTemplates.Count) % _entityTemplates.Count;
+                SetStatus("");
+            }
+            btnX += BW + 4;
 
-        _helpStyle = new GUIStyle(GUI.skin.label)
+            var entityName = _entityNames[_selectedEntityIndex];
+            var actorType = _entityActorTypes[_selectedEntityIndex];
+            GUI.Label(new Rect(btnX, cy + 2, cw - BW * 2 - 12, LH),
+                $"{entityName}  [{actorType}]  ({_selectedEntityIndex + 1}/{_entityTemplates.Count})");
+
+            if (GUI.Button(new Rect(cx + cw - BW, cy, BW, BH), ">"))
+            {
+                _selectedEntityIndex = (_selectedEntityIndex + 1) % _entityTemplates.Count;
+                SetStatus("");
+            }
+            cy += BH + 6;
+
+            // --- Action buttons ---
+            float abw = 80f;
+            float gap = 6f;
+            float abx = cx;
+
+            if (GUI.Button(new Rect(abx, cy, abw, BH), "Spawn"))
+                TrySpawnEntity();
+            abx += abw + gap;
+
+            if (GUI.Button(new Rect(abx, cy, abw, BH), "God Mode"))
+                TryStartAction(_godModeActionCtor, _godModeTargetValue, "God Mode - click unit");
+            abx += abw + gap;
+
+            if (GUI.Button(new Rect(abx, cy, abw, BH), "Delete"))
+                TryStartAction(_deleteEntityActionCtor, null, "Delete - click unit");
+            cy += BH + 4;
+        }
+        else
         {
-            fontSize = 11,
-            normal = { textColor = new Color(0.5f, 0.5f, 0.5f) },
-        };
+            GUI.Label(new Rect(cx, cy, cw, LH), "No entities loaded");
+            cy += LH + 4;
+        }
+
+        // --- Status message ---
+        if (!string.IsNullOrEmpty(_statusMessage))
+        {
+            float elapsed = 0f;
+            try { elapsed = Time.time - _statusTime; } catch { }
+            if (elapsed < 5f)
+                GUI.Label(new Rect(cx, cy, cw, LH), _statusMessage);
+        }
     }
 
     public void OnGUI()
     {
-        if (!_devModeReady || !_showUI) return;
-
-        InitStyles();
-
-        float w = 300;
-        float h = 180;
-        float x = Screen.width - w - 80;
-        float y = 10;
-
-        GUI.Box(new Rect(x, y, w, h), "", _boxStyle);
-
-        float cx = x + 10;
-        float cy = y + 6;
-        float cw = w - 20;
-
-        GUI.Label(new Rect(cx, cy, cw, 20), "DEV MODE", _headerStyle);
-        cy += 22;
-
-        if (_entityTemplates.Count > 0 && _factions.Count > 0)
-        {
-            var faction = _factions[_selectedFactionIndex];
-            GUI.Label(new Rect(cx, cy, cw, 18), faction.Name, _factionStyle);
-            cy += 20;
-
-            var entityName = _entityNames[_selectedEntityIndex];
-            GUI.Label(new Rect(cx, cy, cw, 20), entityName, _entityStyle);
-            cy += 18;
-
-            var actorType = _entityActorTypes[_selectedEntityIndex];
-            GUI.Label(new Rect(cx, cy, cw, 16),
-                $"{actorType}  ({_selectedEntityIndex + 1}/{_entityTemplates.Count})", _labelStyle);
-            cy += 20;
-        }
-        else
-        {
-            GUI.Label(new Rect(cx, cy, cw, 18), "No entities loaded", _labelStyle);
-            cy += 40;
-        }
-
-        if (!string.IsNullOrEmpty(_statusMessage) && Time.time - _statusTime < 5f)
-        {
-            GUI.Label(new Rect(cx, cy, cw, 16), _statusMessage, _statusStyle);
-        }
-        cy += 18;
-
-        GUI.Label(new Rect(cx, cy, cw, 14), "[ ]  Unit    \\  Faction    Enter  Spawn", _helpStyle);
-        cy += 15;
-        GUI.Label(new Rect(cx, cy, cw, 14), "F2  God mode    F3  Delete    ~  Hide", _helpStyle);
+        // Drawing is handled by the DevConsole panel system
     }
 }

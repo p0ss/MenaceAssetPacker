@@ -158,11 +158,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     private void OnNodeSelected(TreeNodeViewModel? node)
     {
-        Console.WriteLine($"[DEBUG] OnNodeSelected: node={node?.Name}, IsCategory={node?.IsCategory}, HasTemplate={node?.Template != null}");
-
         if (node?.Template == null)
         {
-            Console.WriteLine($"[DEBUG] OnNodeSelected: No template, clearing properties");
             VanillaProperties = null;
             ModifiedProperties = null;
             return;
@@ -260,11 +257,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] Failed to load staging overrides from {file}: {ex.Message}");
+                ModkitLog.Warn($"Failed to load staging overrides from {file}: {ex.Message}");
             }
         }
-
-        Console.WriteLine($"[DEBUG] Loaded {_stagingOverrides.Count} staging override entries, {_cloneDefinitions.Count} clone(s) for modpack '{_currentModpackName}'");
     }
 
     /// <summary>
@@ -532,9 +527,21 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 if (!string.IsNullOrEmpty(t.Name))
                     names.Add(t.Name);
             }
-            names.Sort(StringComparer.Ordinal);
         }
 
+        // Include cloned template names from the current modpack
+        var prefix = templateTypeName + "/";
+        foreach (var compositeKey in _cloneDefinitions.Keys)
+        {
+            if (compositeKey.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var cloneName = compositeKey[prefix.Length..];
+                if (!names.Contains(cloneName))
+                    names.Add(cloneName);
+            }
+        }
+
+        names.Sort(StringComparer.Ordinal);
         _templateInstanceNamesCache[templateTypeName] = names;
         return names;
     }
@@ -563,6 +570,29 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         using var doc = JsonDocument.Parse(sb.ToString());
         _modifiedProperties[fieldName] = doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Replaces a complex array field's value with new JSON text.
+    /// Used by the structured object array editor for full-array replacement on any sub-field edit.
+    /// </summary>
+    public void UpdateComplexArrayProperty(string fieldName, string jsonText)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
+            return;
+
+        _userEditedFields.Add(fieldName);
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonText);
+            _modifiedProperties[fieldName] = doc.RootElement.Clone();
+        }
+        catch
+        {
+            // Invalid JSON — ignore the update
+        }
     }
 
     public void SaveToStaging()
@@ -739,6 +769,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
         // Register clone definition
         _cloneDefinitions[compositeKey] = sourceDyn.Name;
 
+        // Invalidate the cached template names so autocomplete lists pick up the new clone
+        _templateInstanceNamesCache.Remove(templateTypeName);
+
         // Add to tree: find the parent category of the source and add the clone as a sibling
         var cloneLeaf = new TreeNodeViewModel
         {
@@ -811,11 +844,39 @@ public sealed class StatsEditorViewModel : ViewModelBase
             var vanillaKey = $"{templateType}/{instanceName}";
             object? vanillaValue = null;
 
-            // Try to get the vanilla type from current vanilla properties or by reloading
+            // Try to get the vanilla type from current vanilla properties (fast path)
             if (_vanillaProperties != null && _selectedNode?.Template != null
                 && GetTemplateKey(_selectedNode.Template) == vanillaKey)
             {
                 _vanillaProperties.TryGetValue(fieldName, out vanillaValue);
+            }
+
+            // Fallback: look up the template's original JSON to determine the field type.
+            // This handles clones and any template that isn't currently selected.
+            if (vanillaValue == null)
+            {
+                var node = FindNode(_allTreeNodes, templateType, instanceName);
+                if (node?.Template is DynamicDataTemplate dyn)
+                {
+                    var json = dyn.GetJsonElement();
+                    var dotIndex = fieldName.IndexOf('.');
+                    if (dotIndex >= 0)
+                    {
+                        // Nested field: "AIRole.Move" → json["AIRole"]["Move"]
+                        var parentKey = fieldName[..dotIndex];
+                        var childKey = fieldName[(dotIndex + 1)..];
+                        if (json.TryGetProperty(parentKey, out var parent)
+                            && parent.ValueKind == JsonValueKind.Object
+                            && parent.TryGetProperty(childKey, out var child))
+                        {
+                            vanillaValue = ConvertJsonElementToValue(child);
+                        }
+                    }
+                    else if (json.TryGetProperty(fieldName, out var fieldEl))
+                    {
+                        vanillaValue = ConvertJsonElementToValue(fieldEl);
+                    }
+                }
             }
 
             if (vanillaValue is long)
@@ -865,9 +926,6 @@ public sealed class StatsEditorViewModel : ViewModelBase
         {
             var jsonElement = dynamicTemplate.GetJsonElement();
             var templateTypeName = dynamicTemplate.TemplateTypeName ?? "";
-
-            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: template={template.Name}, type={templateTypeName}, jsonElement.ValueKind={jsonElement.ValueKind}");
-
             int propCount = 0;
             try
             {
@@ -956,15 +1014,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] ERROR in ConvertTemplateToProperties: {ex.Message}");
-                Console.WriteLine($"[DEBUG] Stack trace: {ex.StackTrace}");
+                ModkitLog.Warn($"Error in ConvertTemplateToProperties: {ex.Message}");
             }
-
-            Console.WriteLine($"[DEBUG] ConvertTemplateToProperties: Found {propCount} properties, result.Count={result.Count}");
-        }
-        else
-        {
-            System.Diagnostics.Debug.WriteLine($"ConvertTemplateToProperties: template is not DynamicDataTemplate, it's {template?.GetType().Name}");
         }
 
         return result;
@@ -1168,12 +1219,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
             return node;
         }
 
-        // Category name matches query (and not modpack-only) → include entire subtree
-        if (query != null && !_showModpackOnly &&
-            node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
-            return node;
-
-        // Otherwise check children recursively
+        // Check children recursively
         var matchingChildren = new List<TreeNodeViewModel>();
         foreach (var child in node.Children)
         {

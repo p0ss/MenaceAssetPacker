@@ -95,10 +95,40 @@ public class CompilationService
             return result;
         }
 
+        // Inject nullable attribute polyfill — the IL2CPP target assemblies don't
+        // include System.Runtime.CompilerServices.NullableAttribute, but Roslyn
+        // emits references to it for any generic types with reference type args
+        // (e.g. Dictionary<int, string>), even with NullableContextOptions.Disable.
+        syntaxTrees.Add(CSharpSyntaxTree.ParseText(
+            NullableAttributePolyfill,
+            CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.CSharp10),
+            path: "<NullablePolyfill>"));
+
         // Resolve references
         var gameInstallPath = AppSettings.Instance.GameInstallPath;
         var resolver = new ReferenceResolver(gameInstallPath);
         var references = resolver.ResolveReferences(manifest.Code.References);
+
+        // Report any resolution issues as warnings
+        foreach (var issue in resolver.ResolutionIssues)
+        {
+            result.Diagnostics.Add(new CompilationDiagnostic
+            {
+                Severity = Models.DiagnosticSeverity.Warning,
+                Message = $"[Reference Resolution] {issue}"
+            });
+        }
+
+        if (references.Count == 0)
+        {
+            result.Success = false;
+            result.Diagnostics.Add(new CompilationDiagnostic
+            {
+                Severity = Models.DiagnosticSeverity.Error,
+                Message = "No references resolved. Check that the game install path is set correctly and MelonLoader is installed."
+            });
+            return result;
+        }
 
         // Sanitize assembly name
         var assemblyName = SanitizeAssemblyName(manifest.Name);
@@ -111,7 +141,8 @@ public class CompilationService
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
                 .WithOptimizationLevel(OptimizationLevel.Release)
                 .WithPlatform(Platform.AnyCpu)
-                .WithAllowUnsafe(true));
+                .WithAllowUnsafe(true)
+                .WithNullableContextOptions(NullableContextOptions.Disable));
 
         // Output path
         var buildDir = Path.Combine(modpackDir, "build");
@@ -159,4 +190,23 @@ public class CompilationService
         var sanitized = string.Join("_", name.Split(invalid, StringSplitOptions.RemoveEmptyEntries));
         return sanitized.Replace(" ", "_").Replace(".", "_");
     }
+
+    private const string NullableAttributePolyfill = @"
+// Auto-injected polyfill for IL2CPP targets that lack these attributes.
+namespace System.Runtime.CompilerServices
+{
+    [AttributeUsage(AttributeTargets.All, AllowMultiple = true)]
+    internal sealed class NullableAttribute : Attribute
+    {
+        public NullableAttribute(byte _) { }
+        public NullableAttribute(byte[] _) { }
+    }
+
+    [AttributeUsage(AttributeTargets.All)]
+    internal sealed class NullableContextAttribute : Attribute
+    {
+        public NullableContextAttribute(byte _) { }
+    }
+}
+";
 }

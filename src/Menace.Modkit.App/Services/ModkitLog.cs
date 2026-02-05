@@ -9,11 +9,16 @@ namespace Menace.Modkit.App.Services;
 /// </summary>
 public static class ModkitLog
 {
-    private static readonly string LogPath = Path.Combine(
+    private static readonly string _logPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "MenaceModkit", "modkit.log");
 
     private static readonly object _lock = new();
+
+    /// <summary>
+    /// Gets the full path to the modkit log file.
+    /// </summary>
+    public static string LogPath => _logPath;
 
     public static void Info(string message) => Write("INFO", message);
     public static void Warn(string message) => Write("WARN", message);
@@ -23,14 +28,14 @@ public static class ModkitLog
     {
         try
         {
-            var dir = Path.GetDirectoryName(LogPath);
+            var dir = Path.GetDirectoryName(_logPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
             var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {message}";
             lock (_lock)
             {
-                File.AppendAllText(LogPath, line + Environment.NewLine);
+                File.AppendAllText(_logPath, line + Environment.NewLine);
             }
             Console.WriteLine(line);
         }

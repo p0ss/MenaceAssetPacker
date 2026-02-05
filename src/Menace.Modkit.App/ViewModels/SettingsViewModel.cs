@@ -1,8 +1,10 @@
 using ReactiveUI;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reactive;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Menace.Modkit.App.Models;
@@ -33,6 +35,10 @@ public sealed class SettingsViewModel : ViewModelBase
     ClearCacheCommand = ReactiveCommand.Create(ClearCache);
     ForceReExtractCommand = ReactiveCommand.CreateFromTask(ForceReExtractAsync);
     CleanRedeployCommand = ReactiveCommand.CreateFromTask(CleanRedeployAsync);
+    OpenModkitLogCommand = ReactiveCommand.Create(OpenModkitLog);
+    OpenMelonLoaderLogCommand = ReactiveCommand.Create(OpenMelonLoaderLog);
+    OpenModkitLogFolderCommand = ReactiveCommand.Create(OpenModkitLogFolder);
+    OpenMelonLoaderLogFolderCommand = ReactiveCommand.Create(OpenMelonLoaderLogFolder);
   }
 
   public string GameInstallPath
@@ -201,6 +207,16 @@ public sealed class SettingsViewModel : ViewModelBase
   public ReactiveCommand<Unit, Unit> ClearCacheCommand { get; }
   public ReactiveCommand<Unit, Unit> ForceReExtractCommand { get; }
   public ReactiveCommand<Unit, Unit> CleanRedeployCommand { get; }
+  public ReactiveCommand<Unit, Unit> OpenModkitLogCommand { get; }
+  public ReactiveCommand<Unit, Unit> OpenMelonLoaderLogCommand { get; }
+  public ReactiveCommand<Unit, Unit> OpenModkitLogFolderCommand { get; }
+  public ReactiveCommand<Unit, Unit> OpenMelonLoaderLogFolderCommand { get; }
+
+  // Log paths
+  public string ModkitLogPath => ModkitLog.LogPath;
+  public string MelonLoaderLogPath => string.IsNullOrEmpty(GameInstallPath)
+    ? "(set game install path)"
+    : Path.Combine(GameInstallPath, "MelonLoader", "Latest.log");
 
   private void ValidateInstallPath()
   {
@@ -366,6 +382,68 @@ public sealed class SettingsViewModel : ViewModelBase
         CacheStatus = $"Error clearing cache: {ex.Message}";
       }
     }
+  }
+
+  private void OpenModkitLog()
+  {
+    var path = ModkitLog.LogPath;
+    if (File.Exists(path))
+      OpenFileInDefaultApp(path);
+  }
+
+  private void OpenMelonLoaderLog()
+  {
+    if (string.IsNullOrEmpty(GameInstallPath))
+      return;
+
+    var path = Path.Combine(GameInstallPath, "MelonLoader", "Latest.log");
+    if (File.Exists(path))
+      OpenFileInDefaultApp(path);
+  }
+
+  private void OpenModkitLogFolder()
+  {
+    var dir = Path.GetDirectoryName(ModkitLog.LogPath);
+    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+      OpenFolderInExplorer(dir);
+  }
+
+  private void OpenMelonLoaderLogFolder()
+  {
+    if (string.IsNullOrEmpty(GameInstallPath))
+      return;
+
+    var dir = Path.Combine(GameInstallPath, "MelonLoader");
+    if (Directory.Exists(dir))
+      OpenFolderInExplorer(dir);
+  }
+
+  private static void OpenFileInDefaultApp(string filePath)
+  {
+    try
+    {
+      if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
+      else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        Process.Start("open", filePath);
+      else // Linux
+        Process.Start("xdg-open", filePath);
+    }
+    catch { }
+  }
+
+  private static void OpenFolderInExplorer(string folderPath)
+  {
+    try
+    {
+      if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        Process.Start(new ProcessStartInfo("explorer.exe", folderPath) { UseShellExecute = true });
+      else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        Process.Start("open", folderPath);
+      else // Linux
+        Process.Start("xdg-open", folderPath);
+    }
+    catch { }
   }
 
   private async Task ForceReExtractAsync()

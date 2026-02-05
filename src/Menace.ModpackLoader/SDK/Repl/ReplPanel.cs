@@ -6,6 +6,7 @@ namespace Menace.SDK.Repl;
 /// <summary>
 /// IMGUI REPL panel for the DevConsole. Provides a text input field, submit on Enter,
 /// scrollable output, and history navigation with up/down arrows.
+/// Uses raw GUI.* calls for IL2CPP compatibility.
 /// </summary>
 internal static class ReplPanel
 {
@@ -25,73 +26,104 @@ internal static class ReplPanel
     private static bool _stylesInitialized;
 
     private const string InputControlName = "ReplInput";
+    private const float LineHeight = 18f;
+    private const float InputHeight = 22f;
 
     internal static void Initialize(ConsoleEvaluator evaluator)
     {
         _evaluator = evaluator;
         _initialized = evaluator != null;
-
-        if (_initialized)
-        {
-            DevConsole.RegisterPanel("REPL", Draw);
-        }
+        // Panel registration removed - REPL is now integrated into the Console panel
     }
 
-    internal static void Draw()
+    /// <summary>
+    /// Returns true if the REPL evaluator is available.
+    /// </summary>
+    internal static bool IsAvailable => _initialized && _evaluator != null;
+
+    /// <summary>
+    /// Evaluate a C# expression and return the result.
+    /// </summary>
+    internal static ConsoleEvaluator.EvalResult Evaluate(string input)
+    {
+        if (!IsAvailable)
+            return new ConsoleEvaluator.EvalResult { Success = false, Error = "REPL not available" };
+        return _evaluator.Evaluate(input);
+    }
+
+    internal static void Draw(Rect area)
     {
         if (!_initialized || _evaluator == null)
         {
-            GUILayout.Label("REPL not initialized. Roslyn may not be available.");
+            GUI.Label(new Rect(area.x, area.y, area.width, LineHeight),
+                "REPL not initialized. Roslyn may not be available.");
             return;
         }
 
         InitializeStyles();
 
-        // Output area
-        _outputScroll = GUILayout.BeginScrollView(_outputScroll, GUILayout.ExpandHeight(true));
-
-        foreach (var (input, result) in _evaluator.History)
-        {
-            // Show input
-            GUILayout.Label($"> {input}", _promptStyle);
-
-            // Show result
-            if (result.Success)
-            {
-                var style = result.Value == null ? _nullStyle : _successStyle;
-                GUILayout.Label($"  {result.DisplayText}", style);
-            }
-            else
-            {
-                GUILayout.Label($"  Error: {result.Error}", _errorStyle);
-            }
-
-            GUILayout.Space(2);
-        }
-
-        GUILayout.EndScrollView();
-
-        // Input area
-        GUILayout.BeginHorizontal();
-        GUILayout.Label(">", _promptStyle, GUILayout.Width(14));
-
-        // Handle input events before the text field
+        // Handle input events before drawing controls
         var e = Event.current;
         if (e.type == EventType.KeyDown)
         {
             HandleInputKeys(e);
         }
 
+        // Layout: output scroll at top, input bar at bottom
+        float inputBarHeight = InputHeight + 4;
+        float outputHeight = area.height - inputBarHeight;
+
+        // Output area (manual scroll — GUI.BeginScrollView not unstripped)
+        var history = _evaluator.History;
+        float contentHeight = 0;
+        foreach (var _ in history)
+            contentHeight += LineHeight * 2 + 2;
+
+        var outputRect = new Rect(area.x, area.y, area.width, outputHeight);
+        _outputScroll.y = DevConsole.HandleScrollWheel(outputRect, contentHeight, _outputScroll.y);
+
+        GUI.BeginGroup(outputRect);
+        float sy = -_outputScroll.y;
+        foreach (var (input, result) in history)
+        {
+            if (sy + LineHeight > 0 && sy < outputHeight)
+                GUI.Label(new Rect(0, sy, outputRect.width, LineHeight), $"> {input}", _promptStyle);
+            sy += LineHeight;
+
+            if (sy + LineHeight > 0 && sy < outputHeight)
+            {
+                if (result.Success)
+                {
+                    var style = result.Value == null ? _nullStyle : _successStyle;
+                    GUI.Label(new Rect(0, sy, outputRect.width, LineHeight), $"  {result.DisplayText}", style);
+                }
+                else
+                {
+                    GUI.Label(new Rect(0, sy, outputRect.width, LineHeight), $"  Error: {result.Error}", _errorStyle);
+                }
+            }
+            sy += LineHeight + 2;
+        }
+        GUI.EndGroup();
+
+        // Input bar
+        float iy = area.y + outputHeight + 2;
+        float promptWidth = 16;
+        float runWidth = 44;
+        float fieldWidth = area.width - promptWidth - runWidth - 8;
+
+        GUI.Label(new Rect(area.x, iy, promptWidth, InputHeight), ">", _promptStyle);
+
         GUI.SetNextControlName(InputControlName);
-        _inputText = GUILayout.TextField(_inputText, _inputStyle);
+        _inputText = GUI.TextField(
+            new Rect(area.x + promptWidth + 2, iy, fieldWidth, InputHeight),
+            _inputText ?? "", _inputStyle);
         GUI.FocusControl(InputControlName);
 
-        if (GUILayout.Button("Run", GUILayout.Width(40)))
+        if (GUI.Button(new Rect(area.x + promptWidth + fieldWidth + 6, iy, runWidth, InputHeight), "Run"))
         {
             SubmitInput();
         }
-
-        GUILayout.EndHorizontal();
     }
 
     private static void HandleInputKeys(Event e)

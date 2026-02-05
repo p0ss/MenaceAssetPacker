@@ -24,6 +24,12 @@ public class ReferenceResolver
     }
 
     /// <summary>
+    /// Issues encountered during reference resolution.
+    /// Check this after calling ResolveReferences to see if there were problems.
+    /// </summary>
+    public List<string> ResolutionIssues { get; } = new();
+
+    /// <summary>
     /// Resolve all MetadataReferences needed to compile a mod DLL targeting net6.0.
     /// </summary>
     public List<MetadataReference> ResolveReferences(List<string>? requestedReferences = null)
@@ -31,8 +37,21 @@ public class ReferenceResolver
         var refs = new List<MetadataReference>();
         var addedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var addedAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ResolutionIssues.Clear();
 
         ModkitLog.Info("=== Resolving references ===");
+
+        // Validate game install path first
+        if (string.IsNullOrEmpty(_gameInstallPath))
+        {
+            ResolutionIssues.Add("Game install path is not configured. Set it in Settings.");
+            ModkitLog.Error("Game install path is not set!");
+        }
+        else if (!Directory.Exists(_gameInstallPath))
+        {
+            ResolutionIssues.Add($"Game install path does not exist: {_gameInstallPath}");
+            ModkitLog.Error($"Game install path does not exist: {_gameInstallPath}");
+        }
 
         // Core add — deduplicates by path and assembly filename.
         void AddRef(string path)
@@ -91,14 +110,29 @@ public class ReferenceResolver
         }
 
         // 3. Game directories (skip any framework assemblies)
-        if (!string.IsNullOrEmpty(_gameInstallPath))
+        if (!string.IsNullOrEmpty(_gameInstallPath) && Directory.Exists(_gameInstallPath))
         {
             var il2cppDir = Path.Combine(_gameInstallPath, "MelonLoader", "Il2CppAssemblies");
             if (Directory.Exists(il2cppDir))
             {
                 ModkitLog.Info($"Step 3a: Il2CppAssemblies ({il2cppDir})");
+                var il2cppCount = 0;
                 foreach (var dll in Directory.GetFiles(il2cppDir, "*.dll"))
+                {
                     AddNonSystemRef(dll);
+                    il2cppCount++;
+                }
+                ModkitLog.Info($"  Found {il2cppCount} Il2Cpp assemblies");
+
+                // Check for critical game assemblies
+                var assemblyCSharp = Path.Combine(il2cppDir, "Assembly-CSharp.dll");
+                if (!File.Exists(assemblyCSharp))
+                    ResolutionIssues.Add("Assembly-CSharp.dll not found in Il2CppAssemblies - game types will be unavailable");
+            }
+            else
+            {
+                ResolutionIssues.Add($"Il2CppAssemblies directory not found at {il2cppDir}. Run the game once with MelonLoader to generate proxy assemblies.");
+                ModkitLog.Warn($"Il2CppAssemblies not found: {il2cppDir}");
             }
 
             var mlDir = Path.Combine(_gameInstallPath, "MelonLoader");
@@ -108,6 +142,10 @@ public class ReferenceResolver
                 foreach (var dll in Directory.GetFiles(mlDir, "*.dll"))
                     AddNonSystemRef(dll);
             }
+            else
+            {
+                ResolutionIssues.Add($"MelonLoader directory not found. Is MelonLoader installed?");
+            }
 
             var modsDir = Path.Combine(_gameInstallPath, "Mods");
             if (Directory.Exists(modsDir))
@@ -116,6 +154,10 @@ public class ReferenceResolver
                 foreach (var dll in Directory.GetFiles(modsDir, "*.dll"))
                     AddNonSystemRef(dll);
             }
+        }
+        else if (!string.IsNullOrEmpty(_gameInstallPath))
+        {
+            ResolutionIssues.Add($"Game install path does not exist: {_gameInstallPath}");
         }
 
         // 4. Specific requested references (user-specified, may need Vanilla fallback)
@@ -159,10 +201,10 @@ public class ReferenceResolver
 
     /// <summary>
     /// Add system/BCL references for compilation.
-    /// Priority: game's bundled dotnet/ directory (net6.0, matches MelonLoader's runtime)
-    ///           → global .NET 6 shared framework → host runtime → loaded assemblies.
-    /// Using the game's runtime is critical: if we compile against net10.0 assemblies,
-    /// the DLL references System.Linq Version=10.0.0.0 which doesn't exist at runtime.
+    /// Priority: bundled .NET 6 reference assemblies (guaranteed correct version)
+    ///           → game's bundled dotnet/ → global .NET 6 shared framework → fallbacks.
+    /// Using .NET 6 refs is critical: if we compile against net8/10 assemblies,
+    /// the DLL references System.Linq Version=8.0.0.0 which doesn't exist in MelonLoader's runtime.
     /// </summary>
     private static void AddSystemReferences(string gameInstallPath, List<MetadataReference> refs,
         HashSet<string> addedPaths, HashSet<string> addedAssemblyNames)
@@ -192,8 +234,22 @@ public class ReferenceResolver
             return count;
         }
 
-        // 1. Try the game's bundled .NET runtime (e.g. <game>/dotnet/)
-        //    MelonLoader ships a self-contained net6.0 runtime here.
+        // 1. Try bundled .NET 6 reference assemblies (from Microsoft.NETCore.App.Ref NuGet package)
+        //    This ensures we always compile against .NET 6 assembly versions, regardless of
+        //    what's installed on the user's system. MelonLoader runs on .NET 6, so referencing
+        //    System.Linq Version=6.0.0.0 (not 8.0.0.0 or 10.0.0.0) is critical.
+        var bundledRefsDir = Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", "dotnet-refs", "net6.0");
+        if (Directory.Exists(bundledRefsDir))
+        {
+            ModkitLog.Info($"  Using bundled .NET 6 reference assemblies: {bundledRefsDir}");
+            var count = AddManagedDlls(bundledRefsDir);
+            ModkitLog.Info($"  Added {count} assemblies from bundled refs");
+            if (count > 0)
+                return;
+        }
+
+        // 2. Try the game's bundled .NET runtime (e.g. <game>/dotnet/)
+        //    MelonLoader may ship a self-contained net6.0 runtime here.
         if (!string.IsNullOrEmpty(gameInstallPath))
         {
             var gameDotnetDir = Path.Combine(gameInstallPath, "dotnet");
@@ -204,39 +260,38 @@ public class ReferenceResolver
                 ModkitLog.Info($"  Added {count} assemblies from game runtime");
 
                 if (count > 0)
-                    return; // Game runtime found and populated — don't add host runtime
+                    return;
             }
         }
 
-        // 2. Try global .NET 6 shared framework installation.
-        //    This targets net6.0 specifically to match MelonLoader's runtime,
-        //    avoiding version mismatches from the host's newer runtime.
-        ModkitLog.Warn("  Game's bundled dotnet/ not found — searching for .NET 6 shared framework");
-        var net6Dir = FindNet6SharedFramework();
-        if (net6Dir != null)
+        // 3. Try global .NET 6 shared framework installation (SDK ref packs).
+        ModkitLog.Warn("  Bundled refs not found — searching for .NET 6 SDK reference assemblies");
+        var sdkRefsDir = FindNet6SdkRefs();
+        if (sdkRefsDir != null)
         {
-            ModkitLog.Info($"  Found .NET 6 shared framework: {net6Dir}");
-            var count = AddManagedDlls(net6Dir);
-            ModkitLog.Info($"  Added {count} assemblies from .NET 6 shared framework");
+            ModkitLog.Info($"  Found .NET 6 SDK refs: {sdkRefsDir}");
+            var count = AddManagedDlls(sdkRefsDir);
+            ModkitLog.Info($"  Added {count} assemblies from .NET 6 SDK refs");
             if (count > 0)
                 return;
         }
 
-        // 3. Fallback: use the host's runtime directory.
-        //    On single-file self-contained apps this directory may contain only native DLLs,
-        //    so we check whether we actually found any managed assemblies.
-        ModkitLog.Warn("  .NET 6 shared framework not found — falling back to host runtime");
-        var dotnetRoot = RuntimeEnvironment.GetRuntimeDirectory();
-        ModkitLog.Info($"  Host runtime: {dotnetRoot}");
-        var hostCount = AddManagedDlls(dotnetRoot);
-        ModkitLog.Info($"  Added {hostCount} assemblies from host runtime");
-        if (hostCount > 0)
-            return;
+        // 4. Try global .NET 6 shared framework (runtime assemblies).
+        //    WARNING: Using .NET 8/10 here will cause version mismatch errors at runtime!
+        ModkitLog.Warn("  SDK refs not found — searching for .NET 6 shared framework");
+        var net6Dir = FindNet6SharedFramework();
+        if (net6Dir != null)
+        {
+            ModkitLog.Info($"  Found .NET shared framework: {net6Dir}");
+            var count = AddManagedDlls(net6Dir);
+            ModkitLog.Info($"  Added {count} assemblies from shared framework");
+            if (count > 0)
+                return;
+        }
 
-        // 4. Last resort: use the trusted platform assemblies list.
-        //    The .NET runtime tracks all assemblies it can load, even in single-file apps
-        //    where Assembly.Location may be empty. This list includes full paths to BCL DLLs.
-        ModkitLog.Warn("  Host runtime had no managed DLLs (single-file app?) — trying trusted platform assemblies");
+        // 5. Last resort: use trusted platform assemblies.
+        //    WARNING: This may use .NET 8/10 assemblies and cause runtime errors!
+        ModkitLog.Error("  CRITICAL: No .NET 6 references found! Using host runtime (may cause version mismatch).");
         var tpaCount = 0;
         var tpa = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
         if (!string.IsNullOrEmpty(tpa))
@@ -272,14 +327,67 @@ public class ReferenceResolver
         if (tpaCount == 0)
         {
             ModkitLog.Error("  CRITICAL: No system references found! Compilation will fail.");
-            ModkitLog.Error("  Ensure MelonLoader is installed (creates <game>/dotnet/ with .NET 6 runtime),");
-            ModkitLog.Error("  or verify that the game install path is set correctly in Settings.");
+            ModkitLog.Error("  The bundled .NET 6 reference assemblies are missing from third_party/bundled/dotnet-refs/net6.0/");
         }
     }
 
     /// <summary>
-    /// Find the .NET 6 shared framework directory from a global .NET installation.
-    /// Returns the path to the highest 6.x.x version, or null if not found.
+    /// Find .NET 6 SDK reference assemblies (Microsoft.NETCore.App.Ref pack).
+    /// These are the ideal compilation references since they contain only metadata.
+    /// </summary>
+    private static string? FindNet6SdkRefs()
+    {
+        var candidates = new List<string>();
+
+        if (OperatingSystem.IsWindows())
+        {
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "dotnet", "packs", "Microsoft.NETCore.App.Ref"));
+            candidates.Add(@"C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref");
+        }
+        else if (OperatingSystem.IsLinux())
+        {
+            candidates.Add("/usr/share/dotnet/packs/Microsoft.NETCore.App.Ref");
+            candidates.Add("/usr/lib/dotnet/packs/Microsoft.NETCore.App.Ref");
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            candidates.Add(Path.Combine(home, ".dotnet", "packs", "Microsoft.NETCore.App.Ref"));
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            candidates.Add("/usr/local/share/dotnet/packs/Microsoft.NETCore.App.Ref");
+        }
+
+        foreach (var basePath in candidates.Distinct())
+        {
+            if (!Directory.Exists(basePath))
+                continue;
+
+            // Look for 6.x version directories
+            var dirs = Directory.GetDirectories(basePath)
+                .Select(Path.GetFileName)
+                .Where(n => n != null && n.StartsWith("6."))
+                .OrderByDescending(n => n)
+                .ToList();
+
+            if (dirs.Count > 0)
+            {
+                var refDir = Path.Combine(basePath, dirs[0]!, "ref", "net6.0");
+                if (Directory.Exists(refDir))
+                {
+                    ModkitLog.Info($"  Found .NET 6 SDK refs: {refDir}");
+                    return refDir;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Find .NET 6 shared framework directory from a global .NET installation.
+    /// ONLY returns .NET 6 - does NOT fall back to 8 or 10 since those would cause
+    /// assembly version mismatches at runtime (MelonLoader runs on .NET 6).
     /// </summary>
     private static string? FindNet6SharedFramework()
     {
@@ -307,20 +415,24 @@ public class ReferenceResolver
             candidates.Add("/usr/local/share/dotnet/shared/Microsoft.NETCore.App");
         }
 
+        // ONLY use .NET 6 - do NOT fall back to 8 or 10!
+        // Using newer runtimes causes assembly version mismatches at runtime.
         foreach (var basePath in candidates.Distinct())
         {
             if (!Directory.Exists(basePath))
                 continue;
 
-            // Find highest 6.x.x version directory
-            var best = Directory.GetDirectories(basePath)
+            var dirs = Directory.GetDirectories(basePath)
                 .Select(Path.GetFileName)
                 .Where(n => n != null && n.StartsWith("6."))
                 .OrderByDescending(n => n)
-                .FirstOrDefault();
+                .ToList();
 
-            if (best != null)
-                return Path.Combine(basePath, best);
+            if (dirs.Count > 0)
+            {
+                ModkitLog.Info($"  Using .NET {dirs[0]} shared framework");
+                return Path.Combine(basePath, dirs[0]!);
+            }
         }
 
         return null;

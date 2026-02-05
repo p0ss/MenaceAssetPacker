@@ -65,7 +65,7 @@ public class DataTemplateLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error loading {templateType}: {ex.Message}");
+            ModkitLog.Warn($"Error loading {templateType}: {ex.Message}");
             return new List<T>();
         }
     }
@@ -106,7 +106,7 @@ public class DataTemplateLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error loading {templateType}: {ex.Message}");
+            ModkitLog.Warn($"Error loading {templateType}: {ex.Message}");
             return new List<DataTemplate>();
         }
     }

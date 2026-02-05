@@ -1,0 +1,34 @@
+{
+  "manifestVersion": 2,
+  "name": "TwitchSquaddies",
+  "version": "1.0.0",
+  "author": "Menace Modkit",
+  "description": "Discovers squaddie data at runtime and repurposes the home planet display to show Twitch chat messages.",
+  "loadOrder": 20,
+  "patches": {},
+  "assets": {},
+  "code": {
+    "sources": [
+      "src/TwitchSquaddiesPlugin.cs",
+      "src/SquaddieExplorer.cs",
+      "src/SquaddieReadWrite.cs",
+      "src/TwitchClient.cs"
+    ],
+    "references": [
+      "MelonLoader",
+      "0Harmony",
+      "Il2CppInterop.Runtime",
+      "Il2CppInterop.Common",
+      "Il2Cppmscorlib",
+      "Assembly-CSharp",
+      "UnityEngine.CoreModule",
+      "UnityEngine.InputLegacyModule",
+      "UnityEngine.IMGUIModule",
+      "UnityEngine.TextRenderingModule",
+      "Menace.ModpackLoader",
+      "System.Net.Http"
+    ],
+    "prebuiltDlls": []
+  },
+  "securityStatus": "SourceVerified"
+}

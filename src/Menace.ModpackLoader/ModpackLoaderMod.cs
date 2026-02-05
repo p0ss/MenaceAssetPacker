@@ -15,6 +15,7 @@ using UnityEngine;
 
 [assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", "2.0.0", "Menace Modkit")]
 [assembly: MelonGame(null, null)]
+[assembly: MelonOptionalDependencies("Microsoft.CodeAnalysis", "Microsoft.CodeAnalysis.CSharp", "System.Collections.Immutable")]
 
 namespace Menace.ModpackLoader;
 
@@ -35,6 +36,7 @@ public partial class ModpackLoaderMod : MelonMod
         // Initialize SDK subsystems
         OffsetCache.Initialize();
         DevConsole.Initialize();
+        DevConsole.ApplyInputPatches(HarmonyInstance);
         InitializeRepl();
 
         LoadModpacks();
@@ -58,6 +60,7 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
+        DevConsole.IsVisible = false;
         GameState.NotifySceneLoaded(sceneName);
         GameQuery.ClearCache();
         DllLoader.NotifySceneLoaded(buildIndex, sceneName);
@@ -391,17 +394,28 @@ public partial class ModpackLoaderMod : MelonMod
     {
         try
         {
-            var resolver = new RuntimeReferenceResolver();
-            var refs = resolver.ResolveAll();
-            var compiler = new RuntimeCompiler(refs);
-            var evaluator = new ConsoleEvaluator(compiler);
-            ReplPanel.Initialize(evaluator);
-            LoggerInstance.Msg($"REPL initialized with {refs.Count} references");
+            // Roslyn types live in a separate method to prevent the JIT from resolving
+            // Microsoft.CodeAnalysis when compiling THIS method. Without this split,
+            // the FileNotFoundException fires during JIT (before the try block runs)
+            // and escapes the catch, crashing the entire OnInitializeMelon.
+            InitializeReplCore();
         }
         catch (Exception ex)
         {
             LoggerInstance.Warning($"REPL initialization failed (Roslyn may not be available): {ex.Message}");
         }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void InitializeReplCore()
+    {
+        var resolver = new RuntimeReferenceResolver();
+        var refs = resolver.ResolveAll();
+        var compiler = new RuntimeCompiler(refs);
+        var evaluator = new ConsoleEvaluator(compiler);
+        ReplPanel.Initialize(evaluator);
+        DevConsole.SetReplEvaluator(evaluator);
+        LoggerInstance.Msg($"REPL initialized with {refs.Count} references");
     }
 
     private static void PlayerLog(string message)

@@ -305,7 +305,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public async Task DeploySingleAsync()
     {
-        if (SelectedModpack == null) return;
+        if (SelectedModpack == null || IsDeploying) return;
 
         IsDeploying = true;
         DeployStatus = "Deploying...";
@@ -331,6 +331,8 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public async Task DeployAllAsync()
     {
+        if (IsDeploying) return;
+
         IsDeploying = true;
         DeployStatus = "Deploying...";
 
@@ -355,17 +357,28 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public async Task UndeployAllAsync()
     {
+        if (IsDeploying) return;
+
         IsDeploying = true;
         DeployStatus = "Undeploying...";
 
-        var progress = new Progress<string>(s => DeployStatus = s);
-        var result = await _deployManager.UndeployAllAsync(progress);
+        try
+        {
+            var progress = new Progress<string>(s => DeployStatus = s);
+            var result = await _deployManager.UndeployAllAsync(progress);
+            DeployStatus = result.Message;
 
-        DeployStatus = result.Message;
-        IsDeploying = false;
-
-        if (result.Success)
-            RefreshModpacks();
+            if (result.Success)
+                RefreshModpacks();
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Undeploy failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDeploying = false;
+        }
     }
 
     public void MoveUp() => MoveItemUp(SelectedModpack);

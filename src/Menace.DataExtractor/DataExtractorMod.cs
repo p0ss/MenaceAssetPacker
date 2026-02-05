@@ -18,7 +18,7 @@ namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "4.6.0";
+        private const string ExtractorVersion = "4.8.0";
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -1475,7 +1475,7 @@ namespace Menace.DataExtractor
         /// </summary>
         private object ReadIl2CppListDirect(IntPtr listPtr, IntPtr listClass, int depth)
         {
-            if (depth > 2) return null;
+            if (depth > 8) return null;
 
             try
             {
@@ -1809,7 +1809,7 @@ namespace Menace.DataExtractor
         /// </summary>
         private object ReadArrayFromFieldMetadata(IntPtr arrayPtr, IntPtr fieldType, int depth)
         {
-            if (depth > 2) return null;
+            if (depth > 8) return null;
 
             try
             {
@@ -2225,7 +2225,7 @@ namespace Menace.DataExtractor
                             12 => r8IsActuallyR4 ? (object)(double)ReadFloat(addr) : ReadDoubleValidated(addr),
                             14 => ReadIl2CppStringAt(addr),              // IL2CPP_TYPE_STRING
                             17 => ReadValueTypeField(addr, fieldType),   // IL2CPP_TYPE_VALUETYPE (enums + structs)
-                            18 => ReadNestedRefField(addr, fieldType, depth), // IL2CPP_TYPE_CLASS
+                            18 or 21 => ReadNestedRefField(addr, fieldType, depth), // IL2CPP_TYPE_CLASS or GENERICINST
                             29 => ReadNestedArrayField(addr, fieldType, depth), // IL2CPP_TYPE_SZARRAY
                             _ => null
                         };
@@ -2280,7 +2280,6 @@ namespace Menace.DataExtractor
         {
             try
             {
-                if (depth > 2) return null;
                 IntPtr refPtr = Marshal.ReadIntPtr(addr);
                 if (refPtr == IntPtr.Zero) return null;
 
@@ -2289,12 +2288,17 @@ namespace Menace.DataExtractor
 
                 string className = GetClassNameSafe(expectedClass);
 
+                // Unity object references just read the asset name — no recursion,
+                // so allow them at any depth.
                 if (IsUnityObjectClass(expectedClass))
                 {
                     if (IsUnityObjectAliveWithClass(refPtr, expectedClass))
                         return ReadUnityAssetNameWithClass(refPtr, expectedClass, className);
                     return null;
                 }
+
+                // Depth limit for recursive extraction of non-Unity types
+                if (depth > 8) return null;
 
                 // Handle IL2CPP List<T> — extract as array instead of flat object
                 if (IsIl2CppListClass(className, expectedClass))
@@ -2312,7 +2316,7 @@ namespace Menace.DataExtractor
         {
             try
             {
-                if (depth > 2) return null;
+                if (depth > 8) return null;
                 IntPtr arrayPtr = Marshal.ReadIntPtr(addr);
                 if (arrayPtr == IntPtr.Zero) return null;
                 return ReadArrayFromFieldMetadata(arrayPtr, fieldType, depth + 1);
