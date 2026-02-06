@@ -37,6 +37,7 @@ public partial class ModpackLoaderMod : MelonMod
         OffsetCache.Initialize();
         DevConsole.Initialize();
         DevConsole.ApplyInputPatches(HarmonyInstance);
+        ModSettings.Initialize();
         InitializeRepl();
 
         LoadModpacks();
@@ -60,6 +61,9 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnSceneWasLoaded(int buildIndex, string sceneName)
     {
+        // Save any pending settings changes before scene transition
+        ModSettings.Save();
+
         DevConsole.IsVisible = false;
         GameState.NotifySceneLoaded(sceneName);
         GameQuery.ClearCache();
@@ -92,6 +96,12 @@ public partial class ModpackLoaderMod : MelonMod
         DevConsole.Draw();
         ErrorNotification.Draw();
         DllLoader.NotifyOnGUI();
+    }
+
+    public override void OnApplicationQuit()
+    {
+        // Ensure settings are saved before the game closes
+        ModSettings.Save();
     }
 
     private System.Collections.IEnumerator WaitForTemplatesAndApply(string sceneName)

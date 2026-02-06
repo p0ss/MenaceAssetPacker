@@ -176,6 +176,20 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _hasTextPreview, value);
     }
 
+    private int _vanillaImageWidth;
+    public int VanillaImageWidth
+    {
+        get => _vanillaImageWidth;
+        set => this.RaiseAndSetIfChanged(ref _vanillaImageWidth, value);
+    }
+
+    private int _vanillaImageHeight;
+    public int VanillaImageHeight
+    {
+        get => _vanillaImageHeight;
+        set => this.RaiseAndSetIfChanged(ref _vanillaImageHeight, value);
+    }
+
     // --- Modified preview ---
 
     private Bitmap? _modifiedPreviewImage;
@@ -213,7 +227,41 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _hasModifiedReplacement, value);
     }
 
+    private int _modifiedImageWidth;
+    public int ModifiedImageWidth
+    {
+        get => _modifiedImageWidth;
+        set => this.RaiseAndSetIfChanged(ref _modifiedImageWidth, value);
+    }
+
+    private int _modifiedImageHeight;
+    public int ModifiedImageHeight
+    {
+        get => _modifiedImageHeight;
+        set => this.RaiseAndSetIfChanged(ref _modifiedImageHeight, value);
+    }
+
     // --- Data loading ---
+
+    /// <summary>
+    /// Refresh the list of available modpacks from the staging directory.
+    /// Call this when the view becomes visible to pick up newly created modpacks.
+    /// </summary>
+    public void RefreshModpacks()
+    {
+        var previousSelection = _currentModpackName;
+        AvailableModpacks.Clear();
+        foreach (var mp in _modpackManager.GetStagingModpacks())
+            AvailableModpacks.Add(mp.Name);
+
+        // Restore selection if it still exists, otherwise clear it
+        if (previousSelection != null && AvailableModpacks.Contains(previousSelection))
+            CurrentModpackName = previousSelection;
+        else if (AvailableModpacks.Count > 0)
+            CurrentModpackName = AvailableModpacks[0];
+        else
+            CurrentModpackName = null;
+    }
 
     private void LoadModpacks()
     {
@@ -348,6 +396,8 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         HasTextPreview = false;
         PreviewImage = null;
         PreviewText = string.Empty;
+        VanillaImageWidth = 0;
+        VanillaImageHeight = 0;
 
         if (_selectedNode == null || !_selectedNode.IsFile)
             return;
@@ -360,7 +410,9 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             {
                 PreviewImage = new Bitmap(_selectedNode.FullPath);
                 HasImagePreview = true;
-                PreviewText = $"{_selectedNode.Name}\n{FormatFileSize(_selectedNode.Size)}\n{PreviewImage.PixelSize.Width}x{PreviewImage.PixelSize.Height}";
+                VanillaImageWidth = PreviewImage.PixelSize.Width;
+                VanillaImageHeight = PreviewImage.PixelSize.Height;
+                PreviewText = $"{_selectedNode.Name}\n{FormatFileSize(_selectedNode.Size)}\n{VanillaImageWidth}x{VanillaImageHeight}";
             }
             catch (Exception ex)
             {
@@ -396,6 +448,8 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         HasModifiedReplacement = false;
         ModifiedPreviewImage = null;
         ModifiedPreviewText = string.Empty;
+        ModifiedImageWidth = 0;
+        ModifiedImageHeight = 0;
 
         if (_selectedNode == null || !_selectedNode.IsFile || string.IsNullOrEmpty(_currentModpackName))
             return;
@@ -417,7 +471,9 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             {
                 ModifiedPreviewImage = new Bitmap(stagingPath);
                 HasModifiedImagePreview = true;
-                ModifiedPreviewText = $"Replacement: {Path.GetFileName(stagingPath)}\n{FormatFileSize(new FileInfo(stagingPath).Length)}\n{ModifiedPreviewImage.PixelSize.Width}x{ModifiedPreviewImage.PixelSize.Height}";
+                ModifiedImageWidth = ModifiedPreviewImage.PixelSize.Width;
+                ModifiedImageHeight = ModifiedPreviewImage.PixelSize.Height;
+                ModifiedPreviewText = $"Replacement: {Path.GetFileName(stagingPath)}\n{FormatFileSize(new FileInfo(stagingPath).Length)}\n{ModifiedImageWidth}x{ModifiedImageHeight}";
             }
             catch (Exception ex)
             {
@@ -616,7 +672,11 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         // Folder name matches query (and not modpack-only) -> include entire subtree
         if (query != null && !_showModpackOnly &&
             node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            // Mark for expansion so the matching folder and its contents are visible
+            node.IsExpanded = true;
             return node;
+        }
 
         // Check children recursively
         var matchingChildren = new List<AssetTreeNode>();
@@ -630,14 +690,18 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         if (matchingChildren.Count == 0)
             return null;
 
+        // If all children match, return original node
+        // (don't auto-expand - folder is just a breadcrumb, not a search target)
         if (matchingChildren.Count == node.Children.Count)
             return node;
 
+        // Create a filtered copy with only matching children, pre-expanded
         var copy = new AssetTreeNode
         {
             Name = node.Name,
             FullPath = node.FullPath,
-            IsFile = false
+            IsFile = false,
+            IsExpanded = true
         };
         foreach (var child in matchingChildren)
             copy.Children.Add(child);

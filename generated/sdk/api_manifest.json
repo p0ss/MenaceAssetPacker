@@ -1,0 +1,4390 @@
+{
+  "version": "1.0.0",
+  "types": {
+    "Menace.Tactical.AI.Score": {
+      "name": "Score",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.BehaviorOrder": {
+      "name": "BehaviorOrder",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "None": 0,
+        "Move": 1,
+        "Attack": 2,
+        "Other": 3
+      }
+    },
+    "Menace.Tactical.AI.ID": {
+      "name": "ID",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "None": 0,
+        "InflictDamage": 1,
+        "InflictSuppression": 2,
+        "Stun": 3,
+        "Move": 4,
+        "Deploy": 5,
+        "Scan": 6,
+        "Reload": 7,
+        "TurnArmorTowardsThreat": 8,
+        "TransportEntity": 9,
+        "RemoveStatusEffect": 10,
+        "Buff": 11,
+        "CreateLOSBlocker": 12,
+        "SupplyAmmo": 13,
+        "TargetDesignator": 14,
+        "SpawnHovermine": 15,
+        "SpawnPhantom": 16,
+        "Mindray": 17,
+        "GainBonusTurn": 18,
+        "MovementSkill": 19,
+        "Idle": 99999,
+        "COUNT": 100000
+      }
+    },
+    "Menace.Tactical.AI.DebugVisualization": {
+      "name": "DebugVisualization",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "None": 0,
+        "TotalScore": 1,
+        "TotalScoreScaled": 2,
+        "Utility": 3,
+        "Safety": 4,
+        "SafetyScaled": 5,
+        "Distance": 6
+      }
+    },
+    "Menace.Tactical.AI.DebugVisualizationFilter": {
+      "name": "DebugVisualizationFilter",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "None": 0,
+        "Destinations": 1,
+        "SelectedPath": 2
+      }
+    },
+    "Menace.Tactical.AI.AIConfig": {
+      "name": "AIConfig",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "DebugVisualization",
+          "type": "DebugVisualization",
+          "offset": "0x0",
+          "is_static": true
+        },
+        {
+          "name": "DebugVisualizationFilter",
+          "type": "DebugVisualizationFilter",
+          "offset": "0x4",
+          "is_static": true
+        },
+        {
+          "name": "WEIGHTS",
+          "type": "AIWeightsTemplate",
+          "offset": "0x8",
+          "is_static": true
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "Init",
+          "returns": "void",
+          "params": [],
+          "static": true,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Agent": {
+      "name": "Agent",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [
+        {
+          "name": "FlaggedForDeactivation",
+          "type": "bool",
+          "has_getter": true,
+          "has_setter": true
+        }
+      ],
+      "methods": [
+        {
+          "name": "get_FlaggedForDeactivation",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "set_FlaggedForDeactivation",
+          "returns": "void",
+          "params": [
+            {
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetScore",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetActor",
+          "returns": "Actor",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetRole",
+          "returns": "RoleData",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetFaction",
+          "returns": "AIFaction",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetRandom",
+          "returns": "PseudoRandom",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetBehaviors",
+          "returns": "List<Behavior>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetState",
+          "returns": "Agent.State",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetZones",
+          "returns": "OperationalZones",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetNumThreatsFaced",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsDeployed",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsSleeping",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetSleeping",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_s",
+              "type": "bool"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetDeployed",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_d",
+              "type": "bool"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetFaction",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_f",
+              "type": "AIFaction"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetPriority",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_p",
+              "type": "float"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetPriority",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetNumThreatsFaced",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_t",
+              "type": "int"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasFlag",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_f",
+              "type": "Agent.Flag"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetFlag",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_f",
+              "type": "Agent.Flag"
+            },
+            {
+              "name": "_v",
+              "type": "bool"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetTiles",
+          "returns": "Dictionary<Tile, TileScore>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnSkillAdded",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnSkillRemoved",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Execute",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Reset",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Dispose",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetScoreMultForPickingThisAgent",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetThreatLevel",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Sleep",
+          "returns": "void",
+          "params": [
+            {
+              "name": "1",
+              "type": "float _seconds ="
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnTurnStart",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnBeforeProcessing",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnAfterProcessing",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnPicked",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsDeploymentPhase",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Opponent": {
+      "name": "Opponent",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "Actor",
+          "type": "Actor",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "TTL",
+          "type": "int",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "Data",
+          "type": "Assessment",
+          "offset": "0x20",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsKnown",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.AIFaction": {
+      "name": "AIFaction",
+      "namespace": "Menace.Tactical.AI",
+      "base": "BaseFaction // TypeDefIndex: 3493",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOpponents",
+          "returns": "List<Opponent>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetStrategy",
+          "returns": "StrategyData",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetZones",
+          "returns": "OperationalZones",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetTime",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetPickableActorsCount",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsThinking",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsAlliedWithPlayer",
+          "returns": "override bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsAlliedWith",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_faction",
+              "type": "int"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Process",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnTurnStart",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnRoundStart",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnOpponentSighted",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_a",
+              "type": "Actor"
+            },
+            {
+              "name": "_ttl",
+              "type": "int"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnActorDeath",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasKnownOpponent",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetOpponent",
+          "returns": "Opponent",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.AIWeightsTemplate": {
+      "name": "AIWeightsTemplate",
+      "namespace": "Menace.Tactical.AI",
+      "base": "ScriptableObject // TypeDefIndex: 3494",
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "BehaviorScorePOW",
+          "type": "float",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "TTL_MAX",
+          "type": "int",
+          "offset": "0x1C",
+          "is_static": false
+        },
+        {
+          "name": "UtilityPOW",
+          "type": "float",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "UtilityScale",
+          "type": "float",
+          "offset": "0x24",
+          "is_static": false
+        },
+        {
+          "name": "UtilityPostPOW",
+          "type": "float",
+          "offset": "0x28",
+          "is_static": false
+        },
+        {
+          "name": "UtilityPostScale",
+          "type": "float",
+          "offset": "0x2C",
+          "is_static": false
+        },
+        {
+          "name": "SafetyPOW",
+          "type": "float",
+          "offset": "0x30",
+          "is_static": false
+        },
+        {
+          "name": "SafetyScale",
+          "type": "float",
+          "offset": "0x34",
+          "is_static": false
+        },
+        {
+          "name": "SafetyPostPOW",
+          "type": "float",
+          "offset": "0x38",
+          "is_static": false
+        },
+        {
+          "name": "SafetyPostScale",
+          "type": "float",
+          "offset": "0x3C",
+          "is_static": false
+        },
+        {
+          "name": "DistanceScale",
+          "type": "float",
+          "offset": "0x40",
+          "is_static": false
+        },
+        {
+          "name": "DistancePickScale",
+          "type": "float",
+          "offset": "0x44",
+          "is_static": false
+        },
+        {
+          "name": "ThreatLevelPOW",
+          "type": "float",
+          "offset": "0x48",
+          "is_static": false
+        },
+        {
+          "name": "OpportunityLevelPOW",
+          "type": "float",
+          "offset": "0x4C",
+          "is_static": false
+        },
+        {
+          "name": "PickingScoreMultPOW",
+          "type": "float",
+          "offset": "0x50",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToCurrentTile",
+          "type": "float",
+          "offset": "0x54",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToZones",
+          "type": "float",
+          "offset": "0x58",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToAdvanceZones",
+          "type": "float",
+          "offset": "0x5C",
+          "is_static": false
+        },
+        {
+          "name": "SafetyOutsideDefendZones",
+          "type": "float",
+          "offset": "0x60",
+          "is_static": false
+        },
+        {
+          "name": "SafetyOutsideDefendZonesVehicles",
+          "type": "float",
+          "offset": "0x64",
+          "is_static": false
+        },
+        {
+          "name": "OccupyZoneValue",
+          "type": "float",
+          "offset": "0x68",
+          "is_static": false
+        },
+        {
+          "name": "CaptureZoneValue",
+          "type": "float",
+          "offset": "0x6C",
+          "is_static": false
+        },
+        {
+          "name": "CoverAgainstOpponents",
+          "type": "float",
+          "offset": "0x70",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponents",
+          "type": "float",
+          "offset": "0x74",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromUnknownOpponents",
+          "type": "float",
+          "offset": "0x78",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromTileEffects",
+          "type": "float",
+          "offset": "0x7C",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsDamage",
+          "type": "float",
+          "offset": "0x80",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsArmorDamage",
+          "type": "float",
+          "offset": "0x84",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsSuppression",
+          "type": "float",
+          "offset": "0x88",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsStun",
+          "type": "float",
+          "offset": "0x8C",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromPinnedDownOpponents",
+          "type": "float",
+          "offset": "0x90",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromSuppressedOpponents",
+          "type": "float",
+          "offset": "0x94",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFrom2xStunnedOpponents",
+          "type": "float",
+          "offset": "0x98",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromFleeingOpponents",
+          "type": "float",
+          "offset": "0x9C",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsAlreadyActed",
+          "type": "float",
+          "offset": "0xA0",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsStaggered",
+          "type": "float",
+          "offset": "0xA4",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsButAlliesInControl",
+          "type": "float",
+          "offset": "0xA8",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponentsAtHypotheticalPositionsMult",
+          "type": "float",
+          "offset": "0xAC",
+          "is_static": false
+        },
+        {
+          "name": "AllyMetascoreAgainstThreshold",
+          "type": "float",
+          "offset": "0xB0",
+          "is_static": false
+        },
+        {
+          "name": "AvoidAlliesPOW",
+          "type": "float",
+          "offset": "0xB4",
+          "is_static": false
+        },
+        {
+          "name": "AvoidOpponentsPOW",
+          "type": "float",
+          "offset": "0xB8",
+          "is_static": false
+        },
+        {
+          "name": "FleeFromOpponentsPOW",
+          "type": "float",
+          "offset": "0xBC",
+          "is_static": false
+        },
+        {
+          "name": "ScalePositionWithTags",
+          "type": "float",
+          "offset": "0xC0",
+          "is_static": false
+        },
+        {
+          "name": "IncludeAttacksAgainstAllOpponentsMult",
+          "type": "float",
+          "offset": "0xC4",
+          "is_static": false
+        },
+        {
+          "name": "OppositeSideDistanceFromOpponentCap",
+          "type": "int",
+          "offset": "0xC8",
+          "is_static": false
+        },
+        {
+          "name": "CullTilesDistances",
+          "type": "int",
+          "offset": "0xCC",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToZoneDeployScore",
+          "type": "float",
+          "offset": "0xD0",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToAlliesScore",
+          "type": "float",
+          "offset": "0xD4",
+          "is_static": false
+        },
+        {
+          "name": "CoverInEachDirectionBonus",
+          "type": "float",
+          "offset": "0xD8",
+          "is_static": false
+        },
+        {
+          "name": "InsideBuildingDuringDeployment",
+          "type": "float",
+          "offset": "0xDC",
+          "is_static": false
+        },
+        {
+          "name": "DeploymentConcealmentMult",
+          "type": "float",
+          "offset": "0xE0",
+          "is_static": false
+        },
+        {
+          "name": "InvisibleTargetValueMult",
+          "type": "float",
+          "offset": "0xE4",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueDamageScale",
+          "type": "float",
+          "offset": "0xE8",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueArmorScale",
+          "type": "float",
+          "offset": "0xEC",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueSuppressionScale",
+          "type": "float",
+          "offset": "0xF0",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueStunScale",
+          "type": "float",
+          "offset": "0xF4",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueThreatScale",
+          "type": "float",
+          "offset": "0xF8",
+          "is_static": false
+        },
+        {
+          "name": "TargetValueMaxThreatSuppressScale",
+          "type": "float",
+          "offset": "0xFC",
+          "is_static": false
+        },
+        {
+          "name": "ScoreThresholdWithLimitedUses",
+          "type": "float",
+          "offset": "0x100",
+          "is_static": false
+        },
+        {
+          "name": "FriendlyFirePenalty",
+          "type": "float",
+          "offset": "0x104",
+          "is_static": false
+        },
+        {
+          "name": "DamageBaseScore",
+          "type": "float",
+          "offset": "0x108",
+          "is_static": false
+        },
+        {
+          "name": "DamageScoreMult",
+          "type": "float",
+          "offset": "0x10C",
+          "is_static": false
+        },
+        {
+          "name": "InflictDamageFromTile",
+          "type": "float",
+          "offset": "0x110",
+          "is_static": false
+        },
+        {
+          "name": "SuppressionBaseScore",
+          "type": "float",
+          "offset": "0x114",
+          "is_static": false
+        },
+        {
+          "name": "SuppressionScoreMult",
+          "type": "float",
+          "offset": "0x118",
+          "is_static": false
+        },
+        {
+          "name": "InflictSuppressionFromTile",
+          "type": "float",
+          "offset": "0x11C",
+          "is_static": false
+        },
+        {
+          "name": "StunBaseScore",
+          "type": "float",
+          "offset": "0x120",
+          "is_static": false
+        },
+        {
+          "name": "StunScoreMult",
+          "type": "float",
+          "offset": "0x124",
+          "is_static": false
+        },
+        {
+          "name": "StunFromTile",
+          "type": "float",
+          "offset": "0x128",
+          "is_static": false
+        },
+        {
+          "name": "MoveBaseScore",
+          "type": "float",
+          "offset": "0x12C",
+          "is_static": false
+        },
+        {
+          "name": "MoveScoreMult",
+          "type": "float",
+          "offset": "0x130",
+          "is_static": false
+        },
+        {
+          "name": "NearTileLimit",
+          "type": "int",
+          "offset": "0x134",
+          "is_static": false
+        },
+        {
+          "name": "TileScoreDifferenceMult",
+          "type": "float",
+          "offset": "0x138",
+          "is_static": false
+        },
+        {
+          "name": "TileScoreDifferencePow",
+          "type": "float",
+          "offset": "0x13C",
+          "is_static": false
+        },
+        {
+          "name": "UtilityThreshold",
+          "type": "float",
+          "offset": "0x140",
+          "is_static": false
+        },
+        {
+          "name": "PathfindingSafetyCostMult",
+          "type": "float",
+          "offset": "0x144",
+          "is_static": false
+        },
+        {
+          "name": "PathfindingUnknownTileSafety",
+          "type": "float",
+          "offset": "0x148",
+          "is_static": false
+        },
+        {
+          "name": "PathfindingHiddenFromOpponentsBonus",
+          "type": "int",
+          "offset": "0x14C",
+          "is_static": false
+        },
+        {
+          "name": "EntirePathScoreContribution",
+          "type": "float",
+          "offset": "0x150",
+          "is_static": false
+        },
+        {
+          "name": "MoveIfNewTileIsBetterBy",
+          "type": "float",
+          "offset": "0x154",
+          "is_static": false
+        },
+        {
+          "name": "GetUpIfNewTileIsBetterBy",
+          "type": "float",
+          "offset": "0x158",
+          "is_static": false
+        },
+        {
+          "name": "DistanceTooFarForOneTurnMult",
+          "type": "float",
+          "offset": "0x15C",
+          "is_static": false
+        },
+        {
+          "name": "ConsiderAlternativeIfBetterBy",
+          "type": "float",
+          "offset": "0x160",
+          "is_static": false
+        },
+        {
+          "name": "ConsiderAlternativeToUltimateIfBetterBy",
+          "type": "float",
+          "offset": "0x164",
+          "is_static": false
+        },
+        {
+          "name": "EnoughAPToPerformSkillAfterwards",
+          "type": "float",
+          "offset": "0x168",
+          "is_static": false
+        },
+        {
+          "name": "EnoughAPToPerformOnlySkillAfterwards",
+          "type": "float",
+          "offset": "0x16C",
+          "is_static": false
+        },
+        {
+          "name": "EnoughAPToDeployAfterwards",
+          "type": "float",
+          "offset": "0x170",
+          "is_static": false
+        },
+        {
+          "name": "BuffBaseScore",
+          "type": "float",
+          "offset": "0x174",
+          "is_static": false
+        },
+        {
+          "name": "BuffTargetValueMult",
+          "type": "float",
+          "offset": "0x178",
+          "is_static": false
+        },
+        {
+          "name": "BuffFromTile",
+          "type": "float",
+          "offset": "0x17C",
+          "is_static": false
+        },
+        {
+          "name": "RemoveSuppressionMult",
+          "type": "float",
+          "offset": "0x180",
+          "is_static": false
+        },
+        {
+          "name": "RemoveStunnedMult",
+          "type": "float",
+          "offset": "0x184",
+          "is_static": false
+        },
+        {
+          "name": "RestoreMoraleMult",
+          "type": "float",
+          "offset": "0x188",
+          "is_static": false
+        },
+        {
+          "name": "IncreaseMovementMult",
+          "type": "float",
+          "offset": "0x18C",
+          "is_static": false
+        },
+        {
+          "name": "IncreaseOffensiveStatsMult",
+          "type": "float",
+          "offset": "0x190",
+          "is_static": false
+        },
+        {
+          "name": "IncreaseDefensiveStatsMult",
+          "type": "float",
+          "offset": "0x194",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoBaseScore",
+          "type": "float",
+          "offset": "0x198",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoTargetValueMult",
+          "type": "float",
+          "offset": "0x19C",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoNoAmmoMult",
+          "type": "float",
+          "offset": "0x1A0",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoSpecialWeaponMult",
+          "type": "float",
+          "offset": "0x1A4",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoGoalThreshold",
+          "type": "float",
+          "offset": "0x1A8",
+          "is_static": false
+        },
+        {
+          "name": "SupplyAmmoFromTile",
+          "type": "float",
+          "offset": "0x1AC",
+          "is_static": false
+        },
+        {
+          "name": "TargetDesignatorBaseScore",
+          "type": "float",
+          "offset": "0x1B0",
+          "is_static": false
+        },
+        {
+          "name": "TargetDesignatorScoreMult",
+          "type": "float",
+          "offset": "0x1B4",
+          "is_static": false
+        },
+        {
+          "name": "TargetDesignatorFromTile",
+          "type": "float",
+          "offset": "0x1B8",
+          "is_static": false
+        },
+        {
+          "name": "GainBonusTurnBaseMult",
+          "type": "float",
+          "offset": "0x1BC",
+          "is_static": false
+        },
+        {
+          "name": "TestValueInt",
+          "type": "int",
+          "offset": "0x1C0",
+          "is_static": false
+        },
+        {
+          "name": "TestValueFloat",
+          "type": "float",
+          "offset": "0x1C4",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.BaseFaction": {
+      "name": "BaseFaction",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetIndex",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetFactionType",
+          "returns": "FactionType",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetActors",
+          "returns": "List<Actor>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetDeadActors",
+          "returns": "List<Actor>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasActors",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasUnlockedActors",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetActorCount",
+          "returns": "int",
+          "params": [
+            {
+              "name": "_alive",
+              "type": "bool"
+            },
+            {
+              "name": "_dead",
+              "type": "bool"
+            },
+            {
+              "name": "_actorType",
+              "type": "Nullable<ActorType>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetDeadActorFractionCount",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsActive",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsProcessingTasks",
+          "returns": "bool",
+          "params": [],
+          "static": true,
+          "virtual": false
+        },
+        {
+          "name": "WaitUntilAllTasksAreDone",
+          "returns": "void",
+          "params": [],
+          "static": true,
+          "virtual": false
+        },
+        {
+          "name": "AddActor",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "RemoveActor",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetAmountOfActorsLeftToAct",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnActorDeath",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnTurnStart",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnRoundStart",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnOpponentSighted",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_a",
+              "type": "Actor"
+            },
+            {
+              "name": "_ttl",
+              "type": "int"
+            }
+          ],
+          "static": false,
+          "virtual": true
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behavior": {
+      "name": "Behavior",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetScore",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetAgent",
+          "returns": "Agent",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetRole",
+          "returns": "RoleData",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetStrategy",
+          "returns": "StrategyData",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsFirstExecuted",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "SetAgent",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_a",
+              "type": "Agent"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Collect",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Execute",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "ResetScore",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "string",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnBeforeProcessing",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "OnClear",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": true
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.OperationalZones": {
+      "name": "OperationalZones",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetNumZones",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Reset",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetZone",
+          "returns": "Zone",
+          "params": [
+            {
+              "name": "_tile",
+              "type": "Tile"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetZones",
+          "returns": "List<Zone>",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "QueryZones",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_into",
+              "type": "List<Zone>"
+            },
+            {
+              "name": "2147483647",
+              "type": "int _orders ="
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "QueryZonesInRange",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_center",
+              "type": "Tile"
+            },
+            {
+              "name": "_radius",
+              "type": "int"
+            },
+            {
+              "name": "_into",
+              "type": "List<Zone>"
+            },
+            {
+              "name": "2147483647",
+              "type": "int _orders ="
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "AddZone",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_z",
+              "type": "Zone"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.PlayerFaction": {
+      "name": "PlayerFaction",
+      "namespace": "Menace.Tactical.AI",
+      "base": "BaseFaction // TypeDefIndex: 3498",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsAlliedWithPlayer",
+          "returns": "override bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsAlliedWith",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_faction",
+              "type": "int"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Process",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Goal": {
+      "name": "Goal",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "Damage": 0,
+        "Suppression": 1,
+        "Stun": 2,
+        "Custom": 3,
+        "COUNT": 3
+      }
+    },
+    "Menace.Tactical.AI.SkillBehavior": {
+      "name": "SkillBehavior",
+      "namespace": "Menace.Tactical.AI",
+      "base": "Behavior // TypeDefIndex: 3500",
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetSkill",
+          "returns": "Skill",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetSkillIDHash",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetTargetValue",
+          "returns": "float",
+          "params": [
+            {
+              "name": "_forImmediateUse",
+              "type": "bool"
+            },
+            {
+              "name": "_uses",
+              "type": "int"
+            },
+            {
+              "name": "_target",
+              "type": "Tile"
+            },
+            {
+              "name": "_goal",
+              "type": "Goal"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            },
+            {
+              "name": "_from",
+              "type": "Tile"
+            },
+            {
+              "name": "_targetedTile",
+              "type": "Tile"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.ZoneOrder": {
+      "name": "ZoneOrder",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "enum",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [],
+      "enum_values": {
+        "None": 0,
+        "Attack": 1,
+        "Defend": 2,
+        "OccupyStructures": 4,
+        "Avoid": 8,
+        "AdvanceTowards": 16,
+        "Capture": 32,
+        "All": 2147483647
+      }
+    },
+    "Menace.Tactical.AI.Zone": {
+      "name": "Zone",
+      "namespace": "Menace.Tactical.AI",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "Area",
+          "type": "RectInt",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "Order",
+          "type": "ZoneOrder",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "Priority",
+          "type": "float",
+          "offset": "0x24",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "HasOrder",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_order",
+              "type": "ZoneOrder"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.Assessment": {
+      "name": "Assessment",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "DamageRange",
+          "type": "Assessment.Range",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "SuppressionRange",
+          "type": "Assessment.Range",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "IgnoreCoverRange",
+          "type": "Assessment.Range",
+          "offset": "0x28",
+          "is_static": false
+        },
+        {
+          "name": "IgnoreCoverInsideRange",
+          "type": "Assessment.Range",
+          "offset": "0x30",
+          "is_static": false
+        },
+        {
+          "name": "IgnoreLineOfFireRange",
+          "type": "Assessment.Range",
+          "offset": "0x38",
+          "is_static": false
+        },
+        {
+          "name": "IsDeploymentPrefered",
+          "type": "bool",
+          "offset": "0x40",
+          "is_static": false
+        },
+        {
+          "name": "IsDeploymentRequired",
+          "type": "bool",
+          "offset": "0x41",
+          "is_static": false
+        },
+        {
+          "name": "Attacks",
+          "type": "List<Skill>",
+          "offset": "0x48",
+          "is_static": false
+        },
+        {
+          "name": "SkillPerformanceAgainst",
+          "type": "Dictionary<Skill, TagValue>",
+          "offset": "0x50",
+          "is_static": false
+        },
+        {
+          "name": "CurrentThreatPosed",
+          "type": "Dictionary<Actor, float>",
+          "offset": "0x58",
+          "is_static": false
+        },
+        {
+          "name": "CurrentThreatPosedTotal",
+          "type": "float",
+          "offset": "0x60",
+          "is_static": false
+        },
+        {
+          "name": "CurrentThreatPosedMax",
+          "type": "float",
+          "offset": "0x64",
+          "is_static": false
+        },
+        {
+          "name": "CurrentScoreAgainst",
+          "type": "Dictionary<Actor, float>[]",
+          "offset": "0x68",
+          "is_static": false
+        },
+        {
+          "name": "CurrentScoreAgainstTotal",
+          "type": "float[]",
+          "offset": "0x70",
+          "is_static": false
+        },
+        {
+          "name": "CurrentScoreAgainstMax",
+          "type": "float[]",
+          "offset": "0x78",
+          "is_static": false
+        },
+        {
+          "name": "CurrentScoreAgainstNumActors",
+          "type": "int[]",
+          "offset": "0x80",
+          "is_static": false
+        },
+        {
+          "name": "PriorityMult",
+          "type": "float",
+          "offset": "0x88",
+          "is_static": false
+        },
+        {
+          "name": "IsInsideDefendZone",
+          "type": "bool",
+          "offset": "0x8C",
+          "is_static": false
+        },
+        {
+          "name": "IsInsideAttackZone",
+          "type": "bool",
+          "offset": "0x8D",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "Update",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_zones",
+              "type": "OperationalZones"
+            },
+            {
+              "name": "_ourActors",
+              "type": "IEnumerable<Actor>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Reset",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "RemoveActor",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.RoleData": {
+      "name": "RoleData",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "TargetFriendlyFireValueMult",
+          "type": "float",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "UtilityScale",
+          "type": "float",
+          "offset": "0x14",
+          "is_static": false
+        },
+        {
+          "name": "UtilityThresholdScale",
+          "type": "float",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "SafetyScale",
+          "type": "float",
+          "offset": "0x1C",
+          "is_static": false
+        },
+        {
+          "name": "DistanceScale",
+          "type": "float",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "FriendlyFirePenalty",
+          "type": "float",
+          "offset": "0x24",
+          "is_static": false
+        },
+        {
+          "name": "IsAllowedToEvadeEnemies",
+          "type": "bool",
+          "offset": "0x28",
+          "is_static": false
+        },
+        {
+          "name": "AttemptToStayOutOfSight",
+          "type": "bool",
+          "offset": "0x29",
+          "is_static": false
+        },
+        {
+          "name": "PeekInAndOutOfCover",
+          "type": "bool",
+          "offset": "0x2A",
+          "is_static": false
+        },
+        {
+          "name": "UseAoeAgainstSingleTargets",
+          "type": "bool",
+          "offset": "0x2B",
+          "is_static": false
+        },
+        {
+          "name": "Move",
+          "type": "float",
+          "offset": "0x2C",
+          "is_static": false
+        },
+        {
+          "name": "InflictDamage",
+          "type": "float",
+          "offset": "0x30",
+          "is_static": false
+        },
+        {
+          "name": "InflictSuppression",
+          "type": "float",
+          "offset": "0x34",
+          "is_static": false
+        },
+        {
+          "name": "Stun",
+          "type": "float",
+          "offset": "0x38",
+          "is_static": false
+        },
+        {
+          "name": "AvoidOpponents",
+          "type": "bool",
+          "offset": "0x3C",
+          "is_static": false
+        },
+        {
+          "name": "ConsiderSurroundings",
+          "type": "bool",
+          "offset": "0x3D",
+          "is_static": false
+        },
+        {
+          "name": "CoverAgainstOpponents",
+          "type": "bool",
+          "offset": "0x3E",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToCurrentTile",
+          "type": "bool",
+          "offset": "0x3F",
+          "is_static": false
+        },
+        {
+          "name": "ConsiderZones",
+          "type": "bool",
+          "offset": "0x40",
+          "is_static": false
+        },
+        {
+          "name": "ThreatFromOpponents",
+          "type": "bool",
+          "offset": "0x41",
+          "is_static": false
+        },
+        {
+          "name": "ExistingTileEffects",
+          "type": "bool",
+          "offset": "0x42",
+          "is_static": false
+        },
+        {
+          "name": "IgnoreTileEffects",
+          "type": "TileEffectType",
+          "offset": "0x44",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.StrategyData": {
+      "name": "StrategyData",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "TAG_VALUE",
+          "type": "float[]",
+          "offset": "0x0",
+          "is_static": true
+        },
+        {
+          "name": "SkillsBenefittingFromTargetDesignator",
+          "type": "List<Skill>",
+          "offset": "0x28",
+          "is_static": false
+        },
+        {
+          "name": "NumActorsBenefittingFromTargetDesignator",
+          "type": "int",
+          "offset": "0x30",
+          "is_static": false
+        },
+        {
+          "name": "IsAllowedToEvadeEnemies",
+          "type": "bool",
+          "offset": "0x34",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetFaction",
+          "returns": "AIFaction",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Update",
+          "returns": "void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.TileData": {
+      "name": "TileData",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsAvailable",
+          "returns": "bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_score",
+              "type": "float"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Grab",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_score",
+              "type": "float"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Release",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.TileScore": {
+      "name": "TileScore",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "Tile",
+          "type": "Tile",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "UltimateTile",
+          "type": "Tile",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "DistanceToCurrentTile",
+          "type": "float",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "DistanceScore",
+          "type": "float",
+          "offset": "0x24",
+          "is_static": false
+        },
+        {
+          "name": "SafetyScore",
+          "type": "float",
+          "offset": "0x28",
+          "is_static": false
+        },
+        {
+          "name": "SafetyScoreScaled",
+          "type": "float",
+          "offset": "0x2C",
+          "is_static": false
+        },
+        {
+          "name": "UtilityScore",
+          "type": "float",
+          "offset": "0x30",
+          "is_static": false
+        },
+        {
+          "name": "UtilityScoreScaled",
+          "type": "float",
+          "offset": "0x34",
+          "is_static": false
+        },
+        {
+          "name": "UtilityByAttacksScore",
+          "type": "float",
+          "offset": "0x38",
+          "is_static": false
+        },
+        {
+          "name": "UtilityByAttacksScoreCandidate",
+          "type": "float",
+          "offset": "0x3C",
+          "is_static": false
+        },
+        {
+          "name": "APCost",
+          "type": "int",
+          "offset": "0x40",
+          "is_static": false
+        },
+        {
+          "name": "MinimumUtilityAPCost",
+          "type": "int",
+          "offset": "0x44",
+          "is_static": false
+        },
+        {
+          "name": "Path",
+          "type": "List<Vector3>",
+          "offset": "0x48",
+          "is_static": false
+        },
+        {
+          "name": "HighestSafetyNeighbor",
+          "type": "TileScore",
+          "offset": "0x50",
+          "is_static": false
+        },
+        {
+          "name": "HighestUtilityNeighbor",
+          "type": "TileScore",
+          "offset": "0x58",
+          "is_static": false
+        },
+        {
+          "name": "IsVisibleToOpponentsHere",
+          "type": "bool",
+          "offset": "0x60",
+          "is_static": false
+        },
+        {
+          "name": "IsMovingBackwardsHere",
+          "type": "bool",
+          "offset": "0x61",
+          "is_static": false
+        },
+        {
+          "name": "IsMovementDoneAfterwards",
+          "type": "bool",
+          "offset": "0x62",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetClone",
+          "returns": "TileScore",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetScore",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetScoreWithoutDistance",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetScaledScore",
+          "returns": "float",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Reset",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_tile",
+              "type": "Tile"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "CompareScores",
+          "returns": "int",
+          "params": [
+            {
+              "name": "_a",
+              "type": "TileScore"
+            },
+            {
+              "name": "_b",
+              "type": "TileScore"
+            }
+          ],
+          "static": true,
+          "virtual": false
+        },
+        {
+          "name": "CompareScaledScores",
+          "returns": "int",
+          "params": [
+            {
+              "name": "_a",
+              "type": "TileScore"
+            },
+            {
+              "name": "_b",
+              "type": "TileScore"
+            }
+          ],
+          "static": true,
+          "virtual": false
+        },
+        {
+          "name": "CompareDistances",
+          "returns": "int",
+          "params": [
+            {
+              "name": "_a",
+              "type": "TileScore"
+            },
+            {
+              "name": "_b",
+              "type": "TileScore"
+            }
+          ],
+          "static": true,
+          "virtual": false
+        },
+        {
+          "name": "ToString",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.TileScorePool": {
+      "name": "TileScorePool",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "Grab",
+          "returns": "TileScore",
+          "params": [
+            {
+              "name": "_tile",
+              "type": "Tile"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Return",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_tileScore",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.UsageData": {
+      "name": "UsageData",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "GoverningBehavior",
+          "type": "ID",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "ScoreMult",
+          "type": "float",
+          "offset": "0x14",
+          "is_static": false
+        },
+        {
+          "name": "InfluencesPositioning",
+          "type": "bool",
+          "offset": "0x18",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Data.SkillBehavior": {
+      "name": "SkillBehavior",
+      "namespace": "Menace.Tactical.AI.Data",
+      "base": null,
+      "kind": "class",
+      "abstract": true,
+      "fields": [
+        {
+          "name": "ScoreMult",
+          "type": "float",
+          "offset": "0x10",
+          "is_static": false
+        },
+        {
+          "name": "InfluencesPositioning",
+          "type": "bool",
+          "offset": "0x14",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Assist": {
+      "name": "Assist",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3514",
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Attack": {
+      "name": "Attack",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3516",
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetGoal",
+          "returns": "Goal",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Buff": {
+      "name": "Buff",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Assist // TypeDefIndex: 3517",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Deploy": {
+      "name": "Deploy",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Behavior // TypeDefIndex: 3518",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Idle": {
+      "name": "Idle",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Behavior // TypeDefIndex: 3519",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.InflictDamage": {
+      "name": "InflictDamage",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3520",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.InflictSuppression": {
+      "name": "InflictSuppression",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3521",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Move": {
+      "name": "Move",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Behavior // TypeDefIndex: 3523",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsMovementDone",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasMovedThisTurn",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "HasDelayedMovementThisTurn",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsDelayingMovement",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "IsInsideContainerAndInert",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetTargetTile",
+          "returns": "TileScore",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnBeforeProcessing",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnClear",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Reload": {
+      "name": "Reload",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3525",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.RemoveStatusEffect": {
+      "name": "RemoveStatusEffect",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3526",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.CreateLOSBlocker": {
+      "name": "CreateLOSBlocker",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Assist // TypeDefIndex: 3528",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.GainBonusTurn": {
+      "name": "GainBonusTurn",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3529",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Mindray": {
+      "name": "Mindray",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3530",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.MovementSkill": {
+      "name": "MovementSkill",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3531",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Scan": {
+      "name": "Scan",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3532",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.SpawnHovermine": {
+      "name": "SpawnHovermine",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3533",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.SpawnPhantom": {
+      "name": "SpawnPhantom",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3534",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.SupplyAmmo": {
+      "name": "SupplyAmmo",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Assist // TypeDefIndex: 3537",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.TargetDesignator": {
+      "name": "TargetDesignator",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3538",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.TransportEntity": {
+      "name": "TransportEntity",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3539",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsTargetReached",
+          "returns": "bool",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Stun": {
+      "name": "Stun",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "Attack // TypeDefIndex: 3540",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetName",
+          "returns": "override string",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.TurnArmorTowardsThreat": {
+      "name": "TurnArmorTowardsThreat",
+      "namespace": "Menace.Tactical.AI.Behaviors",
+      "base": "SkillBehavior // TypeDefIndex: 3542",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetOrder",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetID",
+          "returns": "override ID",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "OnNewTurn",
+          "returns": "override void",
+          "params": [],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.Criterion": {
+      "name": "Criterion",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": null,
+      "kind": "class",
+      "abstract": true,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "GetThreads",
+          "returns": "int",
+          "params": [],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "Collect",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "Evaluate",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "PostProcess",
+          "returns": "void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": true
+        },
+        {
+          "name": "Score",
+          "returns": "float",
+          "params": [
+            {
+              "name": "_targetEntity",
+              "type": "Entity"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            },
+            {
+              "name": "_from",
+              "type": "Tile"
+            },
+            {
+              "name": "_to",
+              "type": "Tile"
+            },
+            {
+              "name": "_uses",
+              "type": "int"
+            }
+          ],
+          "static": true,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.AvoidOpponents": {
+      "name": "AvoidOpponents",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3544",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.ConsiderSurroundings": {
+      "name": "ConsiderSurroundings",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3545",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Collect",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.ConsiderZones": {
+      "name": "ConsiderZones",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3546",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Collect",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "PostProcess",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.CoverAgainstOpponents": {
+      "name": "CoverAgainstOpponents",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3547",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.DistanceToCurrentTile": {
+      "name": "DistanceToCurrentTile",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3548",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.ExistingTileEffects": {
+      "name": "ExistingTileEffects",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3549",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.FleeFromOpponents": {
+      "name": "FleeFromOpponents",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3550",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.Roam": {
+      "name": "Roam",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3551",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Collect",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.ThreatFromOpponents": {
+      "name": "ThreatFromOpponents",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3552",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "GetThreads",
+          "returns": "override int",
+          "params": [],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Evaluate",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tile",
+              "type": "TileScore"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Score",
+          "returns": "float",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_attacker",
+              "type": "Opponent"
+            },
+            {
+              "name": "_opponentTile",
+              "type": "Tile"
+            },
+            {
+              "name": "_target",
+              "type": "Entity"
+            },
+            {
+              "name": "_tile",
+              "type": "Tile"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Criterions.WakeUp": {
+      "name": "WakeUp",
+      "namespace": "Menace.Tactical.AI.Behaviors.Criterions",
+      "base": "Criterion // TypeDefIndex: 3553",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "IsValid",
+          "returns": "override bool",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        },
+        {
+          "name": "Collect",
+          "returns": "override void",
+          "params": [
+            {
+              "name": "_actor",
+              "type": "Actor"
+            },
+            {
+              "name": "_tiles",
+              "type": "TileScore>"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.Buff": {
+      "name": "Buff",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3555",
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "SkillHint",
+          "type": "Buff.Flags",
+          "offset": "0x18",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.InflictDamage": {
+      "name": "InflictDamage",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3556",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.InflictSuppression": {
+      "name": "InflictSuppression",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3557",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.Reload": {
+      "name": "Reload",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3558",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.RemoveStatusEffect": {
+      "name": "RemoveStatusEffect",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3559",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.CreateLOSBlocker": {
+      "name": "CreateLOSBlocker",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3560",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.GainBonusTurn": {
+      "name": "GainBonusTurn",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3561",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.Mindray": {
+      "name": "Mindray",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3562",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.MovementSkill": {
+      "name": "MovementSkill",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3563",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.Scan": {
+      "name": "Scan",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3564",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.SpawnHovermine": {
+      "name": "SpawnHovermine",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3565",
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "IdealRangeToOpponents",
+          "type": "int",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "PreferredRangeToOpponents",
+          "type": "int",
+          "offset": "0x1C",
+          "is_static": false
+        },
+        {
+          "name": "MaxRangeToOpponents",
+          "type": "int",
+          "offset": "0x20",
+          "is_static": false
+        },
+        {
+          "name": "TakeConcealmentValueFrom",
+          "type": "EntityTemplate",
+          "offset": "0x28",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.SpawnPhantom": {
+      "name": "SpawnPhantom",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3566",
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "MinRangeToOpponents",
+          "type": "int",
+          "offset": "0x18",
+          "is_static": false
+        },
+        {
+          "name": "MaxRangeToOpponents",
+          "type": "int",
+          "offset": "0x1C",
+          "is_static": false
+        },
+        {
+          "name": "TakeConcealmentValueFrom",
+          "type": "EntityTemplate",
+          "offset": "0x20",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.SupplyAmmo": {
+      "name": "SupplyAmmo",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3567",
+      "kind": "class",
+      "abstract": false,
+      "fields": [
+        {
+          "name": "StickAroundUnitsWithFullAmmo",
+          "type": "bool",
+          "offset": "0x18",
+          "is_static": false
+        }
+      ],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.TargetDesignator": {
+      "name": "TargetDesignator",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3568",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.TransportEntity": {
+      "name": "TransportEntity",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3569",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.Stun": {
+      "name": "Stun",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3570",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    },
+    "Menace.Tactical.AI.Behaviors.Data.TurnArmorTowardsThreat": {
+      "name": "TurnArmorTowardsThreat",
+      "namespace": "Menace.Tactical.AI.Behaviors.Data",
+      "base": "SkillBehavior // TypeDefIndex: 3571",
+      "kind": "class",
+      "abstract": false,
+      "fields": [],
+      "properties": [],
+      "methods": [
+        {
+          "name": "CreateBehavior",
+          "returns": "override SkillBehavior",
+          "params": [
+            {
+              "name": "_agent",
+              "type": "Agent"
+            },
+            {
+              "name": "_skill",
+              "type": "Skill"
+            }
+          ],
+          "static": false,
+          "virtual": false
+        }
+      ],
+      "enum_values": null
+    }
+  }
+}

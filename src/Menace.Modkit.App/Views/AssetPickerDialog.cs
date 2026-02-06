@@ -277,11 +277,8 @@ public class AssetPickerDialog : Window
             var fileName = Path.GetFileName(sourceFile);
             var relativePath = Path.Combine("Assets", _assetType, fileName);
 
-            // Copy to modpack staging
+            // Copy to modpack staging (also updates manifest)
             _modpackManager.SaveStagingAsset(_modpackName, relativePath, sourceFile);
-
-            // Register in manifest
-            _modpackManager.RegisterAssetInManifest(_modpackName, relativePath);
 
             // Build the full destination path for display and selection
             var destPath = Path.Combine(

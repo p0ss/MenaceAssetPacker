@@ -17,6 +17,15 @@ public class StatsEditorView : UserControl
     Content = BuildUI();
   }
 
+  protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+  {
+    base.OnAttachedToVisualTree(e);
+
+    // Refresh modpacks when view becomes visible to pick up newly created ones
+    if (DataContext is StatsEditorViewModel vm)
+      vm.LoadData();
+  }
+
   private Control BuildUI()
   {
     // Check if we should show warning

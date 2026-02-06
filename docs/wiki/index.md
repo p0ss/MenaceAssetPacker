@@ -62,12 +62,13 @@ Nothing in Tier 1 throws.
 | `Templates` | High-level API for reading, writing, and cloning game ScriptableObject templates. `Templates.Find(typeName, name)` locates a template; `Templates.WriteField(obj, "fieldName", value)` modifies it via managed reflection (supports dotted paths like `"Stats.MaxHealth"`). `Templates.Clone(typeName, source, newName)` duplicates a template in memory. |
 | `GameState` | Scene awareness and deferred execution. Exposes `CurrentScene`, the `SceneLoaded` event, and `TacticalReady` (fires 30 frames after the tactical scene loads). `GameState.RunDelayed(frames, callback)` schedules a callback N frames in the future. `GameState.RunWhen(condition, callback)` polls a predicate once per frame and fires when it becomes true. Also provides `GameAssembly` for quick access to the `Assembly-CSharp` assembly. |
 
-### Tier 3 -- Error Handling and Diagnostics
+### Tier 3 -- Error Handling, Diagnostics, and Configuration
 
 | Type | Purpose |
 |------|---------|
 | `ModError` | Central error sink. All SDK internals route failures here instead of throwing. Stores entries in a rate-limited, deduplicated ring buffer (1000 entries max). Errors are simultaneously written to MelonLoader's log. Public API: `ModError.Report(modId, message)`, `ModError.Warn(...)`, `ModError.Info(...)`, `ModError.GetErrors(modId)`. Subscribe to `ModError.OnError` for real-time notifications. |
-| `DevConsole` | IMGUI overlay toggled with the **~** (backtick) key. Ships with four built-in panels: **Errors** (filterable error browser), **Log** (append-only message log), **Inspector** (live object property viewer), and **Watch** (live expression monitor). Plugins can register custom panels via `DevConsole.RegisterPanel(name, drawCallback)`. |
+| `DevConsole` | IMGUI overlay toggled with the **~** (backtick) key. Ships with built-in panels: **Battle Log**, **Log**, **Console**, **Inspector**, **Watch**, and **Settings**. Plugins can register custom panels via `DevConsole.RegisterPanel(name, drawCallback)`. |
+| `ModSettings` | Configuration system for mods. Register settings with `ModSettings.Register(modName, builder => { ... })` using typed builders (toggle, slider, number, dropdown, text). Settings appear in the DevConsole **Settings** panel and persist to `UserData/ModSettings.json`. Read values with `ModSettings.Get<T>(modName, key)`. Subscribe to `ModSettings.OnSettingChanged` for real-time change notifications. |
 | `ErrorNotification` | Passive bottom-left screen badge that displays "N mod errors -- press ~ for console" when errors exist and the console is hidden. Auto-fades after 8 seconds of no new errors. |
 
 ### Tier 4 -- REPL
@@ -136,6 +137,28 @@ place the output DLL in your modpack's `dlls/` directory alongside a
 
 ---
 
+## Example Mod
+
+The SDK ships with **DevMode**, a working example mod that demonstrates SDK
+features with functional implementations. Find it in:
+
+- `third_party/bundled/modpacks/DevMode-modpack/src/DevModePlugin.cs`
+
+DevMode provides:
+
+| Feature | What It Does |
+|---------|--------------|
+| **ModSettings** | Working settings that affect gameplay (damage multiplier, accuracy bonus, enemy health) |
+| **Templates API** | Modifies real `WeaponTemplate.Damage`, `EntityTemplate.Stats.HitpointsPerElement` at runtime |
+| **DevConsole Panel** | Custom "Dev Mode" panel with entity spawning, god mode, delete tools |
+| **Reflection-based Access** | Demonstrates safe runtime type discovery from Assembly-CSharp |
+
+The settings in DevMode actually work — changing "All Weapon Damage" immediately
+modifies all weapon templates in memory. Use this as a reference for building
+mods that modify game data.
+
+---
+
 ## Error Philosophy
 
 The SDK is designed around the principle of **never crashing the game**. Every
@@ -163,16 +186,19 @@ Press **~** (backtick/tilde) at any time to toggle the developer console.
 
 Built-in panels:
 
-- **Errors** -- Browse all `ModError` entries. Filter by mod ID. Clear all.
-- **Log** -- Chronological message log (200-line ring buffer). Write to it
-  with `DevConsole.Log(message)`.
+- **Battle Log** -- Combat events captured from the game's combat system. Filter
+  by event type (hits, misses, deaths, etc.).
+- **Log** -- Combined view of `ModError` entries and `DevConsole.Log()` messages
+  in chronological order. Filter by severity and mod ID.
+- **Console** -- Command-line interface for SDK commands and C# REPL. Type `help`
+  for available commands, or enter C# expressions to evaluate.
 - **Inspector** -- Call `DevConsole.Inspect(someGameObj)` from your plugin
   to view all readable properties on a live IL2CPP object.
 - **Watch** -- Register live expressions with
   `DevConsole.Watch("label", () => someValue.ToString())`. They update every
   frame while the console is open.
-- **REPL** -- Type C# expressions or statements and execute them against the
-  live game. History navigation with up/down arrows.
+- **Settings** -- Configure mod settings registered via `ModSettings.Register()`.
+  Settings are grouped by mod with collapsible headers. Changes save automatically.
 
 Plugins can add their own panels:
 
@@ -182,3 +208,69 @@ DevConsole.RegisterPanel("My Panel", (Rect area) =>
     GUI.Label(new Rect(area.x, area.y, area.width, 18), "Hello from my custom panel");
 });
 ```
+
+---
+
+## Mod Settings
+
+The `ModSettings` API allows mods to define configurable options with automatic UI
+and persistence. Settings appear in the DevConsole's **Settings** panel.
+
+```csharp
+// Register settings during initialization
+ModSettings.Register("My Mod", settings => {
+    settings.AddHeader("Difficulty");
+    settings.AddSlider("DamageTaken", "Damage Taken", 0.5f, 3f, 1f);
+    settings.AddNumber("MaxSquadSize", "Max Squad Size", 1, 12, 6);
+
+    settings.AddHeader("Options");
+    settings.AddToggle("ShowDamage", "Show Damage Numbers", true);
+    settings.AddDropdown("Theme", "UI Theme", new[] { "Dark", "Light" }, "Dark");
+});
+
+// Read settings anywhere
+float damage = ModSettings.Get<float>("My Mod", "DamageTaken");
+bool showDmg = ModSettings.Get<bool>("My Mod", "ShowDamage");
+
+// React to changes
+ModSettings.OnSettingChanged += (mod, key, value) => {
+    if (mod == "My Mod" && key == "DamageTaken")
+        ApplyDamageMultiplier((float)value);
+};
+```
+
+Settings are saved automatically to `UserData/ModSettings.json` on scene
+transitions and game exit.
+
+See [ModSettings API Reference](api/mod-settings.md) for full documentation.
+
+---
+
+## Bundled Modpacks
+
+The SDK ships with modpacks in `third_party/bundled/modpacks/`:
+
+| Modpack | Purpose |
+|---------|---------|
+| **DevMode** | **Recommended starting point.** Working gameplay tweaks (damage, accuracy, health multipliers), entity spawning, god mode, delete tools. All settings actually modify game templates. |
+| **TwitchSquaddies** | Twitch integration for squaddie management — demonstrates runtime type discovery for game state access |
+
+Copy DevMode and modify it for your own mods.
+
+---
+
+## API Reference
+
+Detailed documentation for each SDK type:
+
+- [GameType](api/game-type.md) -- IL2CPP type resolution and field offsets
+- [GameObj](api/game-obj.md) -- Safe handle for live IL2CPP objects
+- [GameQuery](api/game-query.md) -- FindObjectsOfTypeAll helpers
+- [GamePatch](api/game-patch.md) -- Simplified Harmony patching
+- [Collections](api/collections.md) -- GameList, GameDict, GameArray
+- [Templates](api/templates.md) -- ScriptableObject template access
+- [GameState](api/game-state.md) -- Scene awareness and deferred execution
+- [ModError](api/mod-error.md) -- Error reporting and diagnostics
+- [DevConsole](api/dev-console.md) -- Developer console and panels
+- [ModSettings](api/mod-settings.md) -- Configuration system with UI
+- [REPL](api/repl.md) -- Runtime C# expression evaluation

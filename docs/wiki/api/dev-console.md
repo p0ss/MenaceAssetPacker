@@ -20,6 +20,14 @@ Whether the console is currently visible. Can be set programmatically. Toggled b
 
 ## Methods
 
+### ShowPanel
+
+```csharp
+public static void ShowPanel(string panelName)
+```
+
+Open the console and switch to a specific panel by name. Useful for programmatically jumping to a specific tab (e.g., opening Settings when the player clicks a "Configure Mod" button in your custom UI).
+
 ### RegisterPanel
 
 ```csharp

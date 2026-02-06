@@ -51,6 +51,10 @@ public class DevModePlugin : IModpackPlugin
     private readonly List<string> _entityActorTypes = new();
     private int _selectedEntityIndex;
 
+    // Cached for reload
+    private Assembly _gameAssembly;
+    private List<UnityEngine.Object> _allEntityObjects = new();
+
     // GUI colors (applied via content strings, not GUIStyle — avoids IL2CPP unstripping issues)
 
     public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
@@ -59,6 +63,160 @@ public class DevModePlugin : IModpackPlugin
         _harmony = harmony;
         _log.Msg("Menace Dev Mode v1.0.0");
         DevConsole.RegisterPanel("Dev Mode", DrawDevModePanel);
+
+        // Register mod settings - these appear in the DevConsole "Settings" panel
+        // All of these settings actually affect behavior in the code below
+        ModSettings.Register("Dev Mode", settings => {
+            settings.AddHeader("Cheats");
+            settings.AddToggle("AutoEnableCheats", "Auto-Enable Cheats on Load", true);
+
+            settings.AddHeader("Spawn Tool");
+            settings.AddDropdown("DefaultFaction", "Default Spawn Faction",
+                new[] { "Enemy", "Player", "Neutral" }, "Enemy");
+            settings.AddToggle("ShowAllEntityTypes", "Show All Entity Types", false);
+
+            settings.AddHeader("Gameplay Tweaks");
+            settings.AddSlider("WeaponDamageMult", "All Weapon Damage", 0.5f, 3.0f, 1.0f);
+            settings.AddSlider("PlayerAccuracyBonus", "Player Accuracy Bonus", -20f, 40f, 0f);
+            settings.AddSlider("EnemyHealthMult", "Enemy Health Multiplier", 0.5f, 2.0f, 1.0f);
+        });
+
+        // React to setting changes in real-time
+        ModSettings.OnSettingChanged += OnSettingChanged;
+    }
+
+    private void OnSettingChanged(string modName, string key, object value)
+    {
+        if (modName != "Dev Mode") return;
+
+        _log.Msg($"Setting changed: {key} = {value}");
+
+        // Handle ShowAllEntityTypes change - reload entity list
+        if (key == "ShowAllEntityTypes" && _devModeReady)
+        {
+            _log.Msg("Reloading entity templates with new filter...");
+            ReloadEntityTemplates();
+        }
+
+        // Handle gameplay tweaks - these modify actual game templates
+        if (key == "WeaponDamageMult" || key == "PlayerAccuracyBonus" || key == "EnemyHealthMult")
+        {
+            ApplyGameplayTweaks();
+        }
+    }
+
+    // Stores original template values so we can re-apply multipliers correctly
+    private Dictionary<string, float> _originalWeaponDamage = new();
+    private Dictionary<string, float> _originalEntityHealth = new();
+    private bool _baseValuesStored = false;
+
+    /// <summary>
+    /// Applies gameplay tweak settings to actual game templates.
+    /// Uses Templates API to modify WeaponTemplate.Damage, EntityTemplate stats, etc.
+    /// </summary>
+    private void ApplyGameplayTweaks()
+    {
+        if (_gameAssembly == null) return;
+
+        float damageMult = ModSettings.Get<float>("Dev Mode", "WeaponDamageMult");
+        float accuracyBonus = ModSettings.Get<float>("Dev Mode", "PlayerAccuracyBonus");
+        float healthMult = ModSettings.Get<float>("Dev Mode", "EnemyHealthMult");
+
+        _log.Msg($"Applying gameplay tweaks: damage={damageMult}x, accuracy+={accuracyBonus}, health={healthMult}x");
+
+        // Apply weapon damage multiplier
+        var weapons = Templates.FindAll("WeaponTemplate");
+        if (weapons.Length > 0)
+        {
+            int modified = 0;
+            foreach (var weapon in weapons)
+            {
+                string name = weapon.GetName();
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // Store original value on first run
+                if (!_baseValuesStored && !_originalWeaponDamage.ContainsKey(name))
+                {
+                    var baseDamage = Templates.ReadField(weapon, "Damage");
+                    if (baseDamage != null)
+                        _originalWeaponDamage[name] = Convert.ToSingle(baseDamage);
+                }
+
+                // Apply multiplier from stored original
+                if (_originalWeaponDamage.TryGetValue(name, out float origDamage))
+                {
+                    float newDamage = origDamage * damageMult;
+                    if (Templates.WriteField(weapon, "Damage", newDamage))
+                        modified++;
+                }
+            }
+            if (modified > 0)
+                _log.Msg($"  Modified {modified} weapons (damage x{damageMult})");
+        }
+
+        // Apply accuracy bonus to player weapons (those without "enemy" or "pirate" in name)
+        if (Math.Abs(accuracyBonus) > 0.1f)
+        {
+            int modified = 0;
+            foreach (var weapon in weapons)
+            {
+                string name = weapon.GetName()?.ToLowerInvariant() ?? "";
+                // Skip enemy weapons
+                if (name.Contains("enemy") || name.Contains("pirate")) continue;
+
+                var currentAcc = Templates.ReadField(weapon, "AccuracyBonus");
+                if (currentAcc != null)
+                {
+                    // Add bonus on top of existing
+                    float newAcc = Convert.ToSingle(currentAcc) + accuracyBonus;
+                    if (Templates.WriteField(weapon, "AccuracyBonus", newAcc))
+                        modified++;
+                }
+            }
+            if (modified > 0)
+                _log.Msg($"  Modified {modified} player weapons (accuracy +{accuracyBonus})");
+        }
+
+        // Apply enemy health multiplier
+        var entities = Templates.FindAll("EntityTemplate");
+        if (entities.Length > 0)
+        {
+            int modified = 0;
+            foreach (var entity in entities)
+            {
+                string name = entity.GetName()?.ToLowerInvariant() ?? "";
+                // Only modify enemy entities
+                if (!name.Contains("enemy") && !name.Contains("pirate")) continue;
+
+                // Store original
+                if (!_baseValuesStored && !_originalEntityHealth.ContainsKey(name))
+                {
+                    var stats = Templates.ReadField(entity, "Stats");
+                    if (stats is GameObj statsObj && !statsObj.IsNull)
+                    {
+                        var baseHp = statsObj.ReadInt("HitpointsPerElement");
+                        if (baseHp > 0)
+                            _originalEntityHealth[name] = baseHp;
+                    }
+                }
+
+                // Apply multiplier
+                if (_originalEntityHealth.TryGetValue(name, out float origHp))
+                {
+                    var stats = Templates.ReadField(entity, "Stats");
+                    if (stats is GameObj statsObj && !statsObj.IsNull)
+                    {
+                        int newHp = (int)(origHp * healthMult);
+                        if (statsObj.WriteInt("HitpointsPerElement", newHp))
+                            modified++;
+                    }
+                }
+            }
+            if (modified > 0)
+                _log.Msg($"  Modified {modified} enemy entities (health x{healthMult})");
+        }
+
+        _baseValuesStored = true;
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName)
@@ -102,16 +260,17 @@ public class DevModePlugin : IModpackPlugin
     /// </summary>
     private bool TrySetupCore()
     {
-        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+        _gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
-        if (gameAssembly == null)
+        if (_gameAssembly == null)
         {
             _log.Msg("Assembly-CSharp not loaded yet");
             return false;
         }
 
-        _log.Msg($"Assembly-CSharp found, {gameAssembly.GetTypes().Length} types");
+        _log.Msg($"Assembly-CSharp found, {_gameAssembly.GetTypes().Length} types");
+        var gameAssembly = _gameAssembly;
 
         _entityTemplateType = gameAssembly.GetTypes()
             .FirstOrDefault(t => t.Name == "EntityTemplate" && !t.IsAbstract);
@@ -131,11 +290,36 @@ public class DevModePlugin : IModpackPlugin
         if (!ResolveReflectionCache(gameAssembly))
             return false;
 
-        EnableCheats(gameAssembly);
+        // Only enable cheats if the setting is on
+        if (ModSettings.Get<bool>("Dev Mode", "AutoEnableCheats"))
+        {
+            _log.Msg("AutoEnableCheats is ON, enabling cheats...");
+            EnableCheats(gameAssembly);
+        }
+        else
+        {
+            _log.Msg("AutoEnableCheats is OFF, skipping cheat enable");
+        }
+
         CacheActions(gameAssembly);
         TryLoadEntityTemplates(gameAssembly);
 
+        // Apply default faction from settings
+        var defaultFaction = ModSettings.Get<string>("Dev Mode", "DefaultFaction") ?? "Enemy";
+        for (int i = 0; i < _factions.Count; i++)
+        {
+            if (_factions[i].Name.Contains(defaultFaction))
+            {
+                _selectedFactionIndex = i;
+                break;
+            }
+        }
+
         _devModeReady = true;
+
+        // Apply gameplay tweaks now that templates are loaded
+        GameState.RunDelayed(30, () => ApplyGameplayTweaks());
+
         return true;
     }
 
@@ -195,6 +379,8 @@ public class DevModePlugin : IModpackPlugin
 
             if (entityObjects.Count > 0)
             {
+                // Cache raw list for reloading with different filters
+                _allEntityObjects = entityObjects;
                 LoadEntityTemplates(entityObjects.ToArray());
             }
             else
@@ -206,6 +392,30 @@ public class DevModePlugin : IModpackPlugin
         {
             _log.Warning($"Could not load entity templates: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Reloads entity templates with current filter settings.
+    /// Called when ShowAllEntityTypes setting changes.
+    /// </summary>
+    private void ReloadEntityTemplates()
+    {
+        if (_allEntityObjects.Count == 0)
+        {
+            _log.Warning("No cached entity objects to reload");
+            return;
+        }
+
+        // Clear current lists
+        _entityTemplates.Clear();
+        _entityNames.Clear();
+        _entityActorTypes.Clear();
+        _selectedEntityIndex = 0;
+
+        // Reload with current filter settings
+        LoadEntityTemplates(_allEntityObjects.ToArray());
+
+        _log.Msg($"Reloaded {_entityTemplates.Count} entities with current filter");
     }
 
     /// <summary>
@@ -683,6 +893,9 @@ public class DevModePlugin : IModpackPlugin
         var seenEntityTypes = new HashSet<string>();
         var entries = new List<(string name, string actorType, UnityEngine.Object obj)>();
 
+        // Check setting: show all entity types or just actors?
+        bool showAllTypes = ModSettings.Get<bool>("Dev Mode", "ShowAllEntityTypes");
+
         foreach (var obj in allObjects)
         {
             if (obj == null) continue;
@@ -698,12 +911,12 @@ public class DevModePlugin : IModpackPlugin
                 // Create typed proxy for property access (no hardcoded offsets)
                 var typed = Activator.CreateInstance(_entityTemplateType, new object[] { ptr });
 
-                // Filter: only EntityType.Actor
+                // Filter: only EntityType.Actor (unless ShowAllEntityTypes is on)
                 var entityTypeVal = _entityTypeProperty.GetValue(typed);
                 var entityTypeName = entityTypeVal?.ToString() ?? "null";
                 seenEntityTypes.Add(entityTypeName);
 
-                if (!Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
+                if (!showAllTypes && !Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
 
                 // Read ActorType for display
                 string actorTypeName = "Unit";

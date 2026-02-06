@@ -18,6 +18,15 @@ public class CodeEditorView : UserControl
         Content = BuildUI();
     }
 
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        // Refresh modpacks when view becomes visible to pick up newly created ones
+        if (DataContext is CodeEditorViewModel vm)
+            vm.RefreshAll();
+    }
+
     private Control BuildUI()
     {
         var mainGrid = new Grid

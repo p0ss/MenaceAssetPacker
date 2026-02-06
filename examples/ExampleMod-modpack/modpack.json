@@ -1,0 +1,7 @@
+{
+  "manifestVersion": 2,
+  "name": "Example Mod",
+  "version": "1.0.0",
+  "author": "Menace SDK",
+  "loadOrder": 100
+}

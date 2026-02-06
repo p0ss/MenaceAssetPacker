@@ -2,52 +2,140 @@
 
 ## Overview
 
-This system automatically resolves Unity Object references (instance IDs) to human-readable asset names and links them to AssetRipper exported files.
+This system resolves Unity Object references (instance IDs) to human-readable asset names and links them to extracted asset files. It enables the Stats Editor to display meaningful names instead of raw memory addresses.
 
 ## Architecture
 
 ```
-┌─────────────────────────┐
-│   Game Runtime          │
-│   (DataExtractor)       │  Extracts templates + builds reference table
-└──────────┬──────────────┘
+┌─────────────────────────────────┐
+│      Menace.Modkit.App          │
+│  ┌───────────────────────────┐  │
+│  │ AssetRipperService        │  │  Orchestrates extraction
+│  │ (automated extraction)    │  │
+│  └─────────────┬─────────────┘  │
+│                │                 │
+│  ┌─────────────▼─────────────┐  │
+│  │ AssetReferenceResolver    │  │  Resolves IDs to names
+│  │ (loads AssetReferences)   │  │
+│  └─────────────┬─────────────┘  │
+│                │                 │
+│  ┌─────────────▼─────────────┐  │
+│  │ StatsEditorViewModel      │  │  Displays resolved names
+│  │ AssetPickerDialog         │  │  Browse/select assets
+│  └───────────────────────────┘  │
+└─────────────────────────────────┘
+           │
+           │ Uses
+           ▼
+┌─────────────────────────────────┐
+│      Game Runtime               │
+│  ┌───────────────────────────┐  │
+│  │ DataExtractor Mod         │  │  Extracts templates +
+│  │                           │  │  builds reference table
+│  └───────────────────────────┘  │
+└─────────────────────────────────┘
+           │
            │ Produces
-           ↓
-┌─────────────────────────┐
-│  AssetReferences.json   │  { InstanceId → Name, Type, AssetPath }
-│  AccessoryTemplate.json │  Contains instance ID references
-└──────────┬──────────────┘
-           │ Processed by
-           ↓
-┌─────────────────────────┐
-│  match_asset_references │  Python script - matches refs to AssetRipper files
-│         .py             │  Updates AssetPath fields
-└──────────┬──────────────┘
-           │ Used by
-           ↓
-┌─────────────────────────┐
-│  AssetReferenceResolver │  C# service in modkit
-│  StatsEditorViewModel   │  Displays: "icon_ammo → Sprites/icon.png"
-└─────────────────────────┘
+           ▼
+┌─────────────────────────────────┐
+│  UserData/ExtractedData/        │
+│  ├── AssetReferences.json       │  { InstanceId → Name, Type }
+│  ├── WeaponTemplate.json        │  Template data with IDs
+│  └── ...                        │
+└─────────────────────────────────┘
 ```
+
+## GUI Workflow
+
+### Automatic Setup
+
+The Menace Modkit app handles asset extraction automatically:
+
+1. **First Launch** — App detects game installation
+2. **Data Extraction** — Prompts to launch game with DataExtractor
+3. **Asset Ripping** — AssetRipperService extracts game assets
+4. **Reference Matching** — Resolves instance IDs to asset files
+
+After setup, the Stats Editor displays asset names instead of raw IDs.
+
+### Asset Picker Dialog
+
+When editing a field that references an asset (Sprite, Texture2D, etc.):
+
+1. Click the field in Stats Editor
+2. **AssetPickerDialog** opens with:
+   - Search/filter by name
+   - Preview panel for images
+   - "modpack" badge for assets already in your modpack
+3. Select an asset or click **Import New...** to add external files
+4. Selected asset is registered in your modpack manifest
+
+### Browsing Assets
+
+The **Asset Browser** tab provides full asset exploration:
+
+- Browse by type (Sprites, Textures, Audio, Meshes)
+- Search across all extracted assets
+- Preview images and metadata
+- Set up asset replacements for modpacks
 
 ## Components
 
-### 1. DataExtractor Mod (C# - Game Runtime)
+### AssetRipperService
 
-**Files:**
-- `src/Menace.DataExtractor/DataExtractorMod.cs`
+**File:** `src/Menace.Modkit.App/Services/AssetRipperService.cs`
 
-**Features:**
-- Extracts all 861 fields from 72 template types
-- For Unity Object reference fields:
-  - Registers instance ID, name, and type
-  - Attempts to dereference LocalizedString fields to get text
-- Produces:
-  - `TemplateType.json` - Template data with instance IDs
-  - `AssetReferences.json` - Lookup table
+Orchestrates asset extraction:
+- Runs AssetRipper with appropriate settings
+- Manages extraction profiles (Essential, Standard, Complete)
+- Tracks extraction state in manifest
+- Handles cache invalidation on game updates
 
-**AssetReferences.json format:**
+### AssetReferenceResolver
+
+**File:** `src/Menace.Modkit.App/Services/AssetReferenceResolver.cs`
+
+Resolves instance IDs to display information:
+
+```csharp
+var resolver = new AssetReferenceResolver();
+resolver.LoadReferences(gameInstallPath);
+
+var resolved = resolver.Resolve(instanceId);
+
+if (resolved.IsReference)
+{
+    // resolved.DisplayValue  → "icon_ammo"
+    // resolved.AssetPath     → "Assets/Sprites/icon_ammo.png"
+    // resolved.AssetType     → "Sprite"
+}
+```
+
+**ResolvedAsset Properties:**
+- `DisplayValue` — Human-readable text for UI
+- `IsReference` — Is this an asset reference?
+- `AssetName` — Name from runtime extraction
+- `AssetType` — Unity type (Sprite, AudioClip, etc.)
+- `AssetPath` — Relative path to extracted file
+- `HasAssetFile` — Whether the file exists
+- `CanLinkToAssetBrowser` — Can navigate to browser
+
+### AssetPickerDialog
+
+**File:** `src/Menace.Modkit.App/Views/AssetPickerDialog.cs`
+
+Modal dialog for asset selection:
+- Filters by asset type
+- Shows both extracted and modpack assets
+- Supports importing new assets
+- Provides image preview
+
+## Data Files
+
+### AssetReferences.json
+
+Generated by DataExtractor, maps instance IDs to metadata:
+
 ```json
 [
   {
@@ -60,206 +148,94 @@ This system automatically resolves Unity Object references (instance IDs) to hum
     "InstanceId": 1937563168,
     "Name": "icon_ammo_armor_piercing",
     "Type": "Sprite",
-    "AssetPath": "ExportedProject/Assets/Sprites/icon_ammo_armor_piercing.png"
+    "AssetPath": "Assets/Sprites/icon_ammo_armor_piercing.png"
   }
 ]
 ```
 
-### 2. Asset Matching Script (Python)
+### Field Type Display
 
-**File:** `match_asset_references.py`
-
-**Usage:**
-```bash
-python3 match_asset_references.py
-```
-
-**Features:**
-- Scans AssetRipper export directory
-- Builds index of asset files by name
-- Matches instance IDs to asset files
-- Updates `AssetPath` field in `AssetReferences.json`
-- Supports fuzzy matching for name variations
-
-**Matching Logic:**
-1. **Exact match** by filename (without extension)
-2. **Type-aware matching**: Prefers `.png` for Sprites, `.wav` for AudioClips, etc.
-3. **Fuzzy match**: Removes special characters and compares
-
-### 3. AssetReferenceResolver Service (C# - Modkit)
-
-**File:** `src/Menace.Modkit.App/Services/AssetReferenceResolver.cs`
-
-**API:**
-```csharp
-var resolver = new AssetReferenceResolver();
-resolver.LoadReferences(gameInstallPath);
-
-var resolved = resolver.Resolve(instanceId);
-
-if (resolved.IsReference)
-{
-    // Display: resolved.DisplayValue (asset name)
-    // Link to: resolved.AssetPath (file path)
-    // Type: resolved.AssetType (Sprite, LocalizedLine, etc.)
-}
-```
-
-**ResolvedAsset Properties:**
-- `DisplayValue` - Human-readable text for UI
-- `IsReference` - Is this an asset reference?
-- `AssetName` - Name from runtime
-- `AssetType` - Unity type (Sprite, AudioClip, etc.)
-- `AssetPath` - Relative path to AssetRipper file
-- `HasAssetFile` - Whether asset file exists
-- `CanLinkToAssetBrowser` - Can navigate to asset browser
-
-### 4. UI Integration
-
-**File:** `src/Menace.Modkit.App/ViewModels/StatsEditorViewModel.cs`
-
-**Features:**
-- Loads `AssetReferenceResolver` on startup
-- Automatically resolves instance IDs when displaying template properties
-- Shows asset references as:
-  - `icon_ammo → Sprites/icon.png` (with asset file)
-  - `icon_ammo (no asset file)` (without file)
-  - `[Ref:1937563168]` (unknown reference)
-
-## Workflow
-
-### Initial Setup
-
-1. **Extract game data:**
-   ```bash
-   # Run game with DataExtractor mod
-   # Waits for game to load, extracts templates
-   # Produces: UserData/ExtractedData/*.json + AssetReferences.json
-   ```
-
-2. **Export assets with AssetRipper:**
-   ```bash
-   # Use AssetRipper to extract game assets
-   # Produces: ExportedProject/Assets/**/*.png, *.prefab, etc.
-   ```
-
-3. **Match references:**
-   ```bash
-   python3 match_asset_references.py
-   # Scans AssetRipper exports
-   # Updates AssetReferences.json with AssetPath fields
-   ```
-
-4. **Use modkit:**
-   - Modkit loads `AssetReferences.json`
-   - Asset names appear instead of instance IDs
-   - Click asset names to view in asset browser (future)
-
-### After Game Update
-
-1. **Re-extract:**
-   ```bash
-   # Run game (new offsets/templates may exist)
-   ```
-
-2. **Re-match:**
-   ```bash
-   python3 match_asset_references.py
-   ```
-
-3. **Modkit auto-reloads** references
-
-## Field Type Handling
-
-| Field Type | Extraction | Display |
-|------------|------------|---------|
+| Field Type | Extraction | Display in Stats Editor |
+|------------|------------|-------------------------|
 | `int`, `float`, `bool` | Direct read | `42`, `1.5`, `true` |
-| `LocalizedLine` | Try to read text @ offset 0x40 | `"Armor Piercing Ammo"` or asset name |
-| `Sprite`, `Texture2D` | Instance ID → lookup | `icon_ammo → Sprites/icon.png` |
-| `AudioClip` | Instance ID → lookup | `explosion_sound → Audio/explosion.wav` |
-| `GameObject`, `Prefab` | Instance ID → lookup | `model_tank → Prefabs/model_tank.prefab` |
+| `LocalizedLine` | Text @ offset 0x40 | `"Armor Piercing Ammo"` |
+| `Sprite`, `Texture2D` | Instance ID → lookup | `icon_ammo` (clickable) |
+| `AudioClip` | Instance ID → lookup | `explosion_sound` |
+| `GameObject` | Instance ID → lookup | `model_tank` |
 | Unknown reference | Instance ID | `[Ref:1976593696]` |
 
 ## Error Handling
 
 **No AssetReferences.json:**
-- Modkit displays raw instance IDs
-- Still functional, just less user-friendly
+- Stats Editor displays raw instance IDs
+- Still functional, prompts for data extraction
 
-**Asset not found:**
-- Displays: `asset_name (no asset file)`
-- Still shows the asset name from runtime
+**Asset file not found:**
+- Displays: `asset_name (no file)`
+- Shows name from runtime, just can't preview
 
-**AssetRipper exports missing:**
-- `match_asset_references.py` prompts for path
-- Can be run multiple times as exports become available
+**Extraction failed:**
+- Error logged to app log
+- Retry available in Settings tab
 
-## Future Enhancements
+## Modpack Asset Structure
 
-### Clickable Links
-Add command to StatsEditorViewModel:
-```csharp
-public void NavigateToAsset(long instanceId)
+When you import or replace assets, they're stored in your modpack:
+
+```
+MyModpack/
+├── modpack.json
+└── assets/
+    └── Assets/
+        ├── Sprite/
+        │   └── custom_icon.png
+        └── Texture2D/
+            └── custom_texture.png
+```
+
+The manifest tracks replacements:
+
+```json
 {
-    var resolved = _assetResolver.Resolve(instanceId);
-    if (resolved.CanLinkToAssetBrowser)
-    {
-        // Navigate to Asset Browser tab
-        // Select file at: resolved.AssetPath
-    }
+  "assets": {
+    "Assets/Sprite/icon_ammo": "assets/Assets/Sprite/custom_icon.png"
+  }
 }
 ```
 
-### Asset Preview Thumbnails
-- For Sprite references, show thumbnail inline
-- For AudioClip, show waveform or play button
-- For Prefab, show 3D preview
+---
 
-### Reverse Lookup
-- From Asset Browser, show which templates reference this asset
-- "Used by: WeaponTemplate/pistol.Icon, ArmorTemplate/vest.IconEquipment"
+## Advanced: Manual Workflow
 
-### Hot Reload
-- Watch `AssetReferences.json` for changes
-- Auto-reload when `match_asset_references.py` runs
+For developers or troubleshooting, the system can be run manually.
 
-## Files Created/Modified
+### match_asset_references.py
 
-### Created:
-- `src/Menace.DataExtractor/DataExtractorMod.cs` - Added AssetReference tracking
-- `src/Menace.Modkit.App/Services/AssetReferenceResolver.cs` - Resolver service
-- `match_asset_references.py` - Asset matching script
-- `ASSET_REFERENCE_SYSTEM.md` - This document
+Matches extracted references to AssetRipper output files:
 
-### Modified:
-- `src/Menace.DataExtractor/DataExtractorMod.cs` - Reference tracking + saving
-- `src/Menace.Modkit.App/ViewModels/StatsEditorViewModel.cs` - UI integration
-- `src/Menace.Modkit.App/Services/ModpackManager.cs` - Added GetGameInstallPath()
-- `generate_all_templates.py` - Added ReadUnityObjectReference calls
+```bash
+python3 match_asset_references.py
+# Scans AssetRipper exports
+# Updates AssetPath fields in AssetReferences.json
+```
 
-## Testing
+**Matching Logic:**
+1. Exact match by filename (without extension)
+2. Type-aware matching (prefer `.png` for Sprites, `.wav` for AudioClips)
+3. Fuzzy match for name variations
 
-1. **Verify extraction:**
-   ```bash
-   cat ~/.steam/.../Menace\ Demo/UserData/ExtractedData/AssetReferences.json | head -20
-   ```
+### Manual Re-extraction
 
-2. **Run matching:**
-   ```bash
-   python3 match_asset_references.py
-   # Should show: "✅ Matched X/Y asset references"
-   ```
+If automatic extraction fails:
 
-3. **Check modkit:**
-   - Open modkit
-   - Navigate to Stats Editor
-   - Select AccessoryTemplate → armor_piercing_ammo
-   - Verify fields show asset names instead of numbers
+1. Run game with DataExtractor mod
+2. Check `UserData/ExtractedData/` for output
+3. Run `python3 match_asset_references.py` to update paths
+4. Restart the modkit app
 
-## Success Criteria
+## Future Enhancements
 
-✅ Asset references extracted during gameplay
-✅ Python script matches references to files
-✅ Modkit displays asset names instead of IDs
-✅ Graceful fallback when assets not found
-✅ Automatic after game updates (just re-run extraction + matching)
+- **Clickable asset links** — Navigate from Stats Editor to Asset Browser
+- **Asset preview thumbnails** — Inline previews for Sprites
+- **Reverse lookup** — Show which templates reference an asset
+- **Hot reload** — Auto-refresh when assets change

@@ -1,231 +1,332 @@
-# Testing Stat Modifications
+# Testing
 
-## Quick Test Guide
+The Menace Modkit uses xUnit for automated testing. Tests run without the game installed, using mocks for IL2CPP-specific behavior.
 
-### 1. Open the Data Browser
+## Running Tests
 
-```bash
-cd /home/poss/Documents/Code/Menace/MenaceAssetPacker/tools
-firefox data-browser.html
-# or: chromium data-browser.html
-```
-
-Click "Choose Files" and navigate to:
-```
-~/.steam/debian-installation/steamapps/common/Menace Demo/UserData/ExtractedData/
-```
-
-Select all `.json` files and load them.
-
-### 2. Find a Weapon to Test
-
-**Recommended test weapons (easy to identify):**
-
-Click "WeaponTemplate" in the sidebar, then search for:
-- `cannon_long` - Heavy cannon (165 damage baseline)
-- `rocket_launcher` - Rocket launcher (180 damage baseline)
-- `mortar` - Heavy mortar (25 damage baseline)
-- `plasma_rifle` - Plasma rifle (60 damage baseline)
-
-The browser will show you:
-- Damage values
-- Range (MinRange, IdealRange, MaxRange)
-- Accuracy stats
-- Armor penetration
-
-### 3. Create a Test Modification
-
-Let's boost the heavy mortar to be overpowered for easy testing:
+### All Tests
 
 ```bash
-cd ~/.steam/debian-installation/steamapps/common/Menace\ Demo/UserData/ModifiedData
+# Run all test suites
+dotnet test
+
+# With verbose output
+dotnet test --logger "console;verbosity=detailed"
 ```
 
-Create `WeaponTemplate.json` with:
-
-```json
-[
-  {
-    "name": "mod_weapon.heavy.mortar",
-    "MinRange": 8,
-    "IdealRange": 12,
-    "MaxRange": 16,
-    "AccuracyBonus": 50.0,
-    "AccuracyDropoff": 0.0,
-    "Damage": 999.0,
-    "DamageDropoff": 0.0,
-    "ArmorPenetration": 999.0,
-    "ArmorPenetrationDropoff": 0.0
-  }
-]
-```
-
-This makes the heavy mortar:
-- Deal 999 damage (up from 25)
-- Have 999 armor penetration (up from 35)
-- Have perfect accuracy at all ranges
-- Keep same range profile
-
-### 4. Launch and Test
+### Individual Suites
 
 ```bash
-cd ~/.steam/debian-installation/steamapps/common/Menace\ Demo
-tail -f MelonLoader/Latest.log | grep -i "stat modifier"
+# App tests (manifests, security, conflicts)
+dotnet test tests/Menace.Modkit.Tests
+
+# SDK tests (GameType, GameObj, REPL)
+dotnet test tests/Menace.ModpackLoader.Tests
 ```
 
-Launch the game and check the log output. You should see:
+### Specific Test Class
 
-```
-Menace Stat Modifier v1.0.0
-Modified data path: .../UserData/ModifiedData
-✓ Loaded 1 modified WeaponTemplate.json
-Loaded 1 modified templates:
-  - 1 weapons
-  - 0 armor
-  - 0 accessories
-  - 0 entities
-✓ Applied Harmony patches
+```bash
+dotnet test --filter "FullyQualifiedName~SecurityScannerTests"
+dotnet test --filter "FullyQualifiedName~RuntimeCompilerTests"
 ```
 
-### 5. In-Game Verification
+## Test Suites
 
-The heavy mortar appears on:
-- Heavy vehicles (turret options)
-- Some modular vehicle weapon slots
-- Infantry support weapons (tripod/heavy weapon teams)
+### Menace.Modkit.Tests
 
-**How to verify:**
-1. Start a skirmish/battle with heavy vehicles
-2. Check unit details/loadout screen
-3. If the weapon damage is displayed, it should show 999
-4. In combat, mortar shots should be devastating one-shots
+Tests for the desktop application and core services.
 
-### Alternative: Test with Infantry Weapons
+| Test Class | Coverage |
+|------------|----------|
+| `ManifestRoundTripTests` | Modpack manifest serialization/deserialization |
+| `DependencyParsingTests` | Dependency version parsing (`SomeMod>=1.0`) |
+| `PatchMergeTests` | Merging patches across multiple modpacks |
+| `ConflictDetectionTests` | Detecting overlapping modifications |
+| `SecurityScannerTests` | Flagging dangerous APIs in mod code |
+| `DeployStateRoundTripTests` | Deployment state persistence |
+| `RuntimeManifestCompatTests` | V1/V2 manifest compatibility |
+| `ReferenceResolverTests` | Game assembly reference resolution |
+| `PluginManifestTests` | Plugin DLL manifest handling |
+| `TypetreeCacheServiceTests` | Unity typetree caching |
 
-Easier to test with infantry since you can see their weapons in loadout:
+#### Key Test Areas
 
-**Modify a common assault rifle:**
+**Manifest Handling:**
+```csharp
+[Fact]
+public void RoundTrip_PreservesAllFields()
+{
+    var manifest = new ModpackManifest {
+        Name = "Test",
+        Version = "1.0.0",
+        Patches = new() { ["WeaponTemplate"] = ... }
+    };
 
-```json
-[
-  {
-    "name": "weapon.generic_assault_rifle_tier1_ARC_762",
-    "MinRange": 1,
-    "IdealRange": 3,
-    "MaxRange": 7,
-    "AccuracyBonus": 50.0,
-    "AccuracyDropoff": 0.0,
-    "Damage": 500.0,
-    "DamageDropoff": 0.0,
-    "ArmorPenetration": 500.0,
-    "ArmorPenetrationDropoff": 0.0
-  }
-]
+    var json = JsonConvert.SerializeObject(manifest);
+    var restored = JsonConvert.DeserializeObject<ModpackManifest>(json);
+
+    Assert.Equal(manifest.Name, restored.Name);
+    Assert.Equal(manifest.Patches.Count, restored.Patches.Count);
+}
 ```
 
-The ARC-762 is a starter weapon that should be easy to find in the game.
+**Security Scanning:**
+```csharp
+[Fact]
+public void DetectsFileSystemAccess()
+{
+    var code = "File.WriteAllText(\"x\", \"y\");";
+    var result = SecurityScanner.Scan(code);
 
-### 6. Armor Testing
-
-Test armor modifications with:
-
-```json
-[
-  {
-    "name": "armor.heavy_armor",
-    "Armor": 999,
-    "DurabilityPerElement": 999,
-    "DamageResistance": 0.99,
-    "HitpointsPerElement": 999,
-    "Accuracy": 50,
-    "AccuracyMult": 1.5,
-    "DefenseMult": 2.0,
-    "Discipline": 50.0,
-    "Vision": 100,
-    "Detection": 100
-  }
-]
+    Assert.Contains(result.Warnings, w => w.Category == "FileSystem");
+}
 ```
 
-**Note:** You'll need to search the ArmorTemplate in the browser first to find valid armor names.
+**Conflict Detection:**
+```csharp
+[Fact]
+public void DetectsOverlappingPatches()
+{
+    var mod1 = new ModpackManifest { Patches = WeaponDamage(50) };
+    var mod2 = new ModpackManifest { Patches = WeaponDamage(100) };
 
-### Troubleshooting Test Issues
+    var conflicts = ConflictDetector.FindConflicts(mod1, mod2);
 
-**Modifications not applying:**
-- Check MelonLoader log for errors
-- Verify JSON syntax (use jsonlint.com)
-- Ensure template name matches exactly (case-sensitive)
-- Make sure StatModifier.dll is in Mods/ folder
+    Assert.Single(conflicts);
+    Assert.Equal("WeaponTemplate.Pistol.Damage", conflicts[0].Path);
+}
+```
 
-**Can't find the weapon in-game:**
-- Search WeaponTemplate in browser for full list
-- Look for patterns: `weapon.*`, `mod_weapon.*`, `specialweapon.*`, `turret.*`
-- Try infantry weapons first (easier to verify)
+### Menace.ModpackLoader.Tests
 
-**Harmony patch errors:**
-- Check that HarmonyX package installed correctly
-- Verify no other mods conflict with same patches
+Tests for the runtime SDK used by mod developers.
 
-### Data Browser Features
+| Test Class | Coverage |
+|------------|----------|
+| `GameTypeTests` | IL2CPP type lookup and caching |
+| `GameObjTests` | Safe wrapper for IL2CPP objects |
+| `GameStateTests` | Scene tracking, delayed execution |
+| `GameCollectionTests` | IL2CPP collection iteration |
+| `ModErrorTests` | Error reporting, rate limiting, deduplication |
+| `RuntimeCompilerTests` | Roslyn C# compilation |
+| `RuntimeReferenceResolverTests` | Assembly reference resolution for REPL |
+| `ConsoleEvaluatorTests` | C# expression evaluation |
 
-**Search:** Type any text to filter items (searches all fields)
-- `mortar` - Find all mortars
-- `plasma` - Find plasma weapons
-- `heavy` - Find heavy equipment
-- `999` - Find items you've modified with test values
+#### Key Test Areas
 
-**Export:** Click "Export to ModifiedData" to download a template JSON
-- Edit the downloaded file
-- Keep only items you want to modify
-- Place in ModifiedData/ folder
+**GameType Resolution:**
+```csharp
+[Fact]
+public void FindType_CachesResult()
+{
+    var type1 = GameType.Find("WeaponTemplate");
+    var type2 = GameType.Find("WeaponTemplate");
 
-**Column sorting:** Click column headers to sort (browser dependent)
+    Assert.Same(type1, type2);
+}
+```
 
-### Finding Specific Item Types
+**Error Rate Limiting:**
+```csharp
+[Fact]
+public void RateLimits_ExcessiveErrors()
+{
+    for (int i = 0; i < 20; i++)
+        ModError.Report("TestMod", "Same error");
 
-**Vehicle weapons:** Search WeaponTemplate for:
-- `mod_weapon.*` - Modular vehicle weapons
-- `turret.*` - Fixed turret weapons
+    var errors = ModError.GetRecent("TestMod");
+    Assert.True(errors.Count <= 10); // Rate limited
+}
+```
 
-**Infantry weapons:** Search WeaponTemplate for:
-- `weapon.*` - Standard infantry weapons
-- `specialweapon.*` - Special/heavy infantry weapons
+**REPL Compilation:**
+```csharp
+[Fact]
+public void Compiles_SimpleExpression()
+{
+    var compiler = new RuntimeCompiler(TestReferences.Minimal);
+    var result = compiler.Compile("1 + 1");
 
-**Armor:** Search ArmorTemplate for:
-- `armor.*` - Body armor pieces
+    Assert.True(result.Success);
+    Assert.Empty(result.Diagnostics);
+}
+```
 
-**Units:** Search EntityTemplate for:
-- `inf.*` - Infantry units
-- `vehicle.*` - Vehicle units
+## Test Infrastructure
 
-## Advanced: Testing Entity Stats
+### Stubs
 
-EntityTemplate has nested Properties object. To test:
+IL2CPP types are stubbed for testing without the game:
 
-```json
-[
-  {
-    "name": "inf.generic_rifleman_tier1",
-    "ElementsMin": 10,
-    "ElementsMax": 12,
-    "ArmyPointCost": 50,
-    "Properties": {
-      "HitpointsPerElement": 999,
-      "Armor": 100,
-      "ArmorSide": 100,
-      "ArmorBack": 100,
-      "ArmorDurabilityPerElement": 999.0,
-      "ActionPoints": 20,
-      "Accuracy": 100.0,
-      "AccuracyDropoff": 0.0,
-      "DefenseMult": 2.0,
-      "Discipline": 100.0,
-      "Vision": 30,
-      "Detection": 30,
-      "Concealment": 50
+```
+tests/stubs/
+├── Stubs.MelonLoader/     # MelonLogger stubs
+└── Stubs.Il2CppInterop/   # IL2CPP, Il2CppObjectBase stubs
+```
+
+### Helpers
+
+```
+tests/Menace.Modkit.Tests/Helpers/
+├── TemporaryDirectory.cs    # Auto-cleanup temp dirs
+├── ManifestFixtures.cs      # Sample manifest data
+└── RuntimeModpackMirror.cs  # Simulates runtime loading
+```
+
+### Test References
+
+For REPL tests, minimal assembly references:
+
+```csharp
+public static class TestReferences
+{
+    public static IReadOnlyList<MetadataReference> Minimal => new[] {
+        MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
+        MetadataReference.CreateFromFile(typeof(Console).Assembly.Location)
+    };
+}
+```
+
+## Writing New Tests
+
+### Modkit App Tests
+
+```csharp
+namespace Menace.Modkit.Tests.Integration;
+
+public class MyFeatureTests
+{
+    [Fact]
+    public void MyFeature_DoesExpectedThing()
+    {
+        // Arrange
+        var input = CreateTestInput();
+
+        // Act
+        var result = MyService.Process(input);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(expected, result.Value);
     }
-  }
-]
+
+    [Theory]
+    [InlineData("input1", "expected1")]
+    [InlineData("input2", "expected2")]
+    public void MyFeature_HandlesVariousInputs(string input, string expected)
+    {
+        var result = MyService.Process(input);
+        Assert.Equal(expected, result);
+    }
+}
 ```
 
-**Note:** EntityTemplate.Properties patches aren't implemented yet in MVP. This requires additional Harmony patches for the nested Properties object.
+### SDK Tests
+
+```csharp
+namespace Menace.ModpackLoader.Tests.SDK;
+
+public class MySDKFeatureTests
+{
+    [Fact]
+    public void Feature_WorksWithStubs()
+    {
+        // SDK tests use stubs instead of real IL2CPP
+        var obj = new MockGameObj();
+
+        var result = GameQuery.Process(obj);
+
+        Assert.True(result.Success);
+    }
+}
+```
+
+## CI Integration
+
+Tests are designed to run in CI without game installation:
+
+```yaml
+# Example GitHub Actions
+- name: Run Tests
+  run: dotnet test --configuration Release --logger trx
+```
+
+No special setup required — all dependencies are mocked.
+
+## Coverage Areas
+
+### What's Tested
+
+- Manifest parsing and serialization
+- Patch merging logic
+- Conflict detection algorithms
+- Security scanning rules
+- Dependency version parsing
+- SDK API contracts
+- REPL compilation pipeline
+- Error handling and rate limiting
+
+### What's Not Tested (Requires Game)
+
+- Actual IL2CPP type resolution
+- Runtime template patching
+- Asset loading and replacement
+- Harmony patches
+- Unity object interactions
+
+These require manual testing with the game installed.
+
+## Manual Testing
+
+For features requiring the game:
+
+1. Build the modkit: `dotnet build`
+2. Deploy a test modpack
+3. Launch game with MelonLoader
+4. Check `MelonLoader/Latest.log` for results
+5. Use Dev Console (`~`) to inspect runtime state
+
+### Dev Console Commands for Testing
+
+```
+# Verify templates loaded
+templates WeaponTemplate
+
+# Check for errors
+errors
+
+# Inspect specific object
+inspect WeaponTemplate Pistol_Basic
+
+# View current scene
+scene
+```
+
+## Troubleshooting Tests
+
+### Tests Fail to Build
+
+```bash
+# Restore dependencies
+dotnet restore
+
+# Clean and rebuild
+dotnet clean && dotnet build
+```
+
+### Stub Type Conflicts
+
+If IL2CPP stubs conflict with real types:
+
+1. Check `Stubs.*` projects don't reference real assemblies
+2. Verify test project references stubs, not game DLLs
+
+### REPL Tests Fail
+
+REPL tests require Roslyn packages:
+
+```bash
+# Verify packages restored
+dotnet restore tests/Menace.ModpackLoader.Tests
+```

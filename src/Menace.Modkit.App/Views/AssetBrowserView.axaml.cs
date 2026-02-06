@@ -14,6 +14,15 @@ public class AssetBrowserView : UserControl
         Content = BuildUI();
     }
 
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        // Refresh modpacks when view becomes visible to pick up newly created ones
+        if (DataContext is AssetBrowserViewModel vm)
+            vm.RefreshModpacks();
+    }
+
     private Control BuildUI()
     {
         var mainGrid = new Grid
@@ -309,20 +318,17 @@ public class AssetBrowserView : UserControl
         // Preview content
         var previewStack = new StackPanel
         {
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Left
         };
 
-        // Image preview
-        var imagePreview = new Image
-        {
-            MaxWidth = 400,
-            MaxHeight = 400,
-            Stretch = Avalonia.Media.Stretch.Uniform
-        };
-        imagePreview.Bind(Image.SourceProperty, new Avalonia.Data.Binding("PreviewImage"));
-        imagePreview.Bind(Image.IsVisibleProperty, new Avalonia.Data.Binding("HasImagePreview"));
-        previewStack.Children.Add(imagePreview);
+        // Image preview with dimension border
+        var imageContainer = BuildImageWithDimensionBorder(
+            "PreviewImage",
+            "VanillaImageWidth",
+            "VanillaImageHeight",
+            "HasImagePreview");
+        previewStack.Children.Add(imageContainer);
 
         // Text preview
         var textScrollViewer = new ScrollViewer
@@ -392,6 +398,86 @@ public class AssetBrowserView : UserControl
         return panel;
     }
 
+    /// <summary>
+    /// Creates an image preview with dimension labels on the borders.
+    /// Shows width label on top, height label on left side.
+    /// </summary>
+    private Control BuildImageWithDimensionBorder(
+        string imageBinding,
+        string widthBinding,
+        string heightBinding,
+        string visibilityBinding)
+    {
+        // Outer container: column for width label + row for height label + image
+        var outerStack = new StackPanel { Spacing = 4 };
+        outerStack.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding(visibilityBinding));
+
+        // Width label (centered above image)
+        var widthLabel = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            FontSize = 10,
+            FontFamily = new FontFamily("monospace"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(24, 0, 0, 0) // offset to account for height label space
+        };
+        widthLabel.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(widthBinding)
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<int, string>(w => $"{w}px")
+        });
+        outerStack.Children.Add(widthLabel);
+
+        // Row: height label + image with border
+        var imageRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4
+        };
+
+        // Height label (rotated, on left side)
+        var heightContainer = new Border
+        {
+            Width = 20,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var heightLabel = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            FontSize = 10,
+            FontFamily = new FontFamily("monospace"),
+            RenderTransform = new RotateTransform(-90),
+            RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative)
+        };
+        heightLabel.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(heightBinding)
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<int, string>(h => $"{h}px")
+        });
+        heightContainer.Child = heightLabel;
+        imageRow.Children.Add(heightContainer);
+
+        // Image with subtle border
+        var imageBorder = new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.Parse("#0A0A0A")),
+            Padding = new Thickness(2)
+        };
+
+        var imagePreview = new Image
+        {
+            MaxWidth = 350,
+            MaxHeight = 350,
+            Stretch = Avalonia.Media.Stretch.Uniform
+        };
+        imagePreview.Bind(Image.SourceProperty, new Avalonia.Data.Binding(imageBinding));
+        imageBorder.Child = imagePreview;
+        imageRow.Children.Add(imageBorder);
+
+        outerStack.Children.Add(imageRow);
+        return outerStack;
+    }
+
     private Control BuildModifiedPanel()
     {
         var panel = new Grid
@@ -423,20 +509,49 @@ public class AssetBrowserView : UserControl
         // Modified preview content
         var previewStack = new StackPanel
         {
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Left
         };
 
-        // Modified image preview
-        var modImagePreview = new Image
+        // Modified image preview with dimension border
+        var modImageContainer = BuildImageWithDimensionBorder(
+            "ModifiedPreviewImage",
+            "ModifiedImageWidth",
+            "ModifiedImageHeight",
+            "HasModifiedImagePreview");
+        previewStack.Children.Add(modImageContainer);
+
+        // Dimension mismatch warning
+        var mismatchWarning = new Border
         {
-            MaxWidth = 400,
-            MaxHeight = 400,
-            Stretch = Avalonia.Media.Stretch.Uniform
+            Background = new SolidColorBrush(Color.Parse("#4b2020")),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 4),
+            Margin = new Thickness(24, 8, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left
         };
-        modImagePreview.Bind(Image.SourceProperty, new Avalonia.Data.Binding("ModifiedPreviewImage"));
-        modImagePreview.Bind(Image.IsVisibleProperty, new Avalonia.Data.Binding("HasModifiedImagePreview"));
-        previewStack.Children.Add(modImagePreview);
+        var mismatchText = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.Parse("#FF8888")),
+            FontSize = 11,
+            Text = "⚠ Dimensions don't match vanilla"
+        };
+        mismatchWarning.Child = mismatchText;
+        // Bind visibility: show when both have images AND dimensions differ
+        mismatchWarning.Bind(Border.IsVisibleProperty, new Avalonia.Data.MultiBinding
+        {
+            Bindings =
+            {
+                new Avalonia.Data.Binding("HasImagePreview"),
+                new Avalonia.Data.Binding("HasModifiedImagePreview"),
+                new Avalonia.Data.Binding("VanillaImageWidth"),
+                new Avalonia.Data.Binding("VanillaImageHeight"),
+                new Avalonia.Data.Binding("ModifiedImageWidth"),
+                new Avalonia.Data.Binding("ModifiedImageHeight")
+            },
+            Converter = new DimensionMismatchConverter()
+        });
+        previewStack.Children.Add(mismatchWarning);
 
         // Modified text preview
         var modTextScrollViewer = new ScrollViewer
@@ -464,7 +579,7 @@ public class AssetBrowserView : UserControl
             Opacity = 0.7,
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 8, 0, 0)
+            Margin = new Thickness(24, 8, 0, 0)
         };
         modInfoText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("ModifiedPreviewText"));
         modInfoText.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("HasModifiedImagePreview"));
@@ -628,5 +743,31 @@ public class AssetBrowserView : UserControl
         {
             await vm.ExtractAssetsAsync();
         }
+    }
+}
+
+/// <summary>
+/// Converter that returns true when image dimensions don't match.
+/// Expects 6 values: hasVanilla, hasModified, vanillaW, vanillaH, modifiedW, modifiedH
+/// </summary>
+public class DimensionMismatchConverter : Avalonia.Data.Converters.IMultiValueConverter
+{
+    public object? Convert(IList<object?> values, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+    {
+        if (values.Count < 6)
+            return false;
+
+        var hasVanilla = values[0] is bool hv && hv;
+        var hasModified = values[1] is bool hm && hm;
+
+        if (!hasVanilla || !hasModified)
+            return false;
+
+        var vanillaW = values[2] is int vw ? vw : 0;
+        var vanillaH = values[3] is int vh ? vh : 0;
+        var modifiedW = values[4] is int mw ? mw : 0;
+        var modifiedH = values[5] is int mh ? mh : 0;
+
+        return vanillaW != modifiedW || vanillaH != modifiedH;
     }
 }

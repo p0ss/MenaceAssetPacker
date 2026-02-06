@@ -269,12 +269,16 @@ public class ModpackManager
 
     public void SaveStagingAsset(string modpackName, string relativePath, string sourceFile)
     {
-        var assetDir = Path.Combine(ResolveStagingDir(modpackName), "assets");
+        var modpackDir = ResolveStagingDir(modpackName);
+        var assetDir = Path.Combine(modpackDir, "assets");
         var destPath = Path.Combine(assetDir, relativePath);
         var destDir = Path.GetDirectoryName(destPath);
         if (!string.IsNullOrEmpty(destDir))
             Directory.CreateDirectory(destDir);
         File.Copy(sourceFile, destPath, true);
+
+        SyncAssetManifest(modpackDir);
+        TouchModified(modpackDir);
     }
 
     public string? GetStagingAssetPath(string modpackName, string relativePath)
@@ -283,21 +287,15 @@ public class ModpackManager
         return File.Exists(path) ? path : null;
     }
 
-    public void RegisterAssetInManifest(string modpackName, string relativePath)
-    {
-        var modpackDir = ResolveStagingDir(modpackName);
-        var manifest = LoadManifest(modpackDir);
-        if (manifest == null) return;
-
-        manifest.Assets[relativePath] = Path.Combine("assets", relativePath);
-        manifest.SaveToFile();
-    }
-
     public void RemoveStagingAsset(string modpackName, string relativePath)
     {
-        var path = Path.Combine(ResolveStagingDir(modpackName), "assets", relativePath);
+        var modpackDir = ResolveStagingDir(modpackName);
+        var path = Path.Combine(modpackDir, "assets", relativePath);
         if (File.Exists(path))
             File.Delete(path);
+
+        SyncAssetManifest(modpackDir);
+        TouchModified(modpackDir);
     }
 
     public List<string> GetStagingAssetPaths(string modpackName)
@@ -485,6 +483,31 @@ public class ModpackManager
         else
         {
             manifest.Code.Sources.Clear();
+        }
+
+        manifest.SaveToFile();
+    }
+
+    /// <summary>
+    /// Synchronize the manifest's Assets dictionary with the actual files in assets/.
+    /// Maps game asset paths (relative path of the file) to the replacement file path.
+    /// </summary>
+    private void SyncAssetManifest(string modpackDir)
+    {
+        var manifest = LoadManifest(modpackDir);
+        if (manifest == null) return;
+
+        var assetsDir = Path.Combine(modpackDir, "assets");
+        manifest.Assets.Clear();
+
+        if (Directory.Exists(assetsDir))
+        {
+            foreach (var file in Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(assetsDir, file);
+                // Map game asset path → replacement file path (relative to modpack root)
+                manifest.Assets[relativePath] = Path.Combine("assets", relativePath);
+            }
         }
 
         manifest.SaveToFile();

@@ -107,6 +107,15 @@ cp tools/doctor.bat dist/gui-win-x64/tools/
 cp tools/doctor.ps1 dist/gui-linux-x64/tools/
 cp tools/doctor.bat dist/gui-linux-x64/tools/
 
+# Bundle documentation
+echo ""
+echo "📦 Bundling documentation..."
+# Create docs zip in a temp location
+(cd docs && zip -q -r ../dist/docs.zip .)
+# Copy docs.zip to both GUI builds
+cp dist/docs.zip dist/gui-linux-x64/
+cp dist/docs.zip dist/gui-win-x64/
+
 # Build CLI for each platform
 echo ""
 echo "📦 Building CLI Tool..."

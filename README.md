@@ -11,6 +11,8 @@ A modding toolkit for [Menace](https://store.steampowered.com/app/2546040/Menace
 - **One-Click Deploy** — Compile and deploy modpacks to the game's Mods/ folder, with automatic bundle generation
 - **Conflict Detection** — Identifies overlapping modifications across modpacks before deployment
 - **Runtime SDK** — In-game API for IL2CPP type resolution, object access, collections, error handling, and a Roslyn REPL ([docs](docs/wiki/index.md))
+- **Dev Console** — In-game IMGUI overlay with tabbed panels for combat logging, error inspection, live watches, and C# evaluation
+- **Twitch Integration** — Standalone server + modpack for viewer-controlled squaddies via chat commands
 
 ## Getting Started
 
@@ -56,13 +58,16 @@ This creates:
 | **Menace.Modkit.App** | Avalonia desktop GUI — stats editor, asset browser, code editor, modpack manager |
 | **Menace.Modkit.Core** | Shared library — asset bundle compilation, type trees, patch merging |
 | **Menace.Modkit.Cli** | Command-line tool for building typetree caches from game installations |
-| **Menace.ModpackLoader** | MelonLoader runtime mod — loads modpacks into the game at launch |
+| **Menace.ModpackLoader** | MelonLoader runtime mod — loads modpacks, provides SDK and DevConsole |
 | **Menace.DataExtractor** | MelonLoader mod — extracts game template data and IL2CPP metadata to JSON |
-| **Menace.CombinedArms** | IModpackPlugin — AI coordination (focus fire, formations, sequencing) |
-| **Menace.DevMode** | IModpackPlugin — in-game dev tools (unit spawning, god mode, entity deletion) |
-| **Menace.PinningMod** | IModpackPlugin — suppression mechanics tweaks (crawling, stun cap) |
+| **TwitchServer** | Standalone HTTP server for Twitch chat integration (tools/TwitchServer) |
 | **Menace.Modkit.Tests** | Test suite (xUnit) — manifest roundtrips, patch merging, conflict detection, security scanning |
 | **Menace.ModpackLoader.Tests** | Test suite (xUnit) — SDK API coverage (GameType, GameObj, GameState, ModError, collections, REPL compiler) |
+
+Example modpacks in `third_party/bundled/modpacks/`:
+- **DevMode-modpack** — In-game dev tools (unit spawning, god mode, entity deletion)
+- **CombinedArms-modpack** — AI coordination (focus fire, formations, sequencing)
+- **TwitchSquaddies-modpack** — Twitch viewer integration for squaddie control
 
 ## Modpack Structure
 
@@ -140,6 +145,46 @@ Key libraries:
 - **Roslyn** — C# compilation for mod code
 - **MelonLoader** — IL2CPP mod injection at runtime
 - **Harmony** — Runtime method patching
+
+## Dev Console
+
+The ModpackLoader includes an in-game developer console (toggle with backtick `~`). It provides:
+
+| Panel | Purpose |
+|-------|---------|
+| **Battle Log** | Combat events with filtering (hits, misses, suppression, morale, deaths) |
+| **Log** | Merged error and log messages with severity filtering |
+| **Console** | Command line with SDK commands + C# REPL evaluation |
+| **Inspector** | Property viewer for game objects |
+| **Watch** | Live expression monitoring |
+
+Built-in commands include `find <type>`, `inspect <type> <name>`, `templates <type>`, `scene`, and `errors`. Unknown commands fall back to Roslyn C# evaluation when available.
+
+See [docs/wiki/api/dev-console.md](docs/wiki/api/dev-console.md) for full documentation.
+
+## Twitch Integration
+
+The **TwitchSquaddies** system lets Twitch viewers control squaddies in-game:
+
+1. **TwitchServer** (`tools/TwitchServer/`) — Standalone .NET 8 server that connects to Twitch IRC and exposes a local HTTP API on port 7654
+2. **TwitchSquaddies modpack** — Polls the server, adds a DevConsole panel, and provides commands to assign viewers to squaddies
+
+### Quick Start
+
+```bash
+# Start the Twitch server (first run creates config.json template)
+cd tools/TwitchServer
+dotnet run
+
+# Edit config.json with your channel and OAuth token
+# Get a token at https://twitchapps.com/tmi/
+
+# Launch the game with the TwitchSquaddies modpack deployed
+```
+
+Viewers type `!draft` in chat to enter the pool. Use the dice button in the Squaddies panel or `twitch.pick <id>` to assign a random viewer to a squaddie.
+
+See [third_party/bundled/modpacks/TwitchSquaddies-modpack/README.md](third_party/bundled/modpacks/TwitchSquaddies-modpack/README.md) for full setup and API documentation.
 
 ## Running Tests
 

@@ -1279,20 +1279,16 @@ public class CombinedArmsPlugin : IModpackPlugin
                 if (diag && validCount == 0)
                     CrashDiag($"Centroids: actor[{i}]=0x{actorPtr.ToInt64():X} alive=true, getting transform");
 
-                try
-                {
-                    var actorComponent = new UnityEngine.Component(actorPtr);
-                    var transform = actorComponent.transform;
-                    if (transform == null) continue;
-                    var pos = transform.position;
-                    sumX += pos.x;
-                    sumZ += pos.z;
-                    validCount++;
+                // Use safe position extraction that won't crash on edge cases
+                var pos = GetActorPositionSafe(actorPtr);
+                if (pos == null) continue;
 
-                    if (diag && validCount == 1)
-                        CrashDiag($"Centroids: first actor pos=({pos.x:F1},{pos.z:F1})");
-                }
-                catch { continue; }
+                sumX += pos.Value.x;
+                sumZ += pos.Value.z;
+                validCount++;
+
+                if (diag && validCount == 1)
+                    CrashDiag($"Centroids: first actor pos=({pos.Value.x:F1},{pos.Value.z:F1})");
             }
 
             if (diag) CrashDiag($"Centroids: done, {validCount} valid opponents");
@@ -1458,6 +1454,54 @@ public class CombinedArmsPlugin : IModpackPlugin
     // ═══════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Safely extract world position from an actor pointer.
+    /// Returns null if the actor is invalid, destroyed, or position cannot be read.
+    /// Uses GameObject wrapper instead of Component to be more robust.
+    /// </summary>
+    private static Vector3? GetActorPositionSafe(IntPtr actorPtr)
+    {
+        if (actorPtr == IntPtr.Zero) return null;
+
+        try
+        {
+            // Double-check the object is valid before any Unity interop
+            IntPtr klass = IL2CPP.il2cpp_object_get_class(actorPtr);
+            if (klass == IntPtr.Zero) return null;
+
+            // Verify m_CachedPtr is non-zero (object not destroyed)
+            if (!IsNativeObjectAlive(actorPtr)) return null;
+
+            // Try using MonoBehaviour wrapper which has more robust transform access
+            // Actor inherits from MonoBehaviour → Component → Object
+            var monoBehaviour = new UnityEngine.MonoBehaviour(actorPtr);
+
+            // Check if the MonoBehaviour itself is null (Unity operator== override)
+            if (monoBehaviour == null) return null;
+
+            // Access gameObject first as an extra validity check
+            var go = monoBehaviour.gameObject;
+            if (go == null) return null;
+
+            var transform = go.transform;
+            if (transform == null) return null;
+
+            return transform.position;
+        }
+        catch (Exception ex)
+        {
+            // Log once per session to avoid spam
+            if (!_loggedPositionError)
+            {
+                _loggedPositionError = true;
+                Log?.Warning($"[CombinedArms] GetActorPositionSafe failed: {ex.Message}");
+            }
+            return null;
+        }
+    }
+
+    private static bool _loggedPositionError;
 
     /// <summary>
     /// Check if the native C++ object backing an IL2CPP pointer is still alive.

@@ -51,6 +51,10 @@ public class DevModePlugin : IModpackPlugin
     private readonly List<string> _entityActorTypes = new();
     private int _selectedEntityIndex;
 
+    // Cached for reload
+    private Assembly _gameAssembly;
+    private List<UnityEngine.Object> _allEntityObjects = new();
+
     // GUI colors (applied via content strings, not GUIStyle — avoids IL2CPP unstripping issues)
 
     public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
@@ -59,6 +63,35 @@ public class DevModePlugin : IModpackPlugin
         _harmony = harmony;
         _log.Msg("Menace Dev Mode v1.0.0");
         DevConsole.RegisterPanel("Dev Mode", DrawDevModePanel);
+
+        // Register mod settings - these appear in the DevConsole "Settings" panel
+        // All of these settings actually affect behavior in the code below
+        ModSettings.Register("Dev Mode", settings => {
+            settings.AddHeader("Cheats");
+            settings.AddToggle("AutoEnableCheats", "Auto-Enable Cheats on Load", true);
+
+            settings.AddHeader("Spawn Tool");
+            settings.AddDropdown("DefaultFaction", "Default Spawn Faction",
+                new[] { "Enemy", "Player", "Neutral" }, "Enemy");
+            settings.AddToggle("ShowAllEntityTypes", "Show All Entity Types", false);
+        });
+
+        // React to setting changes in real-time
+        ModSettings.OnSettingChanged += OnSettingChanged;
+    }
+
+    private void OnSettingChanged(string modName, string key, object value)
+    {
+        if (modName != "Dev Mode") return;
+
+        _log.Msg($"Setting changed: {key} = {value}");
+
+        // Handle ShowAllEntityTypes change - reload entity list
+        if (key == "ShowAllEntityTypes" && _devModeReady)
+        {
+            _log.Msg("Reloading entity templates with new filter...");
+            ReloadEntityTemplates();
+        }
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName)
@@ -102,16 +135,17 @@ public class DevModePlugin : IModpackPlugin
     /// </summary>
     private bool TrySetupCore()
     {
-        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+        _gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
-        if (gameAssembly == null)
+        if (_gameAssembly == null)
         {
             _log.Msg("Assembly-CSharp not loaded yet");
             return false;
         }
 
-        _log.Msg($"Assembly-CSharp found, {gameAssembly.GetTypes().Length} types");
+        _log.Msg($"Assembly-CSharp found, {_gameAssembly.GetTypes().Length} types");
+        var gameAssembly = _gameAssembly;
 
         _entityTemplateType = gameAssembly.GetTypes()
             .FirstOrDefault(t => t.Name == "EntityTemplate" && !t.IsAbstract);
@@ -131,9 +165,30 @@ public class DevModePlugin : IModpackPlugin
         if (!ResolveReflectionCache(gameAssembly))
             return false;
 
-        EnableCheats(gameAssembly);
+        // Only enable cheats if the setting is on
+        if (ModSettings.Get<bool>("Dev Mode", "AutoEnableCheats"))
+        {
+            _log.Msg("AutoEnableCheats is ON, enabling cheats...");
+            EnableCheats(gameAssembly);
+        }
+        else
+        {
+            _log.Msg("AutoEnableCheats is OFF, skipping cheat enable");
+        }
+
         CacheActions(gameAssembly);
         TryLoadEntityTemplates(gameAssembly);
+
+        // Apply default faction from settings
+        var defaultFaction = ModSettings.Get<string>("Dev Mode", "DefaultFaction") ?? "Enemy";
+        for (int i = 0; i < _factions.Count; i++)
+        {
+            if (_factions[i].Name.Contains(defaultFaction))
+            {
+                _selectedFactionIndex = i;
+                break;
+            }
+        }
 
         _devModeReady = true;
         return true;
@@ -195,6 +250,8 @@ public class DevModePlugin : IModpackPlugin
 
             if (entityObjects.Count > 0)
             {
+                // Cache raw list for reloading with different filters
+                _allEntityObjects = entityObjects;
                 LoadEntityTemplates(entityObjects.ToArray());
             }
             else
@@ -206,6 +263,30 @@ public class DevModePlugin : IModpackPlugin
         {
             _log.Warning($"Could not load entity templates: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Reloads entity templates with current filter settings.
+    /// Called when ShowAllEntityTypes setting changes.
+    /// </summary>
+    private void ReloadEntityTemplates()
+    {
+        if (_allEntityObjects.Count == 0)
+        {
+            _log.Warning("No cached entity objects to reload");
+            return;
+        }
+
+        // Clear current lists
+        _entityTemplates.Clear();
+        _entityNames.Clear();
+        _entityActorTypes.Clear();
+        _selectedEntityIndex = 0;
+
+        // Reload with current filter settings
+        LoadEntityTemplates(_allEntityObjects.ToArray());
+
+        _log.Msg($"Reloaded {_entityTemplates.Count} entities with current filter");
     }
 
     /// <summary>
@@ -683,6 +764,9 @@ public class DevModePlugin : IModpackPlugin
         var seenEntityTypes = new HashSet<string>();
         var entries = new List<(string name, string actorType, UnityEngine.Object obj)>();
 
+        // Check setting: show all entity types or just actors?
+        bool showAllTypes = ModSettings.Get<bool>("Dev Mode", "ShowAllEntityTypes");
+
         foreach (var obj in allObjects)
         {
             if (obj == null) continue;
@@ -698,12 +782,12 @@ public class DevModePlugin : IModpackPlugin
                 // Create typed proxy for property access (no hardcoded offsets)
                 var typed = Activator.CreateInstance(_entityTemplateType, new object[] { ptr });
 
-                // Filter: only EntityType.Actor
+                // Filter: only EntityType.Actor (unless ShowAllEntityTypes is on)
                 var entityTypeVal = _entityTypeProperty.GetValue(typed);
                 var entityTypeName = entityTypeVal?.ToString() ?? "null";
                 seenEntityTypes.Add(entityTypeName);
 
-                if (!Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
+                if (!showAllTypes && !Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
 
                 // Read ActorType for display
                 string actorTypeName = "Unit";

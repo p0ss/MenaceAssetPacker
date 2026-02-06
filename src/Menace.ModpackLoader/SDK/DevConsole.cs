@@ -141,6 +141,17 @@ public static class DevConsole
     }
 
     /// <summary>
+    /// Show the console and switch to a specific panel by name.
+    /// </summary>
+    public static void ShowPanel(string panelName)
+    {
+        IsVisible = true;
+        var idx = _panels.FindIndex(p => p.Name.Equals(panelName, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0)
+            _activePanel = idx;
+    }
+
+    /// <summary>
     /// Add a live watch expression.
     /// </summary>
     public static void Watch(string label, Func<string> valueGetter)
