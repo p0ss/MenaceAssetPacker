@@ -126,6 +126,9 @@ public sealed class PrimaryContentExporter
 
 	public void Export(GameBundle fileCollection, CoreConfiguration options, FileSystem fileSystem)
 	{
+		// Build mesh → material lookup using actual asset references before exporting
+		Models.MeshMaterialLookup.Build(fileCollection);
+
 		List<ExportCollectionBase> collections = CreateCollections(fileCollection);
 
 		for (int i = 0; i < collections.Count; i++)

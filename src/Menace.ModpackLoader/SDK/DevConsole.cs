@@ -84,6 +84,17 @@ public static class DevConsole
     private static Rect _consoleRect;
     private const float TitleHeight = 22f;
     private const float TabHeight = 26f;
+
+    // Draggable window state
+    private static Vector2 _consolePosition = new Vector2(10, 10);
+    private static bool _isDragging;
+    private static Vector2 _dragOffset;
+
+    // Click passthrough prevention - track when we consumed a click this frame
+    private static int _lastClickConsumedFrame = -1;
+
+    // Right-click injection to cancel tile selection after left-click on console
+    private static int _injectRightClickUntilFrame = -1;
     private const float LineHeight = 18f;
     private const float Padding = 8f;
 
@@ -448,24 +459,47 @@ public static class DevConsole
         BattleLog.ApplyPatches(harmony);
     }
 
-    private static bool PrefixBlockMouse(ref bool __result)
+    private static bool PrefixBlockMouse(int __0, ref bool __result)
     {
-        if (IsMouseOverConsole)
+        int button = __0;
+
+        // Inject right-click to cancel tile selection after left-clicking on console
+        if (button == 1 && Time.frameCount <= _injectRightClickUntilFrame)
+        {
+            __result = true;
+            return false; // Skip original - return our injected true
+        }
+
+        // Block left-clicks if mouse is over console OR if we recently consumed a click
+        if (button == 0 && (IsMouseOverConsole || (Time.frameCount - _lastClickConsumedFrame) <= 1))
         {
             __result = false;
             return false;
         }
+
         return true;
     }
 
     // Block Input.GetKey*(KeyCode.Mouse0 .. Mouse6) when cursor is over console
     private static bool PrefixBlockMouseKey(KeyCode __0, ref bool __result)
     {
-        if (IsMouseOverConsole && __0 >= KeyCode.Mouse0 && __0 <= KeyCode.Mouse6)
+        // Inject right-click (Mouse1) to cancel tile selection
+        if (__0 == KeyCode.Mouse1 && Time.frameCount <= _injectRightClickUntilFrame)
         {
-            __result = false;
+            __result = true;
             return false;
         }
+
+        // Block left-click (Mouse0) if over console or recently consumed
+        if (__0 == KeyCode.Mouse0)
+        {
+            if (IsMouseOverConsole || (Time.frameCount - _lastClickConsumedFrame) <= 1)
+            {
+                __result = false;
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -515,10 +549,15 @@ public static class DevConsole
         {
             InitializeStyles();
 
-            // Console occupies top-left portion of screen
+            // Console size
             float w = Math.Min(Screen.width * 0.6f, 900f);
             float h = Math.Min(Screen.height * 0.7f, 700f);
-            _consoleRect = new Rect(10, 10, w, h);
+
+            // Clamp position to screen bounds
+            _consolePosition.x = Mathf.Clamp(_consolePosition.x, 0, Screen.width - w);
+            _consolePosition.y = Mathf.Clamp(_consolePosition.y, 0, Screen.height - h);
+
+            _consoleRect = new Rect(_consolePosition.x, _consolePosition.y, w, h);
 
             // Track whether the mouse is over the console this frame so
             // Update()-based input handlers can skip game-world clicks.
@@ -531,8 +570,12 @@ public static class DevConsole
             float cy = _consoleRect.y + Padding;
             float cw = _consoleRect.width - Padding * 2;
 
-            // Title bar
-            GUI.Label(new Rect(cx, cy, cw - 30, TitleHeight), "Menace SDK Console", _headerStyle);
+            // Title bar (draggable)
+            var titleRect = new Rect(cx, cy, cw - 30, TitleHeight);
+            GUI.Label(titleRect, "Menace Modkit Console", _headerStyle);
+
+            // Handle title bar dragging
+            HandleTitleBarDrag(titleRect);
             if (GUI.Button(new Rect(cx + cw - 24, cy, 24, 20), "X"))
                 IsVisible = false;
             cy += TitleHeight;
@@ -585,6 +628,13 @@ public static class DevConsole
                     ev.type == EventType.MouseDrag ||
                     ev.type == EventType.ScrollWheel)
                 {
+                    // If this is a left-click, inject a right-click for the next few frames
+                    // to cancel any tile selection the game might have started
+                    if (ev.type == EventType.MouseDown && ev.button == 0)
+                    {
+                        _lastClickConsumedFrame = Time.frameCount;
+                        _injectRightClickUntilFrame = Time.frameCount + 3; // Inject for a few frames
+                    }
                     ev.Use();
                 }
             }
@@ -592,6 +642,43 @@ public static class DevConsole
         catch (Exception ex)
         {
             MelonLoader.MelonLogger.Warning($"[DevConsole] Draw error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Handle dragging the console window by the title bar.
+    /// </summary>
+    private static void HandleTitleBarDrag(Rect titleRect)
+    {
+        var ev = Event.current;
+        if (ev == null) return;
+
+        switch (ev.type)
+        {
+            case EventType.MouseDown:
+                if (titleRect.Contains(ev.mousePosition) && ev.button == 0)
+                {
+                    _isDragging = true;
+                    _dragOffset = ev.mousePosition - _consolePosition;
+                    ev.Use();
+                }
+                break;
+
+            case EventType.MouseUp:
+                if (_isDragging && ev.button == 0)
+                {
+                    _isDragging = false;
+                    ev.Use();
+                }
+                break;
+
+            case EventType.MouseDrag:
+                if (_isDragging)
+                {
+                    _consolePosition = ev.mousePosition - _dragOffset;
+                    ev.Use();
+                }
+                break;
         }
     }
 

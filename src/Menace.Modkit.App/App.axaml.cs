@@ -26,6 +26,10 @@ public class App : Application
 
   public override void OnFrameworkInitializationCompleted()
   {
+    // Log version at startup
+    Services.ModkitLog.Info($"[App] {ModkitVersion.AppFull} starting");
+    Services.ModkitLog.Info($"[App] Platform: {Environment.OSVersion}, Runtime: {Environment.Version}");
+
     if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
     {
       desktop.MainWindow = new MainWindow(_serviceProvider!);

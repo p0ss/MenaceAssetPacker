@@ -448,7 +448,7 @@ public static partial class MeshExtensions
 
 	private static float TriangleArea(Vector2 a, Vector2 b, Vector2 c)
 	{
-		return TriangleArea(a.AsVector3(), b.AsVector3(), c.AsVector3());
+		return TriangleArea(VectorExtensions.AsVector3(a), VectorExtensions.AsVector3(b), VectorExtensions.AsVector3(c));
 	}
 
 	private static float TriangleArea(Vector3 a, Vector3 b, Vector3 c)

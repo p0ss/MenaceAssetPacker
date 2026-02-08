@@ -1,9 +1,14 @@
+using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using AvaloniaEdit;
+using AvaloniaEdit.TextMate;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
+using ReactiveUI;
+using TextMateSharp.Grammars;
 
 namespace Menace.Modkit.App.Views;
 
@@ -13,18 +18,88 @@ namespace Menace.Modkit.App.Views;
 /// </summary>
 public class CodeEditorView : UserControl
 {
+    private TextEditor? _textEditor;
+    private TextBlock? _loadingIndicator;
+    private bool _isUpdatingText;
+    private bool _textMateReady;
+
     public CodeEditorView()
     {
         Content = BuildUI();
     }
 
-    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    protected override async void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
 
-        // Refresh modpacks when view becomes visible to pick up newly created ones
+        // Refresh modpacks when view becomes visible
         if (DataContext is CodeEditorViewModel vm)
             vm.RefreshAll();
+
+        // Setup TextMate asynchronously to avoid blocking UI
+        if (!_textMateReady)
+        {
+            await SetupTextMateAsync();
+        }
+    }
+
+    private async System.Threading.Tasks.Task SetupTextMateAsync()
+    {
+        if (_textEditor == null) return;
+
+        try
+        {
+            // Show loading indicator
+            if (_loadingIndicator != null)
+                _loadingIndicator.IsVisible = true;
+
+            // Run TextMate setup on background thread
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
+                Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
+                {
+                    var textMateInstallation = _textEditor.InstallTextMate(registryOptions);
+                    textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("csharp"));
+                });
+            });
+
+            _textMateReady = true;
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Warn($"[CodeEditorView] TextMate setup failed: {ex.Message}");
+        }
+        finally
+        {
+            // Hide loading indicator
+            if (_loadingIndicator != null)
+                _loadingIndicator.IsVisible = false;
+        }
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+
+        if (DataContext is CodeEditorViewModel vm && _textEditor != null)
+        {
+            // Subscribe to FileContent changes from ViewModel
+            vm.WhenAnyValue(x => x.FileContent)
+                .Subscribe(content =>
+                {
+                    if (!_isUpdatingText)
+                    {
+                        _isUpdatingText = true;
+                        _textEditor.Text = content ?? "";
+                        _isUpdatingText = false;
+                    }
+                });
+
+            // Subscribe to IsReadOnly changes
+            vm.WhenAnyValue(x => x.IsReadOnly)
+                .Subscribe(isReadOnly => _textEditor.IsReadOnly = isReadOnly);
+        }
     }
 
     private Control BuildUI()
@@ -285,22 +360,45 @@ public class CodeEditorView : UserControl
         DockPanel.SetDock(header, Dock.Top);
         stack.Children.Add(header);
 
-        // Code editor
-        var editor = new TextBox
+        // Editor container with loading overlay
+        var editorContainer = new Grid();
+
+        // Code editor with syntax highlighting
+        _textEditor = new TextEditor
         {
-            AcceptsReturn = true,
-            AcceptsTab = true,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new FontFamily("monospace"),
+            FontFamily = new FontFamily("Cascadia Code, Consolas, Menlo, monospace"),
             FontSize = 13,
-            Foreground = new SolidColorBrush(Color.Parse("#D4D4D4")),
-            Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 8)
+            ShowLineNumbers = true,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
         };
-        editor.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("FileContent") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        editor.Bind(TextBox.IsReadOnlyProperty, new Avalonia.Data.Binding("IsReadOnly"));
-        stack.Children.Add(editor);
+
+        // Sync text changes back to ViewModel
+        _textEditor.TextChanged += (_, _) =>
+        {
+            if (!_isUpdatingText && DataContext is CodeEditorViewModel vm)
+            {
+                _isUpdatingText = true;
+                vm.FileContent = _textEditor.Text;
+                _isUpdatingText = false;
+            }
+        };
+
+        editorContainer.Children.Add(_textEditor);
+
+        // Loading indicator
+        _loadingIndicator = new TextBlock
+        {
+            Text = "Initializing syntax highlighting...",
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = true
+        };
+        editorContainer.Children.Add(_loadingIndicator);
+
+        stack.Children.Add(editorContainer);
 
         border.Child = stack;
         return border;

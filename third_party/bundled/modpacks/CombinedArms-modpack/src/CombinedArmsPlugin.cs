@@ -693,12 +693,26 @@ public class CombinedArmsPlugin : IModpackPlugin
 
             if (__instance is not Il2CppObjectBase il2cppObj) return;
 
-            int factionIndex = Marshal.ReadInt32(il2cppObj.Pointer + (int)_off_BaseFaction_m_FactionIndex);
+            IntPtr factionPtr = il2cppObj.Pointer;
+            int factionIndex = Marshal.ReadInt32(factionPtr + (int)_off_BaseFaction_m_FactionIndex);
             CrashDiag($"OnTurnStart: faction={factionIndex}");
 
             var state = CoordinationState.GetOrCreate(factionIndex);
             state.ArchivePositions();
             state.Reset();
+
+            // Pre-compute depth cache while still single-threaded
+            // This avoids race conditions during parallel agent evaluation
+            var config = CoordinationState.Config;
+            if (config.EnableFormationDepth && _formationDepthAvailable)
+            {
+                CrashDiag("OnTurnStart: pre-computing depth cache");
+                TryComputeEnemyCentroids(state.DepthCache, factionPtr, config);
+                ComputeBandEdges(state.DepthCache, config);
+                state.DepthCache.IsValid = true;
+                CrashDiag($"OnTurnStart: depth cache ready, centroids={state.DepthCache.EnemyCentroids.Count}");
+            }
+
             CrashDiag("OnTurnStart: done");
         }
         catch (Exception ex)
@@ -1073,11 +1087,10 @@ public class CombinedArmsPlugin : IModpackPlugin
             }
 
             // ── Formation Depth ──
-            if (wantDepth)
+            // Cache is pre-computed in OnTurnStart to avoid race conditions
+            if (wantDepth && state.DepthCache.IsValid)
             {
-                CrashDiag($"PPTS#{callNum} step 4: EnsureDepthCache");
-                EnsureDepthCache(state, factionPtr, config);
-                CrashDiag($"PPTS#{callNum} step 4b: centroids={state.DepthCache.EnemyCentroids.Count}");
+                CrashDiag($"PPTS#{callNum} step 4: using pre-computed depth cache, centroids={state.DepthCache.EnemyCentroids.Count}");
 
                 if (state.DepthCache.EnemyCentroids.Count > 0)
                 {

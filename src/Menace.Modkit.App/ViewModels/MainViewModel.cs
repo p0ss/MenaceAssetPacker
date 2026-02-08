@@ -1,78 +1,168 @@
 using ReactiveUI;
+using System;
 using System.Reactive;
 
 namespace Menace.Modkit.App.ViewModels;
 
+/// <summary>
+/// Navigation section at the top level.
+/// </summary>
+public enum NavigationSection
+{
+    Home,
+    ModLoader,
+    ModdingTools
+}
+
 public sealed class MainViewModel : ViewModelBase
 {
-  public MainViewModel(System.IServiceProvider serviceProvider)
-  {
-    AssetBrowser = new AssetBrowserViewModel();
-    StatsEditor = new StatsEditorViewModel();
-    Modpacks = new ModpacksViewModel();
-    CodeEditor = new CodeEditorViewModel();
-    Settings = new SettingsViewModel(serviceProvider);
-
-    _selectedViewModel = Modpacks;
-    _currentSectionTitle = "Modpacks";
-
-    ShowAssetBrowser = ReactiveCommand.Create(() => Navigate(AssetBrowser, "Asset Browser"));
-    ShowStatsEditor = ReactiveCommand.Create(() => Navigate(StatsEditor, "Stats Editor"));
-    ShowModpacks = ReactiveCommand.Create(() => Navigate(Modpacks, "Modpacks"));
-    ShowCodeEditor = ReactiveCommand.Create(() => Navigate(CodeEditor, "Code"));
-    ShowSettings = ReactiveCommand.Create(() => Navigate(Settings, "Settings"));
-
-    // Wire up cross-tab navigation: modpacks → stats editor
-    Modpacks.NavigateToStatsEntry = (modpackName, templateType, instanceName) =>
+    public MainViewModel(IServiceProvider serviceProvider)
     {
-      Navigate(StatsEditor, "Stats Editor");
-      StatsEditor.NavigateToEntry(modpackName, templateType, instanceName);
-    };
+        // Initialize all view models
+        Home = new HomeViewModel();
+        Modpacks = new ModpacksViewModel();
+        SaveEditor = new SaveEditorViewModel();
+        LoaderSettings = new LoaderSettingsViewModel();
+        StatsEditor = new StatsEditorViewModel();
+        AssetBrowser = new AssetBrowserViewModel();
+        CodeEditor = new CodeEditorViewModel();
+        Docs = new DocsViewModel();
+        ToolSettings = new ToolSettingsViewModel(serviceProvider);
 
-    Navigate(Modpacks, "Modpacks");
-  }
+        _selectedViewModel = Home;
+        _currentSection = NavigationSection.Home;
+        _currentSubSection = "";
 
-  public AssetBrowserViewModel AssetBrowser { get; }
+        // Wire up cross-tab navigation: modpacks → stats editor
+        Modpacks.NavigateToStatsEntry = (modpackName, templateType, instanceName) =>
+        {
+            NavigateToModdingTools();
+            NavigateTo(StatsEditor, "Data");
+            StatsEditor.NavigateToEntry(modpackName, templateType, instanceName);
+        };
 
-  public StatsEditorViewModel StatsEditor { get; }
+        // Wire up cross-tab navigation: asset browser → stats editor
+        AssetBrowser.NavigateToTemplate += (modpackName, templateType, instanceName) =>
+        {
+            NavigateTo(StatsEditor, "Data");
+            StatsEditor.NavigateToEntry(modpackName ?? "", templateType, instanceName);
+        };
 
-  public ModpacksViewModel Modpacks { get; }
+        // Share the reference graph service from StatsEditor to AssetBrowser
+        AssetBrowser.SetReferenceGraphService(StatsEditor.ReferenceGraphService);
+    }
 
-  public CodeEditorViewModel CodeEditor { get; }
+    // Home
+    public HomeViewModel Home { get; }
 
-  public SettingsViewModel Settings { get; }
+    // Mod Loader section
+    public ModpacksViewModel Modpacks { get; }
+    public SaveEditorViewModel SaveEditor { get; }
+    public LoaderSettingsViewModel LoaderSettings { get; }
 
-  private ViewModelBase _selectedViewModel;
-  public ViewModelBase SelectedViewModel
-  {
-    get => _selectedViewModel;
-    set => this.RaiseAndSetIfChanged(ref _selectedViewModel, value);
-  }
+    // Modding Tools section
+    public StatsEditorViewModel StatsEditor { get; }
+    public AssetBrowserViewModel AssetBrowser { get; }
+    public CodeEditorViewModel CodeEditor { get; }
+    public DocsViewModel Docs { get; }
+    public ToolSettingsViewModel ToolSettings { get; }
 
-  public ReactiveCommand<Unit, Unit> ShowAssetBrowser { get; }
+    private ViewModelBase _selectedViewModel;
+    public ViewModelBase SelectedViewModel
+    {
+        get => _selectedViewModel;
+        set => this.RaiseAndSetIfChanged(ref _selectedViewModel, value);
+    }
 
-  public ReactiveCommand<Unit, Unit> ShowStatsEditor { get; }
+    private NavigationSection _currentSection;
+    public NavigationSection CurrentSection
+    {
+        get => _currentSection;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _currentSection, value);
+            this.RaisePropertyChanged(nameof(IsHome));
+            this.RaisePropertyChanged(nameof(IsModLoader));
+            this.RaisePropertyChanged(nameof(IsModdingTools));
+        }
+    }
 
-  public ReactiveCommand<Unit, Unit> ShowModpacks { get; }
+    private string _currentSubSection;
+    public string CurrentSubSection
+    {
+        get => _currentSubSection;
+        private set => this.RaiseAndSetIfChanged(ref _currentSubSection, value);
+    }
 
-  public ReactiveCommand<Unit, Unit> ShowCodeEditor { get; }
+    public bool IsHome => CurrentSection == NavigationSection.Home;
+    public bool IsModLoader => CurrentSection == NavigationSection.ModLoader;
+    public bool IsModdingTools => CurrentSection == NavigationSection.ModdingTools;
 
-  public ReactiveCommand<Unit, Unit> ShowSettings { get; }
+    /// <summary>
+    /// Navigate to the Home screen.
+    /// </summary>
+    public void NavigateToHome()
+    {
+        CurrentSection = NavigationSection.Home;
+        CurrentSubSection = "";
+        SelectedViewModel = Home;
+    }
 
-  private string _currentSectionTitle;
-  public string CurrentSectionTitle
-  {
-    get => _currentSectionTitle;
-    private set => this.RaiseAndSetIfChanged(ref _currentSectionTitle, value);
-  }
+    /// <summary>
+    /// Navigate to the Mod Loader section (defaults to Load Order).
+    /// </summary>
+    public void NavigateToModLoader()
+    {
+        CurrentSection = NavigationSection.ModLoader;
+        NavigateTo(Modpacks, "Load Order");
+    }
 
-  private void Navigate(ViewModelBase target, string title)
-  {
-    SelectedViewModel = target;
-    CurrentSectionTitle = title;
+    /// <summary>
+    /// Navigate to the Modding Tools section (defaults to Data).
+    /// </summary>
+    public void NavigateToModdingTools()
+    {
+        CurrentSection = NavigationSection.ModdingTools;
+        NavigateTo(StatsEditor, "Data");
+    }
 
-    // Refresh stats patches when switching to modpacks tab
-    if (target == Modpacks)
-      Modpacks.SelectedModpack?.RefreshStatsPatches();
-  }
+    /// <summary>
+    /// Navigate to a specific view within the current section.
+    /// </summary>
+    public void NavigateTo(ViewModelBase target, string subSection)
+    {
+        SelectedViewModel = target;
+        CurrentSubSection = subSection;
+
+        // Update section based on target
+        if (target == Modpacks || target == SaveEditor || target == LoaderSettings)
+        {
+            CurrentSection = NavigationSection.ModLoader;
+        }
+        else if (target == StatsEditor || target == AssetBrowser || target == CodeEditor || target == Docs || target == ToolSettings)
+        {
+            CurrentSection = NavigationSection.ModdingTools;
+        }
+        else if (target == Home)
+        {
+            CurrentSection = NavigationSection.Home;
+        }
+
+        // Refresh stats patches when switching to modpacks tab
+        if (target == Modpacks)
+            Modpacks.SelectedModpack?.RefreshStatsPatches();
+    }
+
+    // Convenience methods for sub-section navigation
+    // Mod Loader section
+    public void NavigateToLoadOrder() => NavigateTo(Modpacks, "Load Order");
+    public void NavigateToSaves() => NavigateTo(SaveEditor, "Saves");
+    public void NavigateToLoaderSettings() => NavigateTo(LoaderSettings, "Settings");
+
+    // Modding Tools section
+    public void NavigateToData() => NavigateTo(StatsEditor, "Data");
+    public void NavigateToAssets() => NavigateTo(AssetBrowser, "Assets");
+    public void NavigateToCode() => NavigateTo(CodeEditor, "Code");
+    public void NavigateToDocs() => NavigateTo(Docs, "Docs");
+    public void NavigateToToolSettings() => NavigateTo(ToolSettings, "Settings");
 }

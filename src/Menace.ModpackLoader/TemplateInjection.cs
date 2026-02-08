@@ -21,7 +21,7 @@ public partial class ModpackLoaderMod
     private static readonly MethodInfo TryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
     // Properties that should not be modified
-    private static readonly HashSet<string> ReadOnlyProperties = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> ReadOnlyProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "Pointer", "ObjectClass", "WasCollected", "m_CachedPtr",
         "name", "hideFlags", "serializationData"
@@ -124,7 +124,7 @@ public partial class ModpackLoaderMod
         if (_nameLookupCache.TryGetValue(elementType, out var cached))
             return cached;
 
-        var lookup = new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
+        var lookup = new Dictionary<string, UnityEngine.Object>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -173,7 +173,7 @@ public partial class ModpackLoaderMod
         }
 
         // Build property lookup for this type (walk inheritance chain)
-        var propertyMap = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+        var propertyMap = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
         var currentType = templateType;
         while (currentType != null && currentType.Name != "Object" &&
                currentType != typeof(Il2CppObjectBase))
@@ -604,7 +604,7 @@ public partial class ModpackLoaderMod
         var targetType = target.GetType();
 
         // Build property map (walk inheritance chain)
-        var propertyMap = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+        var propertyMap = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
         var currentType = targetType;
         while (currentType != null && currentType.Name != "Object" &&
                currentType != typeof(Il2CppObjectBase))

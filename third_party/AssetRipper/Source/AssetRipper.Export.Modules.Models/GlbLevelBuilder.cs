@@ -1,4 +1,5 @@
 ﻿using AssetRipper.Assets;
+using AssetRipper.Assets.Bundles;
 using AssetRipper.Assets.Collections;
 using AssetRipper.Assets.Generics;
 using AssetRipper.Export.Modules.Textures;
@@ -170,9 +171,10 @@ public static class GlbLevelBuilder
 		Dictionary<ITexture2D, MemoryImage> ImageCache,
 		Dictionary<IMaterial, MaterialBuilder> MaterialCache,
 		Dictionary<IMesh, MeshData> MeshCache,
+		Dictionary<string, ITexture2D> TextureNameCache,
 		bool IsScene)
 	{
-		public BuildParameters(bool isScene) : this(new MaterialBuilder("DefaultMaterial"), new(), new(), new(), isScene) { }
+		public BuildParameters(bool isScene) : this(new MaterialBuilder("DefaultMaterial"), new(), new(), new(), new(), isScene) { }
 		public bool TryGetOrMakeMeshData(IMesh mesh, out MeshData meshData)
 		{
 			if (MeshCache.TryGetValue(mesh, out meshData))
@@ -236,7 +238,7 @@ public static class GlbLevelBuilder
 			return materialBuilder;
 		}
 
-		private static void GetTextures(IMaterial material, out ITexture2D? mainTexture, out ITexture2D? normalTexture)
+		private void GetTextures(IMaterial material, out ITexture2D? mainTexture, out ITexture2D? normalTexture)
 		{
 			mainTexture = null;
 			normalTexture = null;
@@ -258,6 +260,61 @@ public static class GlbLevelBuilder
 				}
 			}
 			mainTexture ??= mainReplacement;
+
+			// Fallback: if textures weren't resolved via PPtr, try to find them by name in the bundle hierarchy
+			// This handles cases where textures are in different asset bundles than the material
+			if (mainTexture is null || normalTexture is null)
+			{
+				string materialName = material.Name;
+				if (mainTexture is null)
+				{
+					mainTexture = TryFindTextureByName(material, materialName + "_BaseMap")
+						?? TryFindTextureByName(material, materialName + "_MainTex")
+						?? TryFindTextureByName(material, materialName);
+				}
+				if (normalTexture is null)
+				{
+					normalTexture = TryFindTextureByName(material, materialName + "_Normal")
+						?? TryFindTextureByName(material, materialName + "_BumpMap");
+				}
+			}
+		}
+
+		private ITexture2D? TryFindTextureByName(IMaterial material, string textureName)
+		{
+			// Check cache first
+			if (TextureNameCache.TryGetValue(textureName, out ITexture2D? cached))
+			{
+				return cached;
+			}
+
+			// Build cache if empty (lazy initialization)
+			if (TextureNameCache.Count == 0)
+			{
+				BuildTextureNameCache(material);
+			}
+
+			// Try again after cache is built
+			TextureNameCache.TryGetValue(textureName, out cached);
+			return cached;
+		}
+
+		private void BuildTextureNameCache(IMaterial material)
+		{
+			// Search all assets in the bundle hierarchy for textures
+			var bundle = material.Collection.Bundle;
+			var root = bundle.GetRoot();
+			foreach (var asset in root.FetchAssets())
+			{
+				if (asset is ITexture2D texture)
+				{
+					string name = texture.Name;
+					if (!string.IsNullOrEmpty(name) && !TextureNameCache.ContainsKey(name))
+					{
+						TextureNameCache[name] = texture;
+					}
+				}
+			}
 		}
 
 		private static bool IsMainTexture(string textureName)

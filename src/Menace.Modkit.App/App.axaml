@@ -9,20 +9,37 @@
     <FluentTheme />
   </Application.Styles>
   <Application.DataTemplates>
-    <DataTemplate DataType="{x:Type viewModels:AssetBrowserViewModel}">
-      <views:AssetBrowserView />
+    <!-- Home -->
+    <DataTemplate DataType="{x:Type viewModels:HomeViewModel}">
+      <views:HomeView />
     </DataTemplate>
+
+    <!-- Mod Loader section -->
+    <DataTemplate DataType="{x:Type viewModels:ModpacksViewModel}">
+      <views:ModpacksView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:SaveEditorViewModel}">
+      <views:SaveEditorView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:LoaderSettingsViewModel}">
+      <views:LoaderSettingsView />
+    </DataTemplate>
+
+    <!-- Modding Tools section -->
     <DataTemplate DataType="{x:Type viewModels:StatsEditorViewModel}">
       <views:StatsEditorView />
     </DataTemplate>
-    <DataTemplate DataType="{x:Type viewModels:ModpacksViewModel}">
-      <views:ModpacksView />
+    <DataTemplate DataType="{x:Type viewModels:AssetBrowserViewModel}">
+      <views:AssetBrowserView />
     </DataTemplate>
     <DataTemplate DataType="{x:Type viewModels:CodeEditorViewModel}">
       <views:CodeEditorView />
     </DataTemplate>
-    <DataTemplate DataType="{x:Type viewModels:SettingsViewModel}">
-      <views:SettingsView />
+    <DataTemplate DataType="{x:Type viewModels:DocsViewModel}">
+      <views:DocsView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:ToolSettingsViewModel}">
+      <views:ToolSettingsView />
     </DataTemplate>
   </Application.DataTemplates>
 </Application>

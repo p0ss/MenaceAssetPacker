@@ -7,7 +7,9 @@ using System.Text;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using ReactiveUI;
+using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
+using GlbLinkedTexture = Menace.Modkit.App.Services.GlbLinkedTexture;
 
 namespace Menace.Modkit.App.ViewModels;
 
@@ -15,11 +17,18 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 {
     private readonly AssetRipperService _assetRipperService;
     private readonly ModpackManager _modpackManager;
+    private ReferenceGraphService? _referenceGraphService;
 
     // Master copy of all tree nodes (unfiltered)
     private List<AssetTreeNode> _allTreeNodes = new();
     // Set of relative paths that have staging replacements
     private readonly HashSet<string> _modpackAssetPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Event fired when user clicks on an asset backlink to navigate to a template in the Stats Editor.
+    /// Parameters: modpackName, templateType, instanceName
+    /// </summary>
+    public event Action<string?, string, string>? NavigateToTemplate;
 
     // Tiered search index for ranked results
     private class SearchEntry
@@ -36,6 +45,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         _assetRipperService = new AssetRipperService();
         _modpackManager = new ModpackManager();
         AvailableModpacks = new ObservableCollection<string>();
+        AssetBacklinks = new ObservableCollection<ReferenceEntry>();
 
         LoadModpacks();
         RefreshAssets();
@@ -45,6 +55,27 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
     public ObservableCollection<AssetTreeNode> FolderTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
+    public ObservableCollection<ReferenceEntry> AssetBacklinks { get; }
+
+    /// <summary>
+    /// Set the reference graph service for querying asset backlinks.
+    /// Called by MainWindow to share the service from StatsEditorViewModel.
+    /// </summary>
+    public void SetReferenceGraphService(ReferenceGraphService service)
+    {
+        _referenceGraphService = service;
+        // Refresh backlinks if we already have a selection
+        LoadAssetBacklinks();
+    }
+
+    /// <summary>
+    /// Request navigation to a template in the Stats Editor.
+    /// Called when user clicks on an asset backlink.
+    /// </summary>
+    public void RequestNavigateToTemplate(ReferenceEntry entry)
+    {
+        NavigateToTemplate?.Invoke(_currentModpackName, entry.SourceTemplateType, entry.SourceInstanceName);
+    }
 
     private string _extractionStatus = string.Empty;
     public string ExtractionStatus
@@ -241,6 +272,153 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _modifiedImageHeight, value);
     }
 
+    // --- GLB preview ---
+
+    private bool _hasGlbPreview;
+    public bool HasGlbPreview
+    {
+        get => _hasGlbPreview;
+        set => this.RaiseAndSetIfChanged(ref _hasGlbPreview, value);
+    }
+
+    private Avalonia.Media.Imaging.Bitmap? _glbPreviewImage;
+    public Avalonia.Media.Imaging.Bitmap? GlbPreviewImage
+    {
+        get => _glbPreviewImage;
+        set => this.RaiseAndSetIfChanged(ref _glbPreviewImage, value);
+    }
+
+    private GlbService? _glbService;
+    public ObservableCollection<GlbLinkedTexture> GlbLinkedTextures { get; } = new();
+
+    private void LoadGlbPreview()
+    {
+        HasGlbPreview = false;
+        GlbLinkedTextures.Clear();
+        GlbPreviewImage = null;
+
+        if (_selectedNode == null || !_selectedNode.IsFile)
+            return;
+
+        var ext = Path.GetExtension(_selectedNode.FullPath).ToLowerInvariant();
+        if (ext != ".glb")
+            return;
+
+        // Initialize GLB service if needed
+        if (_glbService == null)
+        {
+            var extractedPath = AppSettings.GetEffectiveAssetsPath();
+            if (extractedPath != null)
+                _glbService = new GlbService(extractedPath);
+        }
+
+        if (_glbService == null)
+            return;
+
+        try
+        {
+            // Generate 3D preview
+            GlbPreviewImage = GlbPreviewRenderer.RenderPreview(_selectedNode.FullPath, 200, 200);
+
+            var linkedTextures = _glbService.GetLinkedTextures(_selectedNode.FullPath);
+            foreach (var texture in linkedTextures)
+                GlbLinkedTextures.Add(texture);
+
+            HasGlbPreview = linkedTextures.Count > 0 || GlbPreviewImage != null;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading GLB preview: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Export the currently selected GLB with all linked textures embedded.
+    /// </summary>
+    public async Task<string?> ExportPackagedGlbAsync()
+    {
+        if (_selectedNode == null || !_selectedNode.IsFile || _glbService == null)
+            return null;
+
+        var ext = Path.GetExtension(_selectedNode.FullPath).ToLowerInvariant();
+        if (ext != ".glb")
+            return null;
+
+        // Create output path in a temp/export location
+        var fileName = Path.GetFileNameWithoutExtension(_selectedNode.Name) + "_packaged.glb";
+        var outputDir = Path.Combine(Path.GetTempPath(), "MenaceModkit", "exports");
+        Directory.CreateDirectory(outputDir);
+        var outputPath = Path.Combine(outputDir, fileName);
+
+        var success = await Task.Run(() => _glbService.ExportPackaged(_selectedNode.FullPath, outputPath));
+
+        return success ? outputPath : null;
+    }
+
+    /// <summary>
+    /// Import an edited GLB, extracting its textures back to the Texture2D folder.
+    /// </summary>
+    public async Task<bool> ImportGlbAsync(string importedGlbPath)
+    {
+        if (_selectedNode == null || _glbService == null)
+            return false;
+
+        return await Task.Run(() => _glbService.ImportAndExtractTextures(importedGlbPath, _selectedNode.FullPath));
+    }
+
+    /// <summary>
+    /// Navigate to a linked texture in the asset tree.
+    /// </summary>
+    public void NavigateToLinkedTexture(GlbLinkedTexture texture)
+    {
+        if (texture.FoundPath == null)
+            return;
+
+        // Find the node in the tree that matches this path
+        var targetNode = FindNodeByPath(texture.FoundPath);
+        if (targetNode != null)
+        {
+            ExpandToNode(targetNode);
+            SelectedNode = targetNode;
+        }
+    }
+
+    private AssetTreeNode? FindNodeByPath(string fullPath)
+    {
+        foreach (var node in _allTreeNodes)
+        {
+            var found = FindNodeByPathRecursive(node, fullPath);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private AssetTreeNode? FindNodeByPathRecursive(AssetTreeNode node, string fullPath)
+    {
+        if (node.IsFile && node.FullPath == fullPath)
+            return node;
+
+        foreach (var child in node.Children)
+        {
+            var found = FindNodeByPathRecursive(child, fullPath);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
+    private void ExpandToNode(AssetTreeNode node)
+    {
+        // Walk up the parent chain and expand each node
+        var current = node.Parent;
+        while (current != null)
+        {
+            current.IsExpanded = true;
+            current = current.Parent;
+        }
+    }
+
     // --- Data loading ---
 
     /// <summary>
@@ -343,6 +521,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             foreach (var subdir in subdirs)
             {
                 var childNode = BuildFolderTree(subdir);
+                childNode.Parent = node;
                 node.Children.Add(childNode);
             }
 
@@ -353,14 +532,16 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
             foreach (var file in files)
             {
-                node.Children.Add(new AssetTreeNode
+                var fileNode = new AssetTreeNode
                 {
                     Name = Path.GetFileName(file),
                     FullPath = file,
                     IsFile = true,
                     FileType = GetFileType(file),
-                    Size = new FileInfo(file).Length
-                });
+                    Size = new FileInfo(file).Length,
+                    Parent = node
+                };
+                node.Children.Add(fileNode);
             }
         }
         catch
@@ -390,6 +571,20 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
     // --- Preview loading ---
 
+    private void LoadAssetBacklinks()
+    {
+        AssetBacklinks.Clear();
+
+        if (_selectedNode == null || !_selectedNode.IsFile || _referenceGraphService == null)
+            return;
+
+        // Get the asset name (without path and extension for matching)
+        var assetName = Path.GetFileNameWithoutExtension(_selectedNode.Name);
+        var backlinks = _referenceGraphService.GetAssetBacklinks(assetName);
+        foreach (var entry in backlinks)
+            AssetBacklinks.Add(entry);
+    }
+
     private void LoadAssetPreview()
     {
         HasImagePreview = false;
@@ -398,6 +593,10 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         PreviewText = string.Empty;
         VanillaImageWidth = 0;
         VanillaImageHeight = 0;
+
+        // Also load backlinks and GLB preview
+        LoadAssetBacklinks();
+        LoadGlbPreview();
 
         if (_selectedNode == null || !_selectedNode.IsFile)
             return;
@@ -419,6 +618,19 @@ public sealed class AssetBrowserViewModel : ViewModelBase
                 PreviewText = $"Error loading image: {ex.Message}";
                 HasTextPreview = true;
             }
+        }
+        else if (ext is ".glb")
+        {
+            // GLB files show material/texture info
+            var materialCount = GlbLinkedTextures.Select(t => t.MaterialName).Distinct().Count();
+            var embeddedCount = GlbLinkedTextures.Count(t => t.IsEmbedded);
+            var foundCount = GlbLinkedTextures.Count(t => !t.IsEmbedded && t.IsFound);
+            var missingCount = GlbLinkedTextures.Count(t => !t.IsEmbedded && !t.IsFound);
+
+            PreviewText = $"{_selectedNode.Name}\n{FormatFileSize(_selectedNode.Size)}\n\n" +
+                          $"Materials: {materialCount}\n" +
+                          $"Textures: {embeddedCount} embedded, {foundCount} linked, {missingCount} missing";
+            HasTextPreview = true;
         }
         else if (ext is ".txt" or ".json" or ".xml" or ".cs" or ".shader")
         {
@@ -704,7 +916,10 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             IsExpanded = true
         };
         foreach (var child in matchingChildren)
+        {
+            child.Parent = copy;
             copy.Children.Add(child);
+        }
 
         return copy;
     }
@@ -790,6 +1005,7 @@ public sealed class AssetTreeNode : ViewModelBase
     public bool IsFile { get; set; }
     public string FileType { get; set; } = string.Empty;
     public long Size { get; set; }
+    public AssetTreeNode? Parent { get; set; }
     public ObservableCollection<AssetTreeNode> Children { get; } = new();
 
     private bool _isExpanded;

@@ -75,6 +75,32 @@ public sealed class ModpacksViewModel : ViewModelBase
     };
 
     /// <summary>
+    /// Prefixes for system/framework DLLs that should not appear as mods.
+    /// These are dependencies deployed alongside mods, not mods themselves.
+    /// </summary>
+    private static readonly string[] SystemDllPrefixes =
+    {
+        "System.",
+        "Microsoft.",
+        "Newtonsoft.",
+        "Mono.",
+        "mscorlib",
+        "netstandard",
+        "ICSharpCode.",
+        "NuGet.",
+    };
+
+    private static bool IsSystemDll(string fileName)
+    {
+        foreach (var prefix in SystemDllPrefixes)
+        {
+            if (fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// DLL filename substrings that indicate a known-conflicting mod, mapped to a warning message.
     /// Matched case-insensitively against detected DLL filenames.
     /// </summary>
@@ -125,6 +151,7 @@ public sealed class ModpacksViewModel : ViewModelBase
                 var fileName = Path.GetFileName(dllPath);
                 if (InfrastructureDlls.Contains(fileName)) continue;
                 if (knownDllFileNames.Contains(fileName)) continue;
+                if (IsSystemDll(fileName)) continue;
 
                 var displayName = Path.GetFileNameWithoutExtension(fileName);
                 var vm = new ModpackItemViewModel(displayName, "Unknown", "", "",
@@ -192,6 +219,67 @@ public sealed class ModpacksViewModel : ViewModelBase
         var vm = new ModpackItemViewModel(manifest, _modpackManager);
         AllModpacks.Add(vm);
         SelectedModpack = vm;
+    }
+
+    /// <summary>
+    /// Import a modpack from a zip file.
+    /// Returns true if import was successful.
+    /// </summary>
+    public bool ImportModpackFromZip(string zipPath)
+    {
+        try
+        {
+            var manifest = _modpackManager.ImportModpackFromZip(zipPath);
+            if (manifest != null)
+            {
+                RefreshModpacks();
+                // Select the newly imported modpack
+                SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == manifest.Name);
+                DeployStatus = $"Imported: {manifest.Name}";
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Import failed: {ex.Message}";
+            Services.ModkitLog.Error($"[ModpacksViewModel] Import failed: {ex}");
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Import multiple modpacks from zip files.
+    /// </summary>
+    public void ImportModpacksFromZips(IEnumerable<string> zipPaths)
+    {
+        int imported = 0;
+        int failed = 0;
+
+        foreach (var zipPath in zipPaths)
+        {
+            try
+            {
+                var manifest = _modpackManager.ImportModpackFromZip(zipPath);
+                if (manifest != null)
+                    imported++;
+                else
+                    failed++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                Services.ModkitLog.Warn($"[ModpacksViewModel] Failed to import {zipPath}: {ex.Message}");
+            }
+        }
+
+        RefreshModpacks();
+
+        if (imported > 0 && failed == 0)
+            DeployStatus = $"Imported {imported} mod(s)";
+        else if (imported > 0 && failed > 0)
+            DeployStatus = $"Imported {imported} mod(s), {failed} failed";
+        else if (failed > 0)
+            DeployStatus = $"Import failed for {failed} file(s)";
     }
 
     public void DeleteSelectedModpack()

@@ -12,6 +12,11 @@
     <ProjectReference Include="..\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />
   </ItemGroup>
 
+  <!-- Shared version file (single source of truth) -->
+  <ItemGroup>
+    <Compile Include="..\Shared\ModkitVersion.cs" Link="Services\ModkitVersion.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.7" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.7" />
@@ -22,6 +27,9 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.4.1" />
+    <PackageReference Include="AvaloniaEdit.TextMate" Version="11.4.1" />
   </ItemGroup>
 
   <!-- Copy bundled dependencies to output directory -->
@@ -50,8 +58,20 @@
     </None>
   </ItemGroup>
 
-  <!-- App icon -->
+  <!-- App assets -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\icon.jpg" />
+    <AvaloniaResource Include="Assets\load.png" />
+    <AvaloniaResource Include="Assets\marines.png" />
+    <AvaloniaResource Include="Assets\pirates.png" />
+  </ItemGroup>
+
+  <!-- Copy docs folder to output for in-app browsing -->
+  <ItemGroup>
+    <None Include="..\..\docs\**\*.md">
+      <Link>docs\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 </Project>

@@ -3,6 +3,8 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Menace.Modkit.App.Models;
+using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 
 namespace Menace.Modkit.App.Views;
@@ -219,7 +221,7 @@ public class AssetBrowserView : UserControl
 
         var outerGrid = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,*,Auto")
         };
 
         // Row 0: Toolbar
@@ -283,8 +285,131 @@ public class AssetBrowserView : UserControl
         outerGrid.Children.Add(contentGrid);
         Grid.SetRow(contentGrid, 1);
 
+        // Row 2: Referenced By panel
+        var backlinksPanel = BuildAssetBacklinksPanel();
+        outerGrid.Children.Add(backlinksPanel);
+        Grid.SetRow(backlinksPanel, 2);
+
         border.Child = outerGrid;
         return border;
+    }
+
+    private Control BuildAssetBacklinksPanel()
+    {
+        var panel = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+
+        var stack = new StackPanel { Spacing = 6 };
+
+        var header = new TextBlock
+        {
+            Text = "Referenced By",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        stack.Children.Add(header);
+
+        var itemsControl = new ItemsControl();
+        itemsControl.Bind(ItemsControl.ItemsSourceProperty,
+            new Avalonia.Data.Binding("AssetBacklinks"));
+
+        itemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ReferenceEntry>((entry, _) =>
+        {
+            var button = new Button
+            {
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(4, 2),
+                Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+
+            var textPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+
+            var typeBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#2A3A4A")),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(4, 1),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            typeBadge.Child = new TextBlock
+            {
+                Text = entry.SourceTemplateType,
+                Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+                FontSize = 10
+            };
+            textPanel.Children.Add(typeBadge);
+
+            textPanel.Children.Add(new TextBlock
+            {
+                Text = entry.DisplayName,
+                Foreground = Brushes.White,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            // Add "Open in Stats Editor" hint
+            textPanel.Children.Add(new TextBlock
+            {
+                Text = "(click to open)",
+                Foreground = Brushes.White,
+                Opacity = 0.5,
+                FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(4, 0, 0, 0)
+            });
+
+            button.Content = textPanel;
+
+            button.Click += (_, _) =>
+            {
+                if (DataContext is AssetBrowserViewModel vm)
+                {
+                    vm.RequestNavigateToTemplate(entry);
+                }
+            };
+
+            return button;
+        });
+
+        stack.Children.Add(itemsControl);
+
+        // Empty state message
+        var emptyText = new TextBlock
+        {
+            Text = "No templates reference this asset",
+            Foreground = Brushes.White,
+            Opacity = 0.5,
+            FontSize = 11,
+            FontStyle = FontStyle.Italic
+        };
+        emptyText.Bind(TextBlock.IsVisibleProperty,
+            new Avalonia.Data.Binding("AssetBacklinks.Count")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<int, bool>(c => c == 0)
+            });
+        stack.Children.Add(emptyText);
+
+        panel.Child = stack;
+
+        // Hide the entire panel when no file is selected
+        panel.Bind(Border.IsVisibleProperty,
+            new Avalonia.Data.Binding("SelectedNode")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(n =>
+                    n is AssetTreeNode node && node.IsFile)
+            });
+
+        return panel;
     }
 
     private Control BuildVanillaPanel()
@@ -362,6 +487,10 @@ public class AssetBrowserView : UserControl
         infoText.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("HasImagePreview"));
         previewStack.Children.Add(infoText);
 
+        // GLB linked textures panel
+        var glbPanel = BuildGlbLinkedTexturesPanel();
+        previewStack.Children.Add(glbPanel);
+
         previewStack.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding("SelectedNode")
         {
             Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
@@ -394,6 +523,230 @@ public class AssetBrowserView : UserControl
         previewBorder.Child = previewContainer;
         panel.Children.Add(previewBorder);
         Grid.SetRow(previewBorder, 1);
+
+        return panel;
+    }
+
+    /// <summary>
+    /// Creates a panel showing GLB 3D preview and linked textures with export/import buttons.
+    /// </summary>
+    private Control BuildGlbLinkedTexturesPanel()
+    {
+        var panel = new StackPanel
+        {
+            Spacing = 8,
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        panel.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding("HasGlbPreview"));
+
+        // 3D Preview Image
+        var previewBorder = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1E1E24")),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4),
+            Margin = new Thickness(0, 0, 0, 8),
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        var previewImage = new Image
+        {
+            Width = 200,
+            Height = 200,
+            Stretch = Stretch.Uniform
+        };
+        previewImage.Bind(Image.SourceProperty, new Avalonia.Data.Binding("GlbPreviewImage"));
+        previewBorder.Child = previewImage;
+        previewBorder.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("GlbPreviewImage")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj => obj != null)
+        });
+        panel.Children.Add(previewBorder);
+
+        // Header
+        var header = new TextBlock
+        {
+            Text = "Linked Textures",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        panel.Children.Add(header);
+
+        // Texture list
+        var textureList = new ItemsControl();
+        textureList.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("GlbLinkedTextures"));
+        textureList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<GlbLinkedTexture>((texture, _) =>
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(0, 2)
+            };
+
+            // Status indicator - use existing teal/red palette
+            var statusDot = new Border
+            {
+                Width = 8,
+                Height = 8,
+                CornerRadius = new CornerRadius(4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = texture.IsFound
+                    ? new SolidColorBrush(Color.Parse("#8ECDC8")) // Teal for found/embedded
+                    : new SolidColorBrush(Color.Parse("#FF8888")) // Red for missing
+            };
+            row.Children.Add(statusDot);
+
+            // Material name badge
+            var materialBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#2A3A4A")),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(4, 1),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            materialBadge.Child = new TextBlock
+            {
+                Text = texture.MaterialName,
+                Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+                FontSize = 10
+            };
+            row.Children.Add(materialBadge);
+
+            // Texture type
+            var typeText = new TextBlock
+            {
+                Text = texture.TextureType,
+                Foreground = Brushes.White,
+                Opacity = 0.7,
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            row.Children.Add(typeText);
+
+            // Status text - use existing teal/red palette
+            var statusText = new TextBlock
+            {
+                Text = texture.IsEmbedded ? "(embedded)" : texture.IsFound ? "(linked)" : "(missing)",
+                Foreground = texture.IsFound
+                    ? new SolidColorBrush(Color.Parse("#8ECDC8")) // Teal for found
+                    : new SolidColorBrush(Color.Parse("#FF8888")), // Red for missing
+                FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            row.Children.Add(statusText);
+
+            // Navigate button (only if found)
+            if (texture.IsFound && !texture.IsEmbedded)
+            {
+                var navButton = new Button
+                {
+                    Content = "→",
+                    Background = Brushes.Transparent,
+                    Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+                    BorderThickness = new Thickness(0),
+                    Padding = new Thickness(4, 0),
+                    FontSize = 14,
+                    Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                navButton.Click += (_, _) =>
+                {
+                    if (DataContext is AssetBrowserViewModel vm)
+                        vm.NavigateToLinkedTexture(texture);
+                };
+                ToolTip.SetTip(navButton, "Navigate to texture");
+                row.Children.Add(navButton);
+            }
+
+            return row;
+        });
+        panel.Children.Add(textureList);
+
+        // Export button
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+
+        var exportButton = new Button
+        {
+            Content = "Export Packaged GLB",
+            Background = new SolidColorBrush(Color.Parse("#064b48")), // Dark teal - primary action
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(12, 6),
+            FontSize = 11
+        };
+        exportButton.Click += async (_, _) =>
+        {
+            if (DataContext is AssetBrowserViewModel vm)
+            {
+                var outputPath = await vm.ExportPackagedGlbAsync();
+                if (outputPath != null)
+                {
+                    // Open containing folder
+                    var folderPath = System.IO.Path.GetDirectoryName(outputPath);
+                    if (folderPath != null)
+                    {
+                        try
+                        {
+                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                            {
+                                FileName = folderPath,
+                                UseShellExecute = true
+                            });
+                        }
+                        catch { }
+                    }
+                }
+            }
+        };
+        ToolTip.SetTip(exportButton, "Export GLB with all linked textures embedded");
+        buttonPanel.Children.Add(exportButton);
+
+        var importButton = new Button
+        {
+            Content = "Import Edited GLB",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")), // Secondary button style
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Padding = new Thickness(12, 6),
+            FontSize = 11
+        };
+        importButton.Click += async (_, _) =>
+        {
+            if (DataContext is AssetBrowserViewModel vm)
+            {
+                var dialog = new Avalonia.Controls.OpenFileDialog
+                {
+                    Title = "Import Edited GLB",
+                    AllowMultiple = false,
+                    Filters = new List<FileDialogFilter>
+                    {
+                        new FileDialogFilter { Name = "GLB Files", Extensions = { "glb" } }
+                    }
+                };
+
+                var window = TopLevel.GetTopLevel(this) as Window;
+                if (window != null)
+                {
+                    var result = await dialog.ShowAsync(window);
+                    if (result?.Length > 0)
+                    {
+                        await vm.ImportGlbAsync(result[0]);
+                    }
+                }
+            }
+        };
+        ToolTip.SetTip(importButton, "Import edited GLB and extract textures back");
+        buttonPanel.Children.Add(importButton);
+
+        panel.Children.Add(buttonPanel);
 
         return panel;
     }

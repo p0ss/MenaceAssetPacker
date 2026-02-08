@@ -31967,6 +31967,787 @@
       ]
     }
   },
+  "embedded_classes": {
+    "ModularVehicleSlot": {
+      "base_class": "2529",
+      "fields": [
+        {
+          "name": "SlotType",
+          "type": "ModularVehicleSlotType",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "TransformName",
+          "type": "string",
+          "offset": "0x18",
+          "category": "string"
+        },
+        {
+          "name": "AllowsLightWeaponToBeIntegrated",
+          "type": "bool",
+          "offset": "0x20",
+          "category": "primitive"
+        },
+        {
+          "name": "SecondTransformName",
+          "type": "string",
+          "offset": "0x28",
+          "category": "string"
+        }
+      ]
+    },
+    "MissionConfig": {
+      "base_class": "IWeighted",
+      "fields": [
+        {
+          "name": "Template",
+          "type": "MissionTemplate",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Weight",
+          "type": "int",
+          "offset": "0x18",
+          "category": "primitive"
+        }
+      ]
+    },
+    "ModularVehicleWeaponSetup": {
+      "base_class": "2535",
+      "fields": [
+        {
+          "name": "Vehicle",
+          "type": "ModularVehicleType",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "StandaloneModel",
+          "type": "GameObject",
+          "offset": "0x18",
+          "category": "unity_asset"
+        },
+        {
+          "name": "BarrelOnlyModel",
+          "type": "GameObject",
+          "offset": "0x20",
+          "category": "unity_asset"
+        },
+        {
+          "name": "OverrideChassisModel",
+          "type": "GameObject",
+          "offset": "0x28",
+          "category": "unity_asset"
+        }
+      ]
+    },
+    "SkillOnSurfaceDefinition": {
+      "base_class": "3165",
+      "fields": [
+        {
+          "name": "ImpactEffect",
+          "type": "GameObject",
+          "offset": "0x10",
+          "category": "unity_asset"
+        },
+        {
+          "name": "Decals",
+          "type": "DecalCollection",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "DecalChance",
+          "type": "int",
+          "offset": "0x20",
+          "category": "primitive"
+        },
+        {
+          "name": "RicochetChance",
+          "type": "int",
+          "offset": "0x24",
+          "category": "primitive"
+        },
+        {
+          "name": "SoundOnRicochet",
+          "type": "ID",
+          "offset": "0x28",
+          "category": "enum"
+        },
+        {
+          "name": "SoundOnImpact",
+          "type": "ID",
+          "offset": "0x30",
+          "category": "enum"
+        }
+      ]
+    },
+    "EmotionalStateResponse": {
+      "base_class": "2546",
+      "fields": [
+        {
+          "name": "EmotionalState",
+          "type": "EmotionalStateType",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "Text",
+          "type": "LocalizedMultiLine",
+          "offset": "0x18",
+          "category": "localization"
+        },
+        {
+          "name": "Sound",
+          "type": "ID",
+          "offset": "0x20",
+          "category": "enum"
+        }
+      ]
+    },
+    "EventData": {
+      "base_class": "2210",
+      "fields": [
+        {
+          "name": "Sender",
+          "type": "string",
+          "offset": "0x10",
+          "category": "string"
+        },
+        {
+          "name": "Message",
+          "type": "string",
+          "offset": "0x18",
+          "category": "string"
+        },
+        {
+          "name": "Title",
+          "type": "string",
+          "offset": "0x20",
+          "category": "string"
+        },
+        {
+          "name": "TitleColor",
+          "type": "Color",
+          "offset": "0x28",
+          "category": "struct"
+        },
+        {
+          "name": "MessageIcon",
+          "type": "Sprite",
+          "offset": "0x38",
+          "category": "unity_asset"
+        },
+        {
+          "name": "MessageOpenedIcon",
+          "type": "Sprite",
+          "offset": "0x40",
+          "category": "unity_asset"
+        },
+        {
+          "name": "Flags",
+          "type": "EventFlags",
+          "offset": "0x48",
+          "category": "enum"
+        },
+        {
+          "name": "ReqOpsPlayed",
+          "type": "int",
+          "offset": "0x4C",
+          "category": "primitive"
+        }
+      ]
+    },
+    "PrefabAttachment": {
+      "base_class": "2692",
+      "fields": [
+        {
+          "name": "IsLight",
+          "type": "bool",
+          "offset": "0x10",
+          "category": "primitive"
+        },
+        {
+          "name": "AttachmentPointName",
+          "type": "string",
+          "offset": "0x18",
+          "category": "string"
+        },
+        {
+          "name": "Prefab",
+          "type": "GameObject",
+          "offset": "0x20",
+          "category": "unity_asset"
+        }
+      ]
+    },
+    "WeatherEntry": {
+      "base_class": "IWeighted",
+      "fields": [
+        {
+          "name": "Weather",
+          "type": "WeatherTemplate",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Weight",
+          "type": "int",
+          "offset": "0x18",
+          "category": "primitive"
+        }
+      ]
+    },
+    "FixedPrefabEntry": {
+      "base_class": "FixedChunkEntry",
+      "fields": [
+        {
+          "name": "Prefab",
+          "type": "GameObject",
+          "offset": "0x18",
+          "category": "unity_asset"
+        },
+        {
+          "name": "Rotation",
+          "type": "ChunkSpawnRotation",
+          "offset": "0x20",
+          "category": "enum"
+        }
+      ]
+    },
+    "MissionActorConfig": {
+      "base_class": "2563",
+      "fields": [
+        {
+          "name": "Templates",
+          "type": "List<EntityTemplate>",
+          "offset": "0x10",
+          "category": "collection",
+          "element_type": "EntityTemplate"
+        },
+        {
+          "name": "Faction",
+          "type": "FactionType",
+          "offset": "0x18",
+          "category": "enum"
+        },
+        {
+          "name": "Count",
+          "type": "Vector2Int",
+          "offset": "0x1C",
+          "category": "reference"
+        },
+        {
+          "name": "SpawnAreas",
+          "type": "MissionAreaConfig[]",
+          "offset": "0x28",
+          "category": "collection",
+          "element_type": "MissionAreaConfig"
+        },
+        {
+          "name": "SpawnAreaSettings",
+          "type": "ActorSpawnAreaSettings",
+          "offset": "0x30",
+          "category": "enum"
+        }
+      ]
+    },
+    "RagdollPartConfig": {
+      "base_class": "2713",
+      "fields": [
+        {
+          "name": "BoneName",
+          "type": "string",
+          "offset": "0x18",
+          "category": "string"
+        },
+        {
+          "name": "Area",
+          "type": "RagdollHitArea",
+          "offset": "0x20",
+          "category": "enum"
+        },
+        {
+          "name": "NormalHitSelectWeight",
+          "type": "int",
+          "offset": "0x24",
+          "category": "primitive"
+        },
+        {
+          "name": "BaseHitForce",
+          "type": "int",
+          "offset": "0x28",
+          "category": "primitive"
+        },
+        {
+          "name": "DismemberSelectWeight",
+          "type": "int",
+          "offset": "0x2C",
+          "category": "primitive"
+        },
+        {
+          "name": "MovementPreventsSleep",
+          "type": "bool",
+          "offset": "0x30",
+          "category": "primitive"
+        }
+      ]
+    },
+    "DefectGroup": {
+      "base_class": "ScriptableObject",
+      "fields": [
+        {
+          "name": "Defects",
+          "type": "List<DefectTemplate>",
+          "offset": "0x18",
+          "category": "collection",
+          "element_type": "DefectTemplate"
+        }
+      ]
+    },
+    "Role": {
+      "base_class": "SayConversationNode",
+      "fields": [
+        {
+          "name": "RoleName",
+          "type": "string",
+          "offset": "0x10",
+          "category": "string"
+        },
+        {
+          "name": "Optional",
+          "type": "bool",
+          "offset": "0x18",
+          "category": "primitive"
+        },
+        {
+          "name": "Guid",
+          "type": "int",
+          "offset": "0x1C",
+          "category": "primitive"
+        },
+        {
+          "name": "Position",
+          "type": "RolePosition",
+          "offset": "0x20",
+          "category": "enum"
+        },
+        {
+          "name": "EntityIdx",
+          "type": "int",
+          "offset": "0x24",
+          "category": "primitive"
+        }
+      ]
+    },
+    "MissionMapgenTemplateList": {
+      "base_class": "IWeighted",
+      "fields": [
+        {
+          "name": "Weight",
+          "type": "int",
+          "offset": "0x10",
+          "category": "primitive"
+        },
+        {
+          "name": "Templates",
+          "type": "List<MapGenConfig>",
+          "offset": "0x18",
+          "category": "collection",
+          "element_type": "MapGenConfig"
+        }
+      ]
+    },
+    "ConditionalOperationIntro": {
+      "base_class": "2346",
+      "fields": [
+        {
+          "name": "Comment",
+          "type": "string",
+          "offset": "0x10",
+          "category": "string"
+        },
+        {
+          "name": "Condition",
+          "type": "ConversationCondition",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "Text",
+          "type": "LocalizedMultiLine",
+          "offset": "0x20",
+          "category": "localization"
+        },
+        {
+          "name": "Priority",
+          "type": "uint",
+          "offset": "0x28",
+          "category": "unknown"
+        },
+        {
+          "name": "Repeatable",
+          "type": "bool",
+          "offset": "0x2C",
+          "category": "primitive"
+        }
+      ]
+    },
+    "EmotionalTriggerReaction": {
+      "base_class": "2547",
+      "fields": [
+        {
+          "name": "Trigger",
+          "type": "EmotionalTrigger",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "PossibleReactions",
+          "type": "EmotionalStateType",
+          "offset": "0x14",
+          "category": "enum"
+        },
+        {
+          "name": "ShowExtraRequirements",
+          "type": "bool",
+          "offset": "0x18",
+          "category": "primitive"
+        },
+        {
+          "name": "TargetTags",
+          "type": "SpeakerTagFilter[]",
+          "offset": "0x20",
+          "category": "collection",
+          "element_type": "SpeakerTagFilter"
+        },
+        {
+          "name": "RequiredEnemyFaction",
+          "type": "FactionTemplate",
+          "offset": "0x28",
+          "category": "reference"
+        }
+      ]
+    },
+    "MissionSetpieceList": {
+      "base_class": "IWeighted",
+      "fields": [
+        {
+          "name": "Weight",
+          "type": "int",
+          "offset": "0x10",
+          "category": "primitive"
+        },
+        {
+          "name": "Templates",
+          "type": "List<MissionSetPiecePlacement>",
+          "offset": "0x18",
+          "category": "collection",
+          "element_type": "MissionSetPiecePlacement"
+        }
+      ]
+    },
+    "SkillGroup": {
+      "base_class": "ScriptableObject",
+      "fields": [
+        {
+          "name": "Skills",
+          "type": "List<SkillTemplate>",
+          "offset": "0x18",
+          "category": "collection",
+          "element_type": "SkillTemplate"
+        }
+      ]
+    },
+    "OperationIntro": {
+      "base_class": "2345",
+      "fields": [
+        {
+          "name": "Text",
+          "type": "LocalizedMultiLine",
+          "offset": "0x10",
+          "category": "localization"
+        }
+      ]
+    },
+    "StoryMission": {
+      "base_class": "2465",
+      "fields": [
+        {
+          "name": "Template",
+          "type": "MissionTemplate",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Weather",
+          "type": "WeatherTemplate",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "LightCondition",
+          "type": "LightConditionType",
+          "offset": "0x20",
+          "category": "enum"
+        },
+        {
+          "name": "DifficultyOverride",
+          "type": "MissionDifficultyTemplate",
+          "offset": "0x28",
+          "category": "reference"
+        },
+        {
+          "name": "SeedOverwrite",
+          "type": "SeedOverwriteType",
+          "offset": "0x30",
+          "category": "enum"
+        },
+        {
+          "name": "FixedSeedOverwrite",
+          "type": "int",
+          "offset": "0x34",
+          "category": "primitive"
+        },
+        {
+          "name": "CanBeLayer0",
+          "type": "bool",
+          "offset": "0x38",
+          "category": "primitive"
+        },
+        {
+          "name": "CanBeLayer1",
+          "type": "bool",
+          "offset": "0x39",
+          "category": "primitive"
+        },
+        {
+          "name": "CanBeLayer2",
+          "type": "bool",
+          "offset": "0x3A",
+          "category": "primitive"
+        },
+        {
+          "name": "CanBeLayer3",
+          "type": "bool",
+          "offset": "0x3B",
+          "category": "primitive"
+        },
+        {
+          "name": "CanBeFinalLayer",
+          "type": "bool",
+          "offset": "0x3C",
+          "category": "primitive"
+        }
+      ]
+    },
+    "Army": {
+      "base_class": "2338",
+      "fields": [
+        {
+          "name": "Flags",
+          "type": "ArmyFlag",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "ProgressRequired",
+          "type": "int",
+          "offset": "0x14",
+          "category": "primitive"
+        },
+        {
+          "name": "Entries",
+          "type": "List<ArmyEntry>",
+          "offset": "0x18",
+          "category": "collection",
+          "element_type": "ArmyEntry"
+        },
+        {
+          "name": "Cost",
+          "type": "int",
+          "offset": "0x20",
+          "category": "primitive"
+        }
+      ]
+    },
+    "SquaddieConfig": {
+      "base_class": "2541",
+      "fields": [
+        {
+          "name": "HomePlanet",
+          "type": "HomePlanetType",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "RandomGender",
+          "type": "bool",
+          "offset": "0x14",
+          "category": "primitive"
+        },
+        {
+          "name": "Gender",
+          "type": "Gender",
+          "offset": "0x15",
+          "category": "enum"
+        },
+        {
+          "name": "RandomSkinColor",
+          "type": "bool",
+          "offset": "0x16",
+          "category": "primitive"
+        },
+        {
+          "name": "SkinColor",
+          "type": "SkinColor",
+          "offset": "0x17",
+          "category": "enum"
+        }
+      ]
+    },
+    "Perk": {
+      "base_class": "SkillTemplate",
+      "fields": [
+        {
+          "name": "Skill",
+          "type": "PerkTemplate",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Tier",
+          "type": "int",
+          "offset": "0x18",
+          "category": "primitive"
+        }
+      ]
+    },
+    "MissionAreaConfig": {
+      "base_class": "2562",
+      "fields": [
+        {
+          "name": "AreaType",
+          "type": "MissionAreaType",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "Chunk",
+          "type": "ChunkTemplate",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "Setpiece",
+          "type": "MissionSetpiece",
+          "offset": "0x20",
+          "category": "struct"
+        },
+        {
+          "name": "Offset",
+          "type": "Vector2Int",
+          "offset": "0x28",
+          "category": "reference"
+        },
+        {
+          "name": "BaseExpand",
+          "type": "int",
+          "offset": "0x30",
+          "category": "primitive"
+        },
+        {
+          "name": "ClusterExpand",
+          "type": "int",
+          "offset": "0x34",
+          "category": "primitive"
+        },
+        {
+          "name": "BorderWidth",
+          "type": "int",
+          "offset": "0x38",
+          "category": "primitive"
+        },
+        {
+          "name": "BorderHeightPct",
+          "type": "int",
+          "offset": "0x3C",
+          "category": "primitive"
+        },
+        {
+          "name": "Rect",
+          "type": "SerializableRectInt",
+          "offset": "0x40",
+          "category": "reference"
+        }
+      ]
+    },
+    "SpeakerTagFilter": {
+      "base_class": "2290",
+      "fields": [
+        {
+          "name": "Comparator",
+          "type": "TagComparator",
+          "offset": "0x10",
+          "category": "enum"
+        },
+        {
+          "name": "Tags",
+          "type": "string",
+          "offset": "0x18",
+          "category": "string"
+        }
+      ]
+    },
+    "ArmyEntry": {
+      "base_class": "2340",
+      "fields": [
+        {
+          "name": "Template",
+          "type": "EntityTemplate",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "Amount",
+          "type": "int",
+          "offset": "0x20",
+          "category": "primitive"
+        },
+        {
+          "name": "SpawnAsGroup",
+          "type": "bool",
+          "offset": "0x24",
+          "category": "primitive"
+        }
+      ]
+    },
+    "MissionSetPiecePlacement": {
+      "base_class": "2436",
+      "fields": [
+        {
+          "name": "Offset",
+          "type": "Vector2Int",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Variance",
+          "type": "Vector2Int",
+          "offset": "0x18",
+          "category": "reference"
+        },
+        {
+          "name": "Setpiece",
+          "type": "MissionSetpiece",
+          "offset": "0x20",
+          "category": "struct"
+        }
+      ]
+    }
+  },
   "templates": {
     "AIWeightsTemplate": {
       "base_class": "ScriptableObject",

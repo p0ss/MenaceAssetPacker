@@ -288,6 +288,130 @@ def parse_all_templates(content):
     return sorted(template_names)
 
 
+def parse_embedded_class(content, class_name):
+    """Parse a regular class (not template) that's used as an element type."""
+    patterns = [
+        rf"public class {re.escape(class_name)}\s.*?\n\{{\n(.*?)\n\}}",
+    ]
+
+    match = None
+    for pattern in patterns:
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            break
+
+    if not match:
+        return None
+
+    class_body = match.group(1)
+
+    # Extract base class
+    base_match = re.search(rf"public class {re.escape(class_name)}.*?:\s+(\w+)", content)
+    base_class = base_match.group(1) if base_match else None
+
+    # Parse fields
+    fields = []
+    field_pattern = r"public\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+
+    for m in re.finditer(field_pattern, class_body):
+        field_type = m.group(1)
+        field_name = m.group(2)
+        offset = m.group(3)
+
+        # Skip internal IL2CPP fields and back-references to parent
+        if (field_name.startswith("NativeFieldInfoPtr") or
+                field_name.startswith("Il2Cpp") or
+                "k__BackingField" in field_name or
+                field_name == "Parent" or  # Skip parent back-references
+                offset == "0"):  # static fields
+            continue
+
+        fields.append({
+            "type": field_type,
+            "name": field_name,
+            "offset": f"0x{offset}",
+        })
+
+    if not fields:
+        return None
+
+    return {
+        "name": class_name,
+        "base": base_class,
+        "fields": fields,
+    }
+
+
+def discover_embedded_classes(content, templates, known_enums, known_structs, known_templates):
+    """
+    Discover classes used as element types in template collections.
+    These are regular classes (not templates) that are embedded in template fields.
+    Recursively discovers nested element types.
+    """
+    embedded = {}
+    to_process = set()
+
+    # Skip these - they're Unity/system types, not game data classes
+    skip_types = {
+        "String", "Object", "Int32", "Single", "Boolean", "Byte",
+        "GameObject", "Transform", "Component", "MonoBehaviour",
+        "Sprite", "Texture2D", "Material", "AudioClip", "AnimationClip",
+        "ScriptableObject", "Color", "Vector2", "Vector3", "Vector4",
+        "Quaternion", "Rect", "Bounds",
+    }
+
+    # Collect element types from templates
+    for tname, tdata in templates.items():
+        for field in tdata.get("fields", []):
+            elem_type = field.get("element_type")
+            if elem_type and elem_type not in known_templates and elem_type not in known_structs:
+                if elem_type not in known_enums and elem_type not in skip_types:
+                    to_process.add(elem_type)
+
+    # Process embedded classes, discovering nested element types
+    processed = set()
+    while to_process:
+        class_name = to_process.pop()
+        if class_name in processed or class_name in skip_types:
+            continue
+        processed.add(class_name)
+
+        class_info = parse_embedded_class(content, class_name)
+        if not class_info:
+            continue
+
+        # Classify fields and find nested element types
+        classified_fields = []
+        for f in class_info["fields"]:
+            category, element_type = classify_field(
+                f["type"], known_enums, known_structs, known_templates)
+
+            field_entry = {
+                "name": f["name"],
+                "type": f["type"],
+                "offset": f["offset"],
+                "category": category,
+            }
+            if element_type:
+                field_entry["element_type"] = element_type
+                # Queue nested element type for processing
+                if (element_type not in known_templates and
+                    element_type not in known_structs and
+                    element_type not in known_enums and
+                    element_type not in skip_types and
+                    element_type not in processed):
+                    to_process.add(element_type)
+
+            classified_fields.append(field_entry)
+
+        embedded[class_name] = {
+            "base_class": class_info["base"],
+            "fields": classified_fields,
+        }
+
+    return embedded
+
+
 def build_template_hierarchy(content, template_names):
     """Build inheritance map for template classes."""
     hierarchy = {}
@@ -369,11 +493,18 @@ def build_schema(dump_path):
         if tname in hierarchy:
             inheritance[tname] = get_inheritance_chain(tname, hierarchy)
 
+    # Discover embedded classes (used as element types in collections)
+    print("Discovering embedded classes...")
+    embedded_classes = discover_embedded_classes(
+        content, templates, known_enums, known_structs, known_templates)
+    print(f"  Found {len(embedded_classes)} embedded classes")
+
     schema = {
         "version": "1.0.0",
         "dump_hash": dump_hash,
         "enums": enums,
         "structs": structs,
+        "embedded_classes": embedded_classes,
         "templates": templates,
         "inheritance": inheritance,
     }
@@ -416,6 +547,7 @@ def main():
     print(f"\nSchema summary:")
     print(f"  Enums:              {len(schema['enums'])}")
     print(f"  Structs:            {len(schema['structs'])}")
+    print(f"  Embedded classes:   {len(schema['embedded_classes'])}")
     print(f"  Templates:          {n_templates} ({n_concrete} concrete, {n_abstract} abstract)")
     print(f"  Total fields:       {n_fields}")
     print(f"  Inheritance chains: {len(schema['inheritance'])}")

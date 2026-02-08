@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -215,6 +216,21 @@ public class ModpackManager
         TouchModified(modpackDir);
     }
 
+    /// <summary>
+    /// Delete a staging template file (when all overrides for that type are removed).
+    /// </summary>
+    public void DeleteStagingTemplate(string modpackName, string templateType)
+    {
+        var modpackDir = ResolveStagingDir(modpackName);
+        var path = Path.Combine(modpackDir, "stats", $"{templateType}.json");
+
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+            TouchModified(modpackDir);
+        }
+    }
+
     // ---------------------------------------------------------------
     // Clone operations
     // ---------------------------------------------------------------
@@ -416,7 +432,105 @@ public class ModpackManager
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
 
         var archivePath = Path.Combine(exportPath, $"{modpackName}.zip");
-        System.IO.Compression.ZipFile.CreateFromDirectory(stagingPath, archivePath);
+        ZipFile.CreateFromDirectory(stagingPath, archivePath);
+    }
+
+    /// <summary>
+    /// Import a modpack from a zip file into the staging directory.
+    /// Returns the manifest of the imported modpack, or null if import failed.
+    /// </summary>
+    public ModpackManifest? ImportModpackFromZip(string zipPath)
+    {
+        if (!File.Exists(zipPath))
+            throw new FileNotFoundException($"Zip file not found: {zipPath}");
+
+        // Extract to a temp directory first to inspect the contents
+        var tempDir = Path.Combine(Path.GetTempPath(), $"modkit_import_{Guid.NewGuid():N}");
+        try
+        {
+            ZipFile.ExtractToDirectory(zipPath, tempDir);
+
+            // Find the manifest - it might be at root or in a subfolder
+            var manifestPath = FindManifestInDirectory(tempDir);
+            if (manifestPath == null)
+            {
+                ModkitLog.Warn($"[ModpackManager] No manifest.json found in {zipPath}");
+                throw new InvalidOperationException("No manifest.json found in zip file");
+            }
+
+            var manifestDir = Path.GetDirectoryName(manifestPath)!;
+            var manifest = LoadManifest(manifestDir);
+            if (manifest == null)
+            {
+                throw new InvalidOperationException("Failed to parse manifest.json");
+            }
+
+            // Determine target directory name (sanitize the modpack name)
+            var safeName = SanitizeDirectoryName(manifest.Name);
+            var targetDir = Path.Combine(_stagingBasePath, safeName);
+
+            // Handle name conflicts by appending a number
+            var originalName = safeName;
+            var counter = 1;
+            while (Directory.Exists(targetDir))
+            {
+                safeName = $"{originalName}_{counter}";
+                targetDir = Path.Combine(_stagingBasePath, safeName);
+                counter++;
+            }
+
+            // Copy the modpack contents to staging
+            Directory.CreateDirectory(_stagingBasePath);
+            CopyDirectory(manifestDir, targetDir);
+
+            // Update manifest path and reload
+            manifest = LoadManifest(targetDir);
+            if (manifest != null)
+            {
+                ModkitLog.Info($"[ModpackManager] Imported modpack: {manifest.Name}");
+            }
+
+            return manifest;
+        }
+        finally
+        {
+            // Clean up temp directory
+            try
+            {
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, true);
+            }
+            catch { }
+        }
+    }
+
+    private static string? FindManifestInDirectory(string dir)
+    {
+        // Check root first
+        var rootManifest = Path.Combine(dir, "manifest.json");
+        if (File.Exists(rootManifest))
+            return rootManifest;
+
+        // Check one level of subdirectories (in case zip contains a wrapper folder)
+        foreach (var subDir in Directory.GetDirectories(dir))
+        {
+            var subManifest = Path.Combine(subDir, "manifest.json");
+            if (File.Exists(subManifest))
+                return subManifest;
+        }
+
+        return null;
+    }
+
+    private static string SanitizeDirectoryName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var result = new System.Text.StringBuilder();
+        foreach (var c in name)
+        {
+            result.Append(invalid.Contains(c) ? '_' : c);
+        }
+        return result.ToString().Trim();
     }
 
     // ---------------------------------------------------------------

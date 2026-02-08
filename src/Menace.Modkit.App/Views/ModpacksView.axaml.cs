@@ -54,20 +54,41 @@ public class ModpacksView : UserControl
     grid.Children.Add(title);
     Grid.SetRow(title, 0);
 
-    // Row 1: Create New Button
-    var createButton = new Button
+    // Row 1: Button row with Import and Create
+    var buttonRow = new Grid
     {
-      Content = "+ New Modpack",
+      ColumnDefinitions = new ColumnDefinitions("*,8,*"),
+      Margin = new Thickness(0, 0, 0, 12)
+    };
+
+    var importButton = new Button
+    {
+      Content = "+ Import Mod",
       Background = new SolidColorBrush(Color.Parse("#064b48")),
       Foreground = Brushes.White,
       BorderThickness = new Thickness(0),
-      Padding = new Thickness(16, 8),
-      HorizontalAlignment = HorizontalAlignment.Stretch,
-      Margin = new Thickness(0, 0, 0, 12)
+      Padding = new Thickness(12, 8),
+      HorizontalAlignment = HorizontalAlignment.Stretch
+    };
+    importButton.Click += OnImportModClick;
+    buttonRow.Children.Add(importButton);
+    Grid.SetColumn(importButton, 0);
+
+    var createButton = new Button
+    {
+      Content = "+ Create New",
+      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+      Foreground = Brushes.White,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(12, 8),
+      HorizontalAlignment = HorizontalAlignment.Stretch
     };
     createButton.Click += (_, _) => ShowCreateDialog();
-    grid.Children.Add(createButton);
-    Grid.SetRow(createButton, 1);
+    buttonRow.Children.Add(createButton);
+    Grid.SetColumn(createButton, 2);
+
+    grid.Children.Add(buttonRow);
+    Grid.SetRow(buttonRow, 1);
 
     // Row 2: Unified modpack list (star row)
     var modpackList = new ListBox
@@ -83,24 +104,55 @@ public class ModpacksView : UserControl
     modpackList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ModpackItemViewModel>(
       (modpack, _) => CreateModpackListItem(modpack));
 
-    // Drag-and-drop: allow items to be dropped onto the list
+    // Drag-and-drop: allow items to be dropped onto the list (reordering + zip import)
     DragDrop.SetAllowDrop(modpackList, true);
     modpackList.AddHandler(DragDrop.DragOverEvent, (_, e) =>
     {
-      e.DragEffects = e.Data.Contains("ModpackItem")
-        ? DragDropEffects.Move
-        : DragDropEffects.None;
+      if (e.Data.Contains("ModpackItem"))
+      {
+        e.DragEffects = DragDropEffects.Move;
+      }
+      else if (e.Data.Contains(DataFormats.Files))
+      {
+        e.DragEffects = DragDropEffects.Copy;
+      }
+      else
+      {
+        e.DragEffects = DragDropEffects.None;
+      }
     });
     modpackList.AddHandler(DragDrop.DropEvent, (_, e) =>
     {
-      if (e.Data.Get("ModpackItem") is ModpackItemViewModel draggedItem
-          && DataContext is ModpacksViewModel vm)
+      if (DataContext is not ModpacksViewModel vm)
+        return;
+
+      // Handle modpack reordering
+      if (e.Data.Get("ModpackItem") is ModpackItemViewModel draggedItem)
       {
         var targetItem = FindDropTarget(e);
         if (targetItem != null && targetItem != draggedItem)
         {
           var targetIndex = vm.AllModpacks.IndexOf(targetItem);
           vm.MoveItem(draggedItem, targetIndex);
+        }
+        return;
+      }
+
+      // Handle zip file drops
+      if (e.Data.Contains(DataFormats.Files))
+      {
+        var files = e.Data.GetFiles();
+        if (files != null)
+        {
+          var zipPaths = files
+            .Select(f => f.Path.LocalPath)
+            .Where(p => p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+          if (zipPaths.Count > 0)
+          {
+            vm.ImportModpacksFromZips(zipPaths);
+          }
         }
       }
     });
@@ -743,7 +795,7 @@ public class ModpacksView : UserControl
     var deleteButton = new Button
     {
       Content = "Delete Modpack",
-      Background = new SolidColorBrush(Color.Parse("#4b0606")),
+      Background = new SolidColorBrush(Color.Parse("#410511")),  // Maroon
       Foreground = Brushes.White,
       BorderThickness = new Thickness(0),
       Padding = new Thickness(16, 8)
@@ -943,6 +995,40 @@ public class ModpacksView : UserControl
     catch (Exception ex)
     {
       Services.ModkitLog.Error($"Create dialog failed: {ex.Message}");
+    }
+  }
+
+  private async void OnImportModClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    try
+    {
+      if (DataContext is not ModpacksViewModel vm)
+        return;
+
+      var topLevel = TopLevel.GetTopLevel(this);
+      if (topLevel == null) return;
+
+      var storageProvider = topLevel.StorageProvider;
+      var result = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+      {
+        Title = "Import Mod",
+        AllowMultiple = true,
+        FileTypeFilter = new[]
+        {
+          new FilePickerFileType("Mod Package") { Patterns = new[] { "*.zip" } },
+          new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
+        }
+      });
+
+      if (result.Count > 0)
+      {
+        var zipPaths = result.Select(f => f.Path.LocalPath).ToList();
+        vm.ImportModpacksFromZips(zipPaths);
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Import failed: {ex.Message}");
     }
   }
 }

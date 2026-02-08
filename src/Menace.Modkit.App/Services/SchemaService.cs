@@ -7,11 +7,14 @@ namespace Menace.Modkit.App.Services;
 
 /// <summary>
 /// Loads schema.json and provides fast lookup of field metadata by template type and field name.
+/// Also loads embedded classes (non-template classes used as element types in collections).
 /// </summary>
 public class SchemaService
 {
     // templateTypeName -> fieldName -> FieldMeta
     private readonly Dictionary<string, Dictionary<string, FieldMeta>> _fieldsByTemplate = new(StringComparer.Ordinal);
+    // embeddedClassName -> fieldName -> FieldMeta (for classes like Army, ArmyEntry)
+    private readonly Dictionary<string, Dictionary<string, FieldMeta>> _fieldsByEmbeddedClass = new(StringComparer.Ordinal);
     // templateTypeName -> full inheritance chain (base → derived)
     private readonly Dictionary<string, List<string>> _inheritanceChains = new(StringComparer.Ordinal);
     // enumTypeName -> { intValue -> name }
@@ -34,6 +37,7 @@ public class SchemaService
     public void LoadSchema(string schemaJsonPath)
     {
         _fieldsByTemplate.Clear();
+        _fieldsByEmbeddedClass.Clear();
         _inheritanceChains.Clear();
         _enumsByType.Clear();
         _isLoaded = false;
@@ -99,6 +103,40 @@ public class SchemaService
 
             // Resolve base class inheritance (merge parent fields into children)
             ResolveInheritance(templates);
+
+            // Parse embedded classes (non-template classes used as element types)
+            if (doc.RootElement.TryGetProperty("embedded_classes", out var embeddedClasses))
+            {
+                foreach (var classProp in embeddedClasses.EnumerateObject())
+                {
+                    var className = classProp.Name;
+                    var fieldDict = new Dictionary<string, FieldMeta>(StringComparer.Ordinal);
+
+                    if (classProp.Value.TryGetProperty("fields", out var fields))
+                    {
+                        foreach (var field in fields.EnumerateArray())
+                        {
+                            var name = field.GetProperty("name").GetString() ?? "";
+                            var type = field.GetProperty("type").GetString() ?? "";
+                            var offset = field.TryGetProperty("offset", out var o) ? o.GetString() ?? "" : "";
+                            var category = field.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
+                            var elementType = field.TryGetProperty("element_type", out var et) ? et.GetString() ?? "" : "";
+
+                            fieldDict[name] = new FieldMeta
+                            {
+                                Name = name,
+                                Type = type,
+                                Category = category,
+                                Offset = offset,
+                                ElementType = elementType
+                            };
+                        }
+                    }
+
+                    _fieldsByEmbeddedClass[className] = fieldDict;
+                }
+                ModkitLog.Info($"[SchemaService] Loaded {_fieldsByEmbeddedClass.Count} embedded classes");
+            }
 
             // Parse inheritance chains
             if (doc.RootElement.TryGetProperty("inheritance", out var inheritance))
@@ -280,5 +318,64 @@ public class SchemaService
         if (_inheritanceChains.TryGetValue(templateTypeName, out var chain))
             return chain.Count;
         return 1;
+    }
+
+    /// <summary>
+    /// Check if a class name is a known embedded class (non-template class used in collections).
+    /// </summary>
+    public bool IsEmbeddedClass(string className)
+    {
+        return _fieldsByEmbeddedClass.ContainsKey(className);
+    }
+
+    /// <summary>
+    /// Get all field names for an embedded class.
+    /// </summary>
+    public List<string> GetEmbeddedClassFields(string className)
+    {
+        if (_fieldsByEmbeddedClass.TryGetValue(className, out var fields))
+            return new List<string>(fields.Keys);
+        return new List<string>();
+    }
+
+    /// <summary>
+    /// Get metadata for a specific field on an embedded class.
+    /// </summary>
+    public FieldMeta? GetEmbeddedClassFieldMetadata(string className, string fieldName)
+    {
+        if (_fieldsByEmbeddedClass.TryGetValue(className, out var fields))
+        {
+            if (fields.TryGetValue(fieldName, out var meta))
+                return meta;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Get all fields for an embedded class as a list.
+    /// </summary>
+    public List<FieldMeta> GetAllEmbeddedClassFields(string className)
+    {
+        if (_fieldsByEmbeddedClass.TryGetValue(className, out var fields))
+            return new List<FieldMeta>(fields.Values);
+        return new List<FieldMeta>();
+    }
+
+    /// <summary>
+    /// Get all known embedded class names.
+    /// </summary>
+    public IEnumerable<string> GetAllEmbeddedClassNames()
+    {
+        return _fieldsByEmbeddedClass.Keys;
+    }
+
+    /// <summary>
+    /// Check if a given element type (from a collection field) has a known schema.
+    /// Returns true if it's a template, embedded class, or struct.
+    /// </summary>
+    public bool HasSchemaForElementType(string elementType)
+    {
+        return _fieldsByTemplate.ContainsKey(elementType) ||
+               _fieldsByEmbeddedClass.ContainsKey(elementType);
     }
 }

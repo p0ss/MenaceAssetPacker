@@ -13,7 +13,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", "2.0.0", "Menace Modkit")]
+[assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", Menace.ModkitVersion.MelonVersion, "Menace Modkit")]
 [assembly: MelonGame(null, null)]
 [assembly: MelonOptionalDependencies("Microsoft.CodeAnalysis", "Microsoft.CodeAnalysis.CSharp", "System.Collections.Immutable")]
 
@@ -31,7 +31,7 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg("Menace Modpack Loader v2.0 initialized");
+        LoggerInstance.Msg($"{ModkitVersion.LoaderFull} initialized");
 
         // Initialize SDK subsystems
         OffsetCache.Initialize();
@@ -46,7 +46,7 @@ public partial class ModpackLoaderMod : MelonMod
         // Emit startup banner to Player.log for game dev triage
         PlayerLog("========================================");
         PlayerLog("THIS GAME SESSION IS RUNNING MODDED");
-        PlayerLog("Menace Modpack Loader v2.0.0");
+        PlayerLog(ModkitVersion.LoaderFull);
         PlayerLog($"Loaded {_loadedModpacks.Count} modpack(s):");
         foreach (var mp in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
             PlayerLog($"  - {mp.Name} v{mp.Version} by {mp.Author ?? "Unknown"} (order: {mp.LoadOrder})");
@@ -102,6 +102,9 @@ public partial class ModpackLoaderMod : MelonMod
     {
         // Ensure settings are saved before the game closes
         ModSettings.Save();
+
+        // Cleanup save watcher
+        SaveSystemPatches.Shutdown();
     }
 
     private System.Collections.IEnumerator WaitForTemplatesAndApply(string sceneName)
@@ -113,6 +116,10 @@ public partial class ModpackLoaderMod : MelonMod
         }
 
         LoggerInstance.Msg($"Applying modpack modifications (scene: {sceneName})...");
+
+        // Initialize save system watcher (tries to find saves folder)
+        SaveSystemPatches.TryInitialize();
+
         var allApplied = ApplyAllModpacks();
 
         if (allApplied)
@@ -173,6 +180,9 @@ public partial class ModpackLoaderMod : MelonMod
                     modpack.DirectoryPath = modpackDir;
                     modpack.ManifestVersion = manifestVersion;
                     _loadedModpacks[modpack.Name] = modpack;
+
+                    // Register with ModRegistry for save system tracking
+                    ModRegistry.RegisterModpack(modpack.Name, modpack.Version, modpack.Author);
 
                     var vLabel = manifestVersion >= 2 ? "v2" : "v1 (legacy)";
                     LoggerInstance.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");

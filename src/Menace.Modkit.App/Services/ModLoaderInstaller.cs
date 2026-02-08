@@ -57,13 +57,16 @@ public class ModLoaderInstaller
             File.Copy(versionDll, Path.Combine(destDir, "version.dll"), overwrite: true);
         }
 
-        // Copy MelonLoader folder
-        var sourceMelonLoaderDir = Path.Combine(sourceDir, "MelonLoader");
+        // Copy all subfolders (net6, net35, Dependencies, Documentation) into MelonLoader folder
+        // The bundled structure has these directly inside third_party/bundled/MelonLoader/
         var destMelonLoaderDir = Path.Combine(destDir, "MelonLoader");
+        Directory.CreateDirectory(destMelonLoaderDir);
 
-        if (Directory.Exists(sourceMelonLoaderDir))
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
         {
-            CopyDirectoryRecursive(sourceMelonLoaderDir, destMelonLoaderDir);
+            var dirName = Path.GetFileName(subDir);
+            var destSubDir = Path.Combine(destMelonLoaderDir, dirName);
+            CopyDirectoryRecursive(subDir, destSubDir);
         }
     }
 
@@ -124,21 +127,25 @@ public class ModLoaderInstaller
         {
             progressCallback?.Invoke("Installing ModpackLoader mod...");
 
-            var modpackLoaderDll = Path.Combine(
+            var modpackLoaderDir = Path.Combine(
                 AppContext.BaseDirectory,
-                "third_party", "bundled", "ModpackLoader", "Menace.ModpackLoader.dll");
+                "third_party", "bundled", "ModpackLoader");
 
-            if (!File.Exists(modpackLoaderDll))
+            if (!Directory.Exists(modpackLoaderDir))
             {
-                progressCallback?.Invoke("❌ Bundled ModpackLoader.dll not found");
+                progressCallback?.Invoke("❌ Bundled ModpackLoader directory not found");
                 return false;
             }
 
             var modsFolder = Path.Combine(_gameInstallPath, "Mods");
             Directory.CreateDirectory(modsFolder);
 
-            var targetPath = Path.Combine(modsFolder, "Menace.ModpackLoader.dll");
-            File.Copy(modpackLoaderDll, targetPath, overwrite: true);
+            // Copy all files (ModpackLoader.dll + Roslyn dependencies)
+            foreach (var file in Directory.GetFiles(modpackLoaderDir, "*.dll"))
+            {
+                var targetPath = Path.Combine(modsFolder, Path.GetFileName(file));
+                File.Copy(file, targetPath, overwrite: true);
+            }
 
             progressCallback?.Invoke("✓ ModpackLoader mod installed successfully");
             return true;
@@ -196,13 +203,31 @@ public class ModLoaderInstaller
                 return false;
             }
 
-            // Launch game
-            var startInfo = new ProcessStartInfo
+            ProcessStartInfo startInfo;
+
+            // On Linux, launch through Steam for Proton support
+            if (OperatingSystem.IsLinux())
             {
-                FileName = gameExe,
-                WorkingDirectory = _gameInstallPath,
-                UseShellExecute = true
-            };
+                // Menace Steam App ID
+                const string appId = "2432860";
+                startInfo = new ProcessStartInfo
+                {
+                    FileName = "steam",
+                    Arguments = $"steam://rungameid/{appId}",
+                    UseShellExecute = true
+                };
+                progressCallback?.Invoke("Launching via Steam (Proton)...");
+            }
+            else
+            {
+                // On Windows, launch directly
+                startInfo = new ProcessStartInfo
+                {
+                    FileName = gameExe,
+                    WorkingDirectory = _gameInstallPath,
+                    UseShellExecute = true
+                };
+            }
 
             Process.Start(startInfo);
 

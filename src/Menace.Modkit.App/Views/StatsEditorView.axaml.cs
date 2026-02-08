@@ -407,10 +407,10 @@ public class StatsEditorView : UserControl
       Padding = new Thickness(24)
     };
 
-    // Outer grid: toolbar row + content row
+    // Outer grid: toolbar row + content row + backlinks row
     var outerGrid = new Grid
     {
-      RowDefinitions = new RowDefinitions("Auto,*")
+      RowDefinitions = new RowDefinitions("Auto,*,Auto")
     };
 
     // Toolbar row
@@ -583,8 +583,120 @@ public class StatsEditorView : UserControl
     outerGrid.Children.Add(mainGrid);
     Grid.SetRow(mainGrid, 1);
 
+    // Row 2: What Links Here panel
+    var backlinksPanel = BuildBacklinksPanel();
+    outerGrid.Children.Add(backlinksPanel);
+    Grid.SetRow(backlinksPanel, 2);
+
     border.Child = outerGrid;
     return border;
+  }
+
+  private Control BuildBacklinksPanel()
+  {
+    var panel = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
+      BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      BorderThickness = new Thickness(0, 1, 0, 0),
+      Padding = new Thickness(12, 8),
+      Margin = new Thickness(0, 12, 0, 0)
+    };
+
+    var stack = new StackPanel { Spacing = 6 };
+
+    var header = new TextBlock
+    {
+      Text = "What Links Here",
+      FontSize = 13,
+      FontWeight = FontWeight.SemiBold,
+      Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+      Margin = new Thickness(0, 0, 0, 4)
+    };
+    stack.Children.Add(header);
+
+    var itemsControl = new ItemsControl();
+    itemsControl.Bind(ItemsControl.ItemsSourceProperty,
+      new Avalonia.Data.Binding("Backlinks"));
+
+    itemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<Models.ReferenceEntry>((entry, _) =>
+    {
+      var button = new Button
+      {
+        Background = Brushes.Transparent,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(4, 2),
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        HorizontalAlignment = HorizontalAlignment.Left
+      };
+
+      var textPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+
+      var typeBadge = new Border
+      {
+        Background = new SolidColorBrush(Color.Parse("#2A3A4A")),
+        CornerRadius = new CornerRadius(3),
+        Padding = new Thickness(4, 1),
+        VerticalAlignment = VerticalAlignment.Center
+      };
+      typeBadge.Child = new TextBlock
+      {
+        Text = entry.SourceTemplateType,
+        Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+        FontSize = 10
+      };
+      textPanel.Children.Add(typeBadge);
+
+      textPanel.Children.Add(new TextBlock
+      {
+        Text = entry.DisplayName,
+        Foreground = Brushes.White,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center
+      });
+
+      button.Content = textPanel;
+
+      button.Click += (_, _) =>
+      {
+        if (DataContext is StatsEditorViewModel vm)
+        {
+          vm.NavigateToEntry(vm.CurrentModpackName ?? "", entry.SourceTemplateType, entry.SourceInstanceName);
+        }
+      };
+
+      return button;
+    });
+
+    stack.Children.Add(itemsControl);
+
+    // Empty state message
+    var emptyText = new TextBlock
+    {
+      Text = "No other templates reference this one",
+      Foreground = Brushes.White,
+      Opacity = 0.5,
+      FontSize = 11,
+      FontStyle = FontStyle.Italic
+    };
+    emptyText.Bind(TextBlock.IsVisibleProperty,
+      new Avalonia.Data.Binding("Backlinks.Count")
+      {
+        Converter = new Avalonia.Data.Converters.FuncValueConverter<int, bool>(c => c == 0)
+      });
+    stack.Children.Add(emptyText);
+
+    panel.Child = stack;
+
+    // Hide the entire panel when no template is selected
+    panel.Bind(Border.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedNode")
+      {
+        Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(n =>
+          n is TreeNodeViewModel node && node.Template != null)
+      });
+
+    return panel;
   }
 
   private void OnSaveClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1267,14 +1379,24 @@ public class StatsEditorView : UserControl
 
   private Control CreateObjectArrayControl(string fieldName, System.Text.Json.JsonElement arrayElement, bool isEditable)
   {
-    return CreateObjectArrayControlCore(arrayElement, isEditable, json =>
+    // Get element type from schema for the current template's field
+    string? elementType = null;
+    if (DataContext is StatsEditorViewModel vm)
     {
-      if (DataContext is StatsEditorViewModel vm)
-        vm.UpdateComplexArrayProperty(fieldName, json);
+      elementType = vm.GetCollectionElementType(fieldName);
+    }
+
+    return CreateObjectArrayControlCore(fieldName, elementType, null, arrayElement, isEditable, json =>
+    {
+      if (DataContext is StatsEditorViewModel vmInner)
+        vmInner.UpdateComplexArrayProperty(fieldName, json);
     });
   }
 
   private Control CreateObjectArrayControlCore(
+    string fieldName,
+    string? elementTypeName,
+    string? parentClassName,
     System.Text.Json.JsonElement arrayElement,
     bool isEditable,
     System.Action<string> onChanged)
@@ -1508,7 +1630,7 @@ public class StatsEditorView : UserControl
         foreach (var kvp in element.ToList())
         {
           bodyPanel.Children.Add(CreateObjectFieldControl(
-            kvp.Key, kvp.Value, element, isEditable, SyncToViewModel));
+            kvp.Key, kvp.Value, element, elementTypeName, isEditable, SyncToViewModel));
         }
 
         expander.Content = bodyPanel;
@@ -1523,25 +1645,41 @@ public class StatsEditorView : UserControl
 
     if (isEditable)
     {
+      var vm = DataContext as StatsEditorViewModel;
+      var hasSchema = elementTypeName != null && vm != null && vm.HasEmbeddedClassSchema(elementTypeName);
+
       var addBtn = new Button
       {
-        Content = "+ Add Entry",
-        Background = new SolidColorBrush(Color.Parse("#064b48")),
+        Content = hasSchema ? $"+ Add {elementTypeName}" : "+ Add Entry",
+        Background = new SolidColorBrush(Color.Parse("#2D5A2D")),
         Foreground = Brushes.White,
         BorderThickness = new Thickness(0),
         Padding = new Thickness(10, 6),
         FontSize = 11,
-        Margin = new Thickness(0, 4, 0, 0),
+        Margin = new Thickness(0, 8, 0, 0),
         HorizontalAlignment = HorizontalAlignment.Left
       };
       addBtn.Click += (_, _) =>
       {
-        var newElement = new System.Collections.Generic.Dictionary<string, object?>();
-        if (elements.Count > 0)
+        System.Collections.Generic.Dictionary<string, object?> newElement;
+
+        // If we have schema for the element type, create default values from schema
+        if (hasSchema && vm != null)
         {
+          newElement = vm.CreateDefaultElement(elementTypeName!);
+        }
+        else if (elements.Count > 0)
+        {
+          // Fallback: clone last element
+          newElement = new System.Collections.Generic.Dictionary<string, object?>();
           foreach (var kvp in elements[^1])
             newElement[kvp.Key] = kvp.Value;
         }
+        else
+        {
+          newElement = new System.Collections.Generic.Dictionary<string, object?>();
+        }
+
         elements.Add(newElement);
         RebuildItemsPanel();
         SyncToViewModel();
@@ -1557,10 +1695,19 @@ public class StatsEditorView : UserControl
     string propName,
     object? propValue,
     System.Collections.Generic.Dictionary<string, object?> element,
+    string? parentClassName,
     bool isEditable,
     System.Action syncToViewModel)
   {
     var fieldStack = new StackPanel { Spacing = 4 };
+    var vm = DataContext as StatsEditorViewModel;
+
+    // Get field metadata from schema if we know the parent class
+    Services.SchemaService.FieldMeta? fieldMeta = null;
+    if (vm != null && !string.IsNullOrEmpty(parentClassName))
+    {
+      fieldMeta = vm.GetEmbeddedFieldMetadata(parentClassName, propName);
+    }
 
     var label = new TextBlock
     {
@@ -1579,7 +1726,14 @@ public class StatsEditorView : UserControl
         case System.Text.Json.JsonValueKind.Array:
           if (ArrayContainsObjects(je))
           {
-            fieldStack.Children.Add(CreateObjectArrayControlCore(je, isEditable, json =>
+            // Get nested element type from schema
+            string? nestedElementType = null;
+            if (fieldMeta?.Category == "collection" && !string.IsNullOrEmpty(fieldMeta.ElementType))
+              nestedElementType = fieldMeta.ElementType;
+            else if (vm != null && !string.IsNullOrEmpty(parentClassName))
+              nestedElementType = vm.GetEmbeddedCollectionElementType(parentClassName, propName);
+
+            fieldStack.Children.Add(CreateObjectArrayControlCore(propName, nestedElementType, parentClassName, je, isEditable, json =>
             {
               try
               {
@@ -1598,6 +1752,8 @@ public class StatsEditorView : UserControl
           return fieldStack;
 
         case System.Text.Json.JsonValueKind.Object:
+          // Get nested object type from schema
+          string? nestedObjType = fieldMeta?.Type;
           var nestedDict = new System.Collections.Generic.Dictionary<string, object?>();
           foreach (var prop in je.EnumerateObject())
             nestedDict[prop.Name] = prop.Value.Clone();
@@ -1605,7 +1761,7 @@ public class StatsEditorView : UserControl
           foreach (var nkvp in nestedDict.ToList())
           {
             nestedPanel.Children.Add(CreateObjectFieldControl(
-              nkvp.Key, nkvp.Value, nestedDict, isEditable, () =>
+              nkvp.Key, nkvp.Value, nestedDict, nestedObjType, isEditable, () =>
               {
                 element[propName] = SerializeDict(nestedDict);
                 syncToViewModel();
@@ -1635,6 +1791,7 @@ public class StatsEditorView : UserControl
     // Boolean
     if (propValue is bool boolVal)
     {
+      var originalBool = boolVal;
       var checkBox = new CheckBox
       {
         IsChecked = boolVal,
@@ -1651,6 +1808,9 @@ public class StatsEditorView : UserControl
           if (s is CheckBox cb)
           {
             var isChecked = cb.IsChecked ?? false;
+            // Skip sync if value hasn't actually changed (avoids false positives on control initialization)
+            if (isChecked == originalBool) return;
+            originalBool = isChecked; // Update so subsequent changes are detected
             cb.Content = isChecked ? "True" : "False";
             element[propName] = isChecked;
             syncToViewModel();
@@ -1661,16 +1821,17 @@ public class StatsEditorView : UserControl
       return fieldStack;
     }
 
-    // String field named "Template" — AutoCompleteBox with entity names
-    if (isEditable && propName.Equals("Template", System.StringComparison.OrdinalIgnoreCase) && propValue is string)
+    // Reference fields — use schema to determine the target type
+    if (isEditable && fieldMeta?.Category == "reference" && propValue is string)
     {
-      var vm = DataContext as StatsEditorViewModel;
-      var instanceNames = vm?.GetTemplateInstanceNames("EntityTemplate")
+      var refType = fieldMeta.Type; // e.g., "EntityTemplate", "MissionTemplate"
+      var instanceNames = vm?.GetTemplateInstanceNames(refType)
         ?? new System.Collections.Generic.List<string>();
 
+      var originalText = propValue?.ToString() ?? "";
       var autoComplete = new AutoCompleteBox
       {
-        Text = propValue?.ToString() ?? "",
+        Text = originalText,
         ItemsSource = instanceNames,
         FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
         MinimumPrefixLength = 0,
@@ -1683,6 +1844,39 @@ public class StatsEditorView : UserControl
       autoComplete.GetObservable(AutoCompleteBox.TextProperty)
         .Subscribe(text =>
         {
+          // Skip sync if text hasn't actually changed (avoids false positives on control initialization)
+          if (text == originalText) return;
+          element[propName] = text ?? "";
+          syncToViewModel();
+        });
+      fieldStack.Children.Add(autoComplete);
+      return fieldStack;
+    }
+
+    // Fallback: String field named "Template" — AutoCompleteBox with entity names (legacy behavior)
+    if (isEditable && propName.Equals("Template", System.StringComparison.OrdinalIgnoreCase) && propValue is string)
+    {
+      var instanceNames = vm?.GetTemplateInstanceNames("EntityTemplate")
+        ?? new System.Collections.Generic.List<string>();
+
+      var originalText = propValue?.ToString() ?? "";
+      var autoComplete = new AutoCompleteBox
+      {
+        Text = originalText,
+        ItemsSource = instanceNames,
+        FilterMode = AutoCompleteFilterMode.ContainsOrdinal,
+        MinimumPrefixLength = 0,
+        Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+        BorderThickness = new Thickness(1),
+        FontSize = 12
+      };
+      autoComplete.GetObservable(AutoCompleteBox.TextProperty)
+        .Subscribe(text =>
+        {
+          // Skip sync if text hasn't actually changed (avoids false positives on control initialization)
+          if (text == originalText) return;
           element[propName] = text ?? "";
           syncToViewModel();
         });
@@ -1693,9 +1887,10 @@ public class StatsEditorView : UserControl
     // Other primitives
     if (isEditable)
     {
+      var originalText = propValue?.ToString() ?? "";
       var textBox = new TextBox
       {
-        Text = propValue?.ToString() ?? "",
+        Text = originalText,
         Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
         Foreground = Brushes.White,
         BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
@@ -1707,6 +1902,8 @@ public class StatsEditorView : UserControl
       textBox.TextChanged += (_, _) =>
       {
         var text = textBox.Text ?? "";
+        // Skip sync if text hasn't actually changed (avoids false positives on control initialization)
+        if (text == originalText) return;
         if (originalValue is long)
           element[propName] = long.TryParse(text, out var l) ? l : (object)text;
         else if (originalValue is double)
@@ -2031,8 +2228,9 @@ public class StatsEditorView : UserControl
       var fieldsPanel = new StackPanel { Spacing = 6, Margin = new Thickness(8, 4, 0, 0) };
       foreach (var kvp in fields.ToList())
       {
+        // Serialized nodes don't have schema, pass null for parentClassName
         fieldsPanel.Children.Add(CreateObjectFieldControl(
-          kvp.Key, kvp.Value, fields, isEditable, SyncNode));
+          kvp.Key, kvp.Value, fields, null, isEditable, SyncNode));
       }
       panel.Children.Add(fieldsPanel);
     }

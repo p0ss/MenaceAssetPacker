@@ -347,7 +347,7 @@ public sealed class MeshOutlineGenerator
 						outlines.RemoveAt(k--);
 					}
 				}*/
-				resultLine.Add(m_vertices[vertex].AsVector2());
+				resultLine.Add(VectorExtensions.AsVector2(m_vertices[vertex]));
 			}
 			result.Add(resultLine.ToArray());
 		}

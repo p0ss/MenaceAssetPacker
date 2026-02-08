@@ -18,11 +18,15 @@ public sealed class StatsEditorViewModel : ViewModelBase
     private readonly ModpackManager _modpackManager;
     private readonly AssetReferenceResolver _assetResolver;
     private readonly SchemaService _schemaService;
+    private readonly ReferenceGraphService _referenceGraphService;
     private string? _assetOutputPath;
 
     // Change tracking: key = "{TemplateTypeName}/{instanceName}", value = { "field": value }
     private readonly Dictionary<string, Dictionary<string, object?>> _pendingChanges = new();
     private readonly Dictionary<string, Dictionary<string, object?>> _stagingOverrides = new();
+
+    // Fields to remove from staging (set back to vanilla): key = composite key, value = set of field names
+    private readonly Dictionary<string, HashSet<string>> _pendingRemovals = new();
 
     // Clone tracking: compositeKey ("TemplateType/newName") → sourceName
     private readonly Dictionary<string, string> _cloneDefinitions = new();
@@ -44,8 +48,10 @@ public sealed class StatsEditorViewModel : ViewModelBase
         _modpackManager = new ModpackManager();
         _assetResolver = new AssetReferenceResolver();
         _schemaService = new SchemaService();
+        _referenceGraphService = new ReferenceGraphService();
         TreeNodes = new ObservableCollection<TreeNodeViewModel>();
         AvailableModpacks = new ObservableCollection<string>();
+        Backlinks = new ObservableCollection<ReferenceEntry>();
 
         LoadData();
     }
@@ -79,6 +85,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
             schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "schema.json");
         _schemaService.LoadSchema(schemaPath);
 
+        // Build or load reference graph for "What Links Here" functionality
+        _referenceGraphService.LoadOrBuild(_modpackManager.VanillaDataPath, _schemaService);
+
         // Determine asset output path via centralized setting
         _assetOutputPath = AppSettings.GetEffectiveAssetsPath();
 
@@ -92,6 +101,12 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
     public ObservableCollection<TreeNodeViewModel> TreeNodes { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
+    public ObservableCollection<ReferenceEntry> Backlinks { get; }
+
+    /// <summary>
+    /// Exposes the reference graph service for cross-view queries (e.g., from AssetBrowserViewModel).
+    /// </summary>
+    public ReferenceGraphService ReferenceGraphService => _referenceGraphService;
 
     private bool _showVanillaDataWarning;
     public bool ShowVanillaDataWarning
@@ -111,6 +126,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 FlushCurrentEdits();
                 this.RaiseAndSetIfChanged(ref _currentModpackName, value);
                 _pendingChanges.Clear();
+                _pendingRemovals.Clear();
                 LoadStagingOverrides();
                 // Re-render current node with new overrides
                 if (_selectedNode?.Template != null)
@@ -162,6 +178,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         {
             VanillaProperties = null;
             ModifiedProperties = null;
+            Backlinks.Clear();
             return;
         }
 
@@ -194,6 +211,32 @@ public sealed class StatsEditorViewModel : ViewModelBase
         VanillaProperties = properties;
         ModifiedProperties = modified;
         _suppressPropertyUpdates = false;
+
+        // Debug: log property keys
+        if (node.Template is DynamicDataTemplate dt)
+        {
+            ModkitLog.Info($"[OnNodeSelected] {dt.TemplateTypeName ?? "?"} '{node.Template.Name}' has {properties.Count} properties");
+            if (dt.TemplateTypeName == "ArmyTemplate")
+            {
+                foreach (var propKey in properties.Keys)
+                {
+                    var val = properties[propKey];
+                    var typeStr = val?.GetType().Name ?? "null";
+                    if (val is System.Text.Json.JsonElement je)
+                        typeStr = $"JsonElement({je.ValueKind})";
+                    ModkitLog.Info($"  - {propKey}: {typeStr}");
+                }
+            }
+        }
+
+        // Populate backlinks ("What Links Here")
+        Backlinks.Clear();
+        if (node.Template is DynamicDataTemplate dyn && !string.IsNullOrEmpty(dyn.TemplateTypeName))
+        {
+            var backlinks = _referenceGraphService.GetTemplateBacklinks(dyn.TemplateTypeName, node.Template.Name);
+            foreach (var entry in backlinks)
+                Backlinks.Add(entry);
+        }
     }
 
     private void LoadStagingOverrides()
@@ -341,6 +384,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
         // This prevents false diffs from type mismatches, TextChanged events
         // during render, or stale staging values after data re-extraction.
         var diffs = new Dictionary<string, object?>();
+        var removals = new HashSet<string>();
+
         foreach (var fieldName in _userEditedFields)
         {
             if (!_modifiedProperties.TryGetValue(fieldName, out var modVal))
@@ -349,13 +394,36 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 continue;
 
             if (!ValuesEqual(vanillaVal, modVal))
+            {
                 diffs[fieldName] = modVal;
+            }
+            else
+            {
+                // Field was set back to vanilla — mark for removal from staging
+                // Only relevant if there's an existing staging override for this field
+                if (_stagingOverrides.TryGetValue(key, out var existingOverrides) &&
+                    existingOverrides.ContainsKey(fieldName))
+                {
+                    removals.Add(fieldName);
+                }
+            }
         }
 
         if (diffs.Count > 0)
             _pendingChanges[key] = diffs;
         else
             _pendingChanges.Remove(key);
+
+        if (removals.Count > 0)
+        {
+            if (!_pendingRemovals.TryGetValue(key, out var existingRemovals))
+            {
+                existingRemovals = new HashSet<string>();
+                _pendingRemovals[key] = existingRemovals;
+            }
+            foreach (var r in removals)
+                existingRemovals.Add(r);
+        }
 
         _userEditedFields.Clear();
     }
@@ -511,6 +579,132 @@ public sealed class StatsEditorViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Check if a class name is a known embedded class with schema.
+    /// </summary>
+    public bool HasEmbeddedClassSchema(string className)
+    {
+        return _schemaService.IsLoaded && _schemaService.IsEmbeddedClass(className);
+    }
+
+    /// <summary>
+    /// Get all fields for an embedded class from the schema.
+    /// </summary>
+    public List<SchemaService.FieldMeta> GetEmbeddedClassFields(string className)
+    {
+        if (!_schemaService.IsLoaded)
+            return new List<SchemaService.FieldMeta>();
+        return _schemaService.GetAllEmbeddedClassFields(className);
+    }
+
+    /// <summary>
+    /// Get the element type for a collection field on the current template.
+    /// Returns null if not a collection or no element type defined.
+    /// </summary>
+    public string? GetCollectionElementType(string fieldName)
+    {
+        if (_selectedNode?.Template is not DynamicDataTemplate dyn)
+            return null;
+        var templateTypeName = dyn.TemplateTypeName ?? "";
+        if (!_schemaService.IsLoaded || string.IsNullOrEmpty(templateTypeName))
+            return null;
+        var meta = _schemaService.GetFieldMetadata(templateTypeName, fieldName);
+        if (meta == null || meta.Category != "collection")
+            return null;
+        return string.IsNullOrEmpty(meta.ElementType) ? null : meta.ElementType;
+    }
+
+    /// <summary>
+    /// Get the element type for a collection field on an embedded class.
+    /// Returns null if not a collection or no element type defined.
+    /// </summary>
+    public string? GetEmbeddedCollectionElementType(string className, string fieldName)
+    {
+        if (!_schemaService.IsLoaded)
+            return null;
+        var meta = _schemaService.GetEmbeddedClassFieldMetadata(className, fieldName);
+        if (meta == null || meta.Category != "collection")
+            return null;
+        return string.IsNullOrEmpty(meta.ElementType) ? null : meta.ElementType;
+    }
+
+    /// <summary>
+    /// Get field metadata for a field on the current template.
+    /// </summary>
+    public SchemaService.FieldMeta? GetFieldMetadata(string fieldName)
+    {
+        if (_selectedNode?.Template is not DynamicDataTemplate dyn)
+            return null;
+        var templateTypeName = dyn.TemplateTypeName ?? "";
+        if (!_schemaService.IsLoaded || string.IsNullOrEmpty(templateTypeName))
+            return null;
+        return _schemaService.GetFieldMetadata(templateTypeName, fieldName);
+    }
+
+    /// <summary>
+    /// Get field metadata for a field on an embedded class.
+    /// </summary>
+    public SchemaService.FieldMeta? GetEmbeddedFieldMetadata(string className, string fieldName)
+    {
+        if (!_schemaService.IsLoaded)
+            return null;
+        return _schemaService.GetEmbeddedClassFieldMetadata(className, fieldName);
+    }
+
+    /// <summary>
+    /// Resolve an enum value to its name using the schema.
+    /// </summary>
+    public string? ResolveEnumName(string enumTypeName, int value)
+    {
+        if (!_schemaService.IsLoaded)
+            return null;
+        return _schemaService.ResolveEnumName(enumTypeName, value);
+    }
+
+    /// <summary>
+    /// Create a default element for an embedded class with schema-defined default values.
+    /// </summary>
+    public Dictionary<string, object?> CreateDefaultElement(string elementTypeName)
+    {
+        var result = new Dictionary<string, object?>();
+
+        if (!_schemaService.IsLoaded || !_schemaService.IsEmbeddedClass(elementTypeName))
+            return result;
+
+        foreach (var field in _schemaService.GetAllEmbeddedClassFields(elementTypeName))
+        {
+            result[field.Name] = GetDefaultValueForField(field);
+        }
+
+        return result;
+    }
+
+    private object? GetDefaultValueForField(SchemaService.FieldMeta field)
+    {
+        return field.Category switch
+        {
+            "primitive" => field.Type.ToLowerInvariant() switch
+            {
+                "int" or "int32" => 0L,
+                "float" or "single" => 0.0,
+                "bool" or "boolean" => false,
+                "string" => "",
+                _ => null
+            },
+            "string" => "",
+            "enum" => 0L, // First enum value
+            "reference" => "", // Empty template reference
+            "collection" => CreateEmptyJsonArray(),
+            _ => null
+        };
+    }
+
+    private static System.Text.Json.JsonElement CreateEmptyJsonArray()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse("[]");
+        return doc.RootElement.Clone();
+    }
+
+    /// <summary>
     /// Returns all instance names for a given template type, sorted. Cached per session.
     /// </summary>
     public List<string> GetTemplateInstanceNames(string templateTypeName)
@@ -606,6 +800,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
         // Flush whatever's on screen right now
         FlushCurrentEdits();
 
+        // Apply pending removals to staging overrides first
+        foreach (var kvp in _pendingRemovals)
+        {
+            if (_stagingOverrides.TryGetValue(kvp.Key, out var existingOverrides))
+            {
+                foreach (var fieldName in kvp.Value)
+                    existingOverrides.Remove(fieldName);
+
+                // Remove the instance entirely if no fields remain
+                if (existingOverrides.Count == 0)
+                    _stagingOverrides.Remove(kvp.Key);
+            }
+        }
+
         // Merge staging overrides + pending changes, grouped by template type
         var byType = new Dictionary<string, Dictionary<string, Dictionary<string, object?>>>();
 
@@ -640,14 +848,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
         AddToByType(_stagingOverrides);
         AddToByType(_pendingChanges);
 
-        if (byType.Count == 0)
+        // Track which template types had removals (may need to rewrite even if empty)
+        var typesWithRemovals = new HashSet<string>();
+        foreach (var kvp in _pendingRemovals)
         {
-            SaveStatus = "No changes to save";
-            return;
+            var slash = kvp.Key.IndexOf('/');
+            if (slash >= 0)
+                typesWithRemovals.Add(kvp.Key[..slash]);
         }
 
         // Serialize and write each template type
         int fileCount = 0;
+        int removedCount = 0;
+
+        // Write template types that have changes
         foreach (var typeKvp in byType)
         {
             var root = new JsonObject();
@@ -660,12 +874,33 @@ public sealed class StatsEditorViewModel : ViewModelBase
                     if (node != null)
                         instanceObj[fieldKvp.Key] = node;
                 }
-                root[instanceKvp.Key] = instanceObj;
+                // Only add instance if it has fields
+                if (instanceObj.Count > 0)
+                    root[instanceKvp.Key] = instanceObj;
             }
 
-            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-            _modpackManager.SaveStagingTemplate(_currentModpackName, typeKvp.Key, json);
-            fileCount++;
+            // Only write file if there are instances with fields
+            if (root.Count > 0)
+            {
+                var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                _modpackManager.SaveStagingTemplate(_currentModpackName, typeKvp.Key, json);
+                fileCount++;
+            }
+            else if (typesWithRemovals.Contains(typeKvp.Key))
+            {
+                // All fields were removed — delete the staging file
+                _modpackManager.DeleteStagingTemplate(_currentModpackName, typeKvp.Key);
+                removedCount++;
+            }
+
+            typesWithRemovals.Remove(typeKvp.Key);
+        }
+
+        // Handle template types that only had removals (not in byType anymore)
+        foreach (var templateType in typesWithRemovals)
+        {
+            _modpackManager.DeleteStagingTemplate(_currentModpackName, templateType);
+            removedCount++;
         }
 
         // Move pending into staging overrides, clear pending
@@ -680,11 +915,19 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 existing[field.Key] = field.Value;
         }
         _pendingChanges.Clear();
+        _pendingRemovals.Clear();
 
         // Persist clone definitions
         SaveCloneDefinitions();
 
-        SaveStatus = $"Saved {fileCount} template file(s) to '{_currentModpackName}'";
+        if (fileCount > 0 && removedCount > 0)
+            SaveStatus = $"Saved {fileCount} file(s), removed {removedCount} override(s) from '{_currentModpackName}'";
+        else if (fileCount > 0)
+            SaveStatus = $"Saved {fileCount} template file(s) to '{_currentModpackName}'";
+        else if (removedCount > 0)
+            SaveStatus = $"Removed {removedCount} override(s) from '{_currentModpackName}'";
+        else
+            SaveStatus = "No changes to save";
     }
 
     private void SaveCloneDefinitions()
@@ -1084,8 +1327,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
             System.Text.Json.JsonValueKind.True => true,
             System.Text.Json.JsonValueKind.False => false,
             System.Text.Json.JsonValueKind.Null => null,
-            System.Text.Json.JsonValueKind.Array => element, // Keep arrays as JsonElement for View to handle
-            System.Text.Json.JsonValueKind.Object => element, // Keep objects as JsonElement for View to handle
+            // Clone arrays/objects so they survive after the parent JsonDocument is disposed
+            System.Text.Json.JsonValueKind.Array => element.Clone(),
+            System.Text.Json.JsonValueKind.Object => element.Clone(),
             _ => element.ToString()
         };
     }
@@ -1258,8 +1502,9 @@ public sealed class StatsEditorViewModel : ViewModelBase
         var rootDict = new Dictionary<string, TreeNodeViewModel>();
 
         // Get all template types, sorted by inheritance depth descending (most specific first)
+        // Exclude "DataTemplate" - it contains duplicate entries with only base fields
         var templateTypes = _dataLoader.GetTemplateTypes()
-            .Where(t => t != "AssetReferences" && t != "menu")
+            .Where(t => t != "AssetReferences" && t != "menu" && t != "DataTemplate" && t != "references")
             .OrderByDescending(t => _schemaService.GetInheritanceDepth(t))
             .ToList();
 

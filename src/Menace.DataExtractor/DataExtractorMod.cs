@@ -6,19 +6,20 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "4.6.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "4.8.0";
+        private const string ExtractorVersion = "6.0.0"; // Schema-driven extraction
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -57,6 +58,35 @@ namespace Menace.DataExtractor
         // il2cpp_object_get_class on data pointers which can SIGSEGV on stale/garbage pointers)
         private readonly Dictionary<string, IntPtr> _il2cppClassPtrCache = new(StringComparer.Ordinal);
 
+        // DevConsole reflection (for showing extraction progress in-game)
+        private static Type _devConsoleType;
+        private static MethodInfo _devConsoleLog;
+        private static MethodInfo _devConsoleShowPanel;
+        private static PropertyInfo _devConsoleIsVisible;
+        private static bool _devConsoleAvailable;
+
+        // Schema-driven extraction: loaded from embedded schema.json
+        private Dictionary<string, SchemaType> _schemaTypes = new();
+        private Dictionary<string, SchemaType> _embeddedClasses = new();
+        private bool _schemaLoaded = false;
+
+        private class SchemaType
+        {
+            public string Name { get; set; }
+            public string BaseClass { get; set; }
+            public bool IsAbstract { get; set; }
+            public List<SchemaField> Fields { get; set; } = new();
+        }
+
+        private class SchemaField
+        {
+            public string Name { get; set; }
+            public string Type { get; set; }
+            public uint Offset { get; set; }
+            public string Category { get; set; }
+            public string ElementType { get; set; }
+        }
+
         public override void OnInitializeMelon()
         {
             var modsDir = Path.GetDirectoryName(typeof(DataExtractorMod).Assembly.Location) ?? "";
@@ -71,8 +101,11 @@ namespace Menace.DataExtractor
 
             _tryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
+            // Load embedded schema for schema-driven extraction
+            LoadEmbeddedSchema();
+
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg($"Menace Data Extractor v{ExtractorVersion} (Full Direct-Read + List extraction)");
+            LoggerInstance.Msg($"Menace Data Extractor v{ExtractorVersion} (Schema-Driven Extraction)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
             PlayerLog($"Data Extractor v{ExtractorVersion} active");
@@ -87,7 +120,203 @@ namespace Menace.DataExtractor
             }
 
             LoggerInstance.Msg("Game data changed or no previous extraction, running extraction...");
+
+            // Try to find DevConsole via reflection (from ModpackLoader)
+            InitDevConsoleReflection();
+
+            // Open the dev console to show extraction progress to the player
+            ShowExtractionProgress("Data Extractor: Game data changed, re-extracting templates...");
+            ShowExtractionProgress("This may take a moment. The game will resume normally once complete.");
+
             MelonCoroutines.Start(RunExtractionCoroutine(currentFingerprint));
+        }
+
+        /// <summary>
+        /// Load the embedded schema.json for schema-driven extraction.
+        /// The schema defines field offsets for types that aren't exposed via IL2CppInterop.
+        /// </summary>
+        private void LoadEmbeddedSchema()
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                using var stream = assembly.GetManifestResourceStream("schema.json");
+                if (stream == null)
+                {
+                    LoggerInstance.Warning("Schema not found in embedded resources");
+                    return;
+                }
+
+                using var reader = new StreamReader(stream);
+                var json = reader.ReadToEnd();
+                var root = JObject.Parse(json);
+
+                // Parse template types (top-level templates)
+                if (root["template_types"] is JObject templateTypes)
+                {
+                    foreach (var kvp in templateTypes)
+                    {
+                        var typeName = kvp.Key;
+                        var typeData = kvp.Value as JObject;
+                        if (typeData == null) continue;
+
+                        var schemaType = ParseSchemaType(typeName, typeData);
+                        if (schemaType != null)
+                            _schemaTypes[typeName] = schemaType;
+                    }
+                }
+
+                // Parse embedded classes (non-template types like Army, ArmyEntry)
+                if (root["embedded_classes"] is JObject embeddedClasses)
+                {
+                    foreach (var kvp in embeddedClasses)
+                    {
+                        var className = kvp.Key;
+                        var classData = kvp.Value as JObject;
+                        if (classData == null) continue;
+
+                        var schemaType = ParseSchemaType(className, classData);
+                        if (schemaType != null)
+                            _embeddedClasses[className] = schemaType;
+                    }
+                }
+
+                _schemaLoaded = true;
+                LoggerInstance.Msg($"Schema loaded: {_schemaTypes.Count} template types, {_embeddedClasses.Count} embedded classes");
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Error($"Failed to load schema: {ex.Message}");
+            }
+        }
+
+        private SchemaType ParseSchemaType(string name, JObject data)
+        {
+            var schemaType = new SchemaType
+            {
+                Name = name,
+                BaseClass = data["base_class"]?.ToString(),
+                IsAbstract = data["is_abstract"]?.Value<bool>() ?? false
+            };
+
+            if (data["fields"] is JArray fields)
+            {
+                foreach (var fieldToken in fields)
+                {
+                    var fieldData = fieldToken as JObject;
+                    if (fieldData == null) continue;
+
+                    var offsetStr = fieldData["offset"]?.ToString() ?? "0x0";
+                    uint offset = 0;
+                    if (offsetStr.StartsWith("0x"))
+                        uint.TryParse(offsetStr.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out offset);
+                    else
+                        uint.TryParse(offsetStr, out offset);
+
+                    schemaType.Fields.Add(new SchemaField
+                    {
+                        Name = fieldData["name"]?.ToString(),
+                        Type = fieldData["type"]?.ToString(),
+                        Offset = offset,
+                        Category = fieldData["category"]?.ToString(),
+                        ElementType = fieldData["element_type"]?.ToString()
+                    });
+                }
+            }
+
+            return schemaType;
+        }
+
+        private bool _manualExtractionInProgress = false;
+        private bool _isManualExtraction = false; // True when triggered by F11, skips clean and merges results
+
+        /// <summary>
+        /// Allow manual extraction trigger via F11 key.
+        /// Useful for extracting templates that are only loaded in specific game states (e.g., combat).
+        /// Manual extraction is ADDITIVE - it merges new templates with existing extracted data.
+        /// </summary>
+        public override void OnUpdate()
+        {
+            // F11 = trigger manual extraction (captures templates currently in memory)
+            // Can be used to extract combat templates while in battle
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11) && !_manualExtractionInProgress)
+            {
+                _manualExtractionInProgress = true;
+                _isManualExtraction = true;
+                LoggerInstance.Msg("=== MANUAL EXTRACTION TRIGGERED (F11) ===");
+                LoggerInstance.Msg("Additive mode: will merge with existing extracted data");
+                ShowExtractionProgress("Manual extraction triggered - merging with existing data...");
+
+                var fingerprint = ComputeGameFingerprint(
+                    Directory.GetParent(Path.GetDirectoryName(typeof(DataExtractorMod).Assembly.Location) ?? "")?.FullName ?? "");
+                MelonCoroutines.Start(RunExtractionCoroutine(fingerprint));
+            }
+        }
+
+        /// <summary>
+        /// Try to find DevConsole type via reflection from ModpackLoader.
+        /// This allows showing extraction progress in-game when both mods are loaded.
+        /// </summary>
+        private void InitDevConsoleReflection()
+        {
+            if (_devConsoleType != null) return; // Already initialized
+
+            try
+            {
+                // Look for DevConsole in ALL loaded assemblies
+                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                LoggerInstance.Msg($"[DevConsole] Searching {assemblies.Length} assemblies...");
+
+                foreach (var asm in assemblies)
+                {
+                    try
+                    {
+                        // Try to find DevConsole type directly
+                        var dcType = asm.GetType("Menace.SDK.DevConsole");
+                        if (dcType != null)
+                        {
+                            LoggerInstance.Msg($"[DevConsole] Found in: {asm.GetName().Name}");
+                            _devConsoleType = dcType;
+                            _devConsoleLog = dcType.GetMethod("Log", BindingFlags.Public | BindingFlags.Static);
+                            _devConsoleShowPanel = dcType.GetMethod("ShowPanel", BindingFlags.Public | BindingFlags.Static);
+                            _devConsoleIsVisible = dcType.GetProperty("IsVisible", BindingFlags.Public | BindingFlags.Static);
+                            _devConsoleAvailable = _devConsoleLog != null && _devConsoleShowPanel != null;
+                            LoggerInstance.Msg($"[DevConsole] Log={_devConsoleLog != null}, ShowPanel={_devConsoleShowPanel != null}, IsVisible={_devConsoleIsVisible != null}");
+                            return;
+                        }
+                    }
+                    catch { }
+                }
+                LoggerInstance.Msg("[DevConsole] Type 'Menace.SDK.DevConsole' not found in any assembly");
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[DevConsole] Init failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Show extraction progress message in the DevConsole (if available) and MelonLogger.
+        /// Opens the Log panel automatically so the player can see what's happening.
+        /// </summary>
+        private void ShowExtractionProgress(string message)
+        {
+            LoggerInstance.Msg(message);
+
+            if (_devConsoleAvailable)
+            {
+                try
+                {
+                    // Open the Log panel if not already visible
+                    _devConsoleShowPanel?.Invoke(null, new object[] { "Log" });
+                    _devConsoleLog?.Invoke(null, new object[] { $"[DataExtractor] {message}" });
+                }
+                catch (Exception ex)
+                {
+                    LoggerInstance.Warning($"[DevConsole] Call failed: {ex.Message}");
+                    _devConsoleAvailable = false; // Don't keep trying
+                }
+            }
         }
 
         /// <summary>
@@ -174,18 +403,27 @@ namespace Menace.DataExtractor
         {
             try
             {
-                File.AppendAllText(_debugLogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
+                using var sw = new StreamWriter(_debugLogPath, append: true);
+                sw.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+                sw.Flush();
             }
             catch { }
         }
 
         // Shared state between PrepareExtraction and the phase loops
         private List<Type> _pendingTemplateTypes;
-        private Dictionary<string, List<UnityEngine.Object>> _pendingObjectsByType;
+
+        // Cached method references for incremental loading (set during PrepareExtraction)
+        private MethodInfo _getAllMethod;
+        private MethodInfo _getBaseFolderMethod;
+        private MethodInfo _loadAllMethod;
+        private MethodInfo _findObjectsMethod;
+        private Type _loaderType;
 
         private System.Collections.IEnumerator RunExtractionCoroutine(string fingerprint = null)
         {
             LoggerInstance.Msg("Waiting for game to load...");
+            ShowExtractionProgress("Waiting for game to initialize...");
 
             // Wait ~8 seconds on the main thread (yield each frame)
             float waited = 0f;
@@ -195,139 +433,290 @@ namespace Menace.DataExtractor
                 waited += Time.deltaTime;
             }
 
+            // Retry DevConsole lookup after game has loaded (ModpackLoader may have initialized by now)
+            if (!_devConsoleAvailable)
+            {
+                InitDevConsoleReflection();
+            }
+
+            ShowExtractionProgress("Starting template extraction...");
+
             for (int attempt = 1; attempt <= 60; attempt++)
             {
                 if (PrepareExtraction())
                 {
-                    // Extraction is ready — run phases with yields between types
-                    // so the game loop isn't starved
+                    // Extraction is ready — process templates in TWO PASSES:
+                    // Pass 1: Templates WITH Resource paths (loads parent templates)
+                    // Pass 2: Templates WITHOUT paths ("loose" templates, embedded in parents)
+                    // This ensures loose templates like ArmyListTemplate are findable after
+                    // their parent templates (FactionTemplate) are loaded.
 
-                    // ========== PHASE 1: Primitives ==========
-                    DebugLog("=== PHASE 1: Primitive properties only ===");
-                    var allTypeContexts = new List<TypeContext>();
-                    int phase1Success = 0;
+                    DebugLog("=== INCREMENTAL EXTRACTION: Two-pass mode ===");
 
-                    foreach (var templateType in _pendingTemplateTypes)
+                    // Partition templates by whether they have a GetBaseFolder path
+                    var templatesWithPath = new List<Type>();
+                    var templatesWithoutPath = new List<Type>();
+
+                    foreach (var t in _pendingTemplateTypes)
                     {
-                        if (!_pendingObjectsByType.TryGetValue(templateType.Name, out var objects) || objects.Count == 0)
+                        string path = null;
+                        try
                         {
-                            DebugLog($">>> P1 SKIP {templateType.Name} (no instances found)");
+                            path = _getBaseFolderMethod?.Invoke(null, new object[] { t }) as string;
+                        }
+                        catch { }
+
+                        if (!string.IsNullOrEmpty(path))
+                            templatesWithPath.Add(t);
+                        else
+                            templatesWithoutPath.Add(t);
+                    }
+
+                    DebugLog($"  Pass 1: {templatesWithPath.Count} templates with paths");
+                    DebugLog($"  Pass 2: {templatesWithoutPath.Count} loose templates (embedded in parents)");
+
+                    int totalTypes = _pendingTemplateTypes.Count;
+                    int successCount = 0;
+                    int skippedCount = 0;
+                    int typeIndex = 0;
+
+                    // === PASS 1: Templates with paths ===
+                    DebugLog("=== PASS 1: Templates with Resource paths ===");
+                    foreach (var templateType in templatesWithPath)
+                    {
+                        typeIndex++;
+                        ShowExtractionProgress($"[Pass 1] {templateType.Name}... [{typeIndex}/{totalTypes}]");
+
+                        // === LOAD: Get objects for this type only ===
+                        DebugLog($">>> LOAD {templateType.Name}");
+                        var objects = LoadTypeObjects(templateType);
+
+                        if (objects == null || objects.Count == 0)
+                        {
+                            DebugLog($">>> SKIP {templateType.Name} (no instances)");
+                            skippedCount++;
+                            yield return null;
                             continue;
                         }
 
-                        DebugLog($">>> P1 START {templateType.Name}");
+                        // === PHASE 1: Extract primitives ===
+                        DebugLog($">>> P1 START {templateType.Name} ({objects.Count} instances)");
+                        TypeContext typeCtx = null;
                         try
                         {
-                            var typeCtx = ExtractTypePhase1(templateType, objects);
-                            if (typeCtx != null && typeCtx.Instances.Count > 0)
-                            {
-                                allTypeContexts.Add(typeCtx);
-                                var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
-                                SaveSingleTemplateType(templateType.Name, dataList);
-                                phase1Success++;
-                                DebugLog($"  SAVED {typeCtx.Instances.Count} instances (primitives)");
-                                LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances (primitives)");
-                            }
-                            else
-                            {
-                                DebugLog($"  No instances extracted");
-                            }
+                            typeCtx = ExtractTypePhase1(templateType, objects);
                         }
                         catch (Exception ex)
                         {
                             DebugLog($"  P1 EXCEPTION: {ex.Message}");
+                            ShowExtractionProgress($"ERROR extracting {templateType.Name}: {ex.Message}");
                         }
-                        DebugLog($"<<< P1 END {templateType.Name}");
 
-                        yield return null; // Give game a frame between types
-                    }
-
-                    DebugLog($"=== Phase 1 complete: {phase1Success} types saved ===");
-                    LoggerInstance.Msg($"Phase 1 (primitives): {phase1Success} types saved");
-
-                    // ========== PHASE 2: References ==========
-                    DebugLog("=== PHASE 2: Reference properties ===");
-                    int phase2Success = 0;
-
-                    foreach (var typeCtx in allTypeContexts)
-                    {
-                        DebugLog($">>> P2 START {typeCtx.TemplateType.Name}");
-                        try
+                        if (typeCtx == null || typeCtx.Instances.Count == 0)
                         {
-                            bool anyRefs = false;
-                            foreach (var inst in typeCtx.Instances)
-                            {
-                                if (FillReferenceProperties(inst, typeCtx.TemplateType))
-                                    anyRefs = true;
-                            }
-
-                            if (anyRefs)
-                            {
-                                var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
-                                SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
-                                DebugLog($"  UPDATED with references");
-                            }
-                            else
-                            {
-                                DebugLog($"  No reference properties to fill");
-                            }
-                            phase2Success++;
+                            DebugLog($">>> SKIP {templateType.Name} (no instances extracted)");
+                            skippedCount++;
+                            objects.Clear();
+                            objects = null;
+                            yield return null;
+                            continue;
                         }
-                        catch (Exception ex)
-                        {
-                            DebugLog($"  P2 EXCEPTION: {ex.Message}");
-                        }
-                        DebugLog($"<<< P2 END {typeCtx.TemplateType.Name}");
 
+                        // Yield after phase 1 to give game a frame
                         yield return null;
-                    }
 
-                    DebugLog($"=== Phase 2 complete: {phase2Success}/{allTypeContexts.Count} types updated ===");
-                    LoggerInstance.Msg($"Phase 2 (references): {phase2Success}/{allTypeContexts.Count} types updated");
+                        // === PHASE 2: Fill references ===
+                        DebugLog($">>> P2 START {templateType.Name}");
+                        int instIdx = 0;
+                        int yieldCounter = 0;
+                        foreach (var inst in typeCtx.Instances)
+                        {
+                            instIdx++;
+                            try
+                            {
+                                FillReferenceProperties(inst, templateType);
+                            }
+                            catch (Exception instEx)
+                            {
+                                DebugLog($"    P2 instance {instIdx}/{typeCtx.Instances.Count} [{inst.Name}] EXCEPTION: {instEx.Message}");
+                            }
+                            yieldCounter++;
+                        }
 
-                    // ========== PHASE 3: Fix unknown names ==========
-                    DebugLog("=== PHASE 3: Unity .name for remaining unknown names ===");
-                    int phase3Fixed = 0;
+                        // Yield after phase 2 (and give proportional frames for large types)
+                        int extraYields = yieldCounter / 50;
+                        for (int y = 0; y <= extraYields; y++)
+                            yield return null;
 
-                    foreach (var typeCtx in allTypeContexts)
-                    {
-                        bool anyFixed = false;
+                        // === PHASE 3: Fix unknown names ===
+                        DebugLog($">>> P3 START {templateType.Name}");
                         foreach (var inst in typeCtx.Instances)
                         {
                             if (inst.Name != null && inst.Name.StartsWith("unknown_") && inst.Pointer != IntPtr.Zero)
                             {
                                 try
                                 {
-                                    var obj = new UnityEngine.Object(inst.Pointer);
-                                    string unityName = obj.name;
-                                    if (!string.IsNullOrEmpty(unityName))
+                                    var unityObj = objects.FirstOrDefault(o =>
+                                        o is Il2CppObjectBase ib && ib.Pointer == inst.Pointer);
+                                    if (unityObj != null && !string.IsNullOrEmpty(unityObj.name))
                                     {
-                                        inst.Name = unityName;
-                                        inst.Data["name"] = unityName;
-                                        anyFixed = true;
-                                        phase3Fixed++;
+                                        inst.Data["m_ID"] = unityObj.name;
+                                        inst.Name = unityObj.name;
                                     }
                                 }
                                 catch { }
                             }
                         }
 
-                        if (anyFixed)
-                        {
-                            var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
-                            SaveSingleTemplateType(typeCtx.TemplateType.Name, dataList);
-                        }
+                        // === SAVE: Write this type to disk ===
+                        DebugLog($">>> SAVE {templateType.Name}");
+                        var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                        SaveSingleTemplateType(templateType.Name, dataList);
+                        successCount++;
 
+                        LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances");
+                        ShowExtractionProgress($"Saved {templateType.Name} ({typeCtx.Instances.Count}) [{successCount}/{totalTypes - skippedCount}]");
+
+                        // === RELEASE: Clear references so GC can reclaim memory ===
+                        DebugLog($">>> RELEASE {templateType.Name}");
+                        typeCtx.Instances.Clear();
+                        typeCtx = null;
+                        dataList.Clear();
+                        dataList = null;
+                        objects.Clear();
+                        objects = null;
+
+                        // Yield to let GC run and give game a frame
                         yield return null;
                     }
 
-                    DebugLog($"=== Phase 3 complete: fixed {phase3Fixed} names ===");
-                    LoggerInstance.Msg($"Phase 3 (names): fixed {phase3Fixed} unknown names");
+                    // === PASS 2: Loose templates (no Resource path, embedded in parents) ===
+                    // These templates are now findable via FindObjectsOfTypeAll since their
+                    // parent templates (e.g., FactionTemplate) were loaded in Pass 1.
+                    DebugLog("=== PASS 2: Loose templates (embedded in parents) ===");
+                    foreach (var templateType in templatesWithoutPath)
+                    {
+                        typeIndex++;
+                        ShowExtractionProgress($"[Pass 2] {templateType.Name}... [{typeIndex}/{totalTypes}]");
 
-                    _hasSaved = phase1Success > 0;
-                    if (_hasSaved)
+                        // === LOAD: FindObjectsOfTypeAll will find embedded instances ===
+                        DebugLog($">>> LOAD {templateType.Name} (loose template)");
+                        var objects = LoadTypeObjects(templateType);
+
+                        if (objects == null || objects.Count == 0)
+                        {
+                            DebugLog($">>> SKIP {templateType.Name} (no instances found - may need specific game state)");
+                            skippedCount++;
+                            yield return null;
+                            continue;
+                        }
+
+                        // === PHASE 1: Extract primitives ===
+                        DebugLog($">>> P1 START {templateType.Name} ({objects.Count} instances)");
+                        TypeContext typeCtx = null;
+                        try
+                        {
+                            typeCtx = ExtractTypePhase1(templateType, objects);
+                        }
+                        catch (Exception ex)
+                        {
+                            DebugLog($"  P1 EXCEPTION: {ex.Message}");
+                            ShowExtractionProgress($"ERROR extracting {templateType.Name}: {ex.Message}");
+                        }
+
+                        if (typeCtx == null || typeCtx.Instances.Count == 0)
+                        {
+                            DebugLog($">>> SKIP {templateType.Name} (no instances extracted)");
+                            skippedCount++;
+                            objects.Clear();
+                            objects = null;
+                            yield return null;
+                            continue;
+                        }
+
+                        // Yield after phase 1 to give game a frame
+                        yield return null;
+
+                        // === PHASE 2: Fill references ===
+                        DebugLog($">>> P2 START {templateType.Name}");
+                        int instIdx = 0;
+                        int yieldCounter = 0;
+                        foreach (var inst in typeCtx.Instances)
+                        {
+                            instIdx++;
+                            try
+                            {
+                                FillReferenceProperties(inst, templateType);
+                            }
+                            catch (Exception instEx)
+                            {
+                                DebugLog($"    P2 instance {instIdx}/{typeCtx.Instances.Count} [{inst.Name}] EXCEPTION: {instEx.Message}");
+                            }
+                            yieldCounter++;
+                        }
+
+                        // Yield after phase 2 (and give proportional frames for large types)
+                        int extraYields = yieldCounter / 50;
+                        for (int y = 0; y <= extraYields; y++)
+                            yield return null;
+
+                        // === PHASE 3: Fix unknown names ===
+                        DebugLog($">>> P3 START {templateType.Name}");
+                        foreach (var inst in typeCtx.Instances)
+                        {
+                            if (inst.Name != null && inst.Name.StartsWith("unknown_") && inst.Pointer != IntPtr.Zero)
+                            {
+                                try
+                                {
+                                    var unityObj = objects.FirstOrDefault(o =>
+                                        o is Il2CppObjectBase ib && ib.Pointer == inst.Pointer);
+                                    if (unityObj != null && !string.IsNullOrEmpty(unityObj.name))
+                                    {
+                                        inst.Data["m_ID"] = unityObj.name;
+                                        inst.Name = unityObj.name;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+
+                        // === SAVE: Write this type to disk ===
+                        DebugLog($">>> SAVE {templateType.Name}");
+                        var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
+                        SaveSingleTemplateType(templateType.Name, dataList);
+                        successCount++;
+
+                        LoggerInstance.Msg($"  {templateType.Name}: {typeCtx.Instances.Count} instances (loose)");
+                        ShowExtractionProgress($"Saved {templateType.Name} ({typeCtx.Instances.Count}) [{successCount}/{totalTypes - skippedCount}]");
+
+                        // === RELEASE: Clear references so GC can reclaim memory ===
+                        DebugLog($">>> RELEASE {templateType.Name}");
+                        typeCtx.Instances.Clear();
+                        typeCtx = null;
+                        dataList.Clear();
+                        dataList = null;
+                        objects.Clear();
+                        objects = null;
+
+                        // Yield to let GC run and give game a frame
+                        yield return null;
+                    }
+
+                    DebugLog($"=== Extraction complete: {successCount} types saved, {skippedCount} skipped ===");
+                    LoggerInstance.Msg($"Extraction complete: {successCount} types saved, {skippedCount} skipped");
+                    ShowExtractionProgress($"Extraction complete: {successCount} template types saved");
+
+                    _hasSaved = successCount > 0;
+                    if (_hasSaved && !_isManualExtraction)
                         SaveFingerprint(fingerprint);
                     LoggerInstance.Msg($"Extraction completed successfully on attempt {attempt}");
+                    if (_isManualExtraction)
+                        ShowExtractionProgress($"Manual extraction complete! {successCount} types processed (merged with existing).");
+                    else
+                        ShowExtractionProgress($"Extraction complete! {successCount} template types extracted.");
+                    ShowExtractionProgress("Game data is now ready for modding.");
+                    _isManualExtraction = false;
+                    _manualExtractionInProgress = false;
                     yield break;
                 }
 
@@ -504,10 +893,9 @@ namespace Menace.DataExtractor
         }
 
         /// <summary>
-        /// Quick preparation: finds assemblies, enumerates types, loads templates via
-        /// DataTemplateLoader, checks readiness. Stores results in _pendingTemplateTypes
-        /// and _pendingObjectsByType for the phase loops to consume.
-        /// Returns true if ready to extract, false to retry later.
+        /// Preparation phase: discovers template types and caches method references.
+        /// Does NOT load all templates into memory - that happens incrementally during extraction.
+        /// Returns true when ready to begin incremental extraction.
         /// </summary>
         private bool PrepareExtraction()
         {
@@ -532,213 +920,93 @@ namespace Menace.DataExtractor
                 foreach (var t in templateTypes)
                     _il2cppNameToType[t.Name] = t;
 
-                LoggerInstance.Msg($"Found {templateTypes.Count} template types, extracting...");
+                LoggerInstance.Msg($"Found {templateTypes.Count} template types, preparing incremental extraction...");
 
-                // Clean previous extraction results
-                CleanOutputDirectory();
+                // Clean previous extraction results (skip in manual/additive mode)
+                if (!_isManualExtraction)
+                    CleanOutputDirectory();
+                else
+                    DebugLog("Skipping CleanOutputDirectory (additive mode)");
 
-                DebugLog($"=== Extraction started: {templateTypes.Count} types ===");
+                DebugLog($"=== Extraction started: {templateTypes.Count} types (incremental mode) ===");
                 for (int i = 0; i < templateTypes.Count; i++)
                     DebugLog($"  [{i}] {templateTypes[i].Name}");
 
-                // Use DataTemplateLoader.GetAll<T>() — the game's own data pipeline.
-                // Replaces FindObjectsOfTypeAll which crashes on Unity 6000.0.63+
-                var loaderType = gameAssembly.GetTypes()
+                // Cache loader methods for incremental loading
+                _loaderType = gameAssembly.GetTypes()
                     .FirstOrDefault(t => t.Name == "DataTemplateLoader");
 
-                if (loaderType == null)
+                if (_loaderType == null)
                 {
                     DebugLog("  DataTemplateLoader not found — cannot extract");
                     return false;
                 }
 
-                var getAllMethod = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                _getAllMethod = _loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
                     .FirstOrDefault(m => m.Name == "GetAll" && m.IsGenericMethodDefinition);
 
-                if (getAllMethod == null)
+                if (_getAllMethod == null)
                 {
                     DebugLog("  DataTemplateLoader.GetAll<T> not found");
                     return false;
                 }
 
-                DebugLog("=== Loading templates via DataTemplateLoader.GetAll<T> ===");
-                var objectsByType = new Dictionary<string, List<UnityEngine.Object>>();
-                _il2cppClassPtrCache.Clear();
+                // Cache fallback methods
+                _getBaseFolderMethod = _loaderType.GetMethod("GetBaseFolder",
+                    BindingFlags.Public | BindingFlags.Static);
 
-                foreach (var templateType in templateTypes)
+                _loadAllMethod = typeof(Resources).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "LoadAll" && m.IsGenericMethodDefinition &&
+                                    m.GetParameters().Length == 1);
+
+                _findObjectsMethod = typeof(Resources).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "FindObjectsOfTypeAll" && m.IsGenericMethodDefinition);
+
+                // Quick readiness check: load just one key type to verify m_ID is populated
+                var testType = templateTypes.FirstOrDefault(t => t.Name == "WeaponTemplate") ?? templateTypes[0];
+                var testObjects = LoadTypeObjects(testType);
+                if (testObjects == null || testObjects.Count == 0)
                 {
-                    try
-                    {
-                        var getAllGeneric = getAllMethod.MakeGenericMethod(templateType);
-                        var collection = getAllGeneric.Invoke(null, null);
-                        if (collection == null) continue;
-
-                        var objects = EnumerateIl2CppCollection(collection);
-                        if (objects.Count == 0) continue;
-
-                        // Cache IL2CPP class pointer from first valid object
-                        foreach (var obj in objects)
-                        {
-                            if (obj is Il2CppObjectBase il2cppBase && il2cppBase.Pointer != IntPtr.Zero)
-                            {
-                                try
-                                {
-                                    IntPtr klass = IL2CPP.il2cpp_object_get_class(il2cppBase.Pointer);
-                                    if (klass != IntPtr.Zero)
-                                    {
-                                        _il2cppClassPtrCache[templateType.Name] = klass;
-                                        break;
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-
-                        objectsByType[templateType.Name] = objects;
-                    }
-                    catch (Exception ex)
-                    {
-                        DebugLog($"  GetAll<{templateType.Name}> failed: {ex.InnerException?.Message ?? ex.Message}");
-                    }
-                }
-
-                // Fallback: ConversationTemplate uses its own loader, not DataTemplateLoader
-                if (!objectsByType.ContainsKey("ConversationTemplate"))
-                {
-                    try
-                    {
-                        var convType = templateTypes.FirstOrDefault(t => t.Name == "ConversationTemplate");
-                        if (convType != null)
-                        {
-                            List<UnityEngine.Object> convObjects = null;
-
-                            // Strategy 1: ConversationTemplate.LoadAllUncached()
-                            var loadMethod = convType.GetMethod("LoadAllUncached",
-                                BindingFlags.Public | BindingFlags.Static);
-                            if (loadMethod != null)
-                            {
-                                try
-                                {
-                                    var loadResult = loadMethod.Invoke(null, null);
-                                    if (loadResult != null)
-                                        convObjects = EnumerateIl2CppCollection(loadResult);
-                                }
-                                catch (Exception ex)
-                                {
-                                    DebugLog($"  ConversationTemplate.LoadAllUncached failed: {ex.InnerException?.Message ?? ex.Message}");
-                                }
-                            }
-
-                            // Strategy 2: Resources.FindObjectsOfTypeAll<ConversationTemplate>()
-                            if (convObjects == null || convObjects.Count == 0)
-                            {
-                                try
-                                {
-                                    var findMethod = typeof(Resources).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                                        .FirstOrDefault(m => m.Name == "FindObjectsOfTypeAll" && m.IsGenericMethodDefinition);
-                                    if (findMethod != null)
-                                    {
-                                        var findGeneric = findMethod.MakeGenericMethod(convType);
-                                        var findResult = findGeneric.Invoke(null, null);
-                                        if (findResult != null)
-                                            convObjects = EnumerateIl2CppCollection(findResult);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    DebugLog($"  ConversationTemplate FindObjectsOfTypeAll failed: {ex.InnerException?.Message ?? ex.Message}");
-                                }
-                            }
-
-                            if (convObjects != null && convObjects.Count > 0)
-                            {
-                                objectsByType["ConversationTemplate"] = convObjects;
-                                // Cache class pointer
-                                foreach (var obj in convObjects)
-                                {
-                                    if (obj is Il2CppObjectBase il2cppBase &&
-                                        il2cppBase.Pointer != IntPtr.Zero)
-                                    {
-                                        try
-                                        {
-                                            IntPtr klass = IL2CPP.il2cpp_object_get_class(
-                                                il2cppBase.Pointer);
-                                            if (klass != IntPtr.Zero)
-                                            {
-                                                _il2cppClassPtrCache["ConversationTemplate"] = klass;
-                                                break;
-                                            }
-                                        }
-                                        catch { }
-                                    }
-                                }
-                                DebugLog($"  ConversationTemplate: {convObjects.Count} instances (via fallback loader)");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        DebugLog($"  ConversationTemplate fallback failed: {ex.InnerException?.Message ?? ex.Message}");
-                    }
-                }
-
-                DebugLog($"  Loaded {objectsByType.Count} template types via DataTemplateLoader");
-                foreach (var kvp in objectsByType.OrderBy(k => k.Key))
-                    DebugLog($"    {kvp.Key}: {kvp.Value.Count} instances");
-
-                if (objectsByType.Count == 0)
-                {
-                    DebugLog("  No templates loaded yet — will retry");
+                    DebugLog("  Templates not ready yet (no test objects loaded), will retry");
                     return false;
                 }
 
-                // Check if key templates have m_ID populated
-                string[] keyTypes = { "WeaponTemplate", "ArmorTemplate", "AccessoryTemplate",
-                                      "SkillTemplate", "PerkTemplate", "EntityTemplate" };
-                bool allKeyTypesReady = true;
-                int keyTypesChecked = 0;
-
-                foreach (var keyType in keyTypes)
+                // Check m_ID on test objects
+                if (_il2cppClassPtrCache.TryGetValue(testType.Name, out var testClass))
                 {
-                    if (!objectsByType.TryGetValue(keyType, out var keyObjects) || keyObjects.Count == 0)
-                        continue;
-                    if (!_il2cppClassPtrCache.TryGetValue(keyType, out var keyClass))
-                        continue;
-
-                    var sampleObj = keyObjects[0] as Il2CppObjectBase;
-                    if (sampleObj == null || sampleObj.Pointer == IntPtr.Zero) continue;
-
-                    IntPtr idField = FindNativeField(keyClass, "m_ID");
-                    if (idField == IntPtr.Zero) continue;
-
-                    uint idOffset = IL2CPP.il2cpp_field_get_offset(idField);
-                    if (idOffset == 0) continue;
-
-                    keyTypesChecked++;
-                    IntPtr strPtr = Marshal.ReadIntPtr(sampleObj.Pointer + (int)idOffset);
-                    if (strPtr != IntPtr.Zero)
+                    var sampleObj = testObjects[0] as Il2CppObjectBase;
+                    if (sampleObj != null && sampleObj.Pointer != IntPtr.Zero)
                     {
-                        string id = IL2CPP.Il2CppStringToManaged(strPtr);
-                        DebugLog($"  {keyType}[0] m_ID={id}");
-                        if (string.IsNullOrEmpty(id))
-                            allKeyTypesReady = false;
-                    }
-                    else
-                    {
-                        DebugLog($"  {keyType}[0] m_ID=null (not yet initialized)");
-                        allKeyTypesReady = false;
+                        IntPtr idField = FindNativeField(testClass, "m_ID");
+                        if (idField != IntPtr.Zero)
+                        {
+                            uint idOffset = IL2CPP.il2cpp_field_get_offset(idField);
+                            if (idOffset > 0)
+                            {
+                                IntPtr strPtr = Marshal.ReadIntPtr(sampleObj.Pointer + (int)idOffset);
+                                if (strPtr == IntPtr.Zero)
+                                {
+                                    DebugLog($"  {testType.Name}[0] m_ID=null (not yet initialized), will retry");
+                                    return false;
+                                }
+                                string id = IL2CPP.Il2CppStringToManaged(strPtr);
+                                if (string.IsNullOrEmpty(id))
+                                {
+                                    DebugLog($"  {testType.Name}[0] m_ID is empty, will retry");
+                                    return false;
+                                }
+                                DebugLog($"  Readiness check passed: {testType.Name}[0] m_ID={id}");
+                            }
+                        }
                     }
                 }
 
-                if (keyTypesChecked == 0 || !allKeyTypesReady)
-                {
-                    DebugLog("=== Key templates not yet initialized (m_ID is null on some), will retry ===");
-                    return false;
-                }
+                // Clear test objects to free memory before starting real extraction
+                testObjects.Clear();
+                testObjects = null;
 
-                // Ready — store for the phase loops
+                // Ready — store template types for incremental processing
                 _pendingTemplateTypes = templateTypes;
-                _pendingObjectsByType = objectsByType;
                 return true;
             }
             catch (Exception ex)
@@ -747,6 +1015,144 @@ namespace Menace.DataExtractor
                 LoggerInstance.Error($"PrepareExtraction error: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Load objects for a single template type on demand.
+        /// This is called incrementally during extraction to avoid loading everything into memory at once.
+        /// </summary>
+        private List<UnityEngine.Object> LoadTypeObjects(Type templateType)
+        {
+            List<UnityEngine.Object> objects = null;
+            string loadMethodUsed = null;
+
+            // Strategy 1: DataTemplateLoader.GetAll<T>()
+            if (_getAllMethod != null)
+            {
+                try
+                {
+                    var getAllGeneric = _getAllMethod.MakeGenericMethod(templateType);
+                    var collection = getAllGeneric.Invoke(null, null);
+                    if (collection != null)
+                    {
+                        objects = EnumerateIl2CppCollection(collection);
+                        if (objects.Count > 0)
+                            loadMethodUsed = "DataTemplateLoader.GetAll";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    GetAll<{templateType.Name}> failed: {ex.InnerException?.Message ?? ex.Message}");
+                }
+            }
+
+            // Strategy 2: Special handling for ConversationTemplate
+            if ((objects == null || objects.Count == 0) && templateType.Name == "ConversationTemplate")
+            {
+                try
+                {
+                    var loadUncached = templateType.GetMethod("LoadAllUncached",
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (loadUncached != null)
+                    {
+                        var loadResult = loadUncached.Invoke(null, null);
+                        if (loadResult != null)
+                        {
+                            objects = EnumerateIl2CppCollection(loadResult);
+                            if (objects.Count > 0)
+                                loadMethodUsed = "LoadAllUncached";
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    ConversationTemplate.LoadAllUncached failed: {ex.InnerException?.Message ?? ex.Message}");
+                }
+            }
+
+            // Strategy 3: Resources.LoadAll with GetBaseFolder path
+            string basePath = null;
+            if ((objects == null || objects.Count == 0) && _getBaseFolderMethod != null && _loadAllMethod != null)
+            {
+                try
+                {
+                    basePath = _getBaseFolderMethod.Invoke(null, new object[] { templateType }) as string;
+                    if (!string.IsNullOrEmpty(basePath))
+                    {
+                        var loadAllGeneric = _loadAllMethod.MakeGenericMethod(templateType);
+                        var loadResult = loadAllGeneric.Invoke(null, new object[] { basePath });
+                        if (loadResult != null)
+                        {
+                            objects = EnumerateIl2CppCollection(loadResult);
+                            if (objects.Count > 0)
+                                loadMethodUsed = $"Resources.LoadAll(\"{basePath}\")";
+                            else
+                                DebugLog($"    {templateType.Name}: Resources.LoadAll(\"{basePath}\") returned 0 objects");
+                        }
+                    }
+                    else
+                    {
+                        DebugLog($"    {templateType.Name}: GetBaseFolder returned null/empty (no Resources path)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    {templateType.Name} Resources.LoadAll failed: {ex.InnerException?.Message ?? ex.Message}");
+                }
+            }
+
+            // Strategy 4: FindObjectsOfTypeAll (finds already-loaded objects)
+            if ((objects == null || objects.Count == 0) && _findObjectsMethod != null)
+            {
+                try
+                {
+                    var findGeneric = _findObjectsMethod.MakeGenericMethod(templateType);
+                    var findResult = findGeneric.Invoke(null, null);
+                    if (findResult != null)
+                    {
+                        objects = EnumerateIl2CppCollection(findResult);
+                        if (objects.Count > 0)
+                            loadMethodUsed = "FindObjectsOfTypeAll";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    {templateType.Name} FindObjectsOfTypeAll failed: {ex.InnerException?.Message ?? ex.Message}");
+                }
+            }
+
+            // Cache IL2CPP class pointer from first valid object
+            if (objects != null && objects.Count > 0)
+            {
+                foreach (var obj in objects)
+                {
+                    if (obj is Il2CppObjectBase il2cppBase && il2cppBase.Pointer != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            IntPtr klass = IL2CPP.il2cpp_object_get_class(il2cppBase.Pointer);
+                            if (klass != IntPtr.Zero)
+                            {
+                                _il2cppClassPtrCache[templateType.Name] = klass;
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                DebugLog($"  Loaded {objects.Count} {templateType.Name} instances via {loadMethodUsed}");
+            }
+            else
+            {
+                // Log why this type had no instances
+                DebugLog($"  {templateType.Name}: NO INSTANCES FOUND");
+                DebugLog($"    - GetAll: returned 0");
+                DebugLog($"    - Resources path: {basePath ?? "(none)"}");
+                DebugLog($"    - FindObjectsOfTypeAll: returned 0");
+                DebugLog($"    This template may only be loaded in a specific game state (e.g., combat)");
+            }
+
+            return objects ?? new List<UnityEngine.Object>();
         }
 
         /// <summary>
@@ -1159,6 +1565,24 @@ namespace Menace.DataExtractor
                     };
                 }
 
+                // Check if this is a value type struct we can read via IL2CPP metadata
+                if (propType.IsValueType && !propType.IsPrimitive && !propType.IsEnum)
+                {
+                    // Get the IL2CPP type info for this field
+                    IntPtr structFieldType = IL2CPP.il2cpp_field_get_type(field);
+                    if (structFieldType != IntPtr.Zero)
+                    {
+                        int typeEnum = IL2CPP.il2cpp_type_get_type(structFieldType);
+                        if (typeEnum == 17) // IL2CPP_TYPE_VALUETYPE
+                        {
+                            // Read the struct fields recursively
+                            object structValue = ReadValueTypeField(addr, structFieldType, 0);
+                            if (structValue != null)
+                                return structValue;
+                        }
+                    }
+                }
+
                 // Type not supported for direct read
                 return _skipSentinel;
             }
@@ -1387,7 +1811,9 @@ namespace Menace.DataExtractor
                                 else if (ShouldExtractTemplateInline(className))
                                 {
                                     // Template type not extracted standalone — include field data inline
+                                    DebugLog($"      -> reading inline template ({className})...");
                                     var nested = ReadNestedObjectDirect(refPtr, expectedClass, className, 0);
+                                    DebugLog($"      -> inline template ({className}) read complete");
                                     if (nested is Dictionary<string, object> nestedDict)
                                     {
                                         nestedDict["name"] = assetName ?? className;
@@ -1397,7 +1823,7 @@ namespace Menace.DataExtractor
                                     {
                                         inst.Data[prop.Name] = assetName ?? $"({className})";
                                     }
-                                    DebugLog($"      -> inline template ({className})");
+                                    DebugLog($"      -> inline template ({className}) done");
                                 }
                                 else
                                 {
@@ -1442,7 +1868,384 @@ namespace Menace.DataExtractor
                 currentType = currentType.BaseType;
             }
 
+            // Schema-driven extraction: extract fields defined in schema but not found via reflection
+            if (_schemaLoaded && _schemaTypes.TryGetValue(templateType.Name, out var schemaType))
+            {
+                bool schemaAdded = FillSchemaFields(inst, schemaType, klass);
+                addedAny = addedAny || schemaAdded;
+            }
+
             return addedAny;
+        }
+
+        /// <summary>
+        /// Schema-driven field extraction: reads fields at schema-defined offsets
+        /// that weren't found via IL2CppInterop reflection.
+        /// </summary>
+        private bool FillSchemaFields(InstanceContext inst, SchemaType schemaType, IntPtr klass)
+        {
+            if (inst.Pointer == IntPtr.Zero) return false;
+
+            bool addedAny = false;
+
+            foreach (var field in schemaType.Fields)
+            {
+                // Skip fields already extracted
+                if (inst.Data.ContainsKey(field.Name)) continue;
+                if (field.Offset == 0) continue;
+
+                DebugLog($"    [schema] {inst.Name}.{field.Name} offset=0x{field.Offset:X} type={field.Type} cat={field.Category}");
+
+                try
+                {
+                    object value = ReadSchemaField(inst.Pointer, field, klass, 0);
+                    if (value != null)
+                    {
+                        inst.Data[field.Name] = value;
+                        addedAny = true;
+                        DebugLog($"    [schema] -> extracted {field.Name}");
+                    }
+                    else
+                    {
+                        DebugLog($"    [schema] -> null/failed");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    [schema] -> error: {ex.Message}");
+                }
+            }
+
+            return addedAny;
+        }
+
+        /// <summary>
+        /// Read a field value using schema-defined offset and type information.
+        /// </summary>
+        private object ReadSchemaField(IntPtr objPtr, SchemaField field, IntPtr klass, int depth)
+        {
+            if (depth > 8) return null;
+
+            IntPtr addr = objPtr + (int)field.Offset;
+
+            switch (field.Category)
+            {
+                case "primitive":
+                    return ReadSchemaPrimitive(addr, field.Type);
+
+                case "enum":
+                    return Marshal.ReadInt32(addr);
+
+                case "localization":
+                    IntPtr locPtr = Marshal.ReadIntPtr(addr);
+                    if (locPtr == IntPtr.Zero) return null;
+                    return ReadLocalizedStringDirect(locPtr);
+
+                case "reference":
+                    IntPtr refPtr = Marshal.ReadIntPtr(addr);
+                    if (refPtr == IntPtr.Zero) return null;
+                    return ReadSchemaReference(refPtr, field.Type, depth);
+
+                case "collection":
+                    IntPtr colPtr = Marshal.ReadIntPtr(addr);
+                    if (colPtr == IntPtr.Zero) return new List<object>();
+                    return ReadSchemaCollection(colPtr, field, depth);
+
+                case "unity_asset":
+                    IntPtr assetPtr = Marshal.ReadIntPtr(addr);
+                    if (assetPtr == IntPtr.Zero) return null;
+                    return ReadUnityAssetName(assetPtr);
+
+                default:
+                    return null;
+            }
+        }
+
+        private object ReadSchemaPrimitive(IntPtr addr, string typeName)
+        {
+            return typeName switch
+            {
+                "int" or "Int32" => Marshal.ReadInt32(addr),
+                "uint" or "UInt32" => (int)(uint)Marshal.ReadInt32(addr),
+                "float" or "Single" => ReadFloat(addr),
+                "double" or "Double" => ReadDoubleValidated(addr),
+                "bool" or "Boolean" => Marshal.ReadByte(addr) != 0,
+                "byte" or "Byte" => (int)Marshal.ReadByte(addr),
+                "short" or "Int16" => (int)Marshal.ReadInt16(addr),
+                "ushort" or "UInt16" => (int)(ushort)Marshal.ReadInt16(addr),
+                "long" or "Int64" => Marshal.ReadInt64(addr),
+                "string" or "String" => ReadIl2CppStringAt(addr),
+                _ => null
+            };
+        }
+
+        private object ReadSchemaReference(IntPtr refPtr, string typeName, int depth)
+        {
+            // Check if it's a template type with schema - extract inline with full data
+            if (_schemaTypes.TryGetValue(typeName, out var templateSchema))
+            {
+                // For template types, extract the full object using schema
+                var result = new Dictionary<string, object>();
+                string name = ReadUnityAssetName(refPtr);
+                if (name != null)
+                    result["name"] = name;
+
+                // Extract fields from schema
+                foreach (var field in templateSchema.Fields)
+                {
+                    if (field.Offset == 0) continue;
+                    try
+                    {
+                        object value = ReadSchemaField(refPtr, field, IntPtr.Zero, depth + 1);
+                        if (value != null)
+                            result[field.Name] = value;
+                    }
+                    catch { }
+                }
+
+                return result.Count > 0 ? result : (name ?? $"({typeName})");
+            }
+
+            // Check if it's an embedded class we know about
+            if (_embeddedClasses.TryGetValue(typeName, out var embeddedSchema))
+            {
+                return ReadEmbeddedObject(refPtr, embeddedSchema, depth + 1);
+            }
+
+            // Template type without schema - return name only
+            if (typeName.EndsWith("Template"))
+            {
+                return ReadUnityAssetName(refPtr) ?? $"({typeName})";
+            }
+
+            // Fallback: try to read as Unity object name
+            return ReadUnityAssetName(refPtr);
+        }
+
+        private object ReadSchemaCollection(IntPtr colPtr, SchemaField field, int depth)
+        {
+            // Determine if it's a List<T> or T[]
+            bool isList = field.Type.StartsWith("List<");
+            string elementType = field.ElementType;
+
+            if (isList)
+            {
+                return ReadSchemaList(colPtr, elementType, depth);
+            }
+            else
+            {
+                return ReadSchemaArray(colPtr, elementType, depth);
+            }
+        }
+
+        private List<object> ReadSchemaList(IntPtr listPtr, string elementType, int depth)
+        {
+            if (depth > 8) return new List<object>();
+
+            try
+            {
+                // List<T> layout: _size at some offset, _items (T[]) at another
+                // Find these fields dynamically
+                IntPtr listClass = IL2CPP.il2cpp_object_get_class(listPtr);
+                if (listClass == IntPtr.Zero) return new List<object>();
+
+                IntPtr sizeField = FindNativeField(listClass, "_size");
+                IntPtr itemsField = FindNativeField(listClass, "_items");
+                if (sizeField == IntPtr.Zero || itemsField == IntPtr.Zero)
+                    return new List<object>();
+
+                uint sizeOffset = IL2CPP.il2cpp_field_get_offset(sizeField);
+                uint itemsOffset = IL2CPP.il2cpp_field_get_offset(itemsField);
+
+                int size = Marshal.ReadInt32(listPtr + (int)sizeOffset);
+                if (size <= 0) return new List<object>();
+                if (size > 500) size = 500; // safety cap
+
+                IntPtr arrayPtr = Marshal.ReadIntPtr(listPtr + (int)itemsOffset);
+                if (arrayPtr == IntPtr.Zero) return new List<object>();
+
+                return ReadSchemaArrayElements(arrayPtr, elementType, size, depth);
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        ReadSchemaList error: {ex.Message}");
+                return new List<object>();
+            }
+        }
+
+        private List<object> ReadSchemaArray(IntPtr arrayPtr, string elementType, int depth)
+        {
+            if (depth > 8) return new List<object>();
+
+            try
+            {
+                // IL2CPP array layout: [object header 2*IntPtr] [bounds IntPtr] [length int32] [elements...]
+                int headerSize = IntPtr.Size * 3;
+                int length = Marshal.ReadInt32(arrayPtr + headerSize);
+                if (length <= 0) return new List<object>();
+                if (length > 500) length = 500;
+
+                return ReadSchemaArrayElements(arrayPtr, elementType, length, depth);
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        ReadSchemaArray error: {ex.Message}");
+                return new List<object>();
+            }
+        }
+
+        private List<object> ReadSchemaArrayElements(IntPtr arrayPtr, string elementType, int count, int depth)
+        {
+            var result = new List<object>();
+
+            // Elements offset: after header + length (aligned to IntPtr)
+            int headerSize = IntPtr.Size * 3;
+            int elementsOffset = headerSize + IntPtr.Size;
+
+            // Check if element type is a known embedded class
+            bool isEmbeddedClass = _embeddedClasses.TryGetValue(elementType, out var embeddedSchema);
+            bool isTemplateRef = _schemaTypes.ContainsKey(elementType) || elementType.EndsWith("Template");
+            bool isPrimitive = IsPrimitiveTypeName(elementType);
+
+            for (int i = 0; i < count; i++)
+            {
+                IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
+                if (elemPtr == IntPtr.Zero)
+                {
+                    result.Add(null);
+                    continue;
+                }
+
+                if (isEmbeddedClass)
+                {
+                    var obj = ReadEmbeddedObject(elemPtr, embeddedSchema, depth + 1);
+                    result.Add(obj);
+                }
+                else if (isTemplateRef)
+                {
+                    result.Add(ReadUnityAssetName(elemPtr));
+                }
+                else if (isPrimitive)
+                {
+                    // For primitive arrays, elements are inline (not pointers)
+                    // This case shouldn't happen for reference arrays
+                    result.Add(elemPtr.ToString());
+                }
+                else
+                {
+                    // Unknown type - try to read as Unity object name
+                    result.Add(ReadUnityAssetName(elemPtr) ?? $"({elementType})");
+                }
+            }
+
+            return result;
+        }
+
+        private object ReadEmbeddedObject(IntPtr objPtr, SchemaType schema, int depth)
+        {
+            if (depth > 8) return $"({schema.Name})";
+
+            var result = new Dictionary<string, object>();
+
+            foreach (var field in schema.Fields)
+            {
+                if (field.Offset == 0) continue;
+
+                try
+                {
+                    object value = ReadSchemaField(objPtr, field, IntPtr.Zero, depth);
+                    if (value != null)
+                        result[field.Name] = value;
+                }
+                catch { }
+            }
+
+            return result.Count > 0 ? result : $"({schema.Name})";
+        }
+
+        private bool IsPrimitiveTypeName(string typeName)
+        {
+            return typeName switch
+            {
+                "int" or "Int32" or "uint" or "UInt32" or
+                "float" or "Single" or "double" or "Double" or
+                "bool" or "Boolean" or "byte" or "Byte" or
+                "short" or "Int16" or "ushort" or "UInt16" or
+                "long" or "Int64" or "string" or "String" => true,
+                _ => false
+            };
+        }
+
+        private string ReadLocalizedStringDirect(IntPtr locPtr)
+        {
+            try
+            {
+                // Try to find m_DefaultTranslation field
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(locPtr);
+                if (klass == IntPtr.Zero) return null;
+
+                IntPtr field = FindNativeField(klass, "m_DefaultTranslation");
+                if (field == IntPtr.Zero) return null;
+
+                uint offset = IL2CPP.il2cpp_field_get_offset(field);
+                if (offset == 0) return null;
+
+                IntPtr strPtr = Marshal.ReadIntPtr(locPtr + (int)offset);
+                if (strPtr == IntPtr.Zero) return null;
+
+                return IL2CPP.Il2CppStringToManaged(strPtr);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private string ReadUnityAssetName(IntPtr objPtr)
+        {
+            try
+            {
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(objPtr);
+                if (klass == IntPtr.Zero) return null;
+
+                // Try m_ID first (DataTemplate)
+                IntPtr idField = FindNativeField(klass, "m_ID");
+                if (idField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(idField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objPtr + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string id = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(id)) return id;
+                        }
+                    }
+                }
+
+                // Try m_Name (Unity Object)
+                IntPtr nameField = FindNativeField(klass, "m_Name");
+                if (nameField != IntPtr.Zero)
+                {
+                    uint offset = IL2CPP.il2cpp_field_get_offset(nameField);
+                    if (offset != 0)
+                    {
+                        IntPtr strPtr = Marshal.ReadIntPtr(objPtr + (int)offset);
+                        if (strPtr != IntPtr.Zero)
+                        {
+                            string name = IL2CPP.Il2CppStringToManaged(strPtr);
+                            if (!string.IsNullOrEmpty(name)) return name;
+                        }
+                    }
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // ── Metadata-driven helpers (never call il2cpp_object_get_class on data pointers) ──
@@ -1541,7 +2344,7 @@ namespace Menace.DataExtractor
                     for (int i = 0; i < size; i++)
                     {
                         IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
-                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize));
+                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize, elemClass, depth));
                     }
                 }
                 else
@@ -1845,7 +2648,7 @@ namespace Menace.DataExtractor
                     for (int i = 0; i < length; i++)
                     {
                         IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
-                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize));
+                        result.Add(ReadValueTypeElement(addr, elemClassName, elemSize, elemClass, depth));
                     }
                 }
                 else
@@ -2004,17 +2807,17 @@ namespace Menace.DataExtractor
         /// <summary>
         /// Check if a Unity Object class is a game template type that should have its fields
         /// extracted inline (rather than just its name) when encountered as a reference.
-        /// Returns true for template types that are NOT already extracted as standalone entries.
+        /// Returns false for recognized template types (they're extracted as standalone entries).
         /// </summary>
         private bool ShouldExtractTemplateInline(string className)
         {
-            // Only applies to types we recognize as template types
-            if (!_il2cppNameToType.ContainsKey(className))
+            // Recognized template types are extracted as standalone JSON files,
+            // so references to them should just use the name, not inline extraction
+            if (_il2cppNameToType.ContainsKey(className))
                 return false;
-            // If the type IS loaded as standalone entries, keep name-only references
-            if (_pendingObjectsByType != null && _pendingObjectsByType.TryGetValue(className, out var objects) && objects.Count > 0)
-                return false;
-            return true;
+
+            // Unknown types that look like templates - extract inline
+            return className.EndsWith("Template");
         }
 
         /// <summary>
@@ -2080,7 +2883,7 @@ namespace Menace.DataExtractor
                     {
                         IntPtr addr = arrayPtr + elementsOffset + i * elemSize;
                         // Try to read as common value types
-                        object val = ReadValueTypeElement(addr, elemName, elemSize);
+                        object val = ReadValueTypeElement(addr, elemName, elemSize, elemKlass, depth);
                         result.Add(val);
                     }
                 }
@@ -2096,8 +2899,9 @@ namespace Menace.DataExtractor
 
         /// <summary>
         /// Read a value type array element at the given address.
+        /// For complex structs, reads all fields recursively.
         /// </summary>
-        private object ReadValueTypeElement(IntPtr addr, string elemTypeName, int elemSize)
+        private object ReadValueTypeElement(IntPtr addr, string elemTypeName, int elemSize, IntPtr elemClass = default, int depth = 0)
         {
             try
             {
@@ -2112,11 +2916,136 @@ namespace Menace.DataExtractor
                     case "Double": return BitConverter.Int64BitsToDouble(Marshal.ReadInt64(addr));
                     case "UInt32": return (int)(uint)Marshal.ReadInt32(addr);
                     default:
-                        // For structs, try to read as a dict of fields
-                        return $"({elemTypeName})";
+                        // For structs, read all fields (stored inline at addr)
+                        if (elemClass == IntPtr.Zero || depth > 8)
+                            return $"({elemTypeName})";
+                        return ReadValueTypeStructFields(addr, elemClass, elemTypeName, depth);
                 }
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Read fields from a value type struct stored inline at the given address.
+        /// Similar to ReadValueTypeField but for array elements.
+        /// </summary>
+        private object ReadValueTypeStructFields(IntPtr addr, IntPtr klass, string structName, int depth)
+        {
+            if (depth > 8) return $"({structName})";
+
+            try
+            {
+                // Check if it's an enum by looking for the standard "value__" field
+                IntPtr valueField = IL2CPP.il2cpp_class_get_field_from_name(klass, "value__");
+                if (valueField != IntPtr.Zero)
+                {
+                    // It's an enum — read as int32
+                    return Marshal.ReadInt32(addr);
+                }
+
+                var result = new Dictionary<string, object>();
+
+                // Pass 1: Collect all field offsets (for R8→R4 detection)
+                var offsetSet = new HashSet<uint>();
+                IntPtr walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr f;
+                    while ((f = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        IntPtr ft = IL2CPP.il2cpp_field_get_type(f);
+                        if (ft == IntPtr.Zero) continue;
+                        uint fa = IL2CPP.il2cpp_type_get_attrs(ft);
+                        if ((fa & 0x10) != 0) continue; // skip static
+                        uint fo = IL2CPP.il2cpp_field_get_offset(f);
+                        offsetSet.Add(fo);
+                    }
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                    if (walkKlass != IntPtr.Zero)
+                    {
+                        IntPtr pnp = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string pn = pnp != IntPtr.Zero ? Marshal.PtrToStringAnsi(pnp) : "";
+                        if (pn == "ValueType" || pn == "Object") break;
+                    }
+                }
+                var sortedOffsets = offsetSet.OrderBy(x => x).ToArray();
+
+                // Pass 2: Read field values
+                walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr field;
+                    while ((field = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        IntPtr fieldNamePtr = IL2CPP.il2cpp_field_get_name(field);
+                        if (fieldNamePtr == IntPtr.Zero) continue;
+                        string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
+                        if (string.IsNullOrEmpty(fieldName)) continue;
+                        if (SkipProperties.Contains(fieldName)) continue;
+                        if (result.ContainsKey(fieldName)) continue;
+
+                        uint fieldOffset = IL2CPP.il2cpp_field_get_offset(field);
+                        IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
+                        if (fieldType == IntPtr.Zero) continue;
+
+                        uint fieldAttrs = IL2CPP.il2cpp_type_get_attrs(fieldType);
+                        if ((fieldAttrs & 0x10) != 0) continue; // skip static
+
+                        int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+                        IntPtr fieldAddr = addr + (int)fieldOffset;
+
+                        // Detect R8 (double) fields that are actually R4 (float)
+                        bool r8IsActuallyR4 = false;
+                        if (typeEnum == 12)
+                        {
+                            int idx = Array.BinarySearch(sortedOffsets, fieldOffset);
+                            if (idx < 0) idx = ~idx; else idx++;
+                            uint gap = idx < sortedOffsets.Length ? sortedOffsets[idx] - fieldOffset : 8;
+                            r8IsActuallyR4 = gap < 8;
+                        }
+
+                        object value = typeEnum switch
+                        {
+                            1 => Marshal.ReadByte(fieldAddr) != 0,           // BOOLEAN
+                            2 => (int)Marshal.ReadByte(fieldAddr),            // CHAR
+                            3 => (int)(sbyte)Marshal.ReadByte(fieldAddr),     // I1
+                            4 => (int)Marshal.ReadByte(fieldAddr),            // U1
+                            5 => (int)Marshal.ReadInt16(fieldAddr),           // I2
+                            6 => (int)(ushort)Marshal.ReadInt16(fieldAddr),   // U2
+                            7 => Marshal.ReadInt32(fieldAddr),                // I4
+                            8 => (int)(uint)Marshal.ReadInt32(fieldAddr),     // U4
+                            9 => Marshal.ReadInt64(fieldAddr),                // I8
+                            10 => (long)(ulong)Marshal.ReadInt64(fieldAddr),  // U8
+                            11 => ReadFloat(fieldAddr),                       // R4
+                            12 => r8IsActuallyR4 ? (object)(double)ReadFloat(fieldAddr) : ReadDoubleValidated(fieldAddr),
+                            14 => ReadIl2CppStringAt(fieldAddr),              // STRING
+                            17 => ReadValueTypeField(fieldAddr, fieldType, depth + 1),   // VALUETYPE
+                            18 or 21 => ReadNestedRefField(fieldAddr, fieldType, depth + 1), // CLASS or GENERICINST
+                            29 => ReadNestedArrayField(fieldAddr, fieldType, depth + 1), // SZARRAY
+                            _ => null
+                        };
+
+                        if (value != null)
+                            result[fieldName] = value;
+                    }
+
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                    if (walkKlass != IntPtr.Zero)
+                    {
+                        IntPtr pnp = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string pn = pnp != IntPtr.Zero ? Marshal.PtrToStringAnsi(pnp) : "";
+                        if (pn == "ValueType" || pn == "Object") break;
+                    }
+                }
+
+                return result.Count > 0 ? result : $"({structName})";
+            }
+            catch
+            {
+                return $"({structName})";
+            }
         }
 
         /// <summary>
@@ -2179,6 +3108,9 @@ namespace Menace.DataExtractor
                         string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
                         if (string.IsNullOrEmpty(fieldName)) continue;
 
+                        // Skip problematic fields (same as top-level)
+                        if (SkipProperties.Contains(fieldName)) continue;
+
                         // Skip fields already read from a more-derived class
                         if (result.ContainsKey(fieldName)) continue;
 
@@ -2207,7 +3139,8 @@ namespace Menace.DataExtractor
                             r8IsActuallyR4 = gap < 8;
                         }
 
-                        if (doLog) DebugLog($"        [nested]   {fieldName} typeEnum={typeEnum} offset={fieldOffset}{(r8IsActuallyR4 ? " (R8→R4)" : "")}");
+                        // Always log field being read for inline templates (helps diagnose crashes)
+                        DebugLog($"        [nested] reading: {fieldName} typeEnum={typeEnum} offset={fieldOffset}{(r8IsActuallyR4 ? " (R8→R4)" : "")}");
 
                         object value = typeEnum switch
                         {
@@ -2224,13 +3157,13 @@ namespace Menace.DataExtractor
                             11 => ReadFloat(addr),                       // IL2CPP_TYPE_R4
                             12 => r8IsActuallyR4 ? (object)(double)ReadFloat(addr) : ReadDoubleValidated(addr),
                             14 => ReadIl2CppStringAt(addr),              // IL2CPP_TYPE_STRING
-                            17 => ReadValueTypeField(addr, fieldType),   // IL2CPP_TYPE_VALUETYPE (enums + structs)
+                            17 => ReadValueTypeField(addr, fieldType, depth),   // IL2CPP_TYPE_VALUETYPE (enums + structs)
                             18 or 21 => ReadNestedRefField(addr, fieldType, depth), // IL2CPP_TYPE_CLASS or GENERICINST
                             29 => ReadNestedArrayField(addr, fieldType, depth), // IL2CPP_TYPE_SZARRAY
                             _ => null
                         };
 
-                        if (doLog && value != null) DebugLog($"        [nested]     -> {value}");
+                        DebugLog($"        [nested] read complete: {fieldName} = {(value == null ? "null" : value.GetType().Name)}");
 
                         if (value != null)
                             result[fieldName] = value;
@@ -2249,12 +3182,14 @@ namespace Menace.DataExtractor
 
         /// <summary>
         /// Read a value type field (enum or struct) from a nested object.
-        /// Enums are read as their underlying int value; structs are skipped.
+        /// Enums are read as their underlying int value; structs are recursively extracted.
         /// </summary>
-        private object ReadValueTypeField(IntPtr addr, IntPtr fieldType)
+        private object ReadValueTypeField(IntPtr addr, IntPtr fieldType, int depth)
         {
             try
             {
+                if (depth > 8) return null; // Prevent infinite recursion
+
                 IntPtr klass = IL2CPP.il2cpp_class_from_type(fieldType);
                 if (klass == IntPtr.Zero) return null;
 
@@ -2266,8 +3201,117 @@ namespace Menace.DataExtractor
                     return Marshal.ReadInt32(addr);
                 }
 
-                // For other value types (structs), skip for now
-                return null;
+                // For structs, iterate and read all fields (stored inline at addr)
+                var result = new Dictionary<string, object>();
+
+                // Get struct class name for debugging
+                IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
+                string structName = namePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(namePtr) : "?";
+
+                // Pass 1: Collect all field offsets (for R8→R4 detection)
+                var offsetSet = new HashSet<uint>();
+                IntPtr walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr f;
+                    while ((f = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        IntPtr ft = IL2CPP.il2cpp_field_get_type(f);
+                        if (ft == IntPtr.Zero) continue;
+                        uint fa = IL2CPP.il2cpp_type_get_attrs(ft);
+                        if ((fa & 0x10) != 0) continue; // skip static
+                        uint fo = IL2CPP.il2cpp_field_get_offset(f);
+                        // For value types, offset 0 is valid (first field), but skip if it looks wrong
+                        offsetSet.Add(fo);
+                    }
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                    // Stop at System.ValueType
+                    if (walkKlass != IntPtr.Zero)
+                    {
+                        IntPtr pnp = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string pn = pnp != IntPtr.Zero ? Marshal.PtrToStringAnsi(pnp) : "";
+                        if (pn == "ValueType" || pn == "Object") break;
+                    }
+                }
+                var sortedOffsets = offsetSet.OrderBy(x => x).ToArray();
+
+                // Pass 2: Read field values
+                walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr field;
+                    while ((field = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        IntPtr fieldNamePtr = IL2CPP.il2cpp_field_get_name(field);
+                        if (fieldNamePtr == IntPtr.Zero) continue;
+                        string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
+                        if (string.IsNullOrEmpty(fieldName)) continue;
+
+                        // Skip problematic fields
+                        if (SkipProperties.Contains(fieldName)) continue;
+
+                        // Skip fields already read
+                        if (result.ContainsKey(fieldName)) continue;
+
+                        uint fieldOffset = IL2CPP.il2cpp_field_get_offset(field);
+                        IntPtr fieldTypePtr = IL2CPP.il2cpp_field_get_type(field);
+                        if (fieldTypePtr == IntPtr.Zero) continue;
+
+                        uint fieldAttrs = IL2CPP.il2cpp_type_get_attrs(fieldTypePtr);
+                        if ((fieldAttrs & 0x10) != 0) continue; // FIELD_ATTRIBUTE_STATIC
+
+                        int typeEnum = IL2CPP.il2cpp_type_get_type(fieldTypePtr);
+                        // For value types, the struct is stored inline at addr
+                        // Field address is addr + fieldOffset (no object header to skip)
+                        IntPtr fieldAddr = addr + (int)fieldOffset;
+
+                        // R8→R4 detection
+                        bool r8IsActuallyR4 = false;
+                        if (typeEnum == 12)
+                        {
+                            int idx = Array.BinarySearch(sortedOffsets, fieldOffset);
+                            if (idx < 0) idx = ~idx; else idx++;
+                            uint gap = idx < sortedOffsets.Length ? sortedOffsets[idx] - fieldOffset : 8;
+                            r8IsActuallyR4 = gap < 8;
+                        }
+
+                        object value = typeEnum switch
+                        {
+                            1 => Marshal.ReadByte(fieldAddr) != 0,           // IL2CPP_TYPE_BOOLEAN
+                            2 => (int)Marshal.ReadByte(fieldAddr),            // IL2CPP_TYPE_CHAR
+                            3 => (int)(sbyte)Marshal.ReadByte(fieldAddr),     // IL2CPP_TYPE_I1
+                            4 => (int)Marshal.ReadByte(fieldAddr),            // IL2CPP_TYPE_U1
+                            5 => (int)Marshal.ReadInt16(fieldAddr),           // IL2CPP_TYPE_I2
+                            6 => (int)(ushort)Marshal.ReadInt16(fieldAddr),   // IL2CPP_TYPE_U2
+                            7 => Marshal.ReadInt32(fieldAddr),                // IL2CPP_TYPE_I4
+                            8 => (int)(uint)Marshal.ReadInt32(fieldAddr),     // IL2CPP_TYPE_U4
+                            9 => Marshal.ReadInt64(fieldAddr),                // IL2CPP_TYPE_I8
+                            10 => (long)(ulong)Marshal.ReadInt64(fieldAddr),  // IL2CPP_TYPE_U8
+                            11 => ReadFloat(fieldAddr),                       // IL2CPP_TYPE_R4
+                            12 => r8IsActuallyR4 ? (object)(double)ReadFloat(fieldAddr) : ReadDoubleValidated(fieldAddr),
+                            14 => ReadIl2CppStringAt(fieldAddr),              // IL2CPP_TYPE_STRING
+                            17 => ReadValueTypeField(fieldAddr, fieldTypePtr, depth + 1), // Nested struct/enum
+                            18 or 21 => ReadNestedRefField(fieldAddr, fieldTypePtr, depth + 1), // Class/generic
+                            29 => ReadNestedArrayField(fieldAddr, fieldTypePtr, depth + 1), // Array
+                            _ => null
+                        };
+
+                        if (value != null)
+                            result[fieldName] = value;
+                    }
+
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                    if (walkKlass != IntPtr.Zero)
+                    {
+                        IntPtr pnp = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string pn = pnp != IntPtr.Zero ? Marshal.PtrToStringAnsi(pnp) : "";
+                        if (pn == "ValueType" || pn == "Object") break;
+                    }
+                }
+
+                return result.Count > 0 ? result : null;
             }
             catch { return null; }
         }
@@ -2395,6 +3439,58 @@ namespace Menace.DataExtractor
             try
             {
                 string filePath = Path.Combine(_outputPath, $"{typeName}.json");
+
+                // In manual/additive mode, merge with existing data
+                if (_isManualExtraction && File.Exists(filePath))
+                {
+                    try
+                    {
+                        var existingJson = File.ReadAllText(filePath);
+                        var existingList = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(existingJson);
+                        if (existingList != null && existingList.Count > 0)
+                        {
+                            // Build set of existing IDs
+                            var existingIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var existing in existingList)
+                            {
+                                if (existing.TryGetValue("m_ID", out var idObj) && idObj is string id)
+                                    existingIds.Add(id);
+                            }
+
+                            // Add new templates that don't already exist
+                            int added = 0;
+                            foreach (var newTemplate in templates)
+                            {
+                                if (newTemplate is Dictionary<string, object> dict &&
+                                    dict.TryGetValue("m_ID", out var idObj) && idObj is string id)
+                                {
+                                    if (!existingIds.Contains(id))
+                                    {
+                                        existingList.Add(dict);
+                                        existingIds.Add(id);
+                                        added++;
+                                    }
+                                }
+                            }
+
+                            if (added > 0)
+                            {
+                                templates = existingList.Cast<object>().ToList();
+                                DebugLog($"  Merged {added} new {typeName} instances with {existingList.Count - added} existing");
+                            }
+                            else
+                            {
+                                DebugLog($"  No new {typeName} instances to add (all already exist)");
+                                return; // Skip write if nothing changed
+                            }
+                        }
+                    }
+                    catch (Exception mergeEx)
+                    {
+                        DebugLog($"  Merge failed for {typeName}, overwriting: {mergeEx.Message}");
+                    }
+                }
+
                 var json = JsonConvert.SerializeObject(templates, Formatting.Indented, new JsonSerializerSettings
                 {
                     ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
