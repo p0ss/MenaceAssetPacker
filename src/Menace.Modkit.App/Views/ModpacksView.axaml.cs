@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.ViewModels;
 
 namespace Menace.Modkit.App.Views;
@@ -64,12 +65,9 @@ public class ModpacksView : UserControl
     var importButton = new Button
     {
       Content = "+ Import Mod",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 8),
       HorizontalAlignment = HorizontalAlignment.Stretch
     };
+    importButton.Classes.Add("primary");
     importButton.Click += OnImportModClick;
     buttonRow.Children.Add(importButton);
     Grid.SetColumn(importButton, 0);
@@ -77,12 +75,9 @@ public class ModpacksView : UserControl
     var createButton = new Button
     {
       Content = "+ Create New",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 8),
       HorizontalAlignment = HorizontalAlignment.Stretch
     };
+    createButton.Classes.Add("secondary");
     createButton.Click += (_, _) => ShowCreateDialog();
     buttonRow.Children.Add(createButton);
     Grid.SetColumn(createButton, 2);
@@ -138,20 +133,20 @@ public class ModpacksView : UserControl
         return;
       }
 
-      // Handle zip file drops
+      // Handle archive file drops (.zip, .7z, .rar, etc.)
       if (e.Data.Contains(DataFormats.Files))
       {
         var files = e.Data.GetFiles();
         if (files != null)
         {
-          var zipPaths = files
+          var archivePaths = files
             .Select(f => f.Path.LocalPath)
-            .Where(p => p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .Where(IsArchiveFile)
             .ToList();
 
-          if (zipPaths.Count > 0)
+          if (archivePaths.Count > 0)
           {
-            vm.ImportModpacksFromZips(zipPaths);
+            vm.ImportModpacksFromZips(archivePaths);
           }
         }
       }
@@ -181,12 +176,9 @@ public class ModpacksView : UserControl
     var refreshBtn = new Button
     {
       Content = "Refresh",
-      FontSize = 11,
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 4)
+      FontSize = 11
     };
+    refreshBtn.Classes.Add("secondary");
     refreshBtn.Click += (_, _) =>
     {
       if (DataContext is ModpacksViewModel vm)
@@ -225,7 +217,7 @@ public class ModpacksView : UserControl
     var contentGrid = new Grid
     {
       ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto"),
-      Margin = new Thickness(8, 4)
+      Margin = new Thickness(12, 8)
     };
 
     // Col 0: Functional checkbox
@@ -338,6 +330,7 @@ public class ModpacksView : UserControl
       Padding = new Thickness(4, 1),
       VerticalAlignment = VerticalAlignment.Center
     };
+    ToolTip.SetTip(conflictBadge, "This modpack modifies files that conflict with another deployed modpack");
     var conflictBadgeText = new TextBlock
     {
       Text = "CONFLICT",
@@ -385,6 +378,7 @@ public class ModpacksView : UserControl
       HorizontalContentAlignment = HorizontalAlignment.Center,
       Cursor = new Cursor(StandardCursorType.Hand)
     };
+    ToolTip.SetTip(upArrow, "Move up (loads earlier)");
     upArrow.Click += (sender, e) =>
     {
       if ((sender as Button)?.DataContext is ModpackItemViewModel item
@@ -409,6 +403,7 @@ public class ModpacksView : UserControl
       HorizontalContentAlignment = HorizontalAlignment.Center,
       Cursor = new Cursor(StandardCursorType.Hand)
     };
+    ToolTip.SetTip(downArrow, "Move down (loads later)");
     downArrow.Click += (sender, e) =>
     {
       if ((sender as Button)?.DataContext is ModpackItemViewModel item
@@ -456,6 +451,7 @@ public class ModpacksView : UserControl
         HorizontalAlignment = HorizontalAlignment.Center,
       }
     };
+    ToolTip.SetTip(gripArea, "Drag to reorder modpacks");
     gripArea.PointerPressed += async (sender, e) =>
     {
       if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed
@@ -530,12 +526,16 @@ public class ModpacksView : UserControl
     // Load Order field
     editableSection.Children.Add(CreateLabel("Load Order"));
     var loadOrderBox = CreateTextBox();
+    loadOrderBox.Watermark = "0-999";
+    ToolTip.SetTip(loadOrderBox, "Lower numbers load first. Use this to control mod priority.");
     loadOrderBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.LoadOrder") { Mode = Avalonia.Data.BindingMode.TwoWay });
     editableSection.Children.Add(loadOrderBox);
 
     // Dependencies field
     editableSection.Children.Add(CreateLabel("Dependencies (comma-separated)"));
     var depsBox = CreateTextBox();
+    depsBox.Watermark = "e.g., CoreMod, UIEnhancements";
+    ToolTip.SetTip(depsBox, "List modpacks this one depends on, separated by commas. These will be loaded before this modpack.");
     depsBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.DependenciesText") { Mode = Avalonia.Data.BindingMode.TwoWay });
     editableSection.Children.Add(depsBox);
 
@@ -778,12 +778,9 @@ public class ModpacksView : UserControl
 
     var exportButton = new Button
     {
-      Content = "Export Modpack",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(16, 8)
+      Content = "Export Modpack"
     };
+    exportButton.Classes.Add("secondary");
     exportButton.Click += OnExportClick;
     exportButton.Bind(Button.IsEnabledProperty,
       new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
@@ -794,16 +791,27 @@ public class ModpacksView : UserControl
 
     var deleteButton = new Button
     {
-      Content = "Delete Modpack",
-      Background = new SolidColorBrush(Color.Parse("#410511")),  // Maroon
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(16, 8)
+      Content = "Delete Modpack"
     };
-    deleteButton.Click += (_, _) =>
+    deleteButton.Classes.Add("destructive");
+    deleteButton.Click += async (_, _) =>
     {
-      if (DataContext is ModpacksViewModel vm)
-        vm.DeleteSelectedModpack();
+      if (DataContext is ModpacksViewModel vm && vm.SelectedModpack != null)
+      {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is not Window window) return;
+
+        var confirmed = await ConfirmationDialog.ShowAsync(
+          window,
+          "Delete Modpack",
+          $"Are you sure you want to delete '{vm.SelectedModpack.Name}'? This cannot be undone.",
+          "Delete",
+          isDestructive: true
+        );
+
+        if (confirmed)
+          vm.DeleteSelectedModpack();
+      }
     };
     deleteButton.Bind(Button.IsEnabledProperty,
       new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
@@ -835,11 +843,9 @@ public class ModpacksView : UserControl
     var deployAllButton = new Button
     {
       Content = "Deploy All",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
       Padding = new Thickness(20, 8)
     };
+    deployAllButton.Classes.Add("primary");
     deployAllButton.Bind(Button.IsEnabledProperty,
       new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     deployAllButton.Click += OnDeployAllClick;
@@ -848,11 +854,9 @@ public class ModpacksView : UserControl
     var undeployAllButton = new Button
     {
       Content = "Undeploy All",
-      Background = new SolidColorBrush(Color.Parse("#4b0606")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
       Padding = new Thickness(20, 8)
     };
+    undeployAllButton.Classes.Add("destructive");
     undeployAllButton.Bind(Button.IsEnabledProperty,
       new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
     undeployAllButton.Click += OnUndeployAllClick;
@@ -886,18 +890,18 @@ public class ModpacksView : UserControl
     FontWeight = FontWeight.SemiBold,
     Foreground = Brushes.White,
     Opacity = 0.8,
-    Margin = new Thickness(0, 0, 0, 4)
+    Margin = new Thickness(0, 0, 0, 6)
   };
 
-  private static TextBox CreateTextBox() => new TextBox
+  private static TextBox CreateTextBox()
   {
-    Foreground = Brushes.White,
-    Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-    BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-    BorderThickness = new Thickness(1),
-    Padding = new Thickness(8, 6),
-    Margin = new Thickness(0, 0, 0, 16)
-  };
+    var textBox = new TextBox
+    {
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    textBox.Classes.Add("input");
+    return textBox;
+  }
 
   private async void OnToggleDeployClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
@@ -967,7 +971,19 @@ public class ModpacksView : UserControl
     {
       if (DataContext is ModpacksViewModel vm && !vm.IsDeploying)
       {
-        await vm.UndeployAllAsync();
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is not Window window) return;
+
+        var confirmed = await ConfirmationDialog.ShowAsync(
+          window,
+          "Undeploy All Modpacks",
+          "This will undeploy all active modpacks. Continue?",
+          "Undeploy All",
+          isDestructive: true
+        );
+
+        if (confirmed)
+          await vm.UndeployAllAsync();
       }
     }
     catch (Exception ex)
@@ -1015,20 +1031,29 @@ public class ModpacksView : UserControl
         AllowMultiple = true,
         FileTypeFilter = new[]
         {
-          new FilePickerFileType("Mod Package") { Patterns = new[] { "*.zip" } },
+          new FilePickerFileType("Mod Package") { Patterns = new[] { "*.zip", "*.7z", "*.rar" } },
           new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
         }
       });
 
       if (result.Count > 0)
       {
-        var zipPaths = result.Select(f => f.Path.LocalPath).ToList();
-        vm.ImportModpacksFromZips(zipPaths);
+        var archivePaths = result.Select(f => f.Path.LocalPath).ToList();
+        vm.ImportModpacksFromZips(archivePaths);
       }
     }
     catch (Exception ex)
     {
       Services.ModkitLog.Error($"Import failed: {ex.Message}");
     }
+  }
+
+  /// <summary>
+  /// Check if a file path is a supported archive format.
+  /// </summary>
+  private static bool IsArchiveFile(string path)
+  {
+    var ext = Path.GetExtension(path).ToLowerInvariant();
+    return ext is ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz" or ".bz2";
   }
 }

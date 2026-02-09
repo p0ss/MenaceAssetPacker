@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-config-schema.json",
+  "mcpServers": {
+    "menace-modkit": {
+      "command": "dotnet",
+      "args": ["run", "--project", "${workspaceFolder}/src/Menace.Modkit.Mcp/Menace.Modkit.Mcp.csproj", "--no-build"],
+      "description": "Menace Modkit MCP server for modpack management, template editing, compilation, and deployment",
+      "env": {}
+    }
+  }
+}

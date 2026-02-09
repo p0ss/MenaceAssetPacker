@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
@@ -66,7 +67,7 @@ public class AssetBrowserView : UserControl
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(12, 8),
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 12)
         };
         searchBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding("SearchText"));
@@ -78,19 +79,15 @@ public class AssetBrowserView : UserControl
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 12)
         };
 
         var expandAllButton = new Button
         {
             Content = "Expand All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        expandAllButton.Classes.Add("secondary");
         expandAllButton.Click += (_, _) =>
         {
             if (DataContext is AssetBrowserViewModel vm)
@@ -101,13 +98,9 @@ public class AssetBrowserView : UserControl
         var collapseAllButton = new Button
         {
             Content = "Collapse All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        collapseAllButton.Classes.Add("secondary");
         collapseAllButton.Click += (_, _) =>
         {
             if (DataContext is AssetBrowserViewModel vm)
@@ -155,7 +148,7 @@ public class AssetBrowserView : UserControl
                 FontWeight = node.IsFile ? FontWeight.Normal : FontWeight.SemiBold,
                 Foreground = Brushes.White,
                 FontSize = node.IsFile ? 12 : 13,
-                Margin = new Thickness(4, 2)
+                Margin = new Thickness(8, 6)
             },
             node => node.Children);
 
@@ -1060,11 +1053,23 @@ public class AssetBrowserView : UserControl
         }
     }
 
-    private void OnClearReplacementClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnClearReplacementClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (DataContext is AssetBrowserViewModel vm)
+        if (DataContext is AssetBrowserViewModel vm && vm.SelectedNode != null)
         {
-            vm.ClearAssetReplacement();
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is not Window window) return;
+
+            var confirmed = await ConfirmationDialog.ShowAsync(
+                window,
+                "Clear Replacement",
+                $"Remove the custom asset replacement for '{vm.SelectedNode.Name}'?",
+                "Clear",
+                isDestructive: true
+            );
+
+            if (confirmed)
+                vm.ClearAssetReplacement();
         }
     }
 

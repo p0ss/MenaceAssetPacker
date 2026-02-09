@@ -43,6 +43,14 @@ public sealed class StatsEditorViewModel : ViewModelBase
     // Cache: template type name -> sorted list of instance names
     private readonly Dictionary<string, List<string>> _templateInstanceNamesCache = new();
 
+    // Status message for user feedback
+    private string? _statusMessage;
+    public string? StatusMessage
+    {
+        get => _statusMessage;
+        set => this.RaiseAndSetIfChanged(ref _statusMessage, value);
+    }
+
     public StatsEditorViewModel()
     {
         _modpackManager = new ModpackManager();
@@ -172,6 +180,91 @@ public sealed class StatsEditorViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _modifiedProperties, value);
     }
 
+    /// <summary>
+    /// True if the selected template has any modifications from vanilla.
+    /// </summary>
+    public bool HasModifications
+    {
+        get
+        {
+            if (SelectedNode?.Template == null || _currentModpackName == null)
+                return false;
+
+            var key = GetTemplateKey(SelectedNode.Template);
+            if (key == null)
+                return false;
+
+            // Check staging overrides (saved changes)
+            if (_stagingOverrides.ContainsKey(key) && _stagingOverrides[key].Count > 0)
+                return true;
+
+            // Check pending changes (unsaved edits)
+            if (_pendingChanges.ContainsKey(key) && _pendingChanges[key].Count > 0)
+                return true;
+
+            // Check if user has edited any fields this session
+            if (_userEditedFields.Count > 0)
+                return true;
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reset the selected template to its vanilla state, removing all modifications.
+    /// </summary>
+    public void ResetToVanilla()
+    {
+        if (SelectedNode?.Template == null || _currentModpackName == null)
+            return;
+
+        var key = GetTemplateKey(SelectedNode.Template);
+        if (key == null)
+            return;
+
+        // Remove from staging overrides
+        if (_stagingOverrides.ContainsKey(key))
+        {
+            _stagingOverrides.Remove(key);
+        }
+
+        // Remove from pending changes
+        if (_pendingChanges.ContainsKey(key))
+        {
+            _pendingChanges.Remove(key);
+        }
+
+        // Clear user edited fields
+        _userEditedFields.Clear();
+
+        // Reset modified properties to vanilla
+        if (_vanillaProperties != null)
+        {
+            ModifiedProperties = new System.Collections.Generic.Dictionary<string, object?>(_vanillaProperties);
+        }
+
+        // Delete the staging file if it exists
+        var stagingDir = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "MenaceModkit", "staging", _currentModpackName, "stats");
+
+        var parts = key.Split('/');
+        if (parts.Length == 2)
+        {
+            var templateType = parts[0];
+            var instanceName = parts[1];
+            var filePath = System.IO.Path.Combine(stagingDir, templateType, $"{instanceName}.json");
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+                Services.ModkitLog.Info($"[StatsEditor] Deleted staging file: {filePath}");
+            }
+        }
+
+        SaveStatus = $"Reset '{SelectedNode.Template.Name}' to vanilla";
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
     private void OnNodeSelected(TreeNodeViewModel? node)
     {
         if (node?.Template == null)
@@ -211,23 +304,6 @@ public sealed class StatsEditorViewModel : ViewModelBase
         VanillaProperties = properties;
         ModifiedProperties = modified;
         _suppressPropertyUpdates = false;
-
-        // Debug: log property keys
-        if (node.Template is DynamicDataTemplate dt)
-        {
-            ModkitLog.Info($"[OnNodeSelected] {dt.TemplateTypeName ?? "?"} '{node.Template.Name}' has {properties.Count} properties");
-            if (dt.TemplateTypeName == "ArmyTemplate")
-            {
-                foreach (var propKey in properties.Keys)
-                {
-                    var val = properties[propKey];
-                    var typeStr = val?.GetType().Name ?? "null";
-                    if (val is System.Text.Json.JsonElement je)
-                        typeStr = $"JsonElement({je.ValueKind})";
-                    ModkitLog.Info($"  - {propKey}: {typeStr}");
-                }
-            }
-        }
 
         // Populate backlinks ("What Links Here")
         Backlinks.Clear();
@@ -517,6 +593,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         _userEditedFields.Add(fieldName);
         _modifiedProperties[fieldName] = value;
+        this.RaisePropertyChanged(nameof(HasModifications));
     }
 
     public void UpdateModifiedProperty(string fieldName, string text)
@@ -557,6 +634,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         }
 
         _modifiedProperties[fieldName] = text;
+        this.RaisePropertyChanged(nameof(HasModifications));
     }
 
     /// <summary>
@@ -764,6 +842,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
 
         using var doc = JsonDocument.Parse(sb.ToString());
         _modifiedProperties[fieldName] = doc.RootElement.Clone();
+        this.RaisePropertyChanged(nameof(HasModifications));
     }
 
     /// <summary>
@@ -782,6 +861,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         {
             using var doc = JsonDocument.Parse(jsonText);
             _modifiedProperties[fieldName] = doc.RootElement.Clone();
+            this.RaisePropertyChanged(nameof(HasModifications));
         }
         catch
         {
@@ -928,6 +1008,8 @@ public sealed class StatsEditorViewModel : ViewModelBase
             SaveStatus = $"Removed {removedCount} override(s) from '{_currentModpackName}'";
         else
             SaveStatus = "No changes to save";
+
+        this.RaisePropertyChanged(nameof(HasModifications));
     }
 
     private void SaveCloneDefinitions()
@@ -967,23 +1049,41 @@ public sealed class StatsEditorViewModel : ViewModelBase
     /// </summary>
     public bool CloneTemplate(string newName)
     {
-        if (_selectedNode?.Template is not DynamicDataTemplate sourceDyn)
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            StatusMessage = "Template name cannot be empty";
             return false;
+        }
+
+        if (_selectedNode?.Template is not DynamicDataTemplate sourceDyn)
+        {
+            StatusMessage = "No template selected to clone";
+            return false;
+        }
 
         var templateTypeName = sourceDyn.TemplateTypeName;
         if (string.IsNullOrEmpty(templateTypeName))
+        {
+            StatusMessage = "Cannot clone: template type unknown";
             return false;
+        }
 
         var compositeKey = $"{templateTypeName}/{newName}";
 
         // Check if this name already exists
         if (_cloneDefinitions.ContainsKey(compositeKey))
+        {
+            StatusMessage = $"A template named '{newName}' already exists as a clone";
             return false;
+        }
 
         // Check existing templates
         var existingNode = FindNode(_allTreeNodes, templateTypeName, newName);
         if (existingNode != null)
+        {
+            StatusMessage = $"A template named '{newName}' already exists";
             return false;
+        }
 
         // Create a new DynamicDataTemplate from the source's JSON, but with the new name
         var sourceJson = sourceDyn.GetJsonElement();
@@ -1039,6 +1139,7 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (found != null)
             SelectedNode = found;
 
+        StatusMessage = $"Created template '{newName}'";
         return true;
     }
 
@@ -1413,13 +1514,20 @@ public sealed class StatsEditorViewModel : ViewModelBase
                 TreeNodes.Add(n);
         }
 
-        // Auto-expand filtered results so matches are visible
+        // Auto-expand filtered results (multiple passes to handle TreeView container creation timing)
         SetExpansionState(TreeNodes, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(TreeNodes, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(TreeNodes, true), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     public void ExpandAll()
     {
+        // Set expansion state multiple times with UI thread yields to allow
+        // TreeView to create containers for newly-visible children
         SetExpansionState(TreeNodes, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(TreeNodes, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(TreeNodes, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(TreeNodes, true), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     public void CollapseAll()
@@ -1475,14 +1583,19 @@ public sealed class StatsEditorViewModel : ViewModelBase
         if (matchingChildren.Count == 0)
             return null;
 
-        // If all children match, return original node to avoid unnecessary copies
+        // If all children match, return original node (expanded for visibility)
         if (matchingChildren.Count == node.Children.Count)
+        {
+            node.IsExpanded = true;
             return node;
+        }
 
+        // Create copy with only matching children, pre-expanded for visibility
         var copy = new TreeNodeViewModel
         {
             Name = node.Name,
-            IsCategory = true
+            IsCategory = true,
+            IsExpanded = true
         };
         foreach (var child in matchingChildren)
             copy.Children.Add(child);

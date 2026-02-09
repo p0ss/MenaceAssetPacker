@@ -20,6 +20,10 @@ public sealed class CodeEditorViewModel : ViewModelBase
     private readonly VanillaCodeService _vanillaCodeService;
     private readonly CompilationService _compilationService;
 
+    // Master copies of trees for filtering
+    private List<CodeTreeNode> _allVanillaCodeNodes = new();
+    private List<CodeTreeNode> _allModSourceNodes = new();
+
     public CodeEditorViewModel()
     {
         _modpackManager = new ModpackManager();
@@ -115,13 +119,175 @@ public sealed class CodeEditorViewModel : ViewModelBase
     }
 
     // ---------------------------------------------------------------
+    // Search and filtering
+    // ---------------------------------------------------------------
+
+    private string _searchText = string.Empty;
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (_searchText != value)
+            {
+                this.RaiseAndSetIfChanged(ref _searchText, value);
+                ApplySearchFilter();
+            }
+        }
+    }
+
+    private void ApplySearchFilter()
+    {
+        var hasQuery = !string.IsNullOrWhiteSpace(_searchText);
+        var query = hasQuery ? _searchText.Trim() : null;
+
+        // Filter vanilla code tree
+        VanillaCodeTree.Clear();
+        if (!hasQuery)
+        {
+            foreach (var node in _allVanillaCodeNodes)
+                VanillaCodeTree.Add(node);
+        }
+        else
+        {
+            foreach (var node in _allVanillaCodeNodes)
+            {
+                var filtered = FilterCodeNode(node, query);
+                if (filtered != null)
+                    VanillaCodeTree.Add(filtered);
+            }
+            // Multi-pass expansion to handle TreeView container creation timing
+            SetExpansionState(VanillaCodeTree, true);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(VanillaCodeTree, true), Avalonia.Threading.DispatcherPriority.Background);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(VanillaCodeTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        }
+
+        // Filter mod source tree
+        ModSourceTree.Clear();
+        if (!hasQuery)
+        {
+            foreach (var node in _allModSourceNodes)
+                ModSourceTree.Add(node);
+        }
+        else
+        {
+            foreach (var node in _allModSourceNodes)
+            {
+                var filtered = FilterCodeNode(node, query);
+                if (filtered != null)
+                    ModSourceTree.Add(filtered);
+            }
+            // Multi-pass expansion to handle TreeView container creation timing
+            SetExpansionState(ModSourceTree, true);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(ModSourceTree, true), Avalonia.Threading.DispatcherPriority.Background);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(ModSourceTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        }
+    }
+
+    private CodeTreeNode? FilterCodeNode(CodeTreeNode node, string? query)
+    {
+        // File node: check if name matches
+        if (node.IsFile)
+        {
+            if (query == null)
+                return node;
+            if (node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                return node;
+            return null;
+        }
+
+        // Folder: check if folder name matches (include all children)
+        if (query != null && node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            node.IsExpanded = true;
+            return node;
+        }
+
+        // Check children recursively
+        var matchingChildren = new List<CodeTreeNode>();
+        foreach (var child in node.Children)
+        {
+            var filtered = FilterCodeNode(child, query);
+            if (filtered != null)
+                matchingChildren.Add(filtered);
+        }
+
+        if (matchingChildren.Count == 0)
+            return null;
+
+        // If all children match, return original node (expanded for visibility)
+        if (matchingChildren.Count == node.Children.Count)
+        {
+            node.IsExpanded = true;
+            return node;
+        }
+
+        // Create filtered copy with only matching children
+        var copy = new CodeTreeNode
+        {
+            Name = node.Name,
+            FullPath = node.FullPath,
+            IsFile = false,
+            IsReadOnly = node.IsReadOnly,
+            IsExpanded = true
+        };
+        foreach (var child in matchingChildren)
+            copy.Children.Add(child);
+
+        return copy;
+    }
+
+    public void ExpandAll()
+    {
+        // Set expansion state multiple times with UI thread yields to allow
+        // TreeView to create containers for newly-visible children
+        SetExpansionState(VanillaCodeTree, true);
+        SetExpansionState(ModSourceTree, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            SetExpansionState(VanillaCodeTree, true);
+            SetExpansionState(ModSourceTree, true);
+        }, Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            SetExpansionState(VanillaCodeTree, true);
+            SetExpansionState(ModSourceTree, true);
+        }, Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            SetExpansionState(VanillaCodeTree, true);
+            SetExpansionState(ModSourceTree, true);
+        }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    public void CollapseAll()
+    {
+        SetExpansionState(VanillaCodeTree, false);
+        SetExpansionState(ModSourceTree, false);
+    }
+
+    private static void SetExpansionState(IEnumerable<CodeTreeNode> nodes, bool expanded)
+    {
+        foreach (var node in nodes)
+        {
+            if (!node.IsFile)
+            {
+                node.IsExpanded = expanded;
+                SetExpansionState(node.Children, expanded);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Data loading
     // ---------------------------------------------------------------
 
     private void LoadModpacks()
     {
         AvailableModpacks.Clear();
-        foreach (var mp in _modpackManager.GetStagingModpacks())
+        var modpacks = _modpackManager.GetStagingModpacks();
+        Services.ModkitLog.Info($"[CodeEditorViewModel] Found {modpacks.Count} modpacks");
+        foreach (var mp in modpacks)
             AvailableModpacks.Add(mp.Name);
 
         if (AvailableModpacks.Count > 0 && _selectedModpack == null)
@@ -131,31 +297,56 @@ public sealed class CodeEditorViewModel : ViewModelBase
     private void LoadVanillaTree()
     {
         VanillaCodeTree.Clear();
+        _allVanillaCodeNodes.Clear();
         var tree = _vanillaCodeService.BuildVanillaCodeTree();
         if (tree != null)
+        {
+            // Auto-expand the root node so users can see the contents
+            tree.IsExpanded = true;
+            Services.ModkitLog.Info($"[CodeEditorViewModel] Vanilla tree loaded: {tree.Name} with {tree.Children.Count} children");
             VanillaCodeTree.Add(tree);
+            _allVanillaCodeNodes.Add(tree);
+        }
+        else
+        {
+            Services.ModkitLog.Info("[CodeEditorViewModel] Vanilla tree is null - no decompiled code found");
+        }
     }
 
     private void LoadModSourceTree()
     {
         ModSourceTree.Clear();
+        _allModSourceNodes.Clear();
 
         if (string.IsNullOrEmpty(_selectedModpack))
+        {
+            Services.ModkitLog.Info("[CodeEditorViewModel] No modpack selected, skipping mod source tree");
             return;
+        }
 
         var modpacks = _modpackManager.GetStagingModpacks();
         var modpack = modpacks.FirstOrDefault(m => m.Name == _selectedModpack);
-        if (modpack == null) return;
+        if (modpack == null)
+        {
+            Services.ModkitLog.Warn($"[CodeEditorViewModel] Modpack '{_selectedModpack}' not found");
+            return;
+        }
 
         var tree = VanillaCodeService.BuildModSourceTree(modpack.Path, modpack.Name);
+        // Auto-expand the root node
+        tree.IsExpanded = true;
+        Services.ModkitLog.Info($"[CodeEditorViewModel] Mod source tree loaded: {tree.Name} with {tree.Children.Count} children");
         ModSourceTree.Add(tree);
+        _allModSourceNodes.Add(tree);
     }
 
     private void LoadFileContent()
     {
+        Services.ModkitLog.Info($"[CodeEditorViewModel] LoadFileContent: _selectedFile={_selectedFile?.Name}, IsFile={_selectedFile?.IsFile}");
+
         if (_selectedFile == null || !_selectedFile.IsFile)
         {
-            FileContent = string.Empty;
+            FileContent = "// Select a .cs file from the tree to view its contents";
             IsReadOnly = true;
             CurrentFilePath = string.Empty;
             return;
@@ -166,10 +357,13 @@ public sealed class CodeEditorViewModel : ViewModelBase
 
         try
         {
-            FileContent = File.ReadAllText(_selectedFile.FullPath);
+            var content = File.ReadAllText(_selectedFile.FullPath);
+            Services.ModkitLog.Info($"[CodeEditorViewModel] Loaded file: {_selectedFile.FullPath}, length={content.Length}");
+            FileContent = content;
         }
         catch (Exception ex)
         {
+            Services.ModkitLog.Error($"[CodeEditorViewModel] Error loading file: {ex.Message}");
             FileContent = $"// Error loading file: {ex.Message}";
             IsReadOnly = true;
         }
@@ -181,8 +375,23 @@ public sealed class CodeEditorViewModel : ViewModelBase
 
     public void SaveFile()
     {
-        if (_selectedFile == null || _selectedFile.IsReadOnly || string.IsNullOrEmpty(_selectedModpack))
+        if (string.IsNullOrEmpty(_selectedModpack))
+        {
+            BuildStatus = "Cannot save: No modpack selected";
             return;
+        }
+
+        if (_selectedFile == null)
+        {
+            BuildStatus = "Cannot save: No file open";
+            return;
+        }
+
+        if (_selectedFile.IsReadOnly)
+        {
+            BuildStatus = "Cannot save: File is read-only";
+            return;
+        }
 
         try
         {
@@ -203,8 +412,17 @@ public sealed class CodeEditorViewModel : ViewModelBase
 
     public void AddFile(string fileName)
     {
-        if (string.IsNullOrEmpty(_selectedModpack) || string.IsNullOrEmpty(fileName))
+        if (string.IsNullOrEmpty(_selectedModpack))
+        {
+            BuildStatus = "Cannot add file: No modpack selected";
             return;
+        }
+
+        if (string.IsNullOrEmpty(fileName))
+        {
+            BuildStatus = "Cannot add file: No filename provided";
+            return;
+        }
 
         if (!fileName.EndsWith(".cs"))
             fileName += ".cs";

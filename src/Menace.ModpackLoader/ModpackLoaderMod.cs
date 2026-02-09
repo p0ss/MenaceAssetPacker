@@ -219,7 +219,14 @@ public partial class ModpackLoaderMod : MelonMod
         {
             try
             {
-                var fullPath = Path.Combine(modpack.DirectoryPath, replacementFile);
+                // Validate path stays within modpack directory to prevent traversal attacks
+                var fullPath = ValidatePathWithinModpack(modpack.DirectoryPath, replacementFile);
+                if (fullPath == null)
+                {
+                    LoggerInstance.Warning($"  Path traversal blocked for asset: {replacementFile}");
+                    continue;
+                }
+
                 if (File.Exists(fullPath))
                 {
                     _registeredAssetPaths.Add(assetPath);
@@ -235,6 +242,35 @@ public partial class ModpackLoaderMod : MelonMod
             {
                 LoggerInstance.Error($"  Failed to load asset {assetPath}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Validates that a relative path stays within the modpack directory.
+    /// Returns the full path if valid, null if path traversal was attempted.
+    /// </summary>
+    private static string ValidatePathWithinModpack(string modpackDir, string relativePath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(Path.Combine(modpackDir, relativePath));
+            var baseFullPath = Path.GetFullPath(modpackDir);
+
+            // Ensure base path ends with directory separator for proper prefix matching
+            if (!baseFullPath.EndsWith(Path.DirectorySeparatorChar))
+                baseFullPath += Path.DirectorySeparatorChar;
+
+            if (!fullPath.StartsWith(baseFullPath, StringComparison.Ordinal) &&
+                !fullPath.Equals(baseFullPath.TrimEnd(Path.DirectorySeparatorChar), StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return fullPath;
+        }
+        catch
+        {
+            return null;
         }
     }
 

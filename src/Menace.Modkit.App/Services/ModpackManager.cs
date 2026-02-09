@@ -5,7 +5,10 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Menace.Modkit.App.Models;
+using SharpCompress.Archives;
+using SharpCompress.Common;
 
 namespace Menace.Modkit.App.Services;
 
@@ -15,6 +18,17 @@ namespace Menace.Modkit.App.Services;
 /// </summary>
 public class ModpackManager
 {
+    /// <summary>
+    /// Regex pattern for valid modpack names.
+    /// Allows alphanumeric characters, underscores, hyphens, periods, and spaces.
+    /// </summary>
+    private static readonly Regex ValidModpackNameRegex = new(@"^[a-zA-Z0-9_\-. ]+$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Maximum length for modpack names to prevent filesystem issues.
+    /// </summary>
+    private const int MaxModpackNameLength = 64;
+
     private readonly string _stagingBasePath;
 
     public ModpackManager()
@@ -107,6 +121,8 @@ public class ModpackManager
 
     public ModpackManifest CreateModpack(string name, string author, string description)
     {
+        ValidateModpackName(name);
+
         var modpackDir = Path.Combine(_stagingBasePath, SanitizeName(name));
         Directory.CreateDirectory(modpackDir);
         Directory.CreateDirectory(Path.Combine(modpackDir, "stats"));
@@ -273,7 +289,10 @@ public class ModpackManager
                 if (clones != null && clones.Count > 0)
                     result[templateType] = clones;
             }
-            catch { }
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+            {
+                ModkitLog.Warn($"[ModpackManager] Failed to load clones from {file}: {ex.Message}");
+            }
         }
 
         return result;
@@ -431,38 +450,53 @@ public class ModpackManager
         if (!Directory.Exists(stagingPath))
             throw new DirectoryNotFoundException($"Staging modpack not found: {modpackName}");
 
-        var archivePath = Path.Combine(exportPath, $"{modpackName}.zip");
-        ZipFile.CreateFromDirectory(stagingPath, archivePath);
+        // exportPath is already the full path from the save file picker
+        // Delete existing file if present (user confirmed overwrite in picker)
+        if (File.Exists(exportPath))
+            File.Delete(exportPath);
+
+        ZipFile.CreateFromDirectory(stagingPath, exportPath);
+        ModkitLog.Info($"[ModpackManager] Exported modpack to: {exportPath}");
     }
 
     /// <summary>
-    /// Import a modpack from a zip file into the staging directory.
+    /// Import a modpack from an archive file (.zip, .7z, .rar, .tar.gz, etc.) into the staging directory.
+    /// If no manifest.json exists, one will be inferred from the archive contents.
     /// Returns the manifest of the imported modpack, or null if import failed.
     /// </summary>
-    public ModpackManifest? ImportModpackFromZip(string zipPath)
+    public ModpackManifest? ImportModpackFromArchive(string archivePath)
     {
-        if (!File.Exists(zipPath))
-            throw new FileNotFoundException($"Zip file not found: {zipPath}");
+        if (!File.Exists(archivePath))
+            throw new FileNotFoundException($"Archive file not found: {archivePath}");
 
         // Extract to a temp directory first to inspect the contents
         var tempDir = Path.Combine(Path.GetTempPath(), $"modkit_import_{Guid.NewGuid():N}");
         try
         {
-            ZipFile.ExtractToDirectory(zipPath, tempDir);
+            ExtractArchive(archivePath, tempDir);
 
             // Find the manifest - it might be at root or in a subfolder
             var manifestPath = FindManifestInDirectory(tempDir);
-            if (manifestPath == null)
+            string contentDir;
+
+            if (manifestPath != null)
             {
-                ModkitLog.Warn($"[ModpackManager] No manifest.json found in {zipPath}");
-                throw new InvalidOperationException("No manifest.json found in zip file");
+                contentDir = Path.GetDirectoryName(manifestPath)!;
+            }
+            else
+            {
+                // No manifest found - infer one from archive contents
+                ModkitLog.Info($"[ModpackManager] No modpack.json found, inferring from contents...");
+                contentDir = FindContentDirectory(tempDir);
+                var inferredManifest = InferManifestFromContents(archivePath, contentDir);
+                inferredManifest.SaveToFile(Path.Combine(contentDir, "modpack.json"));
+                ModkitLog.Info($"[ModpackManager] Created inferred manifest: {inferredManifest.Name}");
             }
 
-            var manifestDir = Path.GetDirectoryName(manifestPath)!;
-            var manifest = LoadManifest(manifestDir);
+            var manifest = LoadManifest(contentDir);
             if (manifest == null)
             {
-                throw new InvalidOperationException("Failed to parse manifest.json");
+                throw new InvalidOperationException("Failed to load manifest");
             }
 
             // Determine target directory name (sanitize the modpack name)
@@ -481,7 +515,7 @@ public class ModpackManager
 
             // Copy the modpack contents to staging
             Directory.CreateDirectory(_stagingBasePath);
-            CopyDirectory(manifestDir, targetDir);
+            CopyDirectory(contentDir, targetDir);
 
             // Update manifest path and reload
             manifest = LoadManifest(targetDir);
@@ -500,20 +534,126 @@ public class ModpackManager
                 if (Directory.Exists(tempDir))
                     Directory.Delete(tempDir, true);
             }
-            catch { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ModkitLog.Info($"[ModpackManager] Failed to clean up temp directory: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Find the directory containing the modpack content.
+    /// If there's a single subfolder, use that (common for archives with a wrapper folder).
+    /// Otherwise use the root.
+    /// </summary>
+    private static string FindContentDirectory(string extractedDir)
+    {
+        var subDirs = Directory.GetDirectories(extractedDir);
+        var files = Directory.GetFiles(extractedDir);
+
+        // If there's exactly one subfolder and no files at root, use the subfolder
+        if (subDirs.Length == 1 && files.Length == 0)
+            return subDirs[0];
+
+        return extractedDir;
+    }
+
+    /// <summary>
+    /// Infer a manifest from the archive contents.
+    /// Detects stats/, assets/, source/ folders and populates the manifest accordingly.
+    /// </summary>
+    private static ModpackManifest InferManifestFromContents(string archivePath, string contentDir)
+    {
+        // Use archive filename (without extension) as the modpack name
+        var archiveName = Path.GetFileNameWithoutExtension(archivePath);
+        // Handle double extensions like .tar.gz
+        if (archiveName.EndsWith(".tar", StringComparison.OrdinalIgnoreCase))
+            archiveName = Path.GetFileNameWithoutExtension(archiveName);
+
+        var manifest = new ModpackManifest
+        {
+            Name = archiveName,
+            Author = "Unknown",
+            Description = $"Imported from {Path.GetFileName(archivePath)}",
+            Version = "1.0.0",
+            CreatedDate = DateTime.Now,
+            ModifiedDate = DateTime.Now
+        };
+
+        // Detect what content exists
+        var hasStats = Directory.Exists(Path.Combine(contentDir, "stats"));
+        var hasAssets = Directory.Exists(Path.Combine(contentDir, "assets"));
+        var hasSource = Directory.Exists(Path.Combine(contentDir, "source"));
+
+        // Build description based on detected content
+        var contentTypes = new List<string>();
+        if (hasStats) contentTypes.Add("stat changes");
+        if (hasAssets) contentTypes.Add("assets");
+        if (hasSource) contentTypes.Add("code");
+
+        if (contentTypes.Count > 0)
+        {
+            manifest.Description = $"Imported mod with {string.Join(", ", contentTypes)}";
+        }
+
+        return manifest;
+    }
+
+    /// <summary>
+    /// Backwards-compatible alias for ImportModpackFromArchive.
+    /// </summary>
+    public ModpackManifest? ImportModpackFromZip(string zipPath) => ImportModpackFromArchive(zipPath);
+
+    /// <summary>
+    /// Extract an archive file to a directory using SharpCompress.
+    /// Supports .zip, .7z, .rar, .tar, .tar.gz, .tar.bz2, etc.
+    /// Validates each entry to prevent path traversal (Zip Slip) attacks.
+    /// </summary>
+    private static void ExtractArchive(string archivePath, string destinationDir)
+    {
+        Directory.CreateDirectory(destinationDir);
+
+        using var archive = ArchiveFactory.Open(archivePath);
+        foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+        {
+            var entryKey = entry.Key;
+            if (string.IsNullOrEmpty(entryKey))
+                continue;
+
+            // Validate entry path to prevent path traversal attacks
+            var destPath = PathValidator.ValidateArchiveEntryPath(destinationDir, entryKey);
+
+            // Ensure the directory exists
+            var destDir = Path.GetDirectoryName(destPath);
+            if (!string.IsNullOrEmpty(destDir))
+                Directory.CreateDirectory(destDir);
+
+            entry.WriteToFile(destPath, new ExtractionOptions
+            {
+                ExtractFullPath = false,
+                Overwrite = true
+            });
         }
     }
 
     private static string? FindManifestInDirectory(string dir)
     {
-        // Check root first
+        // Check root first - try both modpack.json (our format) and manifest.json (legacy/external)
+        var rootModpack = Path.Combine(dir, "modpack.json");
+        if (File.Exists(rootModpack))
+            return rootModpack;
+
         var rootManifest = Path.Combine(dir, "manifest.json");
         if (File.Exists(rootManifest))
             return rootManifest;
 
-        // Check one level of subdirectories (in case zip contains a wrapper folder)
+        // Check one level of subdirectories (in case archive contains a wrapper folder)
         foreach (var subDir in Directory.GetDirectories(dir))
         {
+            var subModpack = Path.Combine(subDir, "modpack.json");
+            if (File.Exists(subModpack))
+                return subModpack;
+
             var subManifest = Path.Combine(subDir, "manifest.json");
             if (File.Exists(subManifest))
                 return subManifest;
@@ -566,11 +706,25 @@ public class ModpackManager
 
     private ModpackManifest? LoadManifest(string modpackDir)
     {
-        var infoPath = Path.Combine(modpackDir, "modpack.json");
+        // Try modpack.json first (our format), then manifest.json (legacy/external)
+        var modpackPath = Path.Combine(modpackDir, "modpack.json");
+        var manifestPath = Path.Combine(modpackDir, "manifest.json");
+
+        var infoPath = File.Exists(modpackPath) ? modpackPath : manifestPath;
+
         try
         {
             var manifest = ModpackManifest.LoadFromFile(infoPath);
             manifest.Path = modpackDir;
+
+            // If loaded from manifest.json, save as modpack.json for consistency
+            if (infoPath == manifestPath && File.Exists(manifestPath))
+            {
+                manifest.SaveToFile(modpackPath);
+                // Optionally delete the old manifest.json
+                // File.Delete(manifestPath);
+            }
+
             return manifest;
         }
         catch
@@ -862,7 +1016,11 @@ public class ModpackManager
             var buildDir = Path.Combine(destDir, "build");
             if (Directory.Exists(buildDir))
             {
-                try { Directory.Delete(buildDir, true); } catch { }
+                try { Directory.Delete(buildDir, true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    ModkitLog.Warn($"[ModpackManager] Failed to delete build cache: {ex.Message}");
+                }
             }
         }
     }
@@ -901,6 +1059,28 @@ public class ModpackManager
     {
         var invalid = Path.GetInvalidFileNameChars();
         return string.Join("_", name.Split(invalid, StringSplitOptions.RemoveEmptyEntries)).TrimEnd('.');
+    }
+
+    /// <summary>
+    /// Validates a modpack name for security and compatibility.
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown if the name is invalid.</exception>
+    private static void ValidateModpackName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Modpack name is required", nameof(name));
+
+        if (name.Length > MaxModpackNameLength)
+            throw new ArgumentException($"Modpack name must be {MaxModpackNameLength} characters or less", nameof(name));
+
+        if (!ValidModpackNameRegex.IsMatch(name))
+            throw new ArgumentException("Modpack name contains invalid characters. Use only letters, numbers, spaces, underscores, hyphens, and periods.", nameof(name));
+
+        // Check for reserved Windows names
+        var reservedNames = new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+        var baseName = name.Split('.')[0].ToUpperInvariant();
+        if (reservedNames.Contains(baseName))
+            throw new ArgumentException($"'{name}' is a reserved system name and cannot be used", nameof(name));
     }
 
     private void CopyDirectory(string sourceDir, string destDir)

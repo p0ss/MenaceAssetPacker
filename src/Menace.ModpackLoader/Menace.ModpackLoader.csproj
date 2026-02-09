@@ -11,64 +11,70 @@
     <InternalsVisibleTo Include="Menace.ModpackLoader.Tests" />
   </ItemGroup>
 
+  <!-- MelonLoader framework references (configurable via Directory.Build.props) -->
   <ItemGroup>
     <Reference Include="MelonLoader">
-      <HintPath>/home/poss/Documents/Code/Menace/Vanilla/MelonLoader/MelonLoader.dll</HintPath>
+      <HintPath>$(MelonLoaderPath)/MelonLoader.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>/home/poss/Documents/Code/Menace/Vanilla/MelonLoader/0Harmony.dll</HintPath>
+      <HintPath>$(MelonLoaderPath)/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Il2CppInterop.Runtime">
-      <HintPath>/home/poss/Documents/Code/Menace/Vanilla/MelonLoader/Il2CppInterop.Runtime.dll</HintPath>
+      <HintPath>$(MelonLoaderPath)/Il2CppInterop.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Il2CppInterop.Common">
-      <HintPath>/home/poss/Documents/Code/Menace/Vanilla/MelonLoader/Il2CppInterop.Common.dll</HintPath>
+      <HintPath>$(MelonLoaderPath)/Il2CppInterop.Common.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- Game-specific Il2Cpp assemblies (configurable via Directory.Build.props) -->
+  <ItemGroup>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ImageConversionModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.ImageConversionModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Il2Cppmscorlib">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Il2Cppmscorlib.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/Il2Cppmscorlib.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.AssetBundleModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.AssetBundleModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.AssetBundleModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.AudioModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.AudioModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.AudioModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.InputLegacyModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>/home/poss/.steam/debian-installation/steamapps/common/Menace Demo/MelonLoader/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
+      <HintPath>$(GameAssembliesPath)/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.1" />
+    <!-- Standardized to 4.12.0 to match App project -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
   </ItemGroup>
 
   <!-- Shared version file (single source of truth) -->

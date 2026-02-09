@@ -30,3 +30,10 @@ __pycache__/
 third_party/bundled/AssetRipper/
 third_party/bundled/MelonLoader/
 
+# Local symlinks to MelonLoader and game assemblies (see DEVELOPMENT.md)
+third_party/MelonLoader
+third_party/GameAssemblies
+
+# Dependency lock files (generated, can regenerate with `dotnet restore --use-lock-file`)
+packages.lock.json
+

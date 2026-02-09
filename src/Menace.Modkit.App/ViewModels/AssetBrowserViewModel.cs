@@ -853,8 +853,10 @@ public sealed class AssetBrowserViewModel : ViewModelBase
                 FolderTree.Add(n);
         }
 
-        // Auto-expand filtered results
+        // Auto-expand filtered results (multiple passes to handle TreeView container creation timing)
         SetExpansionState(FolderTree, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private AssetTreeNode? FilterNode(AssetTreeNode node, string? query, Dictionary<AssetTreeNode, int> scores)
@@ -902,10 +904,12 @@ public sealed class AssetBrowserViewModel : ViewModelBase
         if (matchingChildren.Count == 0)
             return null;
 
-        // If all children match, return original node
-        // (don't auto-expand - folder is just a breadcrumb, not a search target)
+        // If all children match, return original node (expanded for visibility)
         if (matchingChildren.Count == node.Children.Count)
+        {
+            node.IsExpanded = true;
             return node;
+        }
 
         // Create a filtered copy with only matching children, pre-expanded
         var copy = new AssetTreeNode
@@ -926,7 +930,12 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
     public void ExpandAll()
     {
+        // Set expansion state multiple times with UI thread yields to allow
+        // TreeView to create containers for newly-visible children
         SetExpansionState(FolderTree, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
     }
 
     public void CollapseAll()

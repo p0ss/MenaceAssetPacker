@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="0.8.0-preview.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />
+    <ProjectReference Include="..\Menace.Modkit.App\Menace.Modkit.App.csproj" />
+  </ItemGroup>
+
+</Project>

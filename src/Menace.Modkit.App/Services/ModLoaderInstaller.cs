@@ -24,19 +24,32 @@ public class ModLoaderInstaller
         {
             progressCallback?.Invoke("Installing MelonLoader...");
 
-            // Use bundled MelonLoader from third_party
-            var bundledMelonLoader = Path.Combine(
-                AppContext.BaseDirectory,
-                "third_party", "bundled", "MelonLoader");
+            // Find MelonLoader (checks cache first, then bundled)
+            var melonLoaderPath = ToolsManager.Instance.GetMelonLoaderPath();
 
-            if (!Directory.Exists(bundledMelonLoader))
+            if (melonLoaderPath == null)
             {
-                progressCallback?.Invoke("❌ Bundled MelonLoader not found");
-                return false;
+                // Tools not installed - need to download
+                progressCallback?.Invoke("MelonLoader not found. Downloading tools...");
+                var downloaded = await ToolsManager.Instance.DownloadToolsAsync((msg, pct) =>
+                    progressCallback?.Invoke(msg));
+
+                if (!downloaded)
+                {
+                    progressCallback?.Invoke("❌ Failed to download tools");
+                    return false;
+                }
+
+                melonLoaderPath = ToolsManager.Instance.GetMelonLoaderPath();
+                if (melonLoaderPath == null)
+                {
+                    progressCallback?.Invoke("❌ Tools downloaded but MelonLoader not found");
+                    return false;
+                }
             }
 
             // Copy all MelonLoader files to game directory
-            CopyDirectory(bundledMelonLoader, _gameInstallPath, progressCallback);
+            CopyDirectory(melonLoaderPath, _gameInstallPath, progressCallback);
 
             progressCallback?.Invoke("✓ MelonLoader installed successfully");
             return true;
@@ -87,7 +100,7 @@ public class ModLoaderInstaller
         }
     }
 
-    public async Task<bool> InstallDataExtractorAsync(Action<string>? progressCallback = null)
+    public Task<bool> InstallDataExtractorAsync(Action<string>? progressCallback = null)
     {
         try
         {
@@ -101,7 +114,7 @@ public class ModLoaderInstaller
             if (!File.Exists(dataExtractorDll))
             {
                 progressCallback?.Invoke("❌ Bundled DataExtractor.dll not found");
-                return false;
+                return Task.FromResult(false);
             }
 
             // Copy to game's Mods folder
@@ -112,16 +125,16 @@ public class ModLoaderInstaller
             File.Copy(dataExtractorDll, targetPath, overwrite: true);
 
             progressCallback?.Invoke("✓ DataExtractor mod installed successfully");
-            return true;
+            return Task.FromResult(true);
         }
         catch (Exception ex)
         {
             progressCallback?.Invoke($"❌ Error installing DataExtractor: {ex.Message}");
-            return false;
+            return Task.FromResult(false);
         }
     }
 
-    public async Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
+    public Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
     {
         try
         {
@@ -134,7 +147,7 @@ public class ModLoaderInstaller
             if (!Directory.Exists(modpackLoaderDir))
             {
                 progressCallback?.Invoke("❌ Bundled ModpackLoader directory not found");
-                return false;
+                return Task.FromResult(false);
             }
 
             var modsFolder = Path.Combine(_gameInstallPath, "Mods");
@@ -148,16 +161,16 @@ public class ModLoaderInstaller
             }
 
             progressCallback?.Invoke("✓ ModpackLoader mod installed successfully");
-            return true;
+            return Task.FromResult(true);
         }
         catch (Exception ex)
         {
             progressCallback?.Invoke($"❌ Error installing ModpackLoader: {ex.Message}");
-            return false;
+            return Task.FromResult(false);
         }
     }
 
-    public async Task CleanModsDirectoryAsync(Action<string>? progressCallback = null)
+    public Task CleanModsDirectoryAsync(Action<string>? progressCallback = null)
     {
         var modsFolder = Path.Combine(_gameInstallPath, "Mods");
 
@@ -174,6 +187,7 @@ public class ModLoaderInstaller
 
         Directory.CreateDirectory(modsFolder);
         progressCallback?.Invoke("✓ Mods directory cleaned");
+        return Task.CompletedTask;
     }
 
     public bool IsMelonLoaderInstalled()
@@ -188,7 +202,7 @@ public class ModLoaderInstaller
         return File.Exists(dataExtractorDll);
     }
 
-    public async Task<bool> LaunchGameAsync(Action<string>? progressCallback = null)
+    public Task<bool> LaunchGameAsync(Action<string>? progressCallback = null)
     {
         try
         {
@@ -200,7 +214,7 @@ public class ModLoaderInstaller
             if (!File.Exists(gameExe))
             {
                 progressCallback?.Invoke("❌ Game executable not found");
-                return false;
+                return Task.FromResult(false);
             }
 
             ProcessStartInfo startInfo;
@@ -234,12 +248,12 @@ public class ModLoaderInstaller
             progressCallback?.Invoke("✓ Game launched. Waiting for data extraction...");
             progressCallback?.Invoke("Once the game finishes loading, check the Stats tab to see if data appeared.");
 
-            return true;
+            return Task.FromResult(true);
         }
         catch (Exception ex)
         {
             progressCallback?.Invoke($"❌ Error launching game: {ex.Message}");
-            return false;
+            return Task.FromResult(false);
         }
     }
 }

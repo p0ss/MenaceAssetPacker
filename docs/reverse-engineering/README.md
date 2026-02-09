@@ -24,6 +24,23 @@ This directory contains reverse-engineered documentation of Menace's game system
 | UI System | ✅ Complete | [ui-system.md](./ui-system.md) |
 | Offset Stability | ✅ Complete | [offset-stability.md](./offset-stability.md) |
 | Terrain Generation | ✅ Complete | [terrain-generation.md](./terrain-generation.md) |
+| Tile & Map System | ✅ Complete | [tile-map-system.md](./tile-map-system.md) |
+| Pathfinding System | ✅ Complete | [pathfinding-system.md](./pathfinding-system.md) |
+| Actor System | ✅ Complete | [actor-system.md](./actor-system.md) |
+| Turn & Action System | ✅ Complete | [turn-action-system.md](./turn-action-system.md) |
+| Mission System | ✅ Complete | [mission-system.md](./mission-system.md) |
+| Operation System | ✅ Complete | [operation-system.md](./operation-system.md) |
+| Army Generation | ✅ Complete | [army-generation.md](./army-generation.md) |
+| Roster & Unit Management | ✅ Complete | [roster-system.md](./roster-system.md) |
+| Item System | ✅ Complete | [item-system.md](./item-system.md) |
+| Vehicle System | ✅ Complete | [vehicle-system.md](./vehicle-system.md) |
+| Conversation System | ✅ Complete | [conversation-system.md](./conversation-system.md) |
+| Event System | ✅ Complete | [event-system.md](./event-system.md) |
+| Emotional State System | ✅ Complete | [emotional-system.md](./emotional-system.md) |
+| Tile Effects | ✅ Complete | [tile-effects.md](./tile-effects.md) |
+| Line of Sight & Visibility | ✅ Complete | [line-of-sight.md](./line-of-sight.md) |
+| Offmap Abilities | ✅ Complete | [offmap-abilities.md](./offmap-abilities.md) |
+| BlackMarket | ✅ Complete | [blackmarket.md](./blackmarket.md) |
 
 ## Key Offsets Reference
 
@@ -38,11 +55,29 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 ### Unit State
 - **[suppression-morale.md](./suppression-morale.md)** - Suppression states, morale states, related methods
 - **[entity-properties.md](./entity-properties.md)** - Complete EntityProperties field layout with all combat stats
+- **[actor-system.md](./actor-system.md)** - Entity, Actor, UnitActor, Structure, Element class layouts and methods
 
 ### Game Systems
 - **[skills-effects.md](./skills-effects.md)** - SkillTemplate structure, SkillEventHandler system, effect types
 - **[ai-decisions.md](./ai-decisions.md)** - Agent class, behavior system, utility-based decision making
 - **[template-loading.md](./template-loading.md)** - DataTemplateLoader, resource paths, template hierarchy
+- **[turn-action-system.md](./turn-action-system.md)** - TacticalManager, TacticalState, rounds, turns, action classes
+
+### Campaign/Strategy Layer
+- **[mission-system.md](./mission-system.md)** - Mission class, army management, objectives, environmental settings, spawn flow
+- **[operation-system.md](./operation-system.md)** - Operation lifecycle, faction trust, strategic assets, time management
+- **[army-generation.md](./army-generation.md)** - Budget-based army generation, weighted selection, progress scaling
+- **[roster-system.md](./roster-system.md)** - Roster, BaseUnitLeader, Squaddie, perks, deployment costs
+
+### Items & Equipment
+- **[item-system.md](./item-system.md)** - Item, ItemContainer, BaseItemTemplate, 11 slot types, skill management
+- **[vehicle-system.md](./vehicle-system.md)** - Vehicle, ItemsModularVehicle, modular slots, twin-fire detection
+- **[blackmarket.md](./blackmarket.md)** - BlackMarket shop system, item generation, operation-based timeouts
+
+### Dialogue & Events
+- **[conversation-system.md](./conversation-system.md)** - BaseConversationManager, Role requirements, speaker assignment, conversation nodes
+- **[event-system.md](./event-system.md)** - EventManager, ConversationInstance, strategic layer events
+- **[emotional-system.md](./emotional-system.md)** - EmotionalStates, triggers, skill modifiers, mission lifecycle
 
 ### Infrastructure
 - **[save-system.md](./save-system.md)** - Complete save file format, StrategyState serialization order, all nested processors (Roster, OwnedItems, Squaddies, etc.), parser implementation guide
@@ -51,6 +86,11 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 - **[offset-stability.md](./offset-stability.md)** - API considerations, version compatibility, best practices
 - **[asset-references.md](./asset-references.md)** - Template hierarchy, sprite/prefab references, finding asset usages
 - **[terrain-generation.md](./terrain-generation.md)** - Map generation pipeline, ChunkGenerator, MapMagic integration, road/cover placement
+- **[tile-map-system.md](./tile-map-system.md)** - Tile/Map classes, cover system, visibility, 8-direction system
+- **[pathfinding-system.md](./pathfinding-system.md)** - A* pathfinding, movement costs, traversability, path modifiers
+- **[tile-effects.md](./tile-effects.md)** - TileEffectHandler system, effect types (fire, smoke, bleed-out, ammo crates), lifecycle callbacks
+- **[line-of-sight.md](./line-of-sight.md)** - LOS ray-tracing, visibility masks, fog of war, detection vs concealment
+- **[offmap-abilities.md](./offmap-abilities.md)** - Delayed abilities (airstrikes, artillery), round-based timing, scheduling
 
 ## Key Findings
 

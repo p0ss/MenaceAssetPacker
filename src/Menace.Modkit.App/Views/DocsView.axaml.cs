@@ -100,10 +100,10 @@ public class DocsView : UserControl
 
         var grid = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*")
         };
 
-        // Header
+        // Row 0: Header
         var header = new Border
         {
             Background = new SolidColorBrush(Color.Parse("#252525")),
@@ -119,7 +119,66 @@ public class DocsView : UserControl
         grid.Children.Add(header);
         Grid.SetRow(header, 0);
 
-        // Document tree
+        // Row 1: Search box
+        var searchBox = new TextBox
+        {
+            Watermark = "Search docs...",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(8, 8, 8, 12)
+        };
+        searchBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SearchText"));
+        grid.Children.Add(searchBox);
+        Grid.SetRow(searchBox, 1);
+
+        // Row 2: Expand/Collapse buttons
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(8, 4, 8, 12)
+        };
+
+        var expandAllButton = new Button
+        {
+            Content = "Expand All",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Padding = new Thickness(10, 4),
+            FontSize = 11
+        };
+        expandAllButton.Click += (_, _) =>
+        {
+            if (DataContext is DocsViewModel vm)
+                vm.ExpandAll();
+        };
+        buttonPanel.Children.Add(expandAllButton);
+
+        var collapseAllButton = new Button
+        {
+            Content = "Collapse All",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Padding = new Thickness(10, 4),
+            FontSize = 11
+        };
+        collapseAllButton.Click += (_, _) =>
+        {
+            if (DataContext is DocsViewModel vm)
+                vm.CollapseAll();
+        };
+        buttonPanel.Children.Add(collapseAllButton);
+
+        grid.Children.Add(buttonPanel);
+        Grid.SetRow(buttonPanel, 2);
+
+        // Row 3: Document tree
         var treeView = new TreeView
         {
             Background = Brushes.Transparent,
@@ -135,7 +194,7 @@ public class DocsView : UserControl
 
         var scrollViewer = new ScrollViewer { Content = treeView };
         grid.Children.Add(scrollViewer);
-        Grid.SetRow(scrollViewer, 1);
+        Grid.SetRow(scrollViewer, 3);
 
         border.Child = grid;
         return border;
@@ -150,7 +209,7 @@ public class DocsView : UserControl
                 {
                     Orientation = Orientation.Horizontal,
                     Spacing = 6,
-                    Margin = new Thickness(2, 4)
+                    Margin = new Thickness(4, 8)
                 };
 
                 // Icon for folder/file

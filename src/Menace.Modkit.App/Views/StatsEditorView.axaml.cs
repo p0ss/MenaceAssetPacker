@@ -4,6 +4,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
@@ -12,6 +13,10 @@ namespace Menace.Modkit.App.Views;
 
 public class StatsEditorView : UserControl
 {
+  // Converter to check if an object is non-null (for visibility bindings)
+  private static readonly Avalonia.Data.Converters.FuncValueConverter<object?, bool> ObjectToBoolConverter =
+    new(obj => obj != null);
+
   public StatsEditorView()
   {
     Content = BuildUI();
@@ -368,7 +373,7 @@ public class StatsEditorView : UserControl
           FontWeight = node.IsCategory ? FontWeight.SemiBold : FontWeight.Normal,
           Foreground = Brushes.White,
           FontSize = node.IsCategory ? 13 : 12,
-          Margin = new Thickness(4, 2)
+          Margin = new Thickness(8, 6)
         };
         return text;
       },
@@ -551,16 +556,43 @@ public class StatsEditorView : UserControl
       Margin = new Thickness(12, 0, 0, 0),
       RowDefinitions = new RowDefinitions("Auto,*")
     };
+
+    // Header row with title and Reset button
+    var modifiedHeaderRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Margin = new Thickness(0, 0, 0, 12)
+    };
     var modifiedHeader = new TextBlock
     {
       Text = "Modified",
       FontSize = 16,
       FontWeight = FontWeight.SemiBold,
       Foreground = Brushes.White,
-      Margin = new Thickness(0, 0, 0, 12)
+      VerticalAlignment = VerticalAlignment.Center
     };
-    modifiedPanel.Children.Add(modifiedHeader);
-    Grid.SetRow(modifiedHeader, 0);
+    modifiedHeaderRow.Children.Add(modifiedHeader);
+
+    var resetButton = new Button
+    {
+      Content = "Reset to Vanilla",
+      Background = new SolidColorBrush(Color.Parse("#410511")),  // Maroon
+      Foreground = Brushes.White,
+      FontSize = 11,
+      Padding = new Thickness(8, 4),
+      Margin = new Thickness(12, 0, 0, 0),
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    resetButton.Click += OnResetToVanillaClick;
+    // Show reset button when a node is selected, enable only when there are modifications
+    resetButton.Bind(Button.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedNode") { Converter = ObjectToBoolConverter });
+    resetButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("HasModifications"));
+    modifiedHeaderRow.Children.Add(resetButton);
+
+    modifiedPanel.Children.Add(modifiedHeaderRow);
+    Grid.SetRow(modifiedHeaderRow, 0);
 
     var modifiedScrollViewer = new ScrollViewer
     {
@@ -704,6 +736,26 @@ public class StatsEditorView : UserControl
     if (DataContext is StatsEditorViewModel vm)
     {
       vm.SaveToStaging();
+    }
+  }
+
+  private async void OnResetToVanillaClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    if (DataContext is StatsEditorViewModel vm)
+    {
+      var topLevel = TopLevel.GetTopLevel(this);
+      if (topLevel is not Window window) return;
+
+      var confirmed = await ConfirmationDialog.ShowAsync(
+        window,
+        "Reset to Vanilla",
+        "This will delete all your stat overrides and revert to vanilla values. This cannot be undone.",
+        "Reset",
+        isDestructive: true
+      );
+
+      if (confirmed)
+        vm.ResetToVanilla();
     }
   }
 
@@ -917,15 +969,27 @@ public class StatsEditorView : UserControl
       switch (jsonElement.ValueKind)
       {
         case System.Text.Json.JsonValueKind.Object:
-          // Deeply nested object (2+ levels) — render read-only.
-          // First-level nested objects are flattened to dotted keys in the ViewModel.
-          var nestedPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 0, 0) };
+          // Deeply nested object (2+ levels) — render editable with sync callback.
+          // The parent field key (name) is used to update the entire nested object.
+          var nestedDict = new System.Collections.Generic.Dictionary<string, object?>();
           foreach (var prop in jsonElement.EnumerateObject())
+            nestedDict[prop.Name] = prop.Value.Clone();
+
+          var nestedObjPanel = new StackPanel { Spacing = 8, Margin = new Thickness(16, 4, 0, 0) };
+          foreach (var prop in nestedDict.ToList())
           {
-            var nestedField = CreatePropertyField(prop.Name, prop.Value, false, 0);
-            nestedPanel.Children.Add(nestedField);
+            nestedObjPanel.Children.Add(CreateObjectFieldControl(
+              prop.Key, prop.Value, nestedDict, null, isEditable, () =>
+              {
+                // Sync the entire nested object back to ModifiedProperties
+                if (DataContext is StatsEditorViewModel nestedVm)
+                {
+                  var json = SerializeDict(nestedDict);
+                  nestedVm.UpdateComplexArrayProperty(name, json.GetRawText());
+                }
+              }));
           }
-          fieldStack.Children.Add(nestedPanel);
+          fieldStack.Children.Add(nestedObjPanel);
           return fieldStack;
 
         case System.Text.Json.JsonValueKind.Array:

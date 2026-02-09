@@ -11,6 +11,7 @@ namespace Menace.SDK.Repl;
 /// <summary>
 /// Roslyn-based runtime C# compiler. Wraps expressions/statements in a class,
 /// compiles to in-memory assembly, and loads it.
+/// Security: Blocks dangerous namespaces and disables unsafe code.
 /// </summary>
 public class RuntimeCompiler
 {
@@ -24,6 +25,44 @@ public class RuntimeCompiler
         "System.Collections.Generic",
         "Menace.SDK",
         "UnityEngine"
+    };
+
+    /// <summary>
+    /// Namespaces that are blocked for security reasons in REPL code.
+    /// These could be used for arbitrary code execution, file system access, or network access.
+    /// </summary>
+    private static readonly HashSet<string> BlockedNamespaces = new(StringComparer.Ordinal)
+    {
+        "System.Reflection.Emit",
+        "System.Runtime.InteropServices",
+        "System.Diagnostics.Process",
+        "System.IO.File",
+        "System.IO.Directory",
+        "System.IO.FileStream",
+        "System.IO.StreamWriter",
+        "System.IO.StreamReader",
+        "System.Net.Http",
+        "System.Net.Sockets",
+        "System.Net.WebClient",
+    };
+
+    /// <summary>
+    /// Specific dangerous patterns that should be blocked.
+    /// </summary>
+    private static readonly string[] BlockedPatterns =
+    {
+        "Process.Start",
+        "Assembly.Load",
+        "Assembly.LoadFrom",
+        "Assembly.LoadFile",
+        "Activator.CreateInstance",
+        "Type.InvokeMember",
+        "AppDomain.CreateDomain",
+        "File.WriteAllText",
+        "File.WriteAllBytes",
+        "File.Delete",
+        "Directory.Delete",
+        "Environment.Exit",
     };
 
     public RuntimeCompiler(IReadOnlyList<MetadataReference> references)
@@ -103,6 +142,13 @@ public static class {className}
     }}
 }}";
 
+        // Security check: Block dangerous code patterns before compilation
+        var securityError = CheckForDangerousCode(source);
+        if (securityError != null)
+        {
+            return CompilationResult.Fail($"Security: {securityError}");
+        }
+
         try
         {
             var syntaxTree = CSharpSyntaxTree.ParseText(source);
@@ -113,7 +159,7 @@ public static class {className}
                 _references,
                 new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
                     .WithOptimizationLevel(OptimizationLevel.Debug)
-                    .WithAllowUnsafe(true));
+                    .WithAllowUnsafe(false)); // Disable unsafe code for security
 
             using var ms = new MemoryStream();
             var emitResult = compilation.Emit(ms);
@@ -173,5 +219,46 @@ public static class {className}
                 Errors = new[] { error }
             };
         }
+    }
+
+    /// <summary>
+    /// Check source code for dangerous patterns that could be used for malicious purposes.
+    /// Returns an error message if dangerous code is detected, null otherwise.
+    /// </summary>
+    private static string CheckForDangerousCode(string source)
+    {
+        // Check for blocked namespaces
+        foreach (var ns in BlockedNamespaces)
+        {
+            if (source.Contains(ns, StringComparison.Ordinal))
+            {
+                return $"Blocked namespace detected: {ns}";
+            }
+        }
+
+        // Check for blocked patterns
+        foreach (var pattern in BlockedPatterns)
+        {
+            if (source.Contains(pattern, StringComparison.Ordinal))
+            {
+                return $"Blocked operation detected: {pattern}";
+            }
+        }
+
+        // Check for unsafe keyword
+        if (source.Contains("unsafe ", StringComparison.Ordinal) ||
+            source.Contains("unsafe{", StringComparison.Ordinal))
+        {
+            return "Unsafe code is not allowed in REPL";
+        }
+
+        // Check for pointer syntax
+        if (source.Contains("fixed ", StringComparison.Ordinal) ||
+            source.Contains("stackalloc ", StringComparison.Ordinal))
+        {
+            return "Pointer operations are not allowed in REPL";
+        }
+
+        return null;
     }
 }

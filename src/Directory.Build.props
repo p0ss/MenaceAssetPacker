@@ -1,0 +1,22 @@
+<Project>
+  <!-- Import parent Directory.Build.props first -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+  <!-- Configurable paths for MelonLoader and game assemblies.
+       These can be overridden via environment variables or command-line properties:
+       dotnet build /p:MelonLoaderPath=/path/to/MelonLoader
+
+       For local development, set these environment variables:
+       - MELONLOADER_PATH: Path to MelonLoader installation directory
+       - GAME_ASSEMBLIES_PATH: Path to game's MelonLoader/Il2CppAssemblies folder
+  -->
+  <PropertyGroup>
+    <!-- MelonLoader DLLs (MelonLoader.dll, 0Harmony.dll, Il2CppInterop.*.dll) -->
+    <MelonLoaderPath Condition="'$(MelonLoaderPath)' == '' AND '$(MELONLOADER_PATH)' != ''">$(MELONLOADER_PATH)</MelonLoaderPath>
+    <MelonLoaderPath Condition="'$(MelonLoaderPath)' == ''">$(MSBuildThisFileDirectory)../third_party/MelonLoader</MelonLoaderPath>
+
+    <!-- Game-specific Il2Cpp assemblies (Assembly-CSharp.dll, UnityEngine.*.dll, etc.) -->
+    <GameAssembliesPath Condition="'$(GameAssembliesPath)' == '' AND '$(GAME_ASSEMBLIES_PATH)' != ''">$(GAME_ASSEMBLIES_PATH)</GameAssembliesPath>
+    <GameAssembliesPath Condition="'$(GameAssembliesPath)' == ''">$(MSBuildThisFileDirectory)../third_party/GameAssemblies</GameAssembliesPath>
+  </PropertyGroup>
+</Project>

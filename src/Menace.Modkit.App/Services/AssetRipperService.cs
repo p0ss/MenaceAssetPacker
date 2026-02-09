@@ -1,9 +1,12 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Menace.Modkit.Core.Models;
 
@@ -12,8 +15,68 @@ namespace Menace.Modkit.App.Services;
 public class AssetRipperService
 {
     private Process? _assetRipperProcess;
-    private readonly int _port = 5734; // Fixed port for AssetRipper
+    private int _port;
     private readonly List<string> _processOutput = new();
+    private CancellationTokenSource? _extractionCts;
+
+    /// <summary>
+    /// Indicates whether an extraction is currently in progress.
+    /// </summary>
+    public bool IsExtracting => _extractionCts != null;
+
+    public AssetRipperService()
+    {
+        _port = FindAvailablePort();
+    }
+
+    /// <summary>
+    /// Cancels the current extraction operation, if any.
+    /// </summary>
+    public void CancelExtraction()
+    {
+        _extractionCts?.Cancel();
+    }
+
+    /// <summary>
+    /// Find an available port for the AssetRipper server.
+    /// Uses a preferred port (5734) if available, otherwise finds a random available port.
+    /// </summary>
+    private static int FindAvailablePort()
+    {
+        const int preferredPort = 5734;
+
+        // Try the preferred port first
+        if (IsPortAvailable(preferredPort))
+            return preferredPort;
+
+        // If preferred port is busy, find a random available port
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        try
+        {
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            return port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static bool IsPortAvailable(int port)
+    {
+        try
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            listener.Stop();
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Resolved output path — uses configured or default path.
@@ -27,8 +90,12 @@ public class AssetRipperService
         return Directory.GetFiles(effectivePath, "*.*", SearchOption.AllDirectories).Length > 0;
     }
 
-    public async Task<bool> ExtractAssetsAsync(Action<string>? progressCallback = null)
+    public async Task<bool> ExtractAssetsAsync(Action<string>? progressCallback = null, CancellationToken externalToken = default)
     {
+        // Create a linked token source so we can cancel via CancelExtraction() or external token
+        _extractionCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+        var cancellationToken = _extractionCts.Token;
+
         try
         {
             // Check if extraction is actually needed (change detection)
@@ -38,17 +105,33 @@ public class AssetRipperService
                 return true;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             progressCallback?.Invoke("Starting AssetRipper server...");
 
             // Kill any stale AssetRipper on our port from a previous run
             KillExistingOnPort();
 
-            // Find AssetRipper executable
-            var assetRipperPath = FindAssetRipper();
+            // Find AssetRipper executable (checks cache first, then bundled)
+            var assetRipperPath = ToolsManager.Instance.GetAssetRipperPath();
             if (assetRipperPath == null)
             {
-                progressCallback?.Invoke("AssetRipper not found. Expected at: third_party/bundled/AssetRipper/");
-                return false;
+                // Tools not installed - need to download
+                progressCallback?.Invoke("AssetRipper not found. Downloading tools...");
+                var downloaded = await ToolsManager.Instance.DownloadToolsAsync((msg, pct) =>
+                    progressCallback?.Invoke(msg));
+
+                if (!downloaded)
+                {
+                    progressCallback?.Invoke("Failed to download tools. Check your internet connection.");
+                    return false;
+                }
+
+                assetRipperPath = ToolsManager.Instance.GetAssetRipperPath();
+                if (assetRipperPath == null)
+                {
+                    progressCallback?.Invoke("Tools downloaded but AssetRipper not found.");
+                    return false;
+                }
             }
 
             // Get game data path
@@ -106,10 +189,11 @@ public class AssetRipperService
             bool serverReady = false;
             for (int attempt = 0; attempt < 15; attempt++)
             {
-                await Task.Delay(1000);
+                cancellationToken.ThrowIfCancellationRequested();
+                await Task.Delay(1000, cancellationToken);
                 try
                 {
-                    var probe = await client.GetAsync($"http://localhost:{_port}/");
+                    var probe = await client.GetAsync($"http://localhost:{_port}/", cancellationToken);
                     if (probe.IsSuccessStatusCode)
                     {
                         serverReady = true;
@@ -135,6 +219,8 @@ public class AssetRipperService
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Configure export settings: Texture2D mode exports sprites as PNG
             progressCallback?.Invoke("Configuring export settings (SpriteExportMode: Texture2D)...");
             try
@@ -145,15 +231,22 @@ public class AssetRipperService
                     {
                         new KeyValuePair<string, string>("SpriteExportMode", "Texture2D"),
                         new KeyValuePair<string, string>("ImageExportFormat", "Png"),
-                    }));
+                    }),
+                    cancellationToken);
 
                 if (!settingsResponse.IsSuccessStatusCode)
                     progressCallback?.Invoke($"Warning: Settings update returned {settingsResponse.StatusCode}, continuing with defaults");
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // Re-throw cancellation
             }
             catch (Exception ex)
             {
                 progressCallback?.Invoke($"Warning: Failed to update settings ({ex.Message}), continuing with defaults");
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             // Load folder (this call blocks until loading completes)
             progressCallback?.Invoke($"Loading game assets from {dataPath}...");
@@ -162,7 +255,8 @@ public class AssetRipperService
                 new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("Path", dataPath)
-                }));
+                }),
+                cancellationToken);
 
             if (!loadResponse.IsSuccessStatusCode)
             {
@@ -170,9 +264,13 @@ public class AssetRipperService
                 return false;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Verify loading completed by checking collection count
             progressCallback?.Invoke("Verifying asset collections loaded...");
-            await WaitForLoadCompletion(client, progressCallback);
+            await WaitForLoadCompletion(client, progressCallback, cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             // Export primary content (returns immediately, export runs async)
             progressCallback?.Invoke($"Exporting assets to {OutputPath}...");
@@ -181,7 +279,8 @@ public class AssetRipperService
                 new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("Path", OutputPath)
-                }));
+                }),
+                cancellationToken);
 
             if (!exportResponse.IsSuccessStatusCode)
             {
@@ -190,7 +289,7 @@ public class AssetRipperService
             }
 
             // Poll output directory until export stabilizes
-            var fileCount = await WaitForExportCompletion(progressCallback);
+            var fileCount = await WaitForExportCompletion(progressCallback, cancellationToken);
 
             if (fileCount > 0)
             {
@@ -205,13 +304,37 @@ public class AssetRipperService
                 return false;
             }
         }
+        catch (OperationCanceledException)
+        {
+            progressCallback?.Invoke("Extraction was cancelled.");
+            return false;
+        }
+        catch (HttpRequestException ex)
+        {
+            progressCallback?.Invoke("Failed to communicate with AssetRipper. Please check your internet connection and try again.");
+            ModkitLog.Error($"[AssetRipperService] HTTP request failed: {ex.Message}");
+            return false;
+        }
+        catch (IOException ex) when (ex.HResult == -2147024784) // Disk full
+        {
+            progressCallback?.Invoke("Not enough disk space to extract assets. Please free up space and try again.");
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            progressCallback?.Invoke("Permission denied. Try running the application as administrator or check folder permissions.");
+            return false;
+        }
         catch (Exception ex)
         {
-            progressCallback?.Invoke($"Error: {ex.Message}");
+            progressCallback?.Invoke($"Extraction failed: {ex.Message}. See the log file for details.");
+            ModkitLog.Error($"[AssetRipperService] Extraction failed: {ex}");
             return false;
         }
         finally
         {
+            _extractionCts?.Dispose();
+            _extractionCts = null;
             // Stop AssetRipper server
             if (_assetRipperProcess != null && !_assetRipperProcess.HasExited)
             {
@@ -222,7 +345,7 @@ public class AssetRipperService
         }
     }
 
-    private async Task WaitForLoadCompletion(HttpClient client, Action<string>? progressCallback)
+    private async Task WaitForLoadCompletion(HttpClient client, Action<string>? progressCallback, CancellationToken cancellationToken = default)
     {
         // Try /Collections/Count to verify loading — not all AssetRipper versions have this.
         // If the endpoint doesn't exist (404), skip verification and proceed.
@@ -231,11 +354,13 @@ public class AssetRipperService
 
         while (DateTime.UtcNow - start < timeout)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var elapsed = (int)(DateTime.UtcNow - start).TotalSeconds;
 
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(5));
                 var response = await client.GetAsync($"http://localhost:{_port}/Collections/Count", cts.Token);
 
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -255,6 +380,10 @@ public class AssetRipperService
 
                 progressCallback?.Invoke($"Loading assets... ({elapsed}s)");
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw; // Re-throw if it's the main cancellation token
+            }
             catch (OperationCanceledException)
             {
                 progressCallback?.Invoke($"Loading assets... ({elapsed}s, server busy)");
@@ -271,7 +400,7 @@ public class AssetRipperService
                 throw new Exception($"AssetRipper crashed (code {_assetRipperProcess.ExitCode}). Full log: {GetProcessLogPath()}\nLast output: {lastLines}");
             }
 
-            await Task.Delay(3000);
+            await Task.Delay(3000, cancellationToken);
         }
 
         progressCallback?.Invoke("Load verification timed out, proceeding to export...");
@@ -313,7 +442,7 @@ public class AssetRipperService
         return -1;
     }
 
-    private async Task<int> WaitForExportCompletion(Action<string>? progressCallback)
+    private async Task<int> WaitForExportCompletion(Action<string>? progressCallback, CancellationToken cancellationToken = default)
     {
         var timeout = TimeSpan.FromMinutes(30);
         var start = DateTime.UtcNow;
@@ -323,7 +452,8 @@ public class AssetRipperService
 
         while (DateTime.UtcNow - start < timeout)
         {
-            await Task.Delay(5000);
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(5000, cancellationToken);
 
             int currentCount;
             try
@@ -370,51 +500,6 @@ public class AssetRipperService
             : 0;
     }
 
-    private string? FindAssetRipper()
-    {
-        // Determine platform subdirectory and executable name
-        string platformDir = OperatingSystem.IsWindows() ? "windows" : "linux";
-        string executableName = OperatingSystem.IsWindows()
-            ? "AssetRipper.GUI.Free.exe"
-            : "AssetRipper.GUI.Free";
-
-        // Search in multiple locations
-        var candidates = new[]
-        {
-            // Bundled with app output
-            Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", "AssetRipper", platformDir, executableName),
-            // Source tree (development)
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "bundled", "AssetRipper", platformDir, executableName),
-            // Alongside the executable
-            Path.Combine(AppContext.BaseDirectory, "AssetRipper", platformDir, executableName),
-        };
-
-        foreach (var candidate in candidates)
-        {
-            var resolved = Path.GetFullPath(candidate);
-            if (File.Exists(resolved))
-            {
-                // Ensure it's executable on Linux/Mac
-                if (!OperatingSystem.IsWindows())
-                {
-                    try
-                    {
-                        var chmod = Process.Start("chmod", $"+x \"{resolved}\"");
-                        chmod?.WaitForExit();
-                    }
-                    catch
-                    {
-                        // chmod failed, might already be executable
-                    }
-                }
-
-                return resolved;
-            }
-        }
-
-        return null;
-    }
-
     private string GetLastProcessOutput(int lineCount)
     {
         lock (_processOutput)
@@ -432,24 +517,41 @@ public class AssetRipperService
         {
             foreach (var proc in Process.GetProcessesByName("AssetRipper.GUI.Free"))
             {
-                try { proc.Kill(); proc.WaitForExit(3000); } catch { }
+                try { proc.Kill(); proc.WaitForExit(3000); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    // Process may have already exited
+                }
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is InvalidOperationException)
+        {
+            // GetProcessesByName can fail on some systems
+            ModkitLog.Info($"[AssetRipperService] Could not enumerate processes: {ex.Message}");
+        }
 
         try
         {
             if (!OperatingSystem.IsWindows())
             {
-                var info = new ProcessStartInfo("fuser", $"-k {_port}/tcp")
+                // Use ArgumentList to prevent command injection
+                var info = new ProcessStartInfo("fuser")
                 {
-                    UseShellExecute = false, CreateNoWindow = true,
-                    RedirectStandardOutput = true, RedirectStandardError = true
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
                 };
+                info.ArgumentList.Add("-k");
+                info.ArgumentList.Add($"{_port}/tcp");
                 Process.Start(info)?.WaitForExit(3000);
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            // Non-critical: process may not exist or we may lack permissions
+            ModkitLog.Info($"[AssetRipperService] Note: Could not kill existing process on port: {ex.Message}");
+        }
     }
 
     private string GetProcessLogPath()
@@ -466,7 +568,10 @@ public class AssetRipperService
                 File.WriteAllLines(GetProcessLogPath(), _processOutput);
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Non-critical: logging failure shouldn't stop the main operation
+        }
     }
 
     /// <summary>

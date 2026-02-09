@@ -34,15 +34,35 @@ public static class DllLoader
     }
 
     /// <summary>
+    /// Controls whether unverified DLLs are loaded. Set to true only if user explicitly approves.
+    /// </summary>
+    public static bool AllowUnverifiedDlls { get; set; } = false;
+
+    /// <summary>
     /// Load all DLLs found in a modpack's dlls/ directory and discover IModpackPlugin implementations.
     /// </summary>
-    public static void LoadModDlls(string modpackDir, string modpackName, string securityStatus)
+    /// <param name="modpackDir">Path to the modpack directory.</param>
+    /// <param name="modpackName">Name of the modpack for logging.</param>
+    /// <param name="securityStatus">Security verification status of the modpack.</param>
+    /// <param name="forceLoad">If true, loads even unverified DLLs regardless of AllowUnverifiedDlls setting.</param>
+    public static void LoadModDlls(string modpackDir, string modpackName, string securityStatus, bool forceLoad = false)
     {
         var dllDir = Path.Combine(modpackDir, "dlls");
         if (!Directory.Exists(dllDir))
             return;
 
         var dllFiles = Directory.GetFiles(dllDir, "*.dll");
+        if (dllFiles.Length == 0)
+            return;
+
+        // Security check: refuse to load unverified DLLs unless explicitly approved
+        var isUnverified = securityStatus != "SourceVerified" && securityStatus != "SourceWithWarnings";
+        if (isUnverified && !forceLoad && !AllowUnverifiedDlls)
+        {
+            MelonLogger.Warning($"  [{modpackName}] Skipping {dllFiles.Length} unverified DLL(s). " +
+                "Set AllowUnverifiedDlls=true or forceLoad=true to override.");
+            return;
+        }
 
         foreach (var dllPath in dllFiles)
         {

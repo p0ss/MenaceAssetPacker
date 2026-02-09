@@ -1,0 +1,80 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <Styles.Resources>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- SPACING SCALE (8px base)                                            -->
+    <!-- xs=2, sm=4, md=8, lg=12, xl=16, 2xl=24, 3xl=32, 4xl=48             -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <x:Double x:Key="SpaceXs">2</x:Double>
+    <x:Double x:Key="SpaceSm">4</x:Double>
+    <x:Double x:Key="SpaceMd">8</x:Double>
+    <x:Double x:Key="SpaceLg">12</x:Double>
+    <x:Double x:Key="SpaceXl">16</x:Double>
+    <x:Double x:Key="Space2xl">24</x:Double>
+    <x:Double x:Key="Space3xl">32</x:Double>
+    <x:Double x:Key="Space4xl">48</x:Double>
+
+    <Thickness x:Key="PaddingXs">2</Thickness>
+    <Thickness x:Key="PaddingSm">4</Thickness>
+    <Thickness x:Key="PaddingMd">8</Thickness>
+    <Thickness x:Key="PaddingLg">12</Thickness>
+    <Thickness x:Key="PaddingXl">16</Thickness>
+    <Thickness x:Key="Padding2xl">24</Thickness>
+
+    <!-- Component-specific padding -->
+    <Thickness x:Key="PaddingButton">12,8</Thickness>
+    <Thickness x:Key="PaddingButtonSm">8,4</Thickness>
+    <Thickness x:Key="PaddingButtonLg">16,10</Thickness>
+    <Thickness x:Key="PaddingInput">8,6</Thickness>
+    <Thickness x:Key="PaddingCard">16</Thickness>
+    <Thickness x:Key="PaddingCardLg">24</Thickness>
+    <Thickness x:Key="PaddingListItem">12,8</Thickness>
+    <Thickness x:Key="PaddingTreeItem">8,6</Thickness>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- COLORS                                                              -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <!-- Primary Brand -->
+    <SolidColorBrush x:Key="BrushPrimary" Color="#0d9488"/>
+    <SolidColorBrush x:Key="BrushPrimaryLight" Color="#8ECDC8"/>
+    <SolidColorBrush x:Key="BrushPrimaryMuted" Color="#064b48"/>
+    <SolidColorBrush x:Key="BrushPrimaryHover" Color="#0f766e"/>
+
+    <!-- Semantic -->
+    <SolidColorBrush x:Key="BrushSuccess" Color="#22c55e"/>
+    <SolidColorBrush x:Key="BrushWarning" Color="#c89b3c"/>
+    <SolidColorBrush x:Key="BrushWarningBg" Color="#3d2e00"/>
+    <SolidColorBrush x:Key="BrushError" Color="#ef4444"/>
+    <SolidColorBrush x:Key="BrushErrorMuted" Color="#FF8888"/>
+    <SolidColorBrush x:Key="BrushInfo" Color="#8ECDC8"/>
+
+    <!-- Backgrounds -->
+    <SolidColorBrush x:Key="BrushBgBase" Color="#121212"/>
+    <SolidColorBrush x:Key="BrushBgSurface" Color="#1E1E1E"/>
+    <SolidColorBrush x:Key="BrushBgElevated" Color="#252525"/>
+    <SolidColorBrush x:Key="BrushBgInput" Color="#2A2A2A"/>
+
+    <!-- Borders -->
+    <SolidColorBrush x:Key="BrushBorder" Color="#2D2D2D"/>
+    <SolidColorBrush x:Key="BrushBorderLight" Color="#3E3E3E"/>
+
+    <!-- Text -->
+    <SolidColorBrush x:Key="BrushTextPrimary" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="BrushTextSecondary" Color="#AAAAAA"/>
+    <SolidColorBrush x:Key="BrushTextMuted" Color="#666666"/>
+
+    <!-- Destructive -->
+    <SolidColorBrush x:Key="BrushDestructive" Color="#7f1d1d"/>
+    <SolidColorBrush x:Key="BrushDestructiveHover" Color="#991b1b"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- CORNER RADII                                                        -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <CornerRadius x:Key="RadiusSm">4</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">8</CornerRadius>
+    <CornerRadius x:Key="RadiusLg">12</CornerRadius>
+  </Styles.Resources>
+
+</Styles>

@@ -530,6 +530,12 @@ public partial class ModpackLoaderMod
         if (targetType == typeof(long)) return Convert.ToInt64(value);
         if (targetType == typeof(string)) return value.ToString();
 
+        // String to IL2CPP type: resolve as reference
+        if (value is string strValue && IsIl2CppType(targetType))
+        {
+            return ResolveIl2CppReference(strValue, targetType);
+        }
+
         return Convert.ChangeType(value, targetType);
     }
 
@@ -550,20 +556,13 @@ public partial class ModpackLoaderMod
         if (targetType == typeof(long)) return token.Value<long>();
         if (targetType == typeof(string)) return token.Value<string>();
 
-        // UnityEngine.Object references: resolve by name from string
-        if (token.Type == JTokenType.String && typeof(UnityEngine.Object).IsAssignableFrom(targetType))
+        // IL2CPP types: resolve by name from string
+        // This covers templates, ScriptableObjects, and other Unity assets
+        if (token.Type == JTokenType.String && IsIl2CppType(targetType))
         {
             var name = token.Value<string>();
-            if (name != null)
-            {
-                var lookup = BuildNameLookup(targetType);
-                if (lookup.TryGetValue(name, out var resolved))
-                {
-                    var castMethod = TryCastMethod.MakeGenericMethod(targetType);
-                    return castMethod.Invoke(resolved, null);
-                }
-                LoggerInstance.Warning($"    Could not resolve '{name}' as {targetType.Name}");
-            }
+            if (!string.IsNullOrEmpty(name))
+                return ResolveIl2CppReference(name, targetType);
             return null;
         }
 
@@ -573,6 +572,75 @@ public partial class ModpackLoaderMod
 
         // For complex types, fall back to conversion
         return token.ToObject(targetType);
+    }
+
+    /// <summary>
+    /// Resolves a string name to an IL2CPP object reference.
+    /// First tries name lookup via Resources.FindObjectsOfTypeAll,
+    /// then falls back to constructing wrapper types (like LocalizedLine).
+    /// </summary>
+    private object ResolveIl2CppReference(string name, Type targetType)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+
+        // Try to look up by name via Resources (works for templates, ScriptableObjects, etc.)
+        // Only attempt this for types that extend UnityEngine.Object (can be looked up via Resources)
+        if (typeof(UnityEngine.Object).IsAssignableFrom(targetType))
+        {
+            try
+            {
+                var lookup = BuildNameLookup(targetType);
+                if (lookup.TryGetValue(name, out var resolved))
+                {
+                    var castMethod = TryCastMethod.MakeGenericMethod(targetType);
+                    return castMethod.Invoke(resolved, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Type can't be looked up via Resources - log only at debug level
+                LoggerInstance.Msg($"    [Debug] BuildNameLookup failed for {targetType.Name}: {ex.Message}");
+            }
+        }
+
+        // Try to construct the type if it's a wrapper (like LocalizedLine)
+        // that stores a string key/value
+        try
+        {
+            var obj = Activator.CreateInstance(targetType);
+            if (obj != null)
+            {
+                // Common patterns for wrapper types: Key, Value, Name, Id, key, value
+                var keyProp = targetType.GetProperty("Key") ??
+                              targetType.GetProperty("Value") ??
+                              targetType.GetProperty("key") ??
+                              targetType.GetProperty("value") ??
+                              targetType.GetProperty("Name") ??
+                              targetType.GetProperty("Id");
+
+                if (keyProp != null && keyProp.CanWrite)
+                {
+                    if (keyProp.PropertyType == typeof(string))
+                    {
+                        keyProp.SetValue(obj, name);
+                        LoggerInstance.Msg($"    Constructed {targetType.Name} with Key='{name}'");
+                        return obj;
+                    }
+                }
+
+                // If we constructed the object but couldn't set a key property,
+                // still return it if it's a valid IL2CPP object (might use default constructor)
+                return obj;
+            }
+        }
+        catch
+        {
+            // Construction failed - type may require special initialization
+        }
+
+        LoggerInstance.Warning($"    Could not resolve '{name}' as {targetType.Name}");
+        return null;
     }
 
     /// <summary>

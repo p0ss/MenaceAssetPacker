@@ -17,6 +17,7 @@ public sealed class DocsViewModel : ViewModelBase
     private DocTreeNode? _selectedNode;
     private string _markdownContent = "";
     private string _selectedTitle = "";
+    private List<DocTreeNode> _allDocNodes = new();
 
     public DocsViewModel()
     {
@@ -50,6 +51,131 @@ public sealed class DocsViewModel : ViewModelBase
 
     public bool HasContent => !string.IsNullOrEmpty(MarkdownContent);
 
+    // ---------------------------------------------------------------
+    // Search and filtering
+    // ---------------------------------------------------------------
+
+    private string _searchText = string.Empty;
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (_searchText != value)
+            {
+                this.RaiseAndSetIfChanged(ref _searchText, value);
+                ApplySearchFilter();
+            }
+        }
+    }
+
+    private void ApplySearchFilter()
+    {
+        DocTree.Clear();
+
+        var hasQuery = !string.IsNullOrWhiteSpace(_searchText);
+        var query = hasQuery ? _searchText.Trim() : null;
+
+        if (!hasQuery)
+        {
+            foreach (var node in _allDocNodes)
+                DocTree.Add(node);
+            return;
+        }
+
+        foreach (var node in _allDocNodes)
+        {
+            var filtered = FilterDocNode(node, query);
+            if (filtered != null)
+                DocTree.Add(filtered);
+        }
+
+        // Multi-pass expansion to handle TreeView container creation timing
+        SetExpansionState(DocTree, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(DocTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(DocTree, true), Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private DocTreeNode? FilterDocNode(DocTreeNode node, string? query)
+    {
+        // File node: check if name matches
+        if (node.IsFile)
+        {
+            if (query == null)
+                return node;
+            if (node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                return node;
+            return null;
+        }
+
+        // Folder: check if folder name matches (include all children)
+        if (query != null && node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            node.IsExpanded = true;
+            return node;
+        }
+
+        // Check children recursively
+        var matchingChildren = new List<DocTreeNode>();
+        foreach (var child in node.Children)
+        {
+            var filtered = FilterDocNode(child, query);
+            if (filtered != null)
+                matchingChildren.Add(filtered);
+        }
+
+        if (matchingChildren.Count == 0)
+            return null;
+
+        // If all children match, return original node (expanded for visibility)
+        if (matchingChildren.Count == node.Children.Count)
+        {
+            node.IsExpanded = true;
+            return node;
+        }
+
+        // Create filtered copy with only matching children
+        var copy = new DocTreeNode
+        {
+            Name = node.Name,
+            FullPath = node.FullPath,
+            RelativePath = node.RelativePath,
+            IsFile = false,
+            IsExpanded = true
+        };
+        foreach (var child in matchingChildren)
+            copy.Children.Add(child);
+
+        return copy;
+    }
+
+    public void ExpandAll()
+    {
+        // Set expansion state multiple times with UI thread yields to allow
+        // TreeView to create containers for newly-visible children
+        SetExpansionState(DocTree, true);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(DocTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(DocTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(DocTree, true), Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    public void CollapseAll()
+    {
+        SetExpansionState(DocTree, false);
+    }
+
+    private static void SetExpansionState(IEnumerable<DocTreeNode> nodes, bool expanded)
+    {
+        foreach (var node in nodes)
+        {
+            if (!node.IsFile)
+            {
+                node.IsExpanded = expanded;
+                SetExpansionState(node.Children, expanded);
+            }
+        }
+    }
+
     /// <summary>
     /// Initialize with the docs folder path.
     /// </summary>
@@ -62,6 +188,7 @@ public sealed class DocsViewModel : ViewModelBase
     public void RefreshDocTree()
     {
         DocTree.Clear();
+        _allDocNodes.Clear();
 
         if (string.IsNullOrEmpty(_docsPath) || !Directory.Exists(_docsPath))
             return;
@@ -81,6 +208,7 @@ public sealed class DocsViewModel : ViewModelBase
             foreach (var child in ordered)
             {
                 DocTree.Add(child);
+                _allDocNodes.Add(child);
             }
         }
         catch (Exception ex)
@@ -194,6 +322,7 @@ public sealed class DocsViewModel : ViewModelBase
 
     /// <summary>
     /// Navigate to a document by relative path (for internal links).
+    /// Validates paths to prevent navigation outside the docs directory.
     /// </summary>
     public void NavigateToRelativePath(string relativePath)
     {
@@ -209,12 +338,14 @@ public sealed class DocsViewModel : ViewModelBase
             {
                 // Resolve relative to current document's directory
                 var currentDir = Path.GetDirectoryName(SelectedNode.FullPath) ?? _docsPath;
-                targetPath = Path.GetFullPath(Path.Combine(currentDir, relativePath));
+                // Validate path stays within docs directory to prevent traversal attacks
+                targetPath = Services.PathValidator.ValidatePathWithinBase(_docsPath,
+                    Path.GetRelativePath(_docsPath, Path.GetFullPath(Path.Combine(currentDir, relativePath))));
             }
             else
             {
-                // Resolve relative to docs root
-                targetPath = Path.GetFullPath(Path.Combine(_docsPath, relativePath));
+                // Resolve relative to docs root - validate path stays within docs directory
+                targetPath = Services.PathValidator.ValidatePathWithinBase(_docsPath, relativePath);
             }
 
             // Find matching node in tree
@@ -227,6 +358,10 @@ public sealed class DocsViewModel : ViewModelBase
             {
                 Services.ModkitLog.Warn($"[DocsViewModel] Could not find document: {relativePath}");
             }
+        }
+        catch (System.Security.SecurityException ex)
+        {
+            Services.ModkitLog.Warn($"[DocsViewModel] Path traversal blocked for {relativePath}: {ex.Message}");
         }
         catch (Exception ex)
         {

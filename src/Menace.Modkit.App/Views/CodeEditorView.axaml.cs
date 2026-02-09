@@ -3,12 +3,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using AvaloniaEdit;
-using AvaloniaEdit.TextMate;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
-using ReactiveUI;
-using TextMateSharp.Grammars;
 
 namespace Menace.Modkit.App.Views;
 
@@ -18,88 +14,19 @@ namespace Menace.Modkit.App.Views;
 /// </summary>
 public class CodeEditorView : UserControl
 {
-    private TextEditor? _textEditor;
-    private TextBlock? _loadingIndicator;
-    private bool _isUpdatingText;
-    private bool _textMateReady;
 
     public CodeEditorView()
     {
         Content = BuildUI();
     }
 
-    protected override async void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
 
         // Refresh modpacks when view becomes visible
         if (DataContext is CodeEditorViewModel vm)
             vm.RefreshAll();
-
-        // Setup TextMate asynchronously to avoid blocking UI
-        if (!_textMateReady)
-        {
-            await SetupTextMateAsync();
-        }
-    }
-
-    private async System.Threading.Tasks.Task SetupTextMateAsync()
-    {
-        if (_textEditor == null) return;
-
-        try
-        {
-            // Show loading indicator
-            if (_loadingIndicator != null)
-                _loadingIndicator.IsVisible = true;
-
-            // Run TextMate setup on background thread
-            await System.Threading.Tasks.Task.Run(() =>
-            {
-                var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
-                Avalonia.Threading.Dispatcher.UIThread.Invoke(() =>
-                {
-                    var textMateInstallation = _textEditor.InstallTextMate(registryOptions);
-                    textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("csharp"));
-                });
-            });
-
-            _textMateReady = true;
-        }
-        catch (Exception ex)
-        {
-            Services.ModkitLog.Warn($"[CodeEditorView] TextMate setup failed: {ex.Message}");
-        }
-        finally
-        {
-            // Hide loading indicator
-            if (_loadingIndicator != null)
-                _loadingIndicator.IsVisible = false;
-        }
-    }
-
-    protected override void OnDataContextChanged(EventArgs e)
-    {
-        base.OnDataContextChanged(e);
-
-        if (DataContext is CodeEditorViewModel vm && _textEditor != null)
-        {
-            // Subscribe to FileContent changes from ViewModel
-            vm.WhenAnyValue(x => x.FileContent)
-                .Subscribe(content =>
-                {
-                    if (!_isUpdatingText)
-                    {
-                        _isUpdatingText = true;
-                        _textEditor.Text = content ?? "";
-                        _isUpdatingText = false;
-                    }
-                });
-
-            // Subscribe to IsReadOnly changes
-            vm.WhenAnyValue(x => x.IsReadOnly)
-                .Subscribe(isReadOnly => _textEditor.IsReadOnly = isReadOnly);
-        }
     }
 
     private Control BuildUI()
@@ -140,9 +67,72 @@ public class CodeEditorView : UserControl
             BorderThickness = new Thickness(0, 0, 1, 0)
         };
 
-        var stack = new StackPanel();
+        // Use a Grid layout so TreeViews get proper height allocation
+        var grid = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,150,Auto,Auto,*")
+        };
 
-        // Toolbar: modpack selector
+        // Row 0: Search box
+        var searchBox = new TextBox
+        {
+            Watermark = "Search code...",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(8, 8, 8, 4)
+        };
+        searchBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SearchText"));
+        grid.Children.Add(searchBox);
+        Grid.SetRow(searchBox, 0);
+
+        // Row 1: Expand/Collapse buttons
+        var expandCollapsePanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(8, 4, 8, 4)
+        };
+
+        var expandAllButton = new Button
+        {
+            Content = "Expand All",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Padding = new Thickness(10, 4),
+            FontSize = 11
+        };
+        expandAllButton.Click += (_, _) =>
+        {
+            if (DataContext is CodeEditorViewModel vm)
+                vm.ExpandAll();
+        };
+        expandCollapsePanel.Children.Add(expandAllButton);
+
+        var collapseAllButton = new Button
+        {
+            Content = "Collapse All",
+            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Padding = new Thickness(10, 4),
+            FontSize = 11
+        };
+        collapseAllButton.Click += (_, _) =>
+        {
+            if (DataContext is CodeEditorViewModel vm)
+                vm.CollapseAll();
+        };
+        expandCollapsePanel.Children.Add(collapseAllButton);
+
+        grid.Children.Add(expandCollapsePanel);
+        Grid.SetRow(expandCollapsePanel, 1);
+
+        // Row 2: Toolbar
         var toolbar = new StackPanel
         {
             Margin = new Thickness(8),
@@ -202,17 +192,20 @@ public class CodeEditorView : UserControl
         fileButtonRow.Children.Add(removeButton);
 
         toolbar.Children.Add(fileButtonRow);
-        stack.Children.Add(toolbar);
+        grid.Children.Add(toolbar);
+        Grid.SetRow(toolbar, 2);
 
-        // Separator
-        stack.Children.Add(new Border
+        // Row 3: Separator
+        var sep1 = new Border
         {
             Height = 1,
             Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
             Margin = new Thickness(0, 4)
-        });
+        };
+        grid.Children.Add(sep1);
+        Grid.SetRow(sep1, 3);
 
-        // Mod Source Tree
+        // Row 4: Mod Source label
         var modSourceLabel = new TextBlock
         {
             Text = "Mod Sources",
@@ -221,31 +214,37 @@ public class CodeEditorView : UserControl
             Foreground = Brushes.White,
             Margin = new Thickness(8, 8, 8, 4)
         };
-        stack.Children.Add(modSourceLabel);
+        grid.Children.Add(modSourceLabel);
+        Grid.SetRow(modSourceLabel, 4);
 
+        // Row 5: Mod Source Tree (fixed height)
         var modTree = new TreeView
         {
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
-            MaxHeight = 250,
-            Margin = new Thickness(4),
+            Margin = new Thickness(8),
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         modTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("ModSourceTree"));
         modTree.ItemTemplate = CreateCodeTreeTemplate();
         modTree.SelectionChanged += OnTreeSelectionChanged;
         modTree.ContainerPrepared += OnTreeContainerPrepared;
-        stack.Children.Add(modTree);
 
-        // Separator
-        stack.Children.Add(new Border
+        var modTreeScroll = new ScrollViewer { Content = modTree };
+        grid.Children.Add(modTreeScroll);
+        Grid.SetRow(modTreeScroll, 5);
+
+        // Row 6: Separator
+        var sep2 = new Border
         {
             Height = 1,
             Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
             Margin = new Thickness(0, 4)
-        });
+        };
+        grid.Children.Add(sep2);
+        Grid.SetRow(sep2, 6);
 
-        // Vanilla Code Tree
+        // Row 7: Vanilla Code label
         var vanillaLabel = new TextBlock
         {
             Text = "Vanilla Code (read-only)",
@@ -255,27 +254,27 @@ public class CodeEditorView : UserControl
             Opacity = 0.7,
             Margin = new Thickness(8, 8, 8, 4)
         };
-        stack.Children.Add(vanillaLabel);
+        grid.Children.Add(vanillaLabel);
+        Grid.SetRow(vanillaLabel, 7);
 
+        // Row 8: Vanilla Code Tree (takes remaining space)
         var vanillaTree = new TreeView
         {
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
-            Margin = new Thickness(4),
+            Margin = new Thickness(8),
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         vanillaTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("VanillaCodeTree"));
         vanillaTree.ItemTemplate = CreateCodeTreeTemplate();
         vanillaTree.SelectionChanged += OnTreeSelectionChanged;
         vanillaTree.ContainerPrepared += OnTreeContainerPrepared;
-        stack.Children.Add(vanillaTree);
 
-        var scrollViewer = new ScrollViewer
-        {
-            Content = stack
-        };
+        var vanillaTreeScroll = new ScrollViewer { Content = vanillaTree };
+        grid.Children.Add(vanillaTreeScroll);
+        Grid.SetRow(vanillaTreeScroll, 8);
 
-        border.Child = scrollViewer;
+        border.Child = grid;
         return border;
     }
 
@@ -360,45 +359,25 @@ public class CodeEditorView : UserControl
         DockPanel.SetDock(header, Dock.Top);
         stack.Children.Add(header);
 
-        // Editor container with loading overlay
-        var editorContainer = new Grid();
-
-        // Code editor with syntax highlighting
-        _textEditor = new TextEditor
+        // Use TextBox as fallback since TextEditor isn't rendering
+        // TODO: Debug AvaloniaEdit TextEditor rendering issue
+        var codeEditor = new TextBox
         {
             FontFamily = new FontFamily("Cascadia Code, Consolas, Menlo, monospace"),
             FontSize = 13,
-            ShowLineNumbers = true,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+            Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+            Foreground = new SolidColorBrush(Color.Parse("#D4D4D4")),
+            BorderThickness = new Thickness(0),
+            AcceptsReturn = true,
+            AcceptsTab = true,
+            TextWrapping = TextWrapping.NoWrap,
+            Padding = new Thickness(8),
+            Text = "// Select a .cs file from the tree to view code"
         };
+        codeEditor.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("FileContent") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        codeEditor.Bind(TextBox.IsReadOnlyProperty, new Avalonia.Data.Binding("IsReadOnly"));
 
-        // Sync text changes back to ViewModel
-        _textEditor.TextChanged += (_, _) =>
-        {
-            if (!_isUpdatingText && DataContext is CodeEditorViewModel vm)
-            {
-                _isUpdatingText = true;
-                vm.FileContent = _textEditor.Text;
-                _isUpdatingText = false;
-            }
-        };
-
-        editorContainer.Children.Add(_textEditor);
-
-        // Loading indicator
-        _loadingIndicator = new TextBlock
-        {
-            Text = "Initializing syntax highlighting...",
-            Foreground = new SolidColorBrush(Color.Parse("#888888")),
-            FontSize = 12,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsVisible = true
-        };
-        editorContainer.Children.Add(_loadingIndicator);
-
-        stack.Children.Add(editorContainer);
+        stack.Children.Add(codeEditor);
 
         border.Child = stack;
         return border;
@@ -471,6 +450,7 @@ public class CodeEditorView : UserControl
     {
         if (sender is TreeView treeView && treeView.SelectedItem is CodeTreeNode node)
         {
+            Services.ModkitLog.Info($"[CodeEditorView] Tree selection: {node.Name}, IsFile={node.IsFile}, Path={node.FullPath}");
             if (DataContext is CodeEditorViewModel vm)
                 vm.SelectedFile = node;
         }
