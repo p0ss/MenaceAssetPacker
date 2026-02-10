@@ -55,7 +55,7 @@ public class EnhancedReferenceEntry : ReferenceEntry
 public class ReferenceGraphService
 {
     private const string ReferenceFileName = "references.json";
-    private const int CurrentVersion = 2; // Bumped for embedded collection support
+    private const int CurrentVersion = 3; // Bumped for ArmyTemplate schema addition
 
     // Template backlinks: "TemplateType/InstanceName" → list of references
     private readonly Dictionary<string, List<ReferenceEntry>> _templateBacklinks = new(StringComparer.Ordinal);

@@ -14,12 +14,26 @@ public class RuntimeReferenceResolver
 {
     private List<MetadataReference> _cached;
 
-    // Known framework assembly prefixes to exclude from game dirs
-    private static readonly HashSet<string> FrameworkPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    // Known framework assembly names/prefixes to exclude from game dirs.
+    // These are provided by the runtime reference set and can conflict when pulled from legacy locations.
+    private static readonly HashSet<string> FrameworkExactNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "System.", "Microsoft.CSharp", "Microsoft.VisualBasic",
-        "Microsoft.Win32", "netstandard", "mscorlib",
-        "WindowsBase", "PresentationCore", "PresentationFramework"
+        "System",
+        "mscorlib",
+        "netstandard",
+        "WindowsBase",
+        "PresentationCore",
+        "PresentationFramework",
+        "Accessibility",
+    };
+
+    private static readonly string[] FrameworkPrefixes =
+    {
+        "System.",
+        "Microsoft.CSharp",
+        "Microsoft.VisualBasic",
+        "Microsoft.Win32",
+        "Mono.",
     };
 
     /// <summary>
@@ -170,9 +184,13 @@ public class RuntimeReferenceResolver
 
     private static bool IsFrameworkAssembly(string fileName)
     {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        if (FrameworkExactNames.Contains(name))
+            return true;
+
         foreach (var prefix in FrameworkPrefixes)
         {
-            if (fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
         return false;

@@ -90,9 +90,11 @@ public class RuntimeReferenceResolverTests : IDisposable
         Assert.NotNull(method);
 
         Assert.True((bool)method.Invoke(null, new object[] { "System.Runtime.dll" }));
+        Assert.True((bool)method.Invoke(null, new object[] { "System.dll" }));
         Assert.True((bool)method.Invoke(null, new object[] { "Microsoft.CSharp.dll" }));
         Assert.True((bool)method.Invoke(null, new object[] { "netstandard.dll" }));
         Assert.True((bool)method.Invoke(null, new object[] { "mscorlib.dll" }));
+        Assert.True((bool)method.Invoke(null, new object[] { "Mono.Security.dll" }));
         Assert.False((bool)method.Invoke(null, new object[] { "MyMod.dll" }));
         Assert.False((bool)method.Invoke(null, new object[] { "Assembly-CSharp.dll" }));
     }

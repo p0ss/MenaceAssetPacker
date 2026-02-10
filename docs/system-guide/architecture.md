@@ -292,8 +292,12 @@ IL2CPP Object in Memory:
 
 **Prerequisites:**
 ```bash
+# Set up paths (adjust to your environment)
+export IL2CPP_DUMPER_DIR="$HOME/Il2CppDumper"
+export MODKIT_DIR="$HOME/MenaceAssetPacker"  # or wherever you cloned the modkit
+
 # 1. Install Il2CppDumper (one-time setup)
-cd /home/poss/Documents/Code/Menace/IL2CppDumper
+cd "$IL2CPP_DUMPER_DIR"
 git clone https://github.com/Perfare/Il2CppDumper.git
 cd Il2CppDumper
 
@@ -305,10 +309,11 @@ dotnet build -c Release
 
 ```bash
 # 1. Navigate to Il2CppDumper
-cd /home/poss/Documents/Code/Menace/IL2CppDumper/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/
+cd "$IL2CPP_DUMPER_DIR/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/"
 
 # 2. Copy game files to a temporary location (to avoid permission issues)
-GAME_DIR="$HOME/.steam/debian-installation/steamapps/common/Menace Demo"
+# Adjust GAME_DIR to your Steam library location
+GAME_DIR="$HOME/.steam/steam/steamapps/common/Menace"
 cp "$GAME_DIR/GameAssembly.so" /tmp/
 cp "$GAME_DIR/Menace_Data/il2cpp_data/Metadata/global-metadata.dat" /tmp/
 
@@ -316,10 +321,10 @@ cp "$GAME_DIR/Menace_Data/il2cpp_data/Metadata/global-metadata.dat" /tmp/
 ./Il2CppDumper /tmp/GameAssembly.so /tmp/global-metadata.dat /tmp/dump_output/
 
 # 4. Copy the generated dump.cs to the modkit project
-cp /tmp/dump_output/dump.cs /home/poss/Documents/Code/Menace/MenaceAssetPacker/il2cpp_dump/
+cp /tmp/dump_output/dump.cs "$MODKIT_DIR/il2cpp_dump/"
 
 # 5. Check Unity version in the dump
-head -n 20 /home/poss/Documents/Code/Menace/MenaceAssetPacker/il2cpp_dump/dump.cs
+head -n 20 "$MODKIT_DIR/il2cpp_dump/dump.cs"
 # Should show: // Unity 6000.0.56f1 (or current version)
 ```
 
@@ -392,14 +397,15 @@ public class EntityProperties  // TypeDefIndex: 2740
 **Rebuild and Deploy:**
 
 ```bash
-cd /home/poss/Documents/Code/Menace/MenaceAssetPacker
+cd "$MODKIT_DIR"
 
 # Build with updated offsets
 dotnet build src/Menace.DataExtractor
 
-# Deploy to game
+# Deploy to game (adjust GAME_DIR to your Steam library location)
+GAME_DIR="$HOME/.steam/steam/steamapps/common/Menace"
 cp -f src/Menace.DataExtractor/bin/Debug/net6.0/Menace.DataExtractor.dll \
-      "$HOME/.steam/debian-installation/steamapps/common/Menace Demo/Mods/"
+      "$GAME_DIR/Mods/"
 
 # Test by launching game and checking extracted JSON
 ```
@@ -433,7 +439,7 @@ cat "$HOME/.steam/debian-installation/steamapps/common/Menace Demo/UserData/Extr
    - Output: `cpp2il_out/Assembly-CSharp.dll` (managed proxy)
 
 **Current Dump:**
-- Location: `/home/poss/Documents/Code/Menace/MenaceAssetPacker/il2cpp_dump/dump.cs`
+- Location: `/il2cpp_dump/dump.cs`
 - Unity Version: 6000.0.56f1
 - Size: 874,630 lines
 - Generated: 2025-10-10 (when game updated to Unity 6)
@@ -790,4 +796,3 @@ Look for:
 - **Cpp2IL**: [https://github.com/SamboyCoding/Cpp2IL](https://github.com/SamboyCoding/Cpp2IL)
 - **AssetRipper**: [https://github.com/AssetRipper/AssetRipper](https://github.com/AssetRipper/AssetRipper)
 - **Avalonia UI**: [https://avaloniaui.net/](https://avaloniaui.net/)
-

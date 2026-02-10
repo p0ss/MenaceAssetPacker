@@ -32746,6 +32746,29 @@
           "category": "struct"
         }
       ]
+    },
+    "ArmyTemplateEntry": {
+      "size_bytes": 32,
+      "fields": [
+        {
+          "name": "Template",
+          "type": "EntityTemplate",
+          "offset": "0x10",
+          "category": "reference"
+        },
+        {
+          "name": "Weight",
+          "type": "int",
+          "offset": "0x18",
+          "category": "primitive"
+        },
+        {
+          "name": "WeightMultAfterPick",
+          "type": "float",
+          "offset": "0x1C",
+          "category": "primitive"
+        }
+      ]
     }
   },
   "templates": {
@@ -41235,6 +41258,37 @@
           "type": "Vector3",
           "offset": "0x38",
           "category": "struct"
+        }
+      ]
+    },
+    "ArmyTemplate": {
+      "base_class": "DataTemplate",
+      "is_abstract": false,
+      "fields": [
+        {
+          "name": "FactionTemplate",
+          "type": "FactionTemplate",
+          "offset": "0x78",
+          "category": "reference"
+        },
+        {
+          "name": "FactionType",
+          "type": "FactionType",
+          "offset": "0x80",
+          "category": "enum"
+        },
+        {
+          "name": "ReqCampaignProgress",
+          "type": "Vector2Int",
+          "offset": "0x88",
+          "category": "struct"
+        },
+        {
+          "name": "PossibleUnits",
+          "type": "List<ArmyTemplateEntry>",
+          "offset": "0x90",
+          "category": "collection",
+          "element_type": "ArmyTemplateEntry"
         }
       ]
     }

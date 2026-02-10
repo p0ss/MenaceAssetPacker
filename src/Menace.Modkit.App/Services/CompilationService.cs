@@ -38,10 +38,13 @@ public class CompilationService
             return result;
         }
 
-        return await Task.Run(() => CompileCore(manifest, result), ct);
+        return await Task.Run(() => CompileCoreAsync(manifest, result, ct), ct).ConfigureAwait(false);
     }
 
-    private CompilationResult CompileCore(ModpackManifest manifest, CompilationResult result)
+    private async Task<CompilationResult> CompileCoreAsync(
+        ModpackManifest manifest,
+        CompilationResult result,
+        CancellationToken ct)
     {
         var modpackDir = manifest.Path;
 
@@ -69,9 +72,10 @@ public class CompilationService
         var syntaxTrees = new List<SyntaxTree>();
         foreach (var file in sourceFiles)
         {
+            ct.ThrowIfCancellationRequested();
             try
             {
-                var source = File.ReadAllText(file);
+                var source = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
                 var tree = CSharpSyntaxTree.ParseText(
                     source,
                     CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.CSharp10),
@@ -107,7 +111,7 @@ public class CompilationService
         // Resolve references
         var gameInstallPath = AppSettings.Instance.GameInstallPath;
         var resolver = new ReferenceResolver(gameInstallPath);
-        var references = resolver.ResolveReferences(manifest.Code.References);
+        var references = await resolver.ResolveReferencesAsync(manifest.Code.References, ct).ConfigureAwait(false);
 
         // Report any resolution issues as warnings
         foreach (var issue in resolver.ResolutionIssues)

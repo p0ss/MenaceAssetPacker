@@ -16,15 +16,15 @@ namespace Menace.SDK.Repl;
 public class RuntimeCompiler
 {
     private readonly IReadOnlyList<MetadataReference> _references;
+    private readonly string[] _defaultUsings;
     private int _compilationCounter;
 
-    private static readonly string[] DefaultUsings =
+    private static readonly string[] BaseUsings =
     {
         "System",
         "System.Linq",
         "System.Collections.Generic",
-        "Menace.SDK",
-        "UnityEngine"
+        "Menace.SDK"
     };
 
     /// <summary>
@@ -68,6 +68,7 @@ public class RuntimeCompiler
     public RuntimeCompiler(IReadOnlyList<MetadataReference> references)
     {
         _references = references ?? throw new ArgumentNullException(nameof(references));
+        _defaultUsings = BuildDefaultUsings(references);
     }
 
     /// <summary>
@@ -131,7 +132,7 @@ public class RuntimeCompiler
         _compilationCounter++;
         var className = $"ReplExpr_{_compilationCounter}";
 
-        var usings = string.Join("\n", DefaultUsings.Select(u => $"using {u};"));
+        var usings = string.Join("\n", _defaultUsings.Select(u => $"using {u};"));
         var source = $@"{usings}
 
 public static class {className}
@@ -260,5 +261,24 @@ public static class {className}
         }
 
         return null;
+    }
+
+    private static string[] BuildDefaultUsings(IReadOnlyList<MetadataReference> references)
+    {
+        var usings = new List<string>(BaseUsings);
+
+        // Only add UnityEngine when a matching metadata reference is present.
+        // This keeps REPL expression tests and non-Unity environments from failing on import resolution.
+        var hasUnity = references
+            .OfType<PortableExecutableReference>()
+            .Select(r => r.FilePath)
+            .Where(p => !string.IsNullOrEmpty(p))
+            .Select(p => Path.GetFileNameWithoutExtension(p!))
+            .Any(n => n.StartsWith("UnityEngine", StringComparison.OrdinalIgnoreCase));
+
+        if (hasUnity)
+            usings.Add("UnityEngine");
+
+        return usings.ToArray();
     }
 }

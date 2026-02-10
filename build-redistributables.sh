@@ -56,7 +56,7 @@ $DOTNET publish src/Menace.Modkit.App -c Release -r win-x64 --self-contained \
   -o dist/gui-win-x64
 
 # =============================================================================
-# Bundle core files with GUI (versions.json, tools scripts)
+# Bundle core files with GUI (versions.json for component downloads)
 # =============================================================================
 
 echo ""
@@ -68,12 +68,7 @@ mkdir -p dist/gui-win-x64/third_party
 cp third_party/versions.json dist/gui-linux-x64/third_party/
 cp third_party/versions.json dist/gui-win-x64/third_party/
 
-# Copy tools (doctor scripts)
-mkdir -p dist/gui-linux-x64/tools
-mkdir -p dist/gui-win-x64/tools
-cp tools/doctor.sh dist/gui-linux-x64/tools/
-cp tools/doctor.ps1 dist/gui-win-x64/tools/
-cp tools/doctor.bat dist/gui-win-x64/tools/
+# Note: doctor scripts are no longer bundled - environment checks are now in-app via SetupView
 
 # =============================================================================
 # Create Component Archives for GitHub Release
@@ -204,11 +199,7 @@ tar -czf menace-modkit-cli-linux-x64.tar.gz -C cli-linux-x64 .
 zip -q -r menace-modkit-cli-win-x64.zip cli-win-x64/
 cd ..
 
-# Create docs archive
-if [ -d "docs" ]; then
-  echo "  → docs.zip..."
-  (cd docs && zip -q -r ../dist/docs.zip .)
-fi
+# Note: docs are not bundled separately - accessible via the Docs section in the app UI
 
 # =============================================================================
 # Summary

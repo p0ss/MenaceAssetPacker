@@ -5,7 +5,7 @@
 If you discover a security vulnerability in MenaceAssetPacker, please report it responsibly:
 
 1. **Do not** create a public GitHub issue for security vulnerabilities
-2. Email security concerns with:
+2. Message us on discord with
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact

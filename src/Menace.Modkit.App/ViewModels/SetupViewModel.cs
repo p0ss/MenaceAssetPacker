@@ -14,13 +14,16 @@ namespace Menace.Modkit.App.ViewModels;
 public class SetupViewModel : ViewModelBase
 {
     private readonly ComponentManager _componentManager;
+    private readonly EnvironmentChecker _environmentChecker;
     private CancellationTokenSource? _downloadCts;
 
     public SetupViewModel()
     {
         _componentManager = ComponentManager.Instance;
+        _environmentChecker = EnvironmentChecker.Instance;
         RequiredComponents = new ObservableCollection<ComponentStatusViewModel>();
         OptionalComponents = new ObservableCollection<ComponentStatusViewModel>();
+        EnvironmentChecks = new ObservableCollection<EnvironmentCheckViewModel>();
     }
 
     /// <summary>
@@ -35,6 +38,7 @@ public class SetupViewModel : ViewModelBase
 
     public ObservableCollection<ComponentStatusViewModel> RequiredComponents { get; }
     public ObservableCollection<ComponentStatusViewModel> OptionalComponents { get; }
+    public ObservableCollection<EnvironmentCheckViewModel> EnvironmentChecks { get; }
 
     private bool _isLoading = true;
     public bool IsLoading
@@ -90,8 +94,12 @@ public class SetupViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _downloadSpeed, value);
     }
 
-    public bool CanDownload => !IsDownloading && HasPendingDownloads;
-    public bool CanSkip => !IsDownloading;
+    /// <summary>
+    /// True when the primary action button should be enabled.
+    /// Enabled when: downloading is possible OR we can continue (no required pending).
+    /// </summary>
+    public bool CanDownload => !IsDownloading && !IsFixing && (HasPendingDownloads || !HasRequiredPending);
+    public bool CanSkip => !IsDownloading && !IsFixing;
 
     private bool _hasPendingDownloads;
     public bool HasPendingDownloads
@@ -108,7 +116,44 @@ public class SetupViewModel : ViewModelBase
     public bool HasRequiredPending
     {
         get => _hasRequiredPending;
-        set => this.RaiseAndSetIfChanged(ref _hasRequiredPending, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _hasRequiredPending, value);
+            this.RaisePropertyChanged(nameof(CanDownload));
+        }
+    }
+
+    private bool _hasEnvironmentIssues;
+    public bool HasEnvironmentIssues
+    {
+        get => _hasEnvironmentIssues;
+        set => this.RaiseAndSetIfChanged(ref _hasEnvironmentIssues, value);
+    }
+
+    private bool _hasEnvironmentFailures;
+    public bool HasEnvironmentFailures
+    {
+        get => _hasEnvironmentFailures;
+        set => this.RaiseAndSetIfChanged(ref _hasEnvironmentFailures, value);
+    }
+
+    private bool _isFixing;
+    public bool IsFixing
+    {
+        get => _isFixing;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isFixing, value);
+            this.RaisePropertyChanged(nameof(CanDownload));
+            this.RaisePropertyChanged(nameof(CanSkip));
+        }
+    }
+
+    private string _fixStatus = "";
+    public string FixStatus
+    {
+        get => _fixStatus;
+        set => this.RaiseAndSetIfChanged(ref _fixStatus, value);
     }
 
     private string _totalDownloadSize = "";
@@ -119,7 +164,7 @@ public class SetupViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Load component status from ComponentManager.
+    /// Load component status from ComponentManager and run environment checks.
     /// </summary>
     public async Task LoadComponentsAsync()
     {
@@ -127,6 +172,19 @@ public class SetupViewModel : ViewModelBase
 
         try
         {
+            // Run environment checks first
+            var envResults = await _environmentChecker.RunAllChecksAsync();
+
+            EnvironmentChecks.Clear();
+            foreach (var result in envResults)
+            {
+                EnvironmentChecks.Add(new EnvironmentCheckViewModel(result, this));
+            }
+
+            HasEnvironmentIssues = envResults.Any(r => r.Status != CheckStatus.Passed);
+            HasEnvironmentFailures = envResults.Any(r => r.Status == CheckStatus.Failed);
+
+            // Then load component status
             var statuses = await _componentManager.GetComponentStatusAsync(forceRemoteFetch: true);
 
             RequiredComponents.Clear();
@@ -134,7 +192,8 @@ public class SetupViewModel : ViewModelBase
 
             foreach (var status in statuses)
             {
-                var vm = new ComponentStatusViewModel(status);
+                // Optional components get a callback to update pending status when selection changes
+                var vm = new ComponentStatusViewModel(status, status.Required ? null : UpdatePendingStatus);
                 if (status.Required)
                     RequiredComponents.Add(vm);
                 else
@@ -291,6 +350,123 @@ public class SetupViewModel : ViewModelBase
     {
         SetupComplete?.Invoke();
     }
+
+    /// <summary>
+    /// Execute an auto-fix action for an environment check.
+    /// </summary>
+    public async Task ExecuteAutoFixAsync(AutoFixAction action)
+    {
+        if (IsFixing) return;
+
+        IsFixing = true;
+        FixStatus = "";
+
+        try
+        {
+            var success = await _environmentChecker.ExecuteAutoFixAsync(action, msg =>
+            {
+                FixStatus = msg;
+            });
+
+            if (success)
+            {
+                FixStatus = "Fix applied. Re-checking environment...";
+                await Task.Delay(500);
+                // Reload to check if fix worked
+                await LoadComponentsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            FixStatus = $"Error: {ex.Message}";
+            ModkitLog.Error($"[SetupViewModel] Auto-fix failed: {ex.Message}");
+        }
+        finally
+        {
+            IsFixing = false;
+        }
+    }
+
+    /// <summary>
+    /// Open the diagnostic log file.
+    /// </summary>
+    public void OpenDiagnosticLog()
+    {
+        ModkitLog.OpenLogFile();
+    }
+
+    /// <summary>
+    /// Write a full diagnostic report and open it.
+    /// </summary>
+    public async Task WriteDiagnosticReportAsync()
+    {
+        await _environmentChecker.WriteDiagnosticReportAsync();
+        ModkitLog.OpenLogFile();
+    }
+
+    /// <summary>
+    /// Open a URL in the default browser.
+    /// </summary>
+    public void OpenUrl(string url)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"Failed to open URL: {ex.Message}");
+        }
+    }
+}
+
+/// <summary>
+/// ViewModel wrapper for EnvironmentCheckResult with UI-specific properties.
+/// </summary>
+public class EnvironmentCheckViewModel : ViewModelBase
+{
+    private readonly SetupViewModel _parent;
+
+    public EnvironmentCheckViewModel(EnvironmentCheckResult result, SetupViewModel parent)
+    {
+        Result = result;
+        _parent = parent;
+    }
+
+    public EnvironmentCheckResult Result { get; }
+
+    public string Name => Result.Name;
+    public string Description => Result.Description;
+    public string Details => Result.Details;
+    public CheckStatus Status => Result.Status;
+    public CheckCategory Category => Result.Category;
+    public string? FixInstructions => Result.FixInstructions;
+    public string? FixUrl => Result.FixUrl;
+    public bool CanAutoFix => Result.CanAutoFix;
+    public AutoFixAction AutoFixAction => Result.AutoFixAction;
+
+    public bool IsPassed => Result.Status == CheckStatus.Passed;
+    public bool IsWarning => Result.Status == CheckStatus.Warning;
+    public bool IsFailed => Result.Status == CheckStatus.Failed;
+    public bool HasIssue => Result.Status != CheckStatus.Passed;
+    public bool HasFixUrl => !string.IsNullOrEmpty(Result.FixUrl);
+
+    public async Task ExecuteAutoFixAsync()
+    {
+        await _parent.ExecuteAutoFixAsync(Result.AutoFixAction);
+    }
+
+    public void OpenFixUrl()
+    {
+        if (!string.IsNullOrEmpty(Result.FixUrl))
+        {
+            _parent.OpenUrl(Result.FixUrl);
+        }
+    }
 }
 
 /// <summary>
@@ -298,9 +474,12 @@ public class SetupViewModel : ViewModelBase
 /// </summary>
 public class ComponentStatusViewModel : ViewModelBase
 {
-    public ComponentStatusViewModel(ComponentStatus status)
+    private readonly Action? _onSelectionChanged;
+
+    public ComponentStatusViewModel(ComponentStatus status, Action? onSelectionChanged = null)
     {
         Status = status;
+        _onSelectionChanged = onSelectionChanged;
         IsSelected = false; // Optional components start unselected
     }
 
@@ -310,7 +489,12 @@ public class ComponentStatusViewModel : ViewModelBase
     public bool IsSelected
     {
         get => _isSelected;
-        set => this.RaiseAndSetIfChanged(ref _isSelected, value);
+        set
+        {
+            if (this.RaiseAndSetIfChanged(ref _isSelected, value) != value)
+                return;
+            _onSelectionChanged?.Invoke();
+        }
     }
 
     private bool _isDownloading;

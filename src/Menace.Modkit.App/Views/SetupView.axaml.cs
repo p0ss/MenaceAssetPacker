@@ -6,6 +6,10 @@ using Avalonia.Media;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 
+// Import enums from EnvironmentChecker
+using CheckStatus = Menace.Modkit.App.Services.CheckStatus;
+using AutoFixAction = Menace.Modkit.App.Services.AutoFixAction;
+
 namespace Menace.Modkit.App.Views;
 
 /// <summary>
@@ -72,6 +76,9 @@ public class SetupView : UserControl
         var contentPanel = new StackPanel { Spacing = 24 };
         contentPanel.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding("!IsLoading"));
 
+        // Environment Checks Section
+        contentPanel.Children.Add(BuildEnvironmentSection());
+
         // Required Components Section
         contentPanel.Children.Add(BuildRequiredSection());
 
@@ -80,6 +87,9 @@ public class SetupView : UserControl
 
         // Download Progress Section
         contentPanel.Children.Add(BuildProgressSection());
+
+        // Fix Progress Section
+        contentPanel.Children.Add(BuildFixProgressSection());
 
         // Action Buttons
         contentPanel.Children.Add(BuildActionButtons());
@@ -365,6 +375,281 @@ public class SetupView : UserControl
         Grid.SetColumn(statusBadge, 3);
 
         return grid;
+    }
+
+    private Control BuildEnvironmentSection()
+    {
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#141414")),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(20)
+        };
+
+        var stack = new StackPanel { Spacing = 12 };
+
+        // Section header
+        var headerGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto")
+        };
+
+        var headerStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
+        };
+        headerStack.Children.Add(new TextBlock
+        {
+            Text = "ENVIRONMENT",
+            FontSize = 12,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#9999FF")),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        // Status indicator
+        var statusIcon = new TextBlock
+        {
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 0, 0)
+        };
+        statusIcon.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("HasEnvironmentIssues")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, string>(hasIssues =>
+                hasIssues ? "(issues found)" : "(all good)")
+        });
+        statusIcon.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding("HasEnvironmentFailures")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, IBrush>(hasFailed =>
+                hasFailed ? new SolidColorBrush(Color.Parse("#FF6B6B"))
+                          : new SolidColorBrush(Color.Parse("#8ECDC8")))
+        });
+        headerStack.Children.Add(statusIcon);
+        Grid.SetColumn(headerStack, 0);
+        headerGrid.Children.Add(headerStack);
+
+        // Open Log button
+        var logButton = new Button
+        {
+            Content = "View Log",
+            FontSize = 11,
+            Padding = new Thickness(8, 4)
+        };
+        logButton.Classes.Add("secondary");
+        logButton.Click += async (_, _) =>
+        {
+            if (DataContext is SetupViewModel vm)
+            {
+                await vm.WriteDiagnosticReportAsync();
+            }
+        };
+        Grid.SetColumn(logButton, 1);
+        headerGrid.Children.Add(logButton);
+
+        stack.Children.Add(headerGrid);
+
+        // Environment check list
+        var itemsControl = new ItemsControl();
+        itemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("EnvironmentChecks"));
+        itemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<EnvironmentCheckViewModel>(
+            (check, _) => BuildEnvironmentCheckRow(check), true);
+        stack.Children.Add(itemsControl);
+
+        border.Child = stack;
+        return border;
+    }
+
+    private Control BuildEnvironmentCheckRow(EnvironmentCheckViewModel check)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            Margin = new Thickness(0, 6)
+        };
+
+        // Column 0: Status icon
+        var statusIcon = new TextBlock
+        {
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0)
+        };
+
+        statusIcon.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Status")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<CheckStatus, string>(status => status switch
+            {
+                CheckStatus.Passed => "\u2713",   // Checkmark
+                CheckStatus.Warning => "\u26A0",  // Warning triangle
+                CheckStatus.Failed => "\u2717",   // X
+                _ => "?"
+            })
+        });
+        statusIcon.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding("Status")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<CheckStatus, IBrush>(status => status switch
+            {
+                CheckStatus.Passed => new SolidColorBrush(Color.Parse("#8ECDC8")),
+                CheckStatus.Warning => new SolidColorBrush(Color.Parse("#FFD700")),
+                CheckStatus.Failed => new SolidColorBrush(Color.Parse("#FF6B6B")),
+                _ => Brushes.White
+            })
+        });
+
+        grid.Children.Add(statusIcon);
+        Grid.SetColumn(statusIcon, 0);
+
+        // Column 1: Name and description
+        var infoStack = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var nameStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
+        };
+        nameStack.Children.Add(new TextBlock
+        {
+            Text = check.Name,
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+        nameStack.Children.Add(new TextBlock
+        {
+            Text = check.Description,
+            FontSize = 12,
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        infoStack.Children.Add(nameStack);
+
+        // Show fix instructions for issues
+        if (check.HasIssue && !string.IsNullOrEmpty(check.FixInstructions))
+        {
+            var fixText = new TextBlock
+            {
+                Text = check.FixInstructions,
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.Parse("#AAAAAA")),
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                MaxWidth = 400
+            };
+            infoStack.Children.Add(fixText);
+        }
+
+        grid.Children.Add(infoStack);
+        Grid.SetColumn(infoStack, 1);
+
+        // Column 2: Fix button(s)
+        if (check.HasIssue)
+        {
+            var buttonStack = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            // Auto-fix button
+            if (check.CanAutoFix)
+            {
+                var fixButton = new Button
+                {
+                    Content = GetFixButtonText(check.AutoFixAction),
+                    FontSize = 11,
+                    Padding = new Thickness(8, 4)
+                };
+                fixButton.Classes.Add("primary");
+                fixButton.Click += async (_, _) =>
+                {
+                    await check.ExecuteAutoFixAsync();
+                };
+                buttonStack.Children.Add(fixButton);
+            }
+
+            // URL button for external fixes
+            if (check.HasFixUrl)
+            {
+                var urlButton = new Button
+                {
+                    Content = "Download",
+                    FontSize = 11,
+                    Padding = new Thickness(8, 4)
+                };
+                urlButton.Classes.Add("secondary");
+                urlButton.Click += (_, _) =>
+                {
+                    check.OpenFixUrl();
+                };
+                buttonStack.Children.Add(urlButton);
+            }
+
+            if (buttonStack.Children.Count > 0)
+            {
+                grid.Children.Add(buttonStack);
+                Grid.SetColumn(buttonStack, 2);
+            }
+        }
+
+        return grid;
+    }
+
+    private static string GetFixButtonText(AutoFixAction action)
+    {
+        return action switch
+        {
+            AutoFixAction.InstallMelonLoader => "Install",
+            AutoFixAction.LaunchGame => "Launch Game",
+            AutoFixAction.InstallDataExtractor => "Install",
+            _ => "Fix"
+        };
+    }
+
+    private Control BuildFixProgressSection()
+    {
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#2a1a3a")),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(20),
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        border.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("IsFixing"));
+
+        var stack = new StackPanel { Spacing = 8 };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Applying fix...",
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+
+        var progressBar = new ProgressBar
+        {
+            IsIndeterminate = true,
+            Height = 4
+        };
+        stack.Children.Add(progressBar);
+
+        var statusText = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = Brushes.White,
+            Opacity = 0.7
+        };
+        statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("FixStatus"));
+        stack.Children.Add(statusText);
+
+        border.Child = stack;
+        return border;
     }
 
     private Control BuildProgressSection()

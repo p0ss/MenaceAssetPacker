@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Menace.Modkit.App.Services;
 
@@ -37,13 +38,20 @@ public class ReferenceResolverTests
     [Fact]
     public void ResolveReferences_PrefersGameBundledRuntime()
     {
+        var expectedVersion = ReadExpectedDotNetRefsVersion();
+        Assert.False(string.IsNullOrWhiteSpace(expectedVersion));
+
         // Simulate a game directory with a bundled dotnet/ dir
         using var tmp = new Helpers.TemporaryDirectory();
         var dotnetDir = tmp.CreateSubdirectory("dotnet");
+        tmp.CreateSubdirectory(Path.Combine("dotnet", "shared", "Microsoft.NETCore.App", expectedVersion!));
 
         // Copy a real managed DLL in as System.Runtime.dll to simulate the game's BCL
-        var testAssembly = typeof(ReferenceResolverTests).Assembly.Location;
-        File.Copy(testAssembly, Path.Combine(dotnetDir, "System.Runtime.dll"));
+        var runtimeSystem = Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "System.Runtime.dll");
+        var sourceAssembly = File.Exists(runtimeSystem)
+            ? runtimeSystem
+            : typeof(ReferenceResolverTests).Assembly.Location;
+        File.Copy(sourceAssembly, Path.Combine(dotnetDir, "System.Runtime.dll"));
 
         var resolver = new ReferenceResolver(tmp.Path);
         var refs = resolver.ResolveReferences();
@@ -56,6 +64,18 @@ public class ReferenceResolverTests
 
         Assert.NotNull(systemRuntime);
         Assert.StartsWith(dotnetDir, systemRuntime!.FilePath!);
+    }
+
+    [Fact]
+    public void ResolveReferences_MissingRequestedReference_ReportsIssue()
+    {
+        var resolver = new ReferenceResolver(string.Empty);
+
+        _ = resolver.ResolveReferences(new List<string> { "DefinitelyMissingReference12345" });
+
+        Assert.Contains(
+            resolver.ResolutionIssues,
+            issue => issue.Contains("DefinitelyMissingReference12345", System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -144,5 +164,23 @@ public class ReferenceResolverTests
 
         Assert.True(duplicates.Count == 0,
             $"Duplicate assembly names: {string.Join(", ", duplicates)}");
+    }
+
+    private static string? ReadExpectedDotNetRefsVersion()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var versionsPath = Path.Combine(repoRoot, "third_party", "versions.json");
+        if (!File.Exists(versionsPath))
+            return null;
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(versionsPath));
+        if (!doc.RootElement.TryGetProperty("components", out var components) ||
+            !components.TryGetProperty("DotNetRefs", out var dotnetRefs) ||
+            !dotnetRefs.TryGetProperty("version", out var versionElement))
+        {
+            return null;
+        }
+
+        return versionElement.GetString();
     }
 }
