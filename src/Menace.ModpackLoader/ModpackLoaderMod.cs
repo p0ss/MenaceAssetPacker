@@ -32,12 +32,13 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg($"{ModkitVersion.LoaderFull} initialized");
+        SdkLogger.Msg($"{ModkitVersion.LoaderFull} initialized");
 
         // Initialize SDK subsystems
         OffsetCache.Initialize();
         DevConsole.Initialize();
         DevConsole.ApplyInputPatches(HarmonyInstance);
+        SdkLogger.Initialize(LoggerInstance); // Set up dual logging to file and DevConsole
         ModSettings.Initialize();
         InitializeRepl();
 
@@ -81,7 +82,7 @@ public partial class ModpackLoaderMod : MelonMod
         // Some builds (e.g. EA) load templates in later scenes, not the title screen.
         if (!_templatesLoaded)
         {
-            LoggerInstance.Msg($"Scene '{sceneName}' loaded, attempting template patches...");
+            SdkLogger.Msg($"Scene '{sceneName}' loaded, attempting template patches...");
             MelonCoroutines.Start(WaitForTemplatesAndApply(sceneName));
         }
 
@@ -135,13 +136,13 @@ public partial class ModpackLoaderMod : MelonMod
 
         if (allApplied)
         {
-            LoggerInstance.Msg("All template patches applied successfully.");
+            SdkLogger.Msg("All template patches applied successfully.");
             _templatesLoaded = true;
             PlayerLog("All template patches applied successfully");
         }
         else
         {
-            LoggerInstance.Msg("Some template types not yet loaded — will retry on next scene.");
+            SdkLogger.Warning("Some template types not yet loaded — will retry on next scene.");
         }
     }
 
@@ -173,7 +174,7 @@ public partial class ModpackLoaderMod : MelonMod
             return;
         }
 
-        LoggerInstance.Msg($"Loading modpacks from: {modsPath}");
+        SdkLogger.Msg($"Loading modpacks from: {modsPath}");
 
         var modpackFiles = Directory.GetFiles(modsPath, "modpack.json", SearchOption.AllDirectories);
 
@@ -215,7 +216,7 @@ public partial class ModpackLoaderMod : MelonMod
                     ModRegistry.RegisterModpack(modpack.Name, modpack.Version, modpack.Author);
 
                     var vLabel = manifestVersion >= 2 ? "v2" : "v1 (legacy)";
-                    LoggerInstance.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");
+                    SdkLogger.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");
 
                     // V2: Load bundles and DLLs
                     if (manifestVersion >= 2 && !string.IsNullOrEmpty(modpackDir))
@@ -233,11 +234,11 @@ public partial class ModpackLoaderMod : MelonMod
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"Failed to load modpack from {modpackFile}: {ex.Message}");
+                SdkLogger.Error($"Failed to load modpack from {modpackFile}: {ex.Message}");
             }
         }
 
-        LoggerInstance.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
+        SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
     }
 
     private void LoadModpackAssets(Modpack modpack)
@@ -328,7 +329,7 @@ public partial class ModpackLoaderMod : MelonMod
             if (!hasClones && !hasPatches && !hasTemplates)
                 continue;
 
-            LoggerInstance.Msg($"Applying modpack: {modpack.Name}");
+            SdkLogger.Msg($"Applying modpack: {modpack.Name}");
 
             // Apply clones BEFORE patches so cloned templates exist when patches run
             if (hasClones)

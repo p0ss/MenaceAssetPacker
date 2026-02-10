@@ -1194,6 +1194,7 @@ public class AssetBrowserView : UserControl
             await vm.ExtractAssetsAsync();
         }
     }
+
 }
 
 /// <summary>

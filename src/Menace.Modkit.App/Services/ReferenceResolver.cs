@@ -138,9 +138,15 @@ public class ReferenceResolver
             var mlDir = Path.Combine(_gameInstallPath, "MelonLoader");
             if (Directory.Exists(mlDir))
             {
-                ModkitLog.Info($"Step 3b: MelonLoader root ({mlDir})");
-                foreach (var dll in Directory.GetFiles(mlDir, "*.dll"))
+                ModkitLog.Info($"Step 3b: MelonLoader ({mlDir})");
+                // Search recursively - MelonLoader DLLs are in net6/ subdirectory
+                var mlCount = 0;
+                foreach (var dll in Directory.GetFiles(mlDir, "*.dll", SearchOption.AllDirectories))
+                {
                     AddNonSystemRef(dll);
+                    mlCount++;
+                }
+                ModkitLog.Info($"  Found {mlCount} MelonLoader assemblies");
             }
             else
             {

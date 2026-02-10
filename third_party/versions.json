@@ -1,42 +1,120 @@
 {
-  "modkit": "1.0.0",
-  "toolsDownloadUrls": {
-    "linux-x64": "https://github.com/p0ss/MenaceAssetPacker/releases/latest/download/tools-linux-x64.tar.gz",
-    "win-x64": "https://github.com/p0ss/MenaceAssetPacker/releases/latest/download/tools-win-x64.zip"
-  },
-  "dependencies": {
+  "schemaVersion": 3,
+  "remoteUrl": "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party/versions.json",
+  "components": {
     "MelonLoader": {
       "version": "0.7.2-ci.2388",
-      "source": "https://github.com/LavaGang/MelonLoader/actions/runs/20586441562",
-      "note": "Nightly build required for Unity 6 (6000.x) support",
-      "bundledPath": "bundled/MelonLoader"
+      "required": true,
+      "category": "core",
+      "description": "Mod loading framework for Unity games",
+      "installPath": "MelonLoader",
+      "downloads": {
+        "win-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/MelonLoader-win-x64.zip",
+          "sha256": "",
+          "size": 49000000
+        },
+        "linux-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/MelonLoader-linux-x64.tar.gz",
+          "sha256": "",
+          "size": 47000000
+        }
+      }
     },
     "DataExtractor": {
-      "version": "4.6.0",
-      "source": "local-build",
-      "bundledPath": "bundled/DataExtractor"
+      "version": "6.0.0",
+      "required": true,
+      "category": "core",
+      "description": "Extracts game template data for editing",
+      "installPath": "DataExtractor",
+      "downloads": {
+        "any": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/DataExtractor.zip",
+          "sha256": "",
+          "size": 1000000
+        }
+      }
     },
     "ModpackLoader": {
-      "version": "2.0.0",
-      "source": "local-build",
-      "bundledPath": "bundled/ModpackLoader"
-    },
-    "AssetRipper": {
-      "version": "1.3.4-patched",
-      "source": "https://github.com/AssetRipper/AssetRipper (with Menace patches)",
-      "bundledPath": "bundled/AssetRipper"
-    },
-    "TwitchServer": {
-      "version": "1.0.0",
-      "source": "local-build",
-      "note": "Companion server for TwitchSquaddies modpack",
-      "bundledPath": "bundled/tools/TwitchServer"
+      "version": "19.0.0",
+      "required": true,
+      "category": "core",
+      "description": "In-game mod loader with REPL and hot-reload",
+      "installPath": "ModpackLoader",
+      "downloads": {
+        "any": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/ModpackLoader.zip",
+          "sha256": "",
+          "size": 13000000
+        }
+      }
     },
     "DotNetRefs": {
       "version": "6.0.36",
-      "source": "https://www.nuget.org/packages/Microsoft.NETCore.App.Ref/6.0.36",
-      "note": "Bundled .NET 6 reference assemblies for modpack compilation.",
-      "bundledPath": "bundled/dotnet-refs/net6.0"
+      "required": true,
+      "category": "core",
+      "description": ".NET 6 reference assemblies for mod compilation",
+      "installPath": "dotnet-refs",
+      "downloads": {
+        "any": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/DotNetRefs.zip",
+          "sha256": "",
+          "size": 5000000
+        }
+      }
+    },
+    "AssetRipper": {
+      "version": "1.3.4-patched",
+      "required": true,
+      "category": "core",
+      "requiredFor": "asset-extraction",
+      "description": "Extracts textures, models, and audio from game assets",
+      "installPath": "AssetRipper",
+      "downloads": {
+        "win-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/AssetRipper-win-x64.zip",
+          "sha256": "",
+          "size": 136000000
+        },
+        "linux-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/AssetRipper-linux-x64.tar.gz",
+          "sha256": "",
+          "size": 142000000
+        }
+      }
+    },
+    "TwitchSquaddies": {
+      "version": "1.0.0",
+      "required": false,
+      "category": "addon",
+      "description": "Twitch chat integration - let viewers control squaddies",
+      "installPath": "addons/TwitchSquaddies",
+      "downloads": {
+        "any": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/TwitchSquaddies.zip",
+          "sha256": "",
+          "size": 12000000
+        }
+      }
+    },
+    "McpServer": {
+      "version": "1.0.0",
+      "required": false,
+      "category": "addon",
+      "description": "MCP server for Claude Code integration",
+      "installPath": "addons/McpServer",
+      "downloads": {
+        "win-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/McpServer-win-x64.zip",
+          "sha256": "",
+          "size": 8000000
+        },
+        "linux-x64": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/McpServer-linux-x64.tar.gz",
+          "sha256": "",
+          "size": 8000000
+        }
+      }
     }
   }
 }

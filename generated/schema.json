@@ -32237,7 +32237,7 @@
           "name": "Count",
           "type": "Vector2Int",
           "offset": "0x1C",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "SpawnAreas",
@@ -32650,7 +32650,7 @@
           "name": "Offset",
           "type": "Vector2Int",
           "offset": "0x28",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "BaseExpand",
@@ -32731,13 +32731,13 @@
           "name": "Offset",
           "type": "Vector2Int",
           "offset": "0x10",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "Variance",
           "type": "Vector2Int",
           "offset": "0x18",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "Setpiece",
@@ -33518,9 +33518,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",
@@ -33750,9 +33750,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",
@@ -34738,7 +34738,7 @@
           "name": "DeathAnimationVariants",
           "type": "Vector2Int",
           "offset": "0x9C",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "HitAnimations",
@@ -34894,7 +34894,7 @@
           "name": "DurationInMissions",
           "type": "Vector2Int",
           "offset": "0xC0",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "Category",
@@ -35032,15 +35032,15 @@
         },
         {
           "name": "DeployCostsPerElement",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xAC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xB0",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "ArmyPointCost",
@@ -36265,9 +36265,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",
@@ -37022,9 +37022,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",
@@ -37340,19 +37340,19 @@
           "name": "RequiredCampaignProgress",
           "type": "Vector2Int",
           "offset": "0x88",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "TotalMissionOptions",
           "type": "Vector2Int",
           "offset": "0x90",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "EnemyAssets",
           "type": "Vector2Int",
           "offset": "0x98",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "MaxRating",
@@ -38646,7 +38646,7 @@
           "name": "AdditionalDismemberedPieces",
           "type": "Vector2Int",
           "offset": "0x80",
-          "category": "reference"
+          "category": "struct"
         },
         {
           "name": "AdditionalDismemberedPieceScale",
@@ -40713,9 +40713,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",
@@ -40955,9 +40955,9 @@
         },
         {
           "name": "DeployCosts",
-          "type": "OperationResources",
+          "type": "int",
           "offset": "0xFC",
-          "category": "reference"
+          "category": "primitive"
         },
         {
           "name": "IsDestroyedAfterCombat",

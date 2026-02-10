@@ -58,6 +58,11 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
 
     public bool HasExtractedAssets => _assetRipperService.HasExtractedAssets();
 
+    /// <summary>
+    /// True if AssetRipper is available for use.
+    /// </summary>
+    public bool IsAssetRipperAvailable => _assetRipperService.IsAssetRipperAvailable();
+
     public ObservableCollection<AssetTreeNode> FolderTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
     public ObservableCollection<ReferenceEntry> AssetBacklinks { get; }

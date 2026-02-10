@@ -369,7 +369,7 @@ public class StatsEditorView : UserControl
     {
       FontSize = 11,
       MinWidth = 120,
-      MaxDropDownHeight = 300
+      MaxDropDownHeight = 500
     };
     sectionCombo.Classes.Add("input");
     sectionCombo.Bind(ComboBox.ItemsSourceProperty,

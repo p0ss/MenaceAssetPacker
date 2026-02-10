@@ -185,10 +185,36 @@ public static class DevConsole
     /// </summary>
     public static void Log(string message)
     {
-        _logBuffer.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
-        while (_logBuffer.Count > LogBufferMax)
-            _logBuffer.RemoveAt(0);
+        AddLogEntry(message, "LOG");
     }
+
+    /// <summary>
+    /// Append a warning to the log panel.
+    /// </summary>
+    public static void LogWarning(string message)
+    {
+        AddLogEntry(message, "WARN");
+    }
+
+    /// <summary>
+    /// Append an error to the log panel.
+    /// </summary>
+    public static void LogError(string message)
+    {
+        AddLogEntry(message, "ERR");
+    }
+
+    private static void AddLogEntry(string message, string level)
+    {
+        lock (_logBuffer)
+        {
+            _logBuffer.Add($"[{DateTime.Now:HH:mm:ss}] [{level}] {message}");
+            while (_logBuffer.Count > LogBufferMax)
+                _logBuffer.RemoveAt(0);
+        }
+    }
+
+    // Logging entry point is called by the SDK logger utility (see SdkLogger.cs)
 
     /// <summary>
     /// Register a command that can be executed from the Commands panel.
@@ -246,6 +272,9 @@ public static class DevConsole
         _panels.Add(new PanelEntry { Name = "Watch", DrawCallback = DrawWatchPanel });
 
         RegisterCoreCommands();
+
+        // Add startup message to verify log is working
+        Log("DevConsole initialized - press ~ to toggle");
     }
 
     private static void RegisterCoreCommands()
@@ -1117,11 +1146,32 @@ public static class DevConsole
             entries.Add((entry.Timestamp, text, style));
         }
 
-        // Add log buffer entries (parse timestamp from format "[HH:mm:ss] message")
-        foreach (var line in _logBuffer)
+        // Add log buffer entries (parse timestamp and level from format "[HH:mm:ss] [LEVEL] message")
+        List<string> logBufferCopy;
+        lock (_logBuffer)
         {
-            // Only show log entries if Info filter is on
-            if ((_errorSeverityFilter & ErrorSeverity.Info) == 0) continue;
+            logBufferCopy = _logBuffer.ToList();
+        }
+
+        foreach (var line in logBufferCopy)
+        {
+            // Determine log level and style from the [LEVEL] tag
+            GUIStyle style = _labelStyle;
+            ErrorSeverity filterRequired = ErrorSeverity.Info;
+
+            if (line.Contains("[ERR]"))
+            {
+                style = _errorStyle;
+                filterRequired = ErrorSeverity.Error;
+            }
+            else if (line.Contains("[WARN]"))
+            {
+                style = _warnStyle;
+                filterRequired = ErrorSeverity.Warning;
+            }
+
+            // Check if this severity is filtered
+            if ((_errorSeverityFilter & filterRequired) == 0) continue;
 
             DateTime time = DateTime.Now;
             if (line.Length > 10 && line[0] == '[' && line[9] == ']')
@@ -1129,7 +1179,7 @@ public static class DevConsole
                 if (TimeSpan.TryParse(line.Substring(1, 8), out var ts))
                     time = DateTime.Today.Add(ts);
             }
-            entries.Add((time, $"[Log] {line}", _labelStyle));
+            entries.Add((time, line, style));
         }
 
         // Sort by time (oldest first for display)

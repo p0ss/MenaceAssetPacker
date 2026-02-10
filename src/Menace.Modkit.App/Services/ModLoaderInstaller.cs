@@ -18,46 +18,31 @@ public class ModLoaderInstaller
         _gameInstallPath = gameInstallPath;
     }
 
-    public async Task<bool> InstallMelonLoaderAsync(Action<string>? progressCallback = null)
+    public Task<bool> InstallMelonLoaderAsync(Action<string>? progressCallback = null)
     {
         try
         {
             progressCallback?.Invoke("Installing MelonLoader...");
 
-            // Find MelonLoader (checks cache first, then bundled)
-            var melonLoaderPath = ToolsManager.Instance.GetMelonLoaderPath();
+            // MelonLoader is a required component (cached or bundled)
+            var melonLoaderPath = ComponentManager.Instance.GetMelonLoaderPath();
 
             if (melonLoaderPath == null)
             {
-                // Tools not installed - need to download
-                progressCallback?.Invoke("MelonLoader not found. Downloading tools...");
-                var downloaded = await ToolsManager.Instance.DownloadToolsAsync((msg, pct) =>
-                    progressCallback?.Invoke(msg));
-
-                if (!downloaded)
-                {
-                    progressCallback?.Invoke("❌ Failed to download tools");
-                    return false;
-                }
-
-                melonLoaderPath = ToolsManager.Instance.GetMelonLoaderPath();
-                if (melonLoaderPath == null)
-                {
-                    progressCallback?.Invoke("❌ Tools downloaded but MelonLoader not found");
-                    return false;
-                }
+                progressCallback?.Invoke("❌ MelonLoader not found. Please reinstall the app.");
+                return Task.FromResult(false);
             }
 
             // Copy all MelonLoader files to game directory
             CopyDirectory(melonLoaderPath, _gameInstallPath, progressCallback);
 
             progressCallback?.Invoke("✓ MelonLoader installed successfully");
-            return true;
+            return Task.FromResult(true);
         }
         catch (Exception ex)
         {
             progressCallback?.Invoke($"❌ Error installing MelonLoader: {ex.Message}");
-            return false;
+            return Task.FromResult(false);
         }
     }
 

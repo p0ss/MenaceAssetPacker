@@ -10,7 +10,7 @@ The Menace Modkit is a modding toolchain for the game "Menace" that allows users
 ┌─────────────────────────────────────────────────────────────────┐
 │                        User Interface Layer                      │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Menace.Modkit.App (Avalonia Desktop App - .NET 9)        │ │
+│  │  Menace.Modkit.App (Avalonia Desktop App - .NET 10)       │ │
 │  │  ├─ Views: Stats Editor, Asset Manager, Settings          │ │
 │  │  ├─ ViewModels: ReactiveUI + MVVM Pattern                 │ │
 │  │  └─ Services: AssetRipperService, ModpackManager           │ │
@@ -21,7 +21,7 @@ The Menace Modkit is a modding toolchain for the game "Menace" that allows users
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Core Library Layer                          │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Menace.Modkit.Core (.NET 6)                              │ │
+│  │  Menace.Modkit.Core (.NET 10)                             │ │
 │  │  ├─ Models: DataTemplate, DynamicDataTemplate             │ │
 │  │  ├─ Services: DataTemplateLoader                          │ │
 │  │  └─ Models: ModpackManager, AppSettings                   │ │
@@ -73,7 +73,7 @@ The Menace Modkit is a modding toolchain for the game "Menace" that allows users
 
 ### 1. Menace.Modkit.App (Desktop Application)
 
-**Technology:** Avalonia 11.3.7, .NET 9, ReactiveUI
+**Technology:** Avalonia 11.3.7, .NET 10, ReactiveUI
 **Purpose:** Main user interface for the modding toolkit
 
 #### Key Components:
@@ -116,7 +116,7 @@ The app includes bundled dependencies that are automatically copied to the outpu
 
 ### 2. Menace.Modkit.Core (Core Library)
 
-**Technology:** .NET 6
+**Technology:** .NET 10
 **Purpose:** Shared business logic and data models
 
 #### Key Classes:
@@ -395,7 +395,7 @@ public class EntityProperties  // TypeDefIndex: 2740
 cd /home/poss/Documents/Code/Menace/MenaceAssetPacker
 
 # Build with updated offsets
-DOTNET_CLI_HOME=$PWD/.dotnet_cli ~/.dotnet9/dotnet build src/Menace.DataExtractor
+dotnet build src/Menace.DataExtractor
 
 # Deploy to game
 cp -f src/Menace.DataExtractor/bin/Debug/net6.0/Menace.DataExtractor.dll \
@@ -636,15 +636,16 @@ Expected: `MinRange`, `Damage`, `ArmorPenetration`, etc.
 | Component | Technology | Version | Purpose |
 |-----------|-----------|---------|---------|
 | Desktop App | Avalonia | 11.3.7 | Cross-platform UI |
-| App Framework | .NET | 9.0 | Modern C# features |
-| Core Library | .NET | 6.0 | Game compatibility |
+| App Framework | .NET | 10.0 | Modern C# features |
+| Core Library | .NET | 10.0 | Shared business logic |
+| MelonLoader Mods | .NET | 6.0 | Game/MelonLoader compatibility |
 | UI Pattern | ReactiveUI | Latest | MVVM with observables |
-| Mod Loader | MelonLoader | 0.7.1 | IL2CPP mod framework |
+| Mod Loader | MelonLoader | 0.7.2 | IL2CPP mod framework |
 | IL2CPP Interop | Il2CppInterop | 1.5.0 | Managed ↔ IL2CPP bridge |
 | Decompiler | Cpp2IL | 2022.1.0 | IL2CPP to .NET |
 | Asset Extractor | AssetRipper | 0.3.x | Unity asset export |
 | Game Engine | Unity | 6000.0.56f1 | Game runtime |
-| Serialization | System.Text.Json | .NET 9 | Template JSON |
+| Serialization | System.Text.Json | .NET 10 | Template JSON |
 | Mod Serialization | Newtonsoft.Json | 13.0.3 | DataExtractor output |
 
 ---
@@ -654,7 +655,7 @@ Expected: `MinRange`, `Damage`, `ArmorPenetration`, etc.
 ```
 MenaceAssetPacker/
 ├── src/
-│   ├── Menace.Modkit.App/              ← Desktop application (.NET 9)
+│   ├── Menace.Modkit.App/              ← Desktop application (.NET 10)
 │   │   ├── Views/
 │   │   │   ├── StatsEditorView.axaml.cs
 │   │   │   └── MainWindow.axaml.cs
@@ -667,7 +668,7 @@ MenaceAssetPacker/
 │   │   └── Assets/
 │   │       └── icon.jpg
 │   │
-│   ├── Menace.Modkit.Core/             ← Shared library (.NET 6)
+│   ├── Menace.Modkit.Core/             ← Shared library (.NET 10)
 │   │   ├── Models/
 │   │   │   ├── DataTemplate.cs
 │   │   │   └── DynamicDataTemplate.cs
@@ -702,14 +703,14 @@ MenaceAssetPacker/
 
 ```bash
 # Build everything
-~/.dotnet9/dotnet build
+dotnet build
 
 # Build specific components
-~/.dotnet9/dotnet build src/Menace.Modkit.App -c Release
-~/.dotnet9/dotnet build src/Menace.DataExtractor -c Release
+dotnet build src/Menace.Modkit.App -c Release
+dotnet build src/Menace.DataExtractor -c Release
 
 # Run the app
-~/.dotnet9/dotnet run --project src/Menace.Modkit.App
+dotnet run --project src/Menace.Modkit.App
 ```
 
 ### Installing DataExtractor Manually

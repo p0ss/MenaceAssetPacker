@@ -1,34 +1,48 @@
 #!/bin/bash
 set -e
 
-# Parse arguments
-BUNDLE_MODE=false
-for arg in "$@"; do
-  case $arg in
-    --bundle)
-      BUNDLE_MODE=true
-      shift
-      ;;
-  esac
-done
+# Build script for Menace Modkit redistributables
+# This creates component archives for GitHub releases and slim app builds
 
 # Use system .NET SDK
 DOTNET="dotnet"
 
 echo "Building Menace Modkit redistributables..."
 echo "Using: $($DOTNET --version)"
-if [ "$BUNDLE_MODE" = true ]; then
-  echo "Mode: BUNDLED (includes all tools)"
-else
-  echo "Mode: SLIM (tools downloaded on demand)"
-fi
 echo ""
 
 # Clean previous builds
 rm -rf dist/
 mkdir -p dist
+mkdir -p dist/components
 
-# Build GUI for each platform
+# =============================================================================
+# Build DLLs
+# =============================================================================
+
+echo "📦 Building DataExtractor Mod..."
+$DOTNET build src/Menace.DataExtractor -c Release -o dist/DataExtractor
+
+# Update source tree bundled copy
+cp dist/DataExtractor/Menace.DataExtractor.dll third_party/bundled/DataExtractor/
+
+echo ""
+echo "📦 Building ModpackLoader Mod..."
+$DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
+
+# Update source tree bundled copy (main DLL + Roslyn dependencies for REPL)
+mkdir -p third_party/bundled/ModpackLoader
+cp dist/ModpackLoader/Menace.ModpackLoader.dll third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/System.Collections.Immutable.dll third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/System.Reflection.Metadata.dll third_party/bundled/ModpackLoader/
+
+# =============================================================================
+# Build GUI App
+# =============================================================================
+
+echo ""
 echo "📦 Building GUI App..."
 
 echo "  → Linux x64..."
@@ -41,170 +55,128 @@ $DOTNET publish src/Menace.Modkit.App -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/gui-win-x64
 
-# Build DataExtractor mod
+# =============================================================================
+# Bundle core files with GUI (versions.json, tools scripts)
+# =============================================================================
+
 echo ""
-echo "📦 Building DataExtractor Mod..."
-$DOTNET build src/Menace.DataExtractor -c Release -o dist/DataExtractor
+echo "📦 Bundling core files with GUI..."
 
-# Update source tree bundled copy
-cp dist/DataExtractor/Menace.DataExtractor.dll third_party/bundled/DataExtractor/
-
-# Bundle DataExtractor with GUI builds (small, always include)
-echo "  → Bundling DataExtractor with GUI builds..."
-mkdir -p dist/gui-linux-x64/third_party/bundled/DataExtractor
-mkdir -p dist/gui-win-x64/third_party/bundled/DataExtractor
-cp dist/DataExtractor/Menace.DataExtractor.dll dist/gui-linux-x64/third_party/bundled/DataExtractor/
-cp dist/DataExtractor/Menace.DataExtractor.dll dist/gui-win-x64/third_party/bundled/DataExtractor/
-
-# Build ModpackLoader mod
-echo ""
-echo "📦 Building ModpackLoader Mod..."
-$DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
-
-# Update source tree bundled copy
-mkdir -p third_party/bundled/ModpackLoader
-cp dist/ModpackLoader/Menace.ModpackLoader.dll third_party/bundled/ModpackLoader/
-
-# Bundle ModpackLoader with GUI builds (small, always include)
-echo "  → Bundling ModpackLoader with GUI builds..."
-mkdir -p dist/gui-linux-x64/third_party/bundled/ModpackLoader
-mkdir -p dist/gui-win-x64/third_party/bundled/ModpackLoader
-cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-linux-x64/third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/gui-win-x64/third_party/bundled/ModpackLoader/
-
-# Copy versions.json to GUI builds
-echo "  → Copying versions.json to GUI builds..."
+# Copy versions.json
 mkdir -p dist/gui-linux-x64/third_party
 mkdir -p dist/gui-win-x64/third_party
 cp third_party/versions.json dist/gui-linux-x64/third_party/
 cp third_party/versions.json dist/gui-win-x64/third_party/
 
-# Bundle modpacks (small, always include)
-echo "  → Copying bundled modpacks..."
-if [ -d "third_party/bundled/modpacks" ]; then
-  mkdir -p dist/gui-linux-x64/third_party/bundled/modpacks
-  mkdir -p dist/gui-win-x64/third_party/bundled/modpacks
-  cp -r third_party/bundled/modpacks/* dist/gui-linux-x64/third_party/bundled/modpacks/
-  cp -r third_party/bundled/modpacks/* dist/gui-win-x64/third_party/bundled/modpacks/
-fi
-
-# Bundle dotnet-refs (small, needed for mod compilation)
-echo "  → Copying dotnet-refs..."
-if [ -d "third_party/bundled/dotnet-refs" ]; then
-  mkdir -p dist/gui-linux-x64/third_party/bundled/dotnet-refs
-  mkdir -p dist/gui-win-x64/third_party/bundled/dotnet-refs
-  cp -r third_party/bundled/dotnet-refs/* dist/gui-linux-x64/third_party/bundled/dotnet-refs/
-  cp -r third_party/bundled/dotnet-refs/* dist/gui-win-x64/third_party/bundled/dotnet-refs/
-fi
-
-# Copy tools (doctor scripts, etc.)
-echo "  → Copying tools..."
+# Copy tools (doctor scripts)
 mkdir -p dist/gui-linux-x64/tools
 mkdir -p dist/gui-win-x64/tools
 cp tools/doctor.sh dist/gui-linux-x64/tools/
 cp tools/doctor.ps1 dist/gui-win-x64/tools/
 cp tools/doctor.bat dist/gui-win-x64/tools/
-cp tools/doctor.ps1 dist/gui-linux-x64/tools/
-cp tools/doctor.bat dist/gui-linux-x64/tools/
 
-# Bundle documentation
+# =============================================================================
+# Create Component Archives for GitHub Release
+# =============================================================================
+
 echo ""
-echo "📦 Bundling documentation..."
-(cd docs && zip -q -r ../dist/docs.zip .)
-cp dist/docs.zip dist/gui-linux-x64/
-cp dist/docs.zip dist/gui-win-x64/
+echo "📦 Creating component archives..."
 
-# Handle heavy tools based on mode
-if [ "$BUNDLE_MODE" = true ]; then
-  echo ""
-  echo "📦 Bundling heavy tools (--bundle mode)..."
+# DataExtractor (platform-independent)
+echo "  → DataExtractor.zip..."
+mkdir -p dist/component-DataExtractor
+cp dist/DataExtractor/Menace.DataExtractor.dll dist/component-DataExtractor/
+(cd dist/component-DataExtractor && zip -q -r ../components/DataExtractor.zip .)
 
-  # AssetRipper
-  echo "  → Copying AssetRipper..."
-  mkdir -p dist/gui-linux-x64/third_party/bundled/AssetRipper/linux
-  mkdir -p dist/gui-win-x64/third_party/bundled/AssetRipper/windows
-  cp -r third_party/bundled/AssetRipper/linux/* dist/gui-linux-x64/third_party/bundled/AssetRipper/linux/
-  cp -r third_party/bundled/AssetRipper/windows/* dist/gui-win-x64/third_party/bundled/AssetRipper/windows/
+# ModpackLoader + Roslyn (platform-independent)
+echo "  → ModpackLoader.zip..."
+mkdir -p dist/component-ModpackLoader
+cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/component-ModpackLoader/
+cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll dist/component-ModpackLoader/
+cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll dist/component-ModpackLoader/
+cp dist/ModpackLoader/System.Collections.Immutable.dll dist/component-ModpackLoader/
+cp dist/ModpackLoader/System.Reflection.Metadata.dll dist/component-ModpackLoader/
+(cd dist/component-ModpackLoader && zip -q -r ../components/ModpackLoader.zip .)
 
-  # Strip debug symbols from AssetRipper bundles to reduce size
-  echo "  → Stripping debug symbols from AssetRipper..."
-  rm -f dist/gui-linux-x64/third_party/bundled/AssetRipper/linux/*.dbg 2>/dev/null || true
-  rm -f dist/gui-linux-x64/third_party/bundled/AssetRipper/linux/*.pdb 2>/dev/null || true
-  rm -f dist/gui-win-x64/third_party/bundled/AssetRipper/windows/*.dbg 2>/dev/null || true
-  rm -f dist/gui-win-x64/third_party/bundled/AssetRipper/windows/*.pdb 2>/dev/null || true
-
-  # MelonLoader
-  echo "  → Copying MelonLoader..."
-  mkdir -p dist/gui-linux-x64/third_party/bundled/MelonLoader
-  mkdir -p dist/gui-win-x64/third_party/bundled/MelonLoader
-  cp -r third_party/bundled/MelonLoader/* dist/gui-linux-x64/third_party/bundled/MelonLoader/
-  cp -r third_party/bundled/MelonLoader/* dist/gui-win-x64/third_party/bundled/MelonLoader/
-
-  # TwitchServer (if exists)
-  if [ -d "third_party/bundled/tools/TwitchServer" ]; then
-    echo "  → Copying TwitchServer..."
-    mkdir -p dist/gui-linux-x64/third_party/bundled/tools/TwitchServer
-    mkdir -p dist/gui-win-x64/third_party/bundled/tools/TwitchServer
-    cp -r third_party/bundled/tools/TwitchServer/* dist/gui-linux-x64/third_party/bundled/tools/TwitchServer/
-    cp -r third_party/bundled/tools/TwitchServer/* dist/gui-win-x64/third_party/bundled/tools/TwitchServer/
-  fi
-else
-  echo ""
-  echo "📦 Creating separate tools archives (slim mode)..."
-
-  # Read ToolsVersion from ModkitVersion.cs
-  TOOLS_VERSION=$(grep -o 'ToolsVersion = [0-9]*' src/Shared/ModkitVersion.cs | grep -o '[0-9]*')
-  if [ -z "$TOOLS_VERSION" ]; then
-    TOOLS_VERSION=1
-  fi
-  echo "  → Tools version: $TOOLS_VERSION"
-
-  # Create tools archive for Linux
-  echo "  → Creating tools-linux-x64.tar.gz..."
-  mkdir -p dist/tools-linux-x64/AssetRipper
-  mkdir -p dist/tools-linux-x64/MelonLoader
-  cp -r third_party/bundled/AssetRipper/linux/* dist/tools-linux-x64/AssetRipper/
-  cp -r third_party/bundled/MelonLoader/* dist/tools-linux-x64/MelonLoader/
-  # Strip debug symbols from AssetRipper
-  rm -f dist/tools-linux-x64/AssetRipper/*.dbg 2>/dev/null || true
-  rm -f dist/tools-linux-x64/AssetRipper/*.pdb 2>/dev/null || true
-  if [ -d "third_party/bundled/tools/TwitchServer" ]; then
-    mkdir -p dist/tools-linux-x64/TwitchServer
-    cp -r third_party/bundled/tools/TwitchServer/* dist/tools-linux-x64/TwitchServer/
-  fi
-  # Include tools version info
-  cat > dist/tools-linux-x64/tools-version.json << EOF
-{
-  "toolsVersion": $TOOLS_VERSION,
-  "platform": "linux-x64"
-}
-EOF
-  tar -czf dist/tools-linux-x64.tar.gz -C dist/tools-linux-x64 .
-
-  # Create tools archive for Windows
-  echo "  → Creating tools-win-x64.zip..."
-  mkdir -p dist/tools-win-x64/AssetRipper
-  mkdir -p dist/tools-win-x64/MelonLoader
-  cp -r third_party/bundled/AssetRipper/windows/* dist/tools-win-x64/AssetRipper/
-  cp -r third_party/bundled/MelonLoader/* dist/tools-win-x64/MelonLoader/
-  # Strip debug symbols from AssetRipper
-  rm -f dist/tools-win-x64/AssetRipper/*.dbg 2>/dev/null || true
-  rm -f dist/tools-win-x64/AssetRipper/*.pdb 2>/dev/null || true
-  if [ -d "third_party/bundled/tools/TwitchServer" ]; then
-    mkdir -p dist/tools-win-x64/TwitchServer
-    cp -r third_party/bundled/tools/TwitchServer/* dist/tools-win-x64/TwitchServer/
-  fi
-  # Include tools version info
-  cat > dist/tools-win-x64/tools-version.json << EOF
-{
-  "toolsVersion": $TOOLS_VERSION,
-  "platform": "win-x64"
-}
-EOF
-  (cd dist/tools-win-x64 && zip -q -r ../tools-win-x64.zip .)
+# DotNetRefs (platform-independent)
+if [ -d "third_party/bundled/dotnet-refs" ]; then
+  echo "  → DotNetRefs.zip..."
+  (cd third_party/bundled/dotnet-refs && zip -q -r ../../../dist/components/DotNetRefs.zip .)
 fi
 
-# Build CLI for each platform
+# MelonLoader (platform-specific)
+if [ -d "third_party/bundled/MelonLoader" ]; then
+  echo "  → MelonLoader-linux-x64.tar.gz..."
+  tar -czf dist/components/MelonLoader-linux-x64.tar.gz \
+    -C third_party/bundled/MelonLoader .
+
+  echo "  → MelonLoader-win-x64.zip..."
+  (cd third_party/bundled/MelonLoader && \
+    zip -q -r ../../../dist/components/MelonLoader-win-x64.zip .)
+fi
+
+# AssetRipper (platform-specific)
+if [ -d "third_party/bundled/AssetRipper/linux" ]; then
+  echo "  → AssetRipper-linux-x64.tar.gz..."
+  # Remove debug symbols first
+  find third_party/bundled/AssetRipper -name "*.pdb" -delete 2>/dev/null || true
+  find third_party/bundled/AssetRipper -name "*.dbg" -delete 2>/dev/null || true
+  tar -czf dist/components/AssetRipper-linux-x64.tar.gz \
+    -C third_party/bundled/AssetRipper/linux .
+fi
+
+if [ -d "third_party/bundled/AssetRipper/windows" ]; then
+  echo "  → AssetRipper-win-x64.zip..."
+  (cd third_party/bundled/AssetRipper/windows && \
+    zip -q -r ../../../../dist/components/AssetRipper-win-x64.zip .)
+fi
+
+# =============================================================================
+# Generate Checksums and Manifest
+# =============================================================================
+
+echo ""
+echo "📦 Generating checksums..."
+
+cd dist/components
+
+# Generate SHA256 for each archive
+for file in *.zip *.tar.gz; do
+  if [ -f "$file" ]; then
+    sha256sum "$file" > "$file.sha256"
+  fi
+done
+
+# Create manifest.json with all checksums
+echo "  → manifest.json..."
+echo "{" > manifest.json
+echo '  "generatedAt": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",' >> manifest.json
+echo '  "components": {' >> manifest.json
+
+first=true
+for file in *.sha256; do
+  if [ -f "$file" ]; then
+    base="${file%.sha256}"
+    hash=$(cat "$file" | cut -d' ' -f1)
+    size=$(stat -c%s "$base" 2>/dev/null || stat -f%z "$base")
+    if [ "$first" = true ]; then
+      first=false
+    else
+      echo ',' >> manifest.json
+    fi
+    echo -n "    \"$base\": {\"sha256\": \"$hash\", \"size\": $size}" >> manifest.json
+  fi
+done
+echo '' >> manifest.json
+echo '  }' >> manifest.json
+echo '}' >> manifest.json
+
+cd ../..
+
+# =============================================================================
+# Build CLI Tool
+# =============================================================================
+
 echo ""
 echo "📦 Building CLI Tool..."
 
@@ -218,42 +190,46 @@ $DOTNET publish src/Menace.Modkit.Cli -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/cli-win-x64
 
-# Create archives
+# =============================================================================
+# Create App Archives
+# =============================================================================
+
 echo ""
-echo "📦 Creating archives..."
+echo "📦 Creating app archives..."
 
 cd dist
-
 tar -czf menace-modkit-gui-linux-x64.tar.gz -C gui-linux-x64 .
 zip -q -r menace-modkit-gui-win-x64.zip gui-win-x64/
-
-if [ "$BUNDLE_MODE" = true ]; then
-  # Rename to indicate bundled
-  mv menace-modkit-gui-linux-x64.tar.gz menace-modkit-gui-linux-x64-bundled.tar.gz
-  mv menace-modkit-gui-win-x64.zip menace-modkit-gui-win-x64-bundled.zip
-fi
-
 tar -czf menace-modkit-cli-linux-x64.tar.gz -C cli-linux-x64 .
 zip -q -r menace-modkit-cli-win-x64.zip cli-win-x64/
-
 cd ..
+
+# Create docs archive
+if [ -d "docs" ]; then
+  echo "  → docs.zip..."
+  (cd docs && zip -q -r ../dist/docs.zip .)
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
 
 echo ""
 echo "✅ Build complete!"
 echo ""
-echo "Redistributables created in dist/:"
-ls -lh dist/*.tar.gz dist/*.zip 2>/dev/null || true
+echo "App archives (dist/):"
+ls -lh dist/*.tar.gz dist/*.zip 2>/dev/null | grep -v components || true
 
 echo ""
-echo "Sizes:"
-du -sh dist/gui-* dist/cli-* 2>/dev/null || true
+echo "Component archives (dist/components/):"
+ls -lh dist/components/*.zip dist/components/*.tar.gz 2>/dev/null || true
 
-if [ "$BUNDLE_MODE" = false ]; then
-  echo ""
-  echo "📋 Release checklist (slim mode):"
-  echo "   1. Upload menace-modkit-gui-linux-x64.tar.gz"
-  echo "   2. Upload menace-modkit-gui-win-x64.zip"
-  echo "   3. Upload tools-linux-x64.tar.gz"
-  echo "   4. Upload tools-win-x64.zip"
-  echo "   5. Upload CLI archives if needed"
-fi
+echo ""
+echo "Component manifest:"
+cat dist/components/manifest.json
+
+echo ""
+echo "📋 Release workflow:"
+echo "   1. Push a tag (e.g., git tag v1.0.0 && git push origin v1.0.0)"
+echo "   2. GitHub Actions will build and create the release automatically"
+echo "   3. Or run manually: gh workflow run release.yml -f version=1.0.0"

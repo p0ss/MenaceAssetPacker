@@ -12,32 +12,32 @@ public static class ModkitVersion
     /// <summary>
     /// The current build number. Increment this for each shared release.
     /// </summary>
-    public const int BuildNumber = 18;
+    public const int BuildNumber = 19;
 
     /// <summary>
     /// Version string for MelonLoader attribute (must be compile-time constant).
     /// Format: "build.0.0" for compatibility with semver parsers.
     /// </summary>
-    public const string MelonVersion = "18.0.0";
+    public const string MelonVersion = "19.0.0";
 
     /// <summary>
-    /// Short display version (e.g., "v18").
+    /// Short display version (e.g., "v19").
     /// </summary>
-    public const string Short = "v18";
+    public const string Short = "v19";
 
     /// <summary>
     /// Full version for the Modkit App.
     /// </summary>
-    public const string AppFull = "Menace Modkit v18";
+    public const string AppFull = "Menace Modkit v19";
 
     /// <summary>
     /// Full version for the Modpack Loader.
     /// </summary>
-    public const string LoaderFull = "Menace Modpack Loader v18";
+    public const string LoaderFull = "Menace Modpack Loader v19";
 
     /// <summary>
-    /// Tools bundle version. Increment when AssetRipper, MelonLoader, or other
-    /// bundled tools are updated. This triggers re-download of cached tools.
+    /// Tools bundle version. Increment when AssetRipper is updated.
+    /// This triggers re-download of cached tools.
     /// </summary>
-    public const int ToolsVersion = 1;
+    public const int ToolsVersion = 2;
 }

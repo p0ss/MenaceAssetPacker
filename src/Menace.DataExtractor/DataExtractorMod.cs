@@ -12,14 +12,14 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.2", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "6.0.0"; // Schema-driven extraction
+        private const string ExtractorVersion = "6.0.2"; // Cleaned up debug logging
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -526,22 +526,29 @@ namespace Menace.DataExtractor
                         yield return null;
 
                         // === PHASE 2: Fill references ===
+                        LoggerInstance.Msg($"  Phase 2: {templateType.Name} - filling references...");
                         DebugLog($">>> P2 START {templateType.Name}");
                         int instIdx = 0;
                         int yieldCounter = 0;
                         foreach (var inst in typeCtx.Instances)
                         {
                             instIdx++;
+                            if (instIdx % 50 == 0 || instIdx >= typeCtx.Instances.Count - 20)
+                                LoggerInstance.Msg($"    P2 [{instIdx}/{typeCtx.Instances.Count}] {inst.Name}...");
                             try
                             {
                                 FillReferenceProperties(inst, templateType);
+                                if (instIdx >= typeCtx.Instances.Count - 20)
+                                    LoggerInstance.Msg($"      [{instIdx}] FillReferenceProperties done");
                             }
                             catch (Exception instEx)
                             {
+                                LoggerInstance.Msg($"    P2 [{instIdx}] EXCEPTION: {instEx.Message}");
                                 DebugLog($"    P2 instance {instIdx}/{typeCtx.Instances.Count} [{inst.Name}] EXCEPTION: {instEx.Message}");
                             }
                             yieldCounter++;
                         }
+                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed");
 
                         // Yield after phase 2 (and give proportional frames for large types)
                         int extraYields = yieldCounter / 50;
@@ -549,6 +556,7 @@ namespace Menace.DataExtractor
                             yield return null;
 
                         // === PHASE 3: Fix unknown names ===
+                        LoggerInstance.Msg($"  Phase 3: {templateType.Name} - fixing names...");
                         DebugLog($">>> P3 START {templateType.Name}");
                         foreach (var inst in typeCtx.Instances)
                         {
@@ -569,6 +577,7 @@ namespace Menace.DataExtractor
                         }
 
                         // === SAVE: Write this type to disk ===
+                        LoggerInstance.Msg($"  Saving {templateType.Name}...");
                         DebugLog($">>> SAVE {templateType.Name}");
                         var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
                         SaveSingleTemplateType(templateType.Name, dataList);
@@ -645,8 +654,10 @@ namespace Menace.DataExtractor
                             ShowExtractionProgress($"ERROR extracting {templateType.Name}: {ex.Message}");
                         }
 
+                        LoggerInstance.Msg($"    P1 returned, checking typeCtx...");
                         if (typeCtx == null || typeCtx.Instances.Count == 0)
                         {
+                            LoggerInstance.Msg($"    typeCtx null or empty, skipping...");
                             DebugLog($">>> SKIP {templateType.Name} (no instances extracted)");
                             skippedCount++;
                             objects.Clear();
@@ -655,26 +666,38 @@ namespace Menace.DataExtractor
                             continue;
                         }
 
+                        LoggerInstance.Msg($"    typeCtx has {typeCtx.Instances.Count} instances, yielding...");
                         // Yield after phase 1 to give game a frame
                         yield return null;
+                        LoggerInstance.Msg($"    yield complete, starting Phase 2...");
 
                         // === PHASE 2: Fill references ===
+                        LoggerInstance.Msg($"  Phase 2: {templateType.Name} - filling references (loose)...");
                         DebugLog($">>> P2 START {templateType.Name}");
                         int instIdx = 0;
                         int yieldCounter = 0;
+                        int totalInstances = typeCtx.Instances.Count;
+                        LoggerInstance.Msg($"    P2 iterating over {totalInstances} instances...");
                         foreach (var inst in typeCtx.Instances)
                         {
                             instIdx++;
+                            // Log first instance and every 50
+                            if (instIdx == 1 || instIdx % 50 == 0 || instIdx >= totalInstances - 20)
+                                LoggerInstance.Msg($"    P2 [{instIdx}/{totalInstances}] {inst?.Name ?? "NULL"}...");
                             try
                             {
                                 FillReferenceProperties(inst, templateType);
+                                if (instIdx >= typeCtx.Instances.Count - 20)
+                                    LoggerInstance.Msg($"      [{instIdx}] FillReferenceProperties done");
                             }
                             catch (Exception instEx)
                             {
+                                LoggerInstance.Msg($"    P2 [{instIdx}] EXCEPTION: {instEx.Message}");
                                 DebugLog($"    P2 instance {instIdx}/{typeCtx.Instances.Count} [{inst.Name}] EXCEPTION: {instEx.Message}");
                             }
                             yieldCounter++;
                         }
+                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed");
 
                         // Yield after phase 2 (and give proportional frames for large types)
                         int extraYields = yieldCounter / 50;
@@ -682,6 +705,7 @@ namespace Menace.DataExtractor
                             yield return null;
 
                         // === PHASE 3: Fix unknown names ===
+                        LoggerInstance.Msg($"  Phase 3: {templateType.Name} - fixing names...");
                         DebugLog($">>> P3 START {templateType.Name}");
                         foreach (var inst in typeCtx.Instances)
                         {
@@ -702,6 +726,7 @@ namespace Menace.DataExtractor
                         }
 
                         // === SAVE: Write this type to disk ===
+                        LoggerInstance.Msg($"  Saving {templateType.Name}...");
                         DebugLog($">>> SAVE {templateType.Name}");
                         var dataList = typeCtx.Instances.Select(i => (object)i.Data).ToList();
                         SaveSingleTemplateType(templateType.Name, dataList);
@@ -1182,6 +1207,7 @@ namespace Menace.DataExtractor
         /// </summary>
         private TypeContext ExtractTypePhase1(Type templateType, List<UnityEngine.Object> objects)
         {
+            LoggerInstance.Msg($"    P1 entering loop for {templateType.Name}...");
             DebugLog($"  {objects.Count} instances to extract");
             var typeCtx = new TypeContext { TemplateType = templateType };
 
@@ -1189,6 +1215,7 @@ namespace Menace.DataExtractor
             // This avoids calling il2cpp_object_get_class on potentially-stale object pointers
             IntPtr cachedKlass = IntPtr.Zero;
             _il2cppClassPtrCache.TryGetValue(templateType.Name, out cachedKlass);
+            LoggerInstance.Msg($"    P1 cachedKlass=0x{cachedKlass.ToInt64():X}");
 
             for (int i = 0; i < objects.Count; i++)
             {
@@ -1196,7 +1223,17 @@ namespace Menace.DataExtractor
                 if (obj == null) { DebugLog($"  [{i}] null, skip"); continue; }
 
                 // Get the IL2CPP pointer — if zero, object is invalid
-                var il2cppCheck = obj as Il2CppObjectBase;
+                Il2CppObjectBase il2cppCheck = null;
+                try
+                {
+                    il2cppCheck = obj as Il2CppObjectBase;
+                }
+                catch (Exception castEx)
+                {
+                    LoggerInstance.Msg($"    [{i}] Il2CppObjectBase cast exception: {castEx.Message}");
+                    continue;
+                }
+
                 if (il2cppCheck == null || il2cppCheck.Pointer == IntPtr.Zero)
                 {
                     DebugLog($"  [{i}] zero pointer, skip");
@@ -1207,9 +1244,17 @@ namespace Menace.DataExtractor
                 IntPtr objPointer = il2cppCheck.Pointer;
                 if (cachedKlass != IntPtr.Zero)
                 {
-                    if (!IsUnityObjectAliveWithClass(objPointer, cachedKlass))
+                    try
                     {
-                        DebugLog($"  [{i}] destroyed (m_CachedPtr=0), skip");
+                        if (!IsUnityObjectAliveWithClass(objPointer, cachedKlass))
+                        {
+                            DebugLog($"  [{i}] destroyed (m_CachedPtr=0), skip");
+                            continue;
+                        }
+                    }
+                    catch (Exception aliveEx)
+                    {
+                        LoggerInstance.Msg($"    [{i}] IsUnityObjectAliveWithClass exception: {aliveEx.Message}");
                         continue;
                     }
                 }
@@ -1217,14 +1262,31 @@ namespace Menace.DataExtractor
                 // Read the name via direct memory using cached class
                 string objName = null;
                 if (cachedKlass != IntPtr.Zero)
-                    objName = ReadObjectNameWithClass(objPointer, cachedKlass);
+                {
+                    try
+                    {
+                        objName = ReadObjectNameWithClass(objPointer, cachedKlass);
+                    }
+                    catch (Exception nameEx)
+                    {
+                        LoggerInstance.Msg($"    [{i}] ReadObjectNameWithClass exception: {nameEx.Message}");
+                        objName = $"unknown_{i}";
+                    }
+                }
 
                 if (objName == null) objName = $"unknown_{i}";
+
+                // Log every 50 instances to console, or every instance for last 20
+                if (i % 50 == 0 || i >= objects.Count - 20)
+                    LoggerInstance.Msg($"    [{i}/{objects.Count}] {objName}...");
                 DebugLog($"  [{i}] {objName}");
 
+                InstanceContext instCtx = null;
                 try
                 {
-                    var instCtx = ExtractPrimitives(obj, templateType, objName);
+                    instCtx = ExtractPrimitives(obj, templateType, objName);
+                    if (i >= objects.Count - 20)
+                        LoggerInstance.Msg($"      [{i}] ExtractPrimitives done, instCtx={(instCtx != null ? "OK" : "null")}");
                     if (instCtx != null)
                     {
                         // Use m_ID as the canonical name if available (more reliable
@@ -1256,14 +1318,18 @@ namespace Menace.DataExtractor
                             catch { }
                         }
                         typeCtx.Instances.Add(instCtx);
+                        if (i >= objects.Count - 20)
+                            LoggerInstance.Msg($"      [{i}] added to typeCtx");
                     }
                 }
                 catch (Exception ex)
                 {
+                    LoggerInstance.Msg($"    [{i}] P1 EXCEPTION: {ex.Message}");
                     DebugLog($"  [{i}] P1 FAILED: {ex.Message}");
                 }
             }
 
+            LoggerInstance.Msg($"    P1 complete: {typeCtx.Instances.Count} instances extracted");
             return typeCtx;
         }
 
@@ -1709,8 +1775,15 @@ namespace Menace.DataExtractor
         /// Uses direct memory reads — NO property getters are called.
         /// Returns true if any reference properties were added.
         /// </summary>
+        // Track which instance we're processing for crash debugging
+        private string _currentFillRefInstance = null;
+        private string _currentFillRefProp = null;
+
         private bool FillReferenceProperties(InstanceContext inst, Type templateType)
         {
+            _currentFillRefInstance = inst?.Name ?? "null";
+            _currentFillRefProp = "entry";
+
             if (inst.Pointer == IntPtr.Zero)
                 return false;
 
@@ -1747,10 +1820,17 @@ namespace Menace.DataExtractor
                     if (!IsIl2CppReferenceProperty(prop))
                         continue;
 
+                    _currentFillRefProp = prop.Name;
                     DebugLog($"    [{inst.Name}].{prop.Name} ({prop.PropertyType.Name})");
 
                     // Get the IL2CPP field + offset
-                    var (field, offset) = GetCachedFieldInfo(klass, templateType.Name, prop.Name);
+                    IntPtr field;
+                    uint offset;
+                    try
+                    {
+                        (field, offset) = GetCachedFieldInfo(klass, templateType.Name, prop.Name);
+                    }
+                    catch { continue; }
                     if (field == IntPtr.Zero || offset == 0)
                     {
                         DebugLog($"      -> field not found, skip");
@@ -1758,12 +1838,23 @@ namespace Menace.DataExtractor
                     }
 
                     // Get field type from IL2CPP METADATA (safe — reads type tables, not object memory)
-                    IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
-                    if (fieldType == IntPtr.Zero) { DebugLog($"      -> no type info"); continue; }
-                    int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+                    IntPtr fieldType;
+                    int typeEnum;
+                    try
+                    {
+                        fieldType = IL2CPP.il2cpp_field_get_type(field);
+                        if (fieldType == IntPtr.Zero) { DebugLog($"      -> no type info"); continue; }
+                        typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+                    }
+                    catch { continue; }
 
                     // Read the raw pointer stored in the field
-                    IntPtr refPtr = Marshal.ReadIntPtr(inst.Pointer + (int)offset);
+                    IntPtr refPtr;
+                    try
+                    {
+                        refPtr = Marshal.ReadIntPtr(inst.Pointer + (int)offset);
+                    }
+                    catch { continue; }
                     if (refPtr == IntPtr.Zero)
                     {
                         inst.Data[prop.Name] = null;
@@ -1892,10 +1983,13 @@ namespace Menace.DataExtractor
             // Schema-driven extraction: extract fields defined in schema but not found via reflection
             if (_schemaLoaded && _schemaTypes.TryGetValue(templateType.Name, out var schemaType))
             {
+                DebugLog($"    [{inst.Name}] starting schema fields...");
                 bool schemaAdded = FillSchemaFields(inst, schemaType, klass);
+                DebugLog($"    [{inst.Name}] schema fields done");
                 addedAny = addedAny || schemaAdded;
             }
 
+            DebugLog($"    [{inst.Name}] FillReferenceProperties complete");
             return addedAny;
         }
 
@@ -1908,7 +2002,6 @@ namespace Menace.DataExtractor
             if (inst.Pointer == IntPtr.Zero) return false;
 
             bool addedAny = false;
-
             foreach (var field in schemaType.Fields)
             {
                 // Skip fields already extracted
@@ -1947,7 +2040,13 @@ namespace Menace.DataExtractor
         {
             if (depth > 8) return null;
 
+            // Validate offset looks reasonable before reading memory
+            if (field.Offset > 0x10000) return null;
+
             IntPtr addr = objPtr + (int)field.Offset;
+
+            // Validate computed address looks reasonable
+            if (addr.ToInt64() < 0x10000 || addr.ToInt64() > 0x7FFFFFFFFFFF) return null;
 
             switch (field.Category)
             {
@@ -1960,22 +2059,52 @@ namespace Menace.DataExtractor
                 case "localization":
                     IntPtr locPtr = Marshal.ReadIntPtr(addr);
                     if (locPtr == IntPtr.Zero) return null;
+                    if (locPtr.ToInt64() < 0x10000) return null;
                     return ReadLocalizedStringDirect(locPtr);
 
                 case "reference":
                     IntPtr refPtr = Marshal.ReadIntPtr(addr);
                     if (refPtr == IntPtr.Zero) return null;
+                    // Validate pointer looks reasonable (not a small int masquerading as pointer)
+                    if (refPtr.ToInt64() < 0x10000)
+                        return (int)refPtr.ToInt64();
                     return ReadSchemaReference(refPtr, field.Type, depth);
 
                 case "collection":
                     IntPtr colPtr = Marshal.ReadIntPtr(addr);
                     if (colPtr == IntPtr.Zero) return new List<object>();
+                    if (colPtr.ToInt64() < 0x10000) return new List<object>(); // Invalid pointer
                     return ReadSchemaCollection(colPtr, field, depth);
 
                 case "unity_asset":
                     IntPtr assetPtr = Marshal.ReadIntPtr(addr);
                     if (assetPtr == IntPtr.Zero) return null;
+                    if (assetPtr.ToInt64() < 0x10000) return null; // Invalid pointer
                     return ReadUnityAssetName(assetPtr);
+
+                case "struct":
+                    // Handle common struct types inline
+                    if (field.Type == "Vector2Int")
+                    {
+                        int x = Marshal.ReadInt32(addr);
+                        int y = Marshal.ReadInt32(addr + 4);
+                        return new Dictionary<string, object> { { "x", x }, { "y", y } };
+                    }
+                    if (field.Type == "Vector2")
+                    {
+                        float x = ReadFloat(addr);
+                        float y = ReadFloat(addr + 4);
+                        return new Dictionary<string, object> { { "x", x }, { "y", y } };
+                    }
+                    if (field.Type == "Vector3")
+                    {
+                        float x = ReadFloat(addr);
+                        float y = ReadFloat(addr + 4);
+                        float z = ReadFloat(addr + 8);
+                        return new Dictionary<string, object> { { "x", x }, { "y", y }, { "z", z } };
+                    }
+                    // Unknown struct - skip
+                    return null;
 
                 default:
                     return null;
@@ -2005,7 +2134,6 @@ namespace Menace.DataExtractor
             // Check if it's a template type with schema - extract inline with full data
             if (_schemaTypes.TryGetValue(typeName, out var templateSchema))
             {
-                // For template types, extract the full object using schema
                 var result = new Dictionary<string, object>();
                 string name = ReadUnityAssetName(refPtr);
                 if (name != null)
@@ -2079,8 +2207,13 @@ namespace Menace.DataExtractor
                 uint itemsOffset = IL2CPP.il2cpp_field_get_offset(itemsField);
 
                 int size = Marshal.ReadInt32(listPtr + (int)sizeOffset);
+                DebugLog($"          List<{elementType}>: size={size}");
                 if (size <= 0) return new List<object>();
-                if (size > 500) size = 500; // safety cap
+                if (size > 500)
+                {
+                    LoggerInstance.Warning($"          List<{elementType}>: suspicious size {size}, capping to 500");
+                    size = 500;
+                }
 
                 IntPtr arrayPtr = Marshal.ReadIntPtr(listPtr + (int)itemsOffset);
                 if (arrayPtr == IntPtr.Zero) return new List<object>();
@@ -2184,9 +2317,15 @@ namespace Menace.DataExtractor
             var result = new Dictionary<string, object>();
 
             // For ScriptableObject-derived types, validate pointer and try to get name
-            bool isUnityObject = schema.BaseClass == "ScriptableObject" ||
-                                 schema.BaseClass == "MonoBehaviour" ||
-                                 schema.BaseClass == "Object";
+            // These have Unity object headers and need special handling
+            bool isUnityObject = !string.IsNullOrEmpty(schema.BaseClass) &&
+                                 (schema.BaseClass == "ScriptableObject" ||
+                                  schema.BaseClass == "SerializedScriptableObject" ||
+                                  schema.BaseClass.Contains("ScriptableObject") ||
+                                  schema.BaseClass == "MonoBehaviour" ||
+                                  schema.BaseClass == "Component" ||
+                                  schema.BaseClass == "Object" ||
+                                  schema.BaseClass == "UnityEngine.Object");
 
             if (isUnityObject)
             {
@@ -2200,7 +2339,7 @@ namespace Menace.DataExtractor
                         return $"({schema.Name})";
                     }
 
-                    // Try to get the object's name/ID
+                    // Get the object's name/ID first
                     string name = ReadUnityAssetName(objPtr);
                     if (!string.IsNullOrEmpty(name))
                         result["name"] = name;
@@ -2212,6 +2351,7 @@ namespace Menace.DataExtractor
                 }
             }
 
+            // Read all fields from the schema
             foreach (var field in schema.Fields)
             {
                 if (field.Offset == 0) continue;
@@ -2724,7 +2864,6 @@ namespace Menace.DataExtractor
                     // Classify element type from metadata (safe, no data pointer dereference)
                     bool elemIsUnityObject = IsUnityObjectClass(elemClass);
                     bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
-
                     bool extractInline = elemIsUnityObject && ShouldExtractTemplateInline(elemClassName);
 
                     for (int i = 0; i < length; i++)
@@ -2763,7 +2902,6 @@ namespace Menace.DataExtractor
                         }
                         else if (elemClassName == "String")
                         {
-                            // IL2CPP String — read directly, don't walk fields
                             string str = IL2CPP.Il2CppStringToManaged(elemPtr);
                             result.Add(str);
                         }

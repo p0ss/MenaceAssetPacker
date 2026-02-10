@@ -90,6 +90,17 @@ public class AssetRipperService
         return Directory.GetFiles(effectivePath, "*.*", SearchOption.AllDirectories).Length > 0;
     }
 
+    /// <summary>
+    /// Check if AssetRipper is available (cached or bundled).
+    /// </summary>
+    public bool IsAssetRipperAvailable() => ComponentManager.Instance.GetAssetRipperPath() != null;
+
+    /// <summary>
+    /// Check if AssetRipper needs to be downloaded.
+    /// </summary>
+    public async Task<bool> NeedsAssetRipperDownloadAsync() =>
+        !await ComponentManager.Instance.IsComponentCurrentAsync("AssetRipper");
+
     public async Task<bool> ExtractAssetsAsync(Action<string>? progressCallback = null, CancellationToken externalToken = default)
     {
         // Create a linked token source so we can cancel via CancelExtraction() or external token
@@ -106,33 +117,20 @@ public class AssetRipperService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Find AssetRipper executable (checks cache first, then bundled)
+            var assetRipperPath = ComponentManager.Instance.GetAssetRipperPath();
+            if (assetRipperPath == null)
+            {
+                // AssetRipper not available - UI should prompt for download
+                progressCallback?.Invoke("AssetRipper not installed. Click 'Download AssetRipper' to enable asset extraction.");
+                return false;
+            }
+
             progressCallback?.Invoke("Starting AssetRipper server...");
 
             // Kill any stale AssetRipper on our port from a previous run
             KillExistingOnPort();
-
-            // Find AssetRipper executable (checks cache first, then bundled)
-            var assetRipperPath = ToolsManager.Instance.GetAssetRipperPath();
-            if (assetRipperPath == null)
-            {
-                // Tools not installed - need to download
-                progressCallback?.Invoke("AssetRipper not found. Downloading tools...");
-                var downloaded = await ToolsManager.Instance.DownloadToolsAsync((msg, pct) =>
-                    progressCallback?.Invoke(msg));
-
-                if (!downloaded)
-                {
-                    progressCallback?.Invoke("Failed to download tools. Check your internet connection.");
-                    return false;
-                }
-
-                assetRipperPath = ToolsManager.Instance.GetAssetRipperPath();
-                if (assetRipperPath == null)
-                {
-                    progressCallback?.Invoke("Tools downloaded but AssetRipper not found.");
-                    return false;
-                }
-            }
 
             // Get game data path
             var dataPath = Path.Combine(gameInstallPath, "Menace_Data");
