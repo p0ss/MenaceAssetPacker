@@ -16,6 +16,7 @@ public class AppSettings
     private static AppSettings? _instance;
     private string _gameInstallPath = string.Empty;
     private string _extractedAssetsPath = string.Empty;
+    private bool _enableDeveloperTools = false;
     private ExtractionSettings _extractionSettings = new();
 
     private class PersistedSettings
@@ -25,6 +26,9 @@ public class AppSettings
 
         [JsonPropertyName("extractedAssetsPath")]
         public string? ExtractedAssetsPath { get; set; }
+
+        [JsonPropertyName("enableDeveloperTools")]
+        public bool EnableDeveloperTools { get; set; }
     }
 
     private static string GetSettingsFilePath()
@@ -64,6 +68,10 @@ public class AppSettings
                 _extractedAssetsPath = data.ExtractedAssetsPath;
                 ModkitLog.Info($"Loaded saved extracted assets path: {_extractedAssetsPath}");
             }
+
+            _enableDeveloperTools = data.EnableDeveloperTools;
+            if (_enableDeveloperTools)
+                ModkitLog.Info("Developer tools enabled");
         }
         catch (Exception ex)
         {
@@ -83,7 +91,8 @@ public class AppSettings
             var data = new PersistedSettings
             {
                 GameInstallPath = string.IsNullOrEmpty(_gameInstallPath) ? null : _gameInstallPath,
-                ExtractedAssetsPath = string.IsNullOrEmpty(_extractedAssetsPath) ? null : _extractedAssetsPath
+                ExtractedAssetsPath = string.IsNullOrEmpty(_extractedAssetsPath) ? null : _extractedAssetsPath,
+                EnableDeveloperTools = _enableDeveloperTools
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
@@ -257,9 +266,20 @@ public class AppSettings
         set => _extractionSettings = value;
     }
 
+    /// <summary>
+    /// When enabled, deploys developer/test modpacks like TestTacticalSDK.
+    /// These are useful for SDK development and debugging but not for end users.
+    /// </summary>
+    public bool EnableDeveloperTools
+    {
+        get => _enableDeveloperTools;
+        set => _enableDeveloperTools = value;
+    }
+
     public event EventHandler? GameInstallPathChanged;
     public event EventHandler? ExtractedAssetsPathChanged;
     public event EventHandler? ExtractionSettingsChanged;
+    public event EventHandler? EnableDeveloperToolsChanged;
 
     public void SetGameInstallPath(string path)
     {
@@ -279,6 +299,13 @@ public class AppSettings
     {
         _extractionSettings = settings;
         ExtractionSettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetEnableDeveloperTools(bool enabled)
+    {
+        _enableDeveloperTools = enabled;
+        SaveToDisk();
+        EnableDeveloperToolsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

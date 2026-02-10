@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 2,
+  "name": "TestTacticalSDK",
+  "version": "2.0.0",
+  "author": "Menace Modkit",
+  "description": "Developer test suite for validating SDK extensions. Covers: EntitySpawner, EntityMovement, EntityCombat, TacticalController, Inventory, Operation, Vehicle, Conversation, Emotions, BlackMarket, Mission, Roster, TileMap, LineOfSight",
+  "createdDate": "2026-02-10T00:00:00",
+  "modifiedDate": "2026-02-10T00:00:00",
+  "loadOrder": 20,
+  "dependencies": [],
+  "code": {
+    "sources": [
+      "src/TestTacticalSDK.cs"
+    ],
+    "references": [
+      "MelonLoader",
+      "0Harmony",
+      "Il2CppInterop.Runtime",
+      "Il2CppInterop.Common",
+      "Il2Cppmscorlib",
+      "Assembly-CSharp",
+      "UnityEngine.CoreModule",
+      "UnityEngine.InputLegacyModule",
+      "UnityEngine.IMGUIModule",
+      "UnityEngine.TextRenderingModule",
+      "Menace.ModpackLoader"
+    ],
+    "prebuiltDlls": [],
+    "hasAnySources": true,
+    "hasAnyPrebuilt": false,
+    "hasAnyCode": true
+  },
+  "patches": {},
+  "bundles": [],
+  "assets": {},
+  "securityStatus": "SourceVerified",
+  "hasCode": true,
+  "hasPatches": false,
+  "hasBundles": false,
+  "hasAssets": false
+}

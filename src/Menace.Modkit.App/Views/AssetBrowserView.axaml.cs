@@ -4,6 +4,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
@@ -30,29 +31,39 @@ public class AssetBrowserView : UserControl
     {
         var mainGrid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,2*")
+            ColumnDefinitions = new ColumnDefinitions("300,4,*")
         };
 
-        // Left: Asset Navigation Tree
-        mainGrid.Children.Add(BuildNavigation());
-        Grid.SetColumn((Control)mainGrid.Children[0], 0);
+        // Left: Asset Navigation Tree (darker panel)
+        var leftPanel = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#141414")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = BuildNavigation()
+        };
+        mainGrid.Children.Add(leftPanel);
+        Grid.SetColumn(leftPanel, 0);
 
-        // Right: Asset Viewer (Vanilla | Modified)
+        // Splitter
+        var splitter = new GridSplitter
+        {
+            Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            ResizeDirection = GridResizeDirection.Columns
+        };
+        mainGrid.Children.Add(splitter);
+        Grid.SetColumn(splitter, 1);
+
+        // Right: Asset Viewer (lighter panel)
         mainGrid.Children.Add(BuildAssetViewer());
-        Grid.SetColumn((Control)mainGrid.Children[1], 1);
+        Grid.SetColumn((Control)mainGrid.Children[2], 2);
 
         return mainGrid;
     }
 
     private Control BuildNavigation()
     {
-        var border = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-            BorderThickness = new Thickness(0, 0, 1, 0),
-            Padding = new Thickness(12)
-        };
+        var border = new Border();  // No padding - use consistent margins on children
 
         var grid = new Grid
         {
@@ -62,25 +73,32 @@ public class AssetBrowserView : UserControl
         // Row 0: Search Box
         var searchBox = new TextBox
         {
-            Watermark = "Search assets...",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 8),
-            Margin = new Thickness(0, 0, 0, 12)
+            Watermark = "Search assets... (3+ chars or Enter)",
+            Margin = new Thickness(8, 8, 8, 12)
         };
+        searchBox.Classes.Add("search");
         searchBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding("SearchText"));
+        searchBox.KeyDown += (s, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter && DataContext is AssetBrowserViewModel vm)
+                vm.ExecuteSearch();
+        };
         grid.Children.Add(searchBox);
         Grid.SetRow(searchBox, 0);
 
-        // Row 1: Expand/Collapse + Modpack Only buttons
+        // Row 1: Toggle between Expand/Collapse buttons and Sort dropdown
+        var buttonContainer = new Panel();
+
+        // Expand/Collapse + Modpack Only buttons (shown when not searching)
         var buttonPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Margin = new Thickness(0, 0, 0, 12)
+            Margin = new Thickness(8, 4, 8, 12)
         };
+        buttonPanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
         var expandAllButton = new Button
         {
@@ -111,13 +129,9 @@ public class AssetBrowserView : UserControl
         var modpackOnlyToggle = new ToggleButton
         {
             Content = "Modpack Only",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        modpackOnlyToggle.Classes.Add("secondary");
         modpackOnlyToggle.Bind(ToggleButton.IsCheckedProperty,
             new Avalonia.Data.Binding("ShowModpackOnly")
             {
@@ -125,20 +139,83 @@ public class AssetBrowserView : UserControl
             });
         buttonPanel.Children.Add(modpackOnlyToggle);
 
-        grid.Children.Add(buttonPanel);
-        Grid.SetRow(buttonPanel, 1);
+        buttonContainer.Children.Add(buttonPanel);
 
-        // Row 2: Asset Tree (non-virtualizing so Expand All works fully)
+        // Sort and filter panel (shown when searching)
+        var searchControlsPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(8, 4, 8, 12)
+        };
+        searchControlsPanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
+
+        // Section filter dropdown
+        var sectionCombo = new ComboBox
+        {
+            FontSize = 11,
+            MinWidth = 120
+        };
+        sectionCombo.Classes.Add("input");
+        sectionCombo.Bind(ComboBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SectionFilters"));
+        sectionCombo.Bind(ComboBox.SelectedItemProperty,
+            new Avalonia.Data.Binding("SelectedSectionFilter"));
+        searchControlsPanel.Children.Add(sectionCombo);
+
+        // Sort dropdown
+        var sortLabel = new TextBlock
+        {
+            Text = "Sort:",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        searchControlsPanel.Children.Add(sortLabel);
+
+        var sortCombo = new ComboBox
+        {
+            FontSize = 11,
+            MinWidth = 100
+        };
+        sortCombo.Items.Add("Relevance");
+        sortCombo.Items.Add("Name A-Z");
+        sortCombo.Items.Add("Name Z-A");
+        sortCombo.Items.Add("Path A-Z");
+        sortCombo.Items.Add("Path Z-A");
+        sortCombo.SelectedIndex = 0;
+        sortCombo.SelectionChanged += (s, e) =>
+        {
+            if (sortCombo.SelectedIndex >= 0 && DataContext is AssetBrowserViewModel vm)
+                vm.CurrentSortOption = (SearchPanelBuilder.SortOption)sortCombo.SelectedIndex;
+        };
+        sortCombo.Classes.Add("input");
+        searchControlsPanel.Children.Add(sortCombo);
+
+        buttonContainer.Children.Add(searchControlsPanel);
+
+        grid.Children.Add(buttonContainer);
+        Grid.SetRow(buttonContainer, 1);
+
+        // Row 2: Toggle between TreeView and Search Results ListBox
+        var contentContainer = new Panel();
+
+        // Asset Tree (non-virtualizing so Expand All works fully) - shown when not searching
         var treeView = new TreeView
         {
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
+            Margin = new Thickness(8, 0),
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         treeView.Bind(TreeView.ItemsSourceProperty,
             new Avalonia.Data.Binding("FolderTree"));
         treeView.Bind(TreeView.SelectedItemProperty,
-            new Avalonia.Data.Binding("SelectedNode"));
+            new Avalonia.Data.Binding("SelectedNode") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        treeView.Bind(TreeView.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
         // Tree item template: folders bold/13pt, files normal/12pt
         treeView.ItemTemplate = new Avalonia.Controls.Templates.FuncTreeDataTemplate<AssetTreeNode>(
@@ -166,8 +243,46 @@ public class AssetBrowserView : UserControl
             }
         };
 
-        grid.Children.Add(treeView);
-        Grid.SetRow(treeView, 2);
+        contentContainer.Children.Add(treeView);
+
+        // Search Results ListBox - shown when searching
+        var searchResultsList = new ListBox
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(8, 0)
+        };
+        searchResultsList.Bind(ListBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SearchResults"));
+        searchResultsList.Bind(ListBox.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
+
+        searchResultsList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<SearchResultItem>(
+            (item, _) => SearchPanelBuilder.CreateSearchResultControl(item), true);
+
+        searchResultsList.SelectionChanged += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is AssetBrowserViewModel vm)
+            {
+                vm.SelectSearchResult(item);
+            }
+        };
+
+        // Double-click to select and exit search mode
+        searchResultsList.DoubleTapped += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is AssetBrowserViewModel vm)
+            {
+                vm.SelectAndExitSearch(item);
+            }
+        };
+
+        contentContainer.Children.Add(searchResultsList);
+
+        grid.Children.Add(contentContainer);
+        Grid.SetRow(contentContainer, 2);
 
         // Row 3: Extraction Status
         var statusText = new SelectableTextBlock
@@ -175,7 +290,7 @@ public class AssetBrowserView : UserControl
             Foreground = Brushes.White,
             Opacity = 0.8,
             FontSize = 11,
-            Margin = new Thickness(0, 12, 0, 8),
+            Margin = new Thickness(8, 12, 8, 8),
             TextWrapping = TextWrapping.Wrap
         };
         statusText.Bind(SelectableTextBlock.TextProperty,
@@ -187,13 +302,11 @@ public class AssetBrowserView : UserControl
         var extractButton = new Button
         {
             Content = "Extract Assets",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(16, 10),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            FontSize = 13
+            FontSize = 13,
+            Margin = new Thickness(8, 0, 8, 8)
         };
+        extractButton.Classes.Add("primary");
         extractButton.Click += OnExtractAssetsClick;
         extractButton.Bind(Button.IsEnabledProperty,
             new Avalonia.Data.Binding("!IsExtracting"));
@@ -208,7 +321,7 @@ public class AssetBrowserView : UserControl
     {
         var border = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#121212")),
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
             Padding = new Thickness(24)
         };
 
@@ -237,12 +350,9 @@ public class AssetBrowserView : UserControl
         var modpackCombo = new ComboBox
         {
             MinWidth = 200,
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
             FontSize = 12
         };
+        modpackCombo.Classes.Add("input");
         modpackCombo.Bind(ComboBox.ItemsSourceProperty,
             new Avalonia.Data.Binding("AvailableModpacks"));
         modpackCombo.Bind(ComboBox.SelectedItemProperty,
@@ -668,12 +778,9 @@ public class AssetBrowserView : UserControl
         var exportButton = new Button
         {
             Content = "Export Packaged GLB",
-            Background = new SolidColorBrush(Color.Parse("#064b48")), // Dark teal - primary action
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 6),
             FontSize = 11
         };
+        exportButton.Classes.Add("primary");
         exportButton.Click += async (_, _) =>
         {
             if (DataContext is AssetBrowserViewModel vm)
@@ -704,13 +811,9 @@ public class AssetBrowserView : UserControl
         var importButton = new Button
         {
             Content = "Import Edited GLB",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")), // Secondary button style
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(12, 6),
             FontSize = 11
         };
+        importButton.Classes.Add("secondary");
         importButton.Click += async (_, _) =>
         {
             if (DataContext is AssetBrowserViewModel vm)
@@ -971,12 +1074,9 @@ public class AssetBrowserView : UserControl
         var replaceButton = new Button
         {
             Content = "Replace Asset...",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
+        replaceButton.Classes.Add("primary");
         replaceButton.Click += OnReplaceAssetClick;
         replaceButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("SelectedNode")
         {
@@ -988,34 +1088,26 @@ public class AssetBrowserView : UserControl
         var clearButton = new Button
         {
             Content = "Clear Replacement",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
+        clearButton.Classes.Add("secondary");
         clearButton.Click += OnClearReplacementClick;
         clearButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("HasModifiedReplacement"));
         actionStack.Children.Add(clearButton);
 
-        var exportButton = new Button
+        var exportAssetButton = new Button
         {
             Content = "Export...",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
-        exportButton.Click += OnExportAssetClick;
-        exportButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("SelectedNode")
+        exportAssetButton.Classes.Add("secondary");
+        exportAssetButton.Click += OnExportAssetClick;
+        exportAssetButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("SelectedNode")
         {
             Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
                 obj is AssetTreeNode node && node.IsFile)
         });
-        actionStack.Children.Add(exportButton);
+        actionStack.Children.Add(exportAssetButton);
 
         panel.Children.Add(actionStack);
         Grid.SetRow(actionStack, 2);

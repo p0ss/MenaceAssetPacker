@@ -5,6 +5,12 @@
   <!-- BUTTONS                                                             -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
 
+  <!-- Base button style - ensures all buttons are "pokeable" with minimum size -->
+  <Style Selector="Button">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="Padding" Value="{StaticResource PaddingButton}"/>
+  </Style>
+
   <!-- Primary Button (Teal) -->
   <Style Selector="Button.primary">
     <Setter Property="Background" Value="{StaticResource BrushPrimary}"/>
@@ -84,6 +90,62 @@
     <Setter Property="Background" Value="{StaticResource BrushBgElevated}"/>
   </Style>
 
+  <!-- ToggleButton base style - ensures all toggle buttons are "pokeable" -->
+  <Style Selector="ToggleButton">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="Padding" Value="{StaticResource PaddingButton}"/>
+  </Style>
+
+  <!-- ToggleButton secondary style -->
+  <Style Selector="ToggleButton.secondary">
+    <Setter Property="Background" Value="{StaticResource BrushBgInput}"/>
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="Padding" Value="{StaticResource PaddingButton}"/>
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BrushBorderLight}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style Selector="ToggleButton.secondary:checked /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource BrushPrimaryMuted}"/>
+  </Style>
+  <Style Selector="ToggleButton.secondary:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource BrushBgElevated}"/>
+  </Style>
+
+  <!-- Tab Button (inactive) - grey background, no border -->
+  <Style Selector="Button.tab">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{StaticResource BrushTextSecondary}"/>
+    <Setter Property="Padding" Value="16,10"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
+    <Setter Property="Margin" Value="2"/>
+  </Style>
+  <Style Selector="Button.tab:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource BrushBgElevated}"/>
+  </Style>
+
+  <!-- Tab Button (active/selected) - grey background with teal left border -->
+  <Style Selector="Button.tabActive">
+    <Setter Property="Background" Value="{StaticResource BrushBgInput}"/>
+    <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}"/>
+    <Setter Property="Padding" Value="16,10"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BrushBorderPrimary}"/>
+    <Setter Property="BorderThickness" Value="2,0,0,0"/>
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
+    <Setter Property="Margin" Value="2"/>
+  </Style>
+
+  <!-- Selected state - grey with teal border (like clone button) -->
+  <Style Selector="Button.selected">
+    <Setter Property="Background" Value="{StaticResource BrushBgInput}"/>
+    <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}"/>
+    <Setter Property="Padding" Value="{StaticResource PaddingButton}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BrushBorderPrimary}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
+  </Style>
+
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- INPUTS                                                              -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -107,13 +169,17 @@
     <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
   </Style>
 
-  <!-- Search Box (with icon space) -->
+  <!-- Search Box -->
   <Style Selector="TextBox.search">
     <Setter Property="Background" Value="{StaticResource BrushBgInput}"/>
+    <Setter Property="Foreground" Value="White"/>
     <Setter Property="BorderBrush" Value="{StaticResource BrushBorderLight}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="Padding" Value="12,8"/>
     <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}"/>
+  </Style>
+  <Style Selector="TextBox.search:focus">
+    <Setter Property="BorderBrush" Value="{StaticResource BrushPrimary}"/>
   </Style>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
@@ -140,6 +206,29 @@
     <Setter Property="Background" Value="{StaticResource BrushBgSurface}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Padding" Value="{StaticResource PaddingXl}"/>
+  </Style>
+
+  <!-- Left panel (darker, navigation) -->
+  <Style Selector="Border.panelLeft">
+    <Setter Property="Background" Value="{StaticResource BrushPanelLeft}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}"/>
+    <Setter Property="BorderThickness" Value="0,0,1,0"/>
+    <Setter Property="Padding" Value="12"/>
+  </Style>
+
+  <!-- Right panel (lighter, content) -->
+  <Style Selector="Border.panelRight">
+    <Setter Property="Background" Value="{StaticResource BrushPanelRight}"/>
+    <Setter Property="Padding" Value="24"/>
+  </Style>
+
+  <!-- Grid splitter for resizable panels -->
+  <Style Selector="GridSplitter.panelSplitter">
+    <Setter Property="Background" Value="{StaticResource BrushBorder}"/>
+    <Setter Property="MinWidth" Value="4"/>
+  </Style>
+  <Style Selector="GridSplitter.panelSplitter:pointerover">
+    <Setter Property="Background" Value="{StaticResource BrushBorderPrimary}"/>
   </Style>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->

@@ -152,7 +152,7 @@ namespace Menace.DataExtractor
                 var root = JObject.Parse(json);
 
                 // Parse template types (top-level templates)
-                if (root["template_types"] is JObject templateTypes)
+                if (root["templates"] is JObject templateTypes)
                 {
                     foreach (var kvp in templateTypes)
                     {
@@ -601,7 +601,26 @@ namespace Menace.DataExtractor
 
                         // === LOAD: FindObjectsOfTypeAll will find embedded instances ===
                         DebugLog($">>> LOAD {templateType.Name} (loose template)");
-                        var objects = LoadTypeObjects(templateType);
+                        LoggerInstance.Msg($"  Loading {templateType.Name}...");
+                        List<UnityEngine.Object> objects = null;
+                        bool loadFailed = false;
+                        try
+                        {
+                            objects = LoadTypeObjects(templateType);
+                        }
+                        catch (Exception loadEx)
+                        {
+                            LoggerInstance.Error($"  LOAD FAILED {templateType.Name}: {loadEx.Message}");
+                            DebugLog($">>> LOAD EXCEPTION {templateType.Name}: {loadEx}");
+                            skippedCount++;
+                            loadFailed = true;
+                        }
+
+                        if (loadFailed)
+                        {
+                            yield return null;
+                            continue;
+                        }
 
                         if (objects == null || objects.Count == 0)
                         {
@@ -613,6 +632,7 @@ namespace Menace.DataExtractor
 
                         // === PHASE 1: Extract primitives ===
                         DebugLog($">>> P1 START {templateType.Name} ({objects.Count} instances)");
+                        LoggerInstance.Msg($"  Phase 1: {templateType.Name} ({objects.Count} instances)");
                         TypeContext typeCtx = null;
                         try
                         {
@@ -620,7 +640,8 @@ namespace Menace.DataExtractor
                         }
                         catch (Exception ex)
                         {
-                            DebugLog($"  P1 EXCEPTION: {ex.Message}");
+                            LoggerInstance.Error($"  P1 EXCEPTION {templateType.Name}: {ex.Message}");
+                            DebugLog($"  P1 EXCEPTION: {ex.Message}\n{ex.StackTrace}");
                             ShowExtractionProgress($"ERROR extracting {templateType.Name}: {ex.Message}");
                         }
 
@@ -2109,32 +2130,47 @@ namespace Menace.DataExtractor
 
             for (int i = 0; i < count; i++)
             {
-                IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
-                if (elemPtr == IntPtr.Zero)
+                try
                 {
-                    result.Add(null);
-                    continue;
-                }
+                    IntPtr elemPtr = Marshal.ReadIntPtr(arrayPtr + elementsOffset + i * IntPtr.Size);
+                    if (elemPtr == IntPtr.Zero)
+                    {
+                        result.Add(null);
+                        continue;
+                    }
 
-                if (isEmbeddedClass)
-                {
-                    var obj = ReadEmbeddedObject(elemPtr, embeddedSchema, depth + 1);
-                    result.Add(obj);
+                    if (isEmbeddedClass)
+                    {
+                        // Validate pointer looks reasonable before reading
+                        if (elemPtr.ToInt64() < 0x10000)
+                        {
+                            DebugLog($"        element[{i}]: suspicious pointer {elemPtr}");
+                            result.Add($"({elementType})");
+                            continue;
+                        }
+                        var obj = ReadEmbeddedObject(elemPtr, embeddedSchema, depth + 1);
+                        result.Add(obj);
+                    }
+                    else if (isTemplateRef)
+                    {
+                        result.Add(ReadUnityAssetName(elemPtr));
+                    }
+                    else if (isPrimitive)
+                    {
+                        // For primitive arrays, elements are inline (not pointers)
+                        // This case shouldn't happen for reference arrays
+                        result.Add(elemPtr.ToString());
+                    }
+                    else
+                    {
+                        // Unknown type - try to read as Unity object name
+                        result.Add(ReadUnityAssetName(elemPtr) ?? $"({elementType})");
+                    }
                 }
-                else if (isTemplateRef)
+                catch (Exception ex)
                 {
-                    result.Add(ReadUnityAssetName(elemPtr));
-                }
-                else if (isPrimitive)
-                {
-                    // For primitive arrays, elements are inline (not pointers)
-                    // This case shouldn't happen for reference arrays
-                    result.Add(elemPtr.ToString());
-                }
-                else
-                {
-                    // Unknown type - try to read as Unity object name
-                    result.Add(ReadUnityAssetName(elemPtr) ?? $"({elementType})");
+                    DebugLog($"        element[{i}] error: {ex.Message}");
+                    result.Add($"(error: {elementType})");
                 }
             }
 
@@ -2147,6 +2183,35 @@ namespace Menace.DataExtractor
 
             var result = new Dictionary<string, object>();
 
+            // For ScriptableObject-derived types, validate pointer and try to get name
+            bool isUnityObject = schema.BaseClass == "ScriptableObject" ||
+                                 schema.BaseClass == "MonoBehaviour" ||
+                                 schema.BaseClass == "Object";
+
+            if (isUnityObject)
+            {
+                try
+                {
+                    // Validate this is a real IL2CPP object by getting its class
+                    IntPtr klass = IL2CPP.il2cpp_object_get_class(objPtr);
+                    if (klass == IntPtr.Zero)
+                    {
+                        DebugLog($"        {schema.Name}: invalid object pointer");
+                        return $"({schema.Name})";
+                    }
+
+                    // Try to get the object's name/ID
+                    string name = ReadUnityAssetName(objPtr);
+                    if (!string.IsNullOrEmpty(name))
+                        result["name"] = name;
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"        {schema.Name}: validation failed: {ex.Message}");
+                    return $"({schema.Name})";
+                }
+            }
+
             foreach (var field in schema.Fields)
             {
                 if (field.Offset == 0) continue;
@@ -2157,7 +2222,10 @@ namespace Menace.DataExtractor
                     if (value != null)
                         result[field.Name] = value;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    DebugLog($"        {schema.Name}.{field.Name}: error: {ex.Message}");
+                }
             }
 
             return result.Count > 0 ? result : $"({schema.Name})";

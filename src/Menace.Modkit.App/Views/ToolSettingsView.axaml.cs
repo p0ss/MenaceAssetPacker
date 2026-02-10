@@ -135,13 +135,9 @@ public class ToolSettingsView : UserControl
 
         var pathBox = new TextBox
         {
-            Watermark = "(auto-detect from game install or out2/assets)",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(12, 8)
+            Watermark = "(auto-detect from game install or out2/assets)"
         };
+        pathBox.Classes.Add("input");
         pathBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding("ExtractedAssetsPath") { Mode = Avalonia.Data.BindingMode.TwoWay });
         pathStack.Children.Add(pathBox);
@@ -305,12 +301,9 @@ public class ToolSettingsView : UserControl
         var validateButton = new Button
         {
             Content = "Validate Extraction",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(12, 6),
             Margin = new Thickness(0, 4, 0, 0)
         };
+        validateButton.Classes.Add("secondary");
         validateButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ValidateExtractionCommand"));
         validationStack.Children.Add(validateButton);
 
@@ -357,34 +350,25 @@ public class ToolSettingsView : UserControl
 
         var clearCacheButton = new Button
         {
-            Content = "Clear Cache",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(16, 8)
+            Content = "Clear Cache"
         };
+        clearCacheButton.Classes.Add("secondary");
         clearCacheButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ClearCacheCommand"));
         buttonStack.Children.Add(clearCacheButton);
 
         var forceExtractDataButton = new Button
         {
-            Content = "Force Extract Data",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(16, 8)
+            Content = "Force Extract Data"
         };
+        forceExtractDataButton.Classes.Add("secondary");
         forceExtractDataButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ForceExtractDataCommand"));
         buttonStack.Children.Add(forceExtractDataButton);
 
         var forceExtractAssetsButton = new Button
         {
-            Content = "Force Extract Assets",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(16, 8)
+            Content = "Force Extract Assets"
         };
+        forceExtractAssetsButton.Classes.Add("secondary");
         forceExtractAssetsButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ForceExtractAssetsCommand"));
         buttonStack.Children.Add(forceExtractAssetsButton);
 

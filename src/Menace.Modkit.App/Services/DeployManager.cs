@@ -93,6 +93,7 @@ public class DeployManager
             return new DeployResult { Success = false, Message = "Game install path not set" };
 
         var modpacks = _modpackManager.GetStagingModpacks()
+            .Where(m => !IsDevOnlyModpack(m.Name) || AppSettings.Instance.EnableDeveloperTools)
             .OrderBy(m => m.LoadOrder)
             .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -662,6 +663,19 @@ public class DeployManager
         {
             CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
         }
+    }
+
+    /// <summary>
+    /// Check if a modpack is a developer-only modpack that should be excluded
+    /// from deployment unless EnableDeveloperTools is enabled.
+    /// </summary>
+    private static bool IsDevOnlyModpack(string modpackName)
+    {
+        // Modpacks starting with "Test" are developer tools
+        if (modpackName.StartsWith("Test", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 }
 

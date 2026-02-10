@@ -1,6 +1,18 @@
 # Collections
 
-Safe wrappers for IL2CPP collection types. All three are `readonly struct` types that read directly from the IL2CPP memory layout. Out-of-bounds access and null pointers return safe defaults; nothing throws.
+Safe wrappers for IL2CPP collection types.
+
+## Overview
+
+The Collections module provides three `readonly struct` wrappers for IL2CPP collections:
+
+- **GameList** - Wraps `List<T>` with count, indexing, and enumeration
+- **GameDict** - Wraps `Dictionary<K,V>` with key-value pair enumeration
+- **GameArray** - Wraps native arrays with indexing and primitive value reads
+
+All wrappers read directly from the IL2CPP memory layout without allocating managed objects. They're designed for safe, zero-throw access: out-of-bounds reads return defaults, null pointers are handled gracefully.
+
+Use these when you encounter collection-typed fields on game objects (e.g., `unit.ReadPtr("abilities")` returns a List pointer that you can wrap with `new GameList(...)`).
 
 ---
 

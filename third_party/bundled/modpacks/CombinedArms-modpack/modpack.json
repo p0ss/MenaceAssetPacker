@@ -1,14 +1,13 @@
 {
   "manifestVersion": 2,
   "name": "Combined Arms",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Menace Modkit",
-  "description": "AI coordination: agent sequencing, focus fire, center of forces, formation depth.",
+  "description": "AI coordination: agent sequencing, focus fire, center of forces, formation depth. Now using SDK for stability.",
   "loadOrder": 50,
   "code": {
     "sources": [
-      "src/CombinedArmsPlugin.cs",
-      "src/CoordinationState.cs"
+      "src/CombinedArmsSDK.cs"
     ],
     "references": [
       "MelonLoader",

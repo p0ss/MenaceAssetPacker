@@ -97,11 +97,9 @@ public class AssetPickerDialog : Window
             {
                 var badge = new Border
                 {
-                    Background = new SolidColorBrush(Color.Parse("#064b48")),
-                    CornerRadius = new CornerRadius(3),
-                    Padding = new Thickness(4, 1),
                     VerticalAlignment = VerticalAlignment.Center
                 };
+                badge.Classes.Add("badgePrimary");
                 badge.Child = new TextBlock
                 {
                     Text = "modpack",
@@ -189,13 +187,9 @@ public class AssetPickerDialog : Window
             var importButton = new Button
             {
                 Content = "Import New...",
-                Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
-                Padding = new Thickness(24, 8),
                 FontSize = 13
             };
+            importButton.Classes.Add("selected");  // Grey with teal border
             importButton.Click += OnImportNewClick;
             buttonRow.Children.Add(importButton);
         }
@@ -203,12 +197,9 @@ public class AssetPickerDialog : Window
         var okButton = new Button
         {
             Content = "Select",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        okButton.Classes.Add("primary");
         okButton.Click += (_, _) =>
         {
             if (_assetListBox.SelectedItem is AssetItem selected)
@@ -219,13 +210,9 @@ public class AssetPickerDialog : Window
         var cancelButton = new Button
         {
             Content = "Cancel",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        cancelButton.Classes.Add("secondary");
         cancelButton.Click += (_, _) => Close(null);
         buttonRow.Children.Add(cancelButton);
 

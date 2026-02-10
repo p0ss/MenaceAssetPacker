@@ -32,26 +32,25 @@ This guide is organized by complexity:
 
 ### Tier 1: Data Patches (No Code Required)
 
-- **Baby's First Mod** - Change one number, see it in-game
-- **Stat Adjustments** - Balance tweaks, unit modifications
-- **Template Cloning** - Create variants of existing units/weapons
+- [Baby's First Mod](01-first-mod.md) - Change one number, see it in-game
+- [Stat Adjustments](02-stat-changes.md) - Balance tweaks, unit modifications
+- [Template Cloning](03-template-cloning.md) - Create variants of existing units/weapons
 
 ### Tier 2: Asset Replacement
 
-- **Textures & Icons** - Replace 2D images
-- **3D Models** - Replace meshes (requires external tools)
-- **Audio** - Replace sound effects and music
+- [Textures & Icons](04-textures-icons.md) - Replace 2D images
+- [3D Models](05-3d-models.md) - Replace meshes (requires external tools)
+- [Audio](06-audio.md) - Replace sound effects and music
 
 ### Tier 3: SDK Coding
 
-- **SDK Basics** - Query game state, react to events
-- **Template Modding** - Programmatically modify game data
-- **UI Modifications** - Add custom interface elements
+- [SDK Basics](07-sdk-basics.md) - Query game state, react to events
+- [Template Modding](08-template-modding.md) - Programmatically modify game data
+- [UI Modifications](09-ui-modifications.md) - Add custom interface elements
 
 ### Tier 4: Advanced Code
 
-- **Custom DLLs** - Full C# programming with Harmony patches
-- **Security Considerations** - Why source-verified mods matter
+- [Advanced Code & Security](10-advanced-code.md) - DLLs, Harmony, and security considerations
 
 ## Getting Started
 

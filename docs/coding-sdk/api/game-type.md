@@ -2,6 +2,17 @@
 
 `Menace.SDK.GameType` -- Wrapper around an IL2CPP class pointer providing safe type system access.
 
+## Overview
+
+GameType represents an IL2CPP class and provides type system operations:
+
+- **Type Lookup** - Find types by name across game assemblies
+- **Hierarchy Navigation** - Walk parent types, check inheritance relationships
+- **Field Discovery** - Get field offsets for direct memory access
+- **Managed Bridge** - Access the IL2CppInterop proxy type for reflection
+
+Use `GameType.Find()` to locate types, then use the GameType to check compatibility with `GameObj` instances or to pre-cache field offsets for performance-critical code.
+
 All lookups are cached internally to avoid repeated `il2cpp_*` FFI calls. The cache is keyed both by name (`assembly:fullTypeName`) and by raw `IntPtr` class pointer.
 
 ## Properties

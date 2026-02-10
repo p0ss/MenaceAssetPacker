@@ -2,6 +2,19 @@
 
 `Menace.SDK.DevConsole` -- IMGUI-based developer console overlay with a tabbed panel system.
 
+## Overview
+
+DevConsole is the primary debugging and runtime inspection tool for Menace mods. It provides:
+
+- **Battle Log** - Real-time combat event tracking (hits, misses, damage, deaths)
+- **Log Panel** - Unified error and message logging with severity filtering
+- **Console** - Command-line interface for SDK commands and game manipulation
+- **Inspector** - Object property viewer via managed reflection
+- **Watch Panel** - Live variable monitoring with custom expressions
+- **Settings** - Mod configuration UI generated from `ModSettings`
+
+Mods can extend the console with custom panels and commands. All SDK systems register console commands automatically.
+
 ## Toggle
 
 Press the **backtick/tilde** key (`~`) to toggle the console. The console renders as a semi-transparent dark overlay occupying up to 60% width and 70% height of the screen (capped at 900x700 pixels), anchored to the top-left corner.
@@ -112,6 +125,7 @@ Duplicate errors show an occurrence count suffix (e.g., `(x5)`).
 
 A command-line interface for executing SDK commands and C# expressions. Type `help` to see available commands:
 
+**Query Commands:**
 - `find <type>` - List all instances of a type
 - `findbyname <type> <name>` - Find instance by name
 - `inspect <type> <name>` - Find and inspect an object
@@ -120,6 +134,40 @@ A command-line interface for executing SDK commands and C# expressions. Type `he
 - `scene` - Show current scene name
 - `errors [modId]` - Show recent errors
 - `clear` - Clear console output
+
+**Entity Spawning:**
+- `spawn <template> <x> <y> [faction]` - Spawn a unit at tile (default faction=1/enemy)
+- `kill` - Kill the selected actor
+- `enemies` - List all enemy actors
+- `actors [faction]` - List all actors (optionally filtered by faction)
+- `clearwave` - Clear all enemies from the map
+
+**Movement:**
+- `move <x> <y>` - Move selected actor to tile
+- `teleport <x> <y>` - Teleport selected actor to tile
+- `pos` - Show selected actor position and facing
+- `facing [dir]` - Get/set facing (0-7 or N/NE/E/SE/S/SW/W/NW)
+- `ap [value]` - Get/set action points
+
+**Combat:**
+- `skills` - List skills for selected actor
+- `damage <amount>` - Apply damage to selected actor
+- `heal <amount>` - Heal selected actor
+- `suppression [value]` - Get/set suppression (0-100)
+- `morale [value]` - Get/set morale
+- `stun` - Toggle stun on selected actor
+- `combat` - Show combat info for selected actor
+
+**Tactical State:**
+- `round` - Show current round number
+- `nextround` - Advance to next round
+- `faction` - Show current faction
+- `endturn` - End the current turn
+- `skipai` - Skip the AI turn
+- `pause` - Toggle game pause
+- `timescale [value]` - Get/set time scale (1.0 = normal)
+- `status` - Show tactical state summary
+- `win` - Finish mission (victory)
 
 If a command is not recognized and Roslyn is available, the input is evaluated as a C# expression. Use arrow keys to navigate command history.
 

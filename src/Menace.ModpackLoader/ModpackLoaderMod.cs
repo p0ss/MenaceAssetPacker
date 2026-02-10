@@ -9,6 +9,7 @@ using MelonLoader;
 using Menace.SDK;
 using Menace.SDK.Internal;
 using Menace.SDK.Repl;
+using Menace.ModpackLoader.Mcp;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -39,6 +40,13 @@ public partial class ModpackLoaderMod : MelonMod
         DevConsole.ApplyInputPatches(HarmonyInstance);
         ModSettings.Initialize();
         InitializeRepl();
+
+        // Register SDK console commands
+        RegisterSdkCommands();
+
+        // Initialize MCP HTTP server for external tooling integration
+        // Controlled via ModSettings - starts automatically if enabled
+        GameMcpServer.Initialize(LoggerInstance);
 
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
@@ -103,6 +111,9 @@ public partial class ModpackLoaderMod : MelonMod
         // Ensure settings are saved before the game closes
         ModSettings.Save();
 
+        // Stop MCP HTTP server
+        GameMcpServer.Stop();
+
         // Cleanup save watcher
         SaveSystemPatches.Shutdown();
     }
@@ -132,6 +143,25 @@ public partial class ModpackLoaderMod : MelonMod
         {
             LoggerInstance.Msg("Some template types not yet loaded — will retry on next scene.");
         }
+    }
+
+    private static void RegisterSdkCommands()
+    {
+        // Register console commands from SDK wrapper classes
+        Inventory.RegisterConsoleCommands();
+        Operation.RegisterConsoleCommands();
+        ArmyGeneration.RegisterConsoleCommands();
+        Vehicle.RegisterConsoleCommands();
+        Conversation.RegisterConsoleCommands();
+        Emotions.RegisterConsoleCommands();
+        BlackMarket.RegisterConsoleCommands();
+        Mission.RegisterConsoleCommands();
+        Roster.RegisterConsoleCommands();
+        Perks.RegisterConsoleCommands();
+        TileMap.RegisterConsoleCommands();
+        Pathfinding.RegisterConsoleCommands();
+        LineOfSight.RegisterConsoleCommands();
+        TileEffects.RegisterConsoleCommands();
     }
 
     private void LoadModpacks()
@@ -376,6 +406,10 @@ public partial class ModpackLoaderMod : MelonMod
                     allFound = false;
                     continue;
                 }
+
+                // Force-load templates via DataTemplateLoader before FindObjectsOfTypeAll
+                // This ensures templates are in memory even if the game hasn't loaded them yet
+                EnsureTemplatesLoaded(gameAssembly, templateType);
 
                 var il2cppType = Il2CppType.From(templateType);
                 var objects = Resources.FindObjectsOfTypeAll(il2cppType);

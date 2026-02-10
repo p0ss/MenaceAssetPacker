@@ -71,7 +71,62 @@ Nothing in Tier 1 throws.
 | `ModSettings` | Configuration system for mods. Register settings with `ModSettings.Register(modName, builder => { ... })` using typed builders (toggle, slider, number, dropdown, text). Settings appear in the DevConsole **Settings** panel and persist to `UserData/ModSettings.json`. Read values with `ModSettings.Get<T>(modName, key)`. Subscribe to `ModSettings.OnSettingChanged` for real-time change notifications. |
 | `ErrorNotification` | Passive bottom-left screen badge that displays "N mod errors -- press ~ for console" when errors exist and the console is hidden. Auto-fades after 8 seconds of no new errors. |
 
-### Tier 4 -- REPL
+### Tier 4 -- Tactical Control
+
+High-level APIs for controlling entities and game state during tactical combat.
+
+| Type | Purpose |
+|------|---------|
+| `EntitySpawner` | Spawn and destroy entities. `SpawnUnit(template, x, y, faction)` creates actors at tile positions. `ListEntities(faction)` queries actors. `ClearEnemies()` removes all enemies. |
+| `EntityMovement` | Control entity movement. `MoveTo(actor, x, y)` pathfinds and moves. `Teleport(actor, x, y)` instant repositioning. `GetMovementRange(actor)` returns reachable tiles. Manage facing direction and action points. |
+| `EntityCombat` | Combat actions and status effects. `Attack(attacker, target)` uses primary weapon. `UseAbility(actor, skill, target)` for abilities. Manage suppression, morale, HP. Query skills with `GetSkills(actor)`. |
+| `TacticalController` | Game state control. `GetCurrentRound()`, `NextRound()`, `EndTurn()` for turn management. `SetPaused()`, `SetTimeScale()` for time control. `SpawnWave()` for enemy spawning. `GetTacticalState()` for full status. |
+
+### Tier 5 -- Map & Environment
+
+APIs for querying and manipulating the tactical map, tiles, and environmental effects.
+
+| Type | Purpose |
+|------|---------|
+| `TileMap` | Query tile information. `GetTile(x, y)` returns tile data. `GetCover(x, y, direction)` checks cover values. `GetMapInfo()` returns map dimensions. `GetAdjacentTiles()` for neighbor queries. |
+| `Pathfinding` | Find paths and check reachability. `FindPath(from, to)` returns tile path. `GetMovementCost(from, to)` calculates AP cost. `IsReachable(actor, x, y)` checks if tile is reachable. |
+| `LineOfSight` | LOS and visibility checks. `HasLOS(from, to)` checks line of sight. `GetVisibleTiles(actor)` returns visible tile set. `IsVisible(actor, target)` checks target visibility. |
+| `TileEffects` | Environmental effects on tiles. `SpawnFire(x, y)`, `SpawnSmoke(x, y)` create effects. `GetTileEffects(x, y)` queries active effects. `ClearEffects(x, y)` removes effects. |
+
+### Tier 6 -- Strategy Layer
+
+APIs for campaign/strategy state including missions, operations, roster, and economy.
+
+| Type | Purpose |
+|------|---------|
+| `Mission` | Mission state and objectives. `GetMissionInfo()` returns current mission data. `GetObjectives()` lists objectives. `CompleteObjective()` marks objectives done. |
+| `Operation` | Campaign operations. `GetOperationInfo()` returns operation state. `GetCurrentMission()` returns active mission. `GetMissions()` lists all missions in operation. |
+| `Roster` | Unit roster management. `GetHiredLeaders()` lists all hired units. `GetHirableLeaders()` lists recruitable templates. `HireLeader(template)` hires a leader. `DismissLeader(leader)` fires a leader. `GetLeaderInfo(leader)` returns unit details. `FindByNickname(name)` searches roster. |
+| `Perks` | Perk and skill management. `GetLeaderPerks(leader)` lists learned perks. `GetPerkTrees(leader)` shows available perk trees. `AddPerk(leader, perk)` grants a perk. `RemoveLastPerk(leader)` demotes. `GetAvailablePerks(leader)` returns unlearned perks. `CanBePromoted(leader)` checks eligibility. |
+| `Inventory` | Items and equipment. `GetContainer(actor)` gets inventory. `GetAllItems(container)` lists items. `GetEquippedWeapons(actor)` returns equipped weapons. Trade value calculations. |
+| `ArmyGeneration` | Army spawning and budgets. `GetArmyInfo(army)` returns army composition. `GetArmyTemplates()` lists available templates. `GetEntityCost(template)` returns spawn cost. |
+| `Vehicle` | Vehicle information. `GetVehicleInfo(entity)` returns vehicle data. `GetModularVehicle(entity)` returns slot info. `IsVehicle(entity)` type check. |
+| `BlackMarket` | Shop system access. `GetBlackMarketInfo()` returns shop state. `GetAvailableStacks()` lists items for sale. Item generation and timeout tracking. |
+
+### Tier 7 -- Social & Dialogue
+
+APIs for conversations, events, and squaddie emotional states.
+
+| Type | Purpose |
+|------|---------|
+| `Conversation` | Dialogue system. `GetActiveConversation()` returns current dialogue. `TriggerConversation(template)` starts dialogue. `GetConversationInfo()` returns conversation state. |
+| `Emotions` | Squaddie emotional states. `GetEmotionalState(squaddie)` returns emotions. `GetActiveEffects(squaddie)` lists active emotional effects. Trigger emotional changes. |
+
+### Tier 8 -- AI System
+
+APIs for inspecting, modifying, and coordinating AI decision-making.
+
+| Type | Purpose |
+|------|---------|
+| `AI` | AI decision system access. `GetAgent(actor)` gets the AI agent. `GetAgentInfo(actor)` returns state (evaluating, ready, executing). `GetRoleData(actor)` returns AI config (utility/safety weights). `GetBehaviors(actor)` lists available actions. `GetTileScores(actor)` returns scored positions. `SetRoleDataFloat/Bool(actor, field, value)` modifies AI config. `IsAnyFactionEvaluating()` checks write safety. |
+| `AICoordination` | Coordinated AI behavior (Combined Arms-style). `InitializeTurnState(faction)` sets up turn state. `ClassifyUnit(actor)` returns role (Suppressor/DamageDealer). `ClassifyFormationBand(actor)` returns position band. `CalculateAgentScoreMultiplier()` for sequencing/focus fire. `ApplyTileScoreModifiers()` for Center of Forces/Formation Depth. Thread-safe per-agent writes. |
+
+### Tier 9 -- REPL
 
 The SDK embeds a Roslyn-based C# REPL that appears as the **REPL** tab in the
 DevConsole. It automatically resolves metadata references from the game's
@@ -209,6 +264,75 @@ DevConsole.RegisterPanel("My Panel", (Rect area) =>
 });
 ```
 
+### Built-in Console Commands
+
+The SDK registers extensive console commands for debugging and testing. Type `help` in the console to see all available commands.
+
+**Entity & Combat:**
+| Command | Description |
+|---------|-------------|
+| `spawn <template> [x y] [faction]` | Spawn entity at position |
+| `kill [name]` | Kill entity (or active actor) |
+| `heal [name] [amount]` | Heal entity |
+| `damage <target> <amount>` | Deal damage to entity |
+| `suppress <target> <amount>` | Apply suppression |
+| `skills [name]` | List actor's skills |
+| `actors [faction]` | List all actors |
+
+**Movement & Positioning:**
+| Command | Description |
+|---------|-------------|
+| `move <x> <y>` | Move active actor to tile |
+| `teleport <x> <y>` | Instant teleport to tile |
+| `facing [direction]` | Get/set facing direction |
+| `range [name]` | Show movement range |
+
+**Map & Environment:**
+| Command | Description |
+|---------|-------------|
+| `tile <x> <y>` | Get tile info |
+| `cover <x> <y>` | Get cover values |
+| `mapinfo` | Show map dimensions |
+| `path <x1> <y1> <x2> <y2>` | Find path between tiles |
+| `los <x1> <y1> <x2> <y2>` | Check line of sight |
+| `fire <x> <y>` | Spawn fire effect |
+| `smoke <x> <y>` | Spawn smoke effect |
+
+**Tactical State:**
+| Command | Description |
+|---------|-------------|
+| `tactical` | Show tactical state |
+| `round` | Show current round |
+| `nextround` | Advance to next round |
+| `endturn` | End current turn |
+| `pause` | Toggle pause |
+| `timescale <value>` | Set time scale |
+
+**Strategy Layer:**
+| Command | Description |
+|---------|-------------|
+| `mission` | Show current mission |
+| `objectives` | List mission objectives |
+| `operation` | Show current operation |
+| `roster` | List hired units |
+| `unit <nickname>` | Show unit info |
+| `available` | Show deployable units |
+
+**Items & Economy:**
+| Command | Description |
+|---------|-------------|
+| `inventory` | Show active actor inventory |
+| `weapons` | Show equipped weapons |
+| `vehicle` | Show vehicle info |
+| `blackmarket` | Show shop info |
+| `armytemplates` | List army templates |
+
+**Dialogue & Social:**
+| Command | Description |
+|---------|-------------|
+| `conversations` | List conversation templates |
+| `emotions <squaddie>` | Show emotional state |
+
 ---
 
 ## Mod Settings
@@ -263,6 +387,7 @@ Copy DevMode and modify it for your own mods.
 
 Detailed documentation for each SDK type:
 
+### Core (Tier 1-3)
 - [GameType](api/game-type.md) -- IL2CPP type resolution and field offsets
 - [GameObj](api/game-obj.md) -- Safe handle for live IL2CPP objects
 - [GameQuery](api/game-query.md) -- FindObjectsOfTypeAll helpers
@@ -274,3 +399,28 @@ Detailed documentation for each SDK type:
 - [DevConsole](api/dev-console.md) -- Developer console and panels
 - [ModSettings](api/mod-settings.md) -- Configuration system with UI
 - [REPL](api/repl.md) -- Runtime C# expression evaluation
+
+### Tactical Control (Tier 4)
+- [EntitySpawner](api/entity-spawner.md) -- Entity spawning and destruction
+- [EntityMovement](api/entity-movement.md) -- Movement and pathfinding control
+- [EntityCombat](api/entity-combat.md) -- Combat actions and status effects
+- [TacticalController](api/tactical-controller.md) -- Game state and turn management
+
+### Map & Environment (Tier 5)
+- [TileMap](api/tile-map.md) -- Tile queries and map information
+- [Pathfinding](api/pathfinding.md) -- Path finding and movement costs
+- [LineOfSight](api/line-of-sight.md) -- LOS and visibility checks
+- [TileEffects](api/tile-effects.md) -- Fire, smoke, and environmental effects
+
+### Strategy Layer (Tier 6)
+- [Mission](api/mission.md) -- Mission state and objectives
+- [Operation](api/operation.md) -- Campaign operations
+- [Roster](api/roster.md) -- Unit roster management
+- [Inventory](api/inventory.md) -- Items and equipment
+- [ArmyGeneration](api/army-generation.md) -- Army spawning and budgets
+- [Vehicle](api/vehicle.md) -- Vehicle information and control
+- [BlackMarket](api/black-market.md) -- Shop system access
+
+### Social & Dialogue (Tier 7)
+- [Conversation](api/conversation.md) -- Dialogue system
+- [Emotions](api/emotions.md) -- Squaddie emotional states

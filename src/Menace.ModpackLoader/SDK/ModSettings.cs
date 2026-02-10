@@ -449,6 +449,13 @@ public static class ModSettings
                     OnSettingChanged?.Invoke(modName, setting.Key, newTextVal);
                 }
                 break;
+
+            case SettingType.Info:
+                GUI.Label(new Rect(rect.x, rect.y, labelWidth, rect.height), setting.Label, GetLabelStyle());
+                string infoVal = setting.StatusCallback?.Invoke() ?? "";
+                GUI.Label(new Rect(rect.x + labelWidth, rect.y, rect.width - labelWidth, rect.height),
+                    infoVal, GetInfoStyle());
+                break;
         }
     }
 
@@ -458,6 +465,7 @@ public static class ModSettings
     private static GUIStyle _headerStyle;
     private static GUIStyle _subHeaderStyle;
     private static GUIStyle _helpStyle;
+    private static GUIStyle _infoStyle;
     private static bool _stylesInitialized;
 
     private static GUIStyle GetLabelStyle()
@@ -482,6 +490,12 @@ public static class ModSettings
     {
         InitStyles();
         return _helpStyle;
+    }
+
+    private static GUIStyle GetInfoStyle()
+    {
+        InitStyles();
+        return _infoStyle;
     }
 
     private static void InitStyles()
@@ -523,6 +537,9 @@ public static class ModSettings
         _helpStyle = new GUIStyle(_labelStyle);
         _helpStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
         _helpStyle.fontStyle = FontStyle.Italic;
+
+        _infoStyle = new GUIStyle(_labelStyle);
+        _infoStyle.normal.textColor = new Color(0.6f, 0.9f, 0.6f); // Light green for status values
     }
 }
 
@@ -638,6 +655,37 @@ public class SettingsBuilder
         return this;
     }
 
+    /// <summary>
+    /// Add a read-only info display with dynamic content.
+    /// The callback is called each frame to get the current value.
+    /// </summary>
+    public SettingsBuilder AddInfo(string key, string label, Func<string> valueCallback)
+    {
+        _settings.Add(new SettingDefinition
+        {
+            Key = key,
+            Label = label,
+            Type = SettingType.Info,
+            StatusCallback = valueCallback
+        });
+        return this;
+    }
+
+    /// <summary>
+    /// Add a read-only info display with static content.
+    /// </summary>
+    public SettingsBuilder AddInfo(string key, string label, string staticValue)
+    {
+        _settings.Add(new SettingDefinition
+        {
+            Key = key,
+            Label = label,
+            Type = SettingType.Info,
+            StatusCallback = () => staticValue
+        });
+        return this;
+    }
+
     internal ModSettingsGroup Build()
     {
         return new ModSettingsGroup
@@ -658,7 +706,8 @@ public enum SettingType
     Slider,
     Number,
     Dropdown,
-    Text
+    Text,
+    Info
 }
 
 /// <summary>
@@ -674,6 +723,12 @@ public class SettingDefinition
     public float Min { get; set; }
     public float Max { get; set; }
     public string[] Options { get; set; }
+
+    /// <summary>
+    /// Callback for dynamic info display (SettingType.Info only).
+    /// Called each frame to get the current display value.
+    /// </summary>
+    public Func<string> StatusCallback { get; set; }
 }
 
 internal class ModSettingsGroup

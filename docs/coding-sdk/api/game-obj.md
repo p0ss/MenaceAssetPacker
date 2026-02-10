@@ -2,6 +2,17 @@
 
 `Menace.SDK.GameObj` -- A `readonly struct` that wraps a raw IL2CPP object pointer with safe read/write operations.
 
+## Overview
+
+GameObj is the core building block for working with game objects in the SDK. It provides:
+
+- **Safe Memory Access** - Read/write fields without crashing on null pointers
+- **Type Introspection** - Get type info, check inheritance, access Unity object names
+- **Field Resolution** - Automatic lookup of fields by name with multiple naming conventions
+- **Error Isolation** - All failures return defaults and log to ModError, never throw
+
+Use `GameQuery` to find GameObj instances, then use GameObj's read/write methods to inspect and modify them. For hot paths, pre-cache field offsets via `GameType.GetFieldOffset()`.
+
 All reads return default values on failure (0, 0f, false, null, `GameObj.Null`). All writes return `false` on failure. No method on `GameObj` ever throws an exception -- failures are routed to `ModError` internally.
 
 ## Properties

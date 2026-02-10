@@ -161,10 +161,13 @@ public class MainWindow : Window
             Content = text,
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(16, 8),
+            BorderThickness = new Thickness(2, 0, 0, 0),
+            BorderBrush = Brushes.Transparent,
+            Padding = new Thickness(16, 10),
+            Margin = new Thickness(2),
             FontSize = 14,
-            FontWeight = FontWeight.Medium
+            FontWeight = FontWeight.Medium,
+            CornerRadius = new CornerRadius(4)
         };
         button.Click += (_, _) => onClick();
         return button;
@@ -177,14 +180,14 @@ public class MainWindow : Window
             Background = new SolidColorBrush(Color.Parse("#161616")),
             BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(16, 0),
-            MinHeight = 36
+            Padding = new Thickness(16, 8),  // Add vertical padding for breathing room
+            MinHeight = 44  // Increased to accommodate padding
         };
 
         _subNavPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 8,  // Increased spacing between nav items
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -227,17 +230,22 @@ public class MainWindow : Window
 
     private void UpdateMainTabHighlight()
     {
-        var activeColor = new SolidColorBrush(Color.Parse("#064b48"));
-        var inactiveColor = Brushes.Transparent;
+        // Active state: grey background with teal left border
+        var activeBg = new SolidColorBrush(Color.Parse("#2A2A2A"));
+        var activeBorder = new SolidColorBrush(Color.Parse("#004f43"));
+        var inactiveBg = Brushes.Transparent;
+        var inactiveBorder = Brushes.Transparent;
 
         if (_modLoaderTab != null)
         {
-            _modLoaderTab.Background = _viewModel.IsModLoader ? activeColor : inactiveColor;
+            _modLoaderTab.Background = _viewModel.IsModLoader ? activeBg : inactiveBg;
+            _modLoaderTab.BorderBrush = _viewModel.IsModLoader ? activeBorder : inactiveBorder;
         }
 
         if (_moddingToolsTab != null)
         {
-            _moddingToolsTab.Background = _viewModel.IsModdingTools ? activeColor : inactiveColor;
+            _moddingToolsTab.Background = _viewModel.IsModdingTools ? activeBg : inactiveBg;
+            _moddingToolsTab.BorderBrush = _viewModel.IsModdingTools ? activeBorder : inactiveBorder;
         }
     }
 
@@ -248,10 +256,13 @@ public class MainWindow : Window
             Content = text,
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 6),
+            BorderThickness = new Thickness(2, 0, 0, 0),
+            BorderBrush = Brushes.Transparent,
+            Padding = new Thickness(16, 10),
+            Margin = new Thickness(2),
             FontSize = 12,
-            Tag = subSection
+            Tag = subSection,
+            CornerRadius = new CornerRadius(4)
         };
         button.Click += (_, _) => onClick();
         return button;
@@ -261,15 +272,19 @@ public class MainWindow : Window
     {
         if (_subNavPanel == null) return;
 
-        var activeColor = new SolidColorBrush(Color.Parse("#2A2A2A"));
-        var inactiveColor = Brushes.Transparent;
+        // Active state: grey background with teal left border
+        var activeBg = new SolidColorBrush(Color.Parse("#2A2A2A"));
+        var activeBorder = new SolidColorBrush(Color.Parse("#004f43"));
+        var inactiveBg = Brushes.Transparent;
+        var inactiveBorder = Brushes.Transparent;
 
         foreach (var child in _subNavPanel.Children)
         {
             if (child is Button btn)
             {
                 var isActive = btn.Tag?.ToString() == _viewModel.CurrentSubSection;
-                btn.Background = isActive ? activeColor : inactiveColor;
+                btn.Background = isActive ? activeBg : inactiveBg;
+                btn.BorderBrush = isActive ? activeBorder : inactiveBorder;
                 btn.FontWeight = isActive ? FontWeight.SemiBold : FontWeight.Normal;
             }
         }

@@ -41,6 +41,32 @@ This directory contains reverse-engineered documentation of Menace's game system
 | Line of Sight & Visibility | ✅ Complete | [line-of-sight.md](./line-of-sight.md) |
 | Offmap Abilities | ✅ Complete | [offmap-abilities.md](./offmap-abilities.md) |
 | BlackMarket | ✅ Complete | [blackmarket.md](./blackmarket.md) |
+| Localization System | ✅ Complete | [localization-system.md](./localization-system.md) |
+| IL2CPP Runtime | ✅ Complete | [../il2cpp-runtime.md](../il2cpp-runtime.md) |
+| Unnamed Functions Plan | 📋 Reference | [unnamed-functions-plan.md](./unnamed-functions-plan.md) |
+
+## SDK Coverage
+
+Many reverse-engineered systems now have SDK wrappers with console commands:
+
+| RE System | SDK Wrapper | Console Commands |
+|-----------|-------------|------------------|
+| [tile-map-system.md](./tile-map-system.md) | [TileMap](../coding-sdk/api/tile-map.md) | `tile`, `cover`, `mapinfo` |
+| [pathfinding-system.md](./pathfinding-system.md) | [Pathfinding](../coding-sdk/api/pathfinding.md) | `path`, `movecost` |
+| [line-of-sight.md](./line-of-sight.md) | [LineOfSight](../coding-sdk/api/line-of-sight.md) | `los`, `visible` |
+| [tile-effects.md](./tile-effects.md) | [TileEffects](../coding-sdk/api/tile-effects.md) | `fire`, `smoke`, `effects` |
+| [mission-system.md](./mission-system.md) | [Mission](../coding-sdk/api/mission.md) | `mission`, `objectives` |
+| [operation-system.md](./operation-system.md) | [Operation](../coding-sdk/api/operation.md) | `operation`, `opmissions` |
+| [roster-system.md](./roster-system.md) | [Roster](../coding-sdk/api/roster.md) | `roster`, `unit`, `available` |
+| [item-system.md](./item-system.md) | [Inventory](../coding-sdk/api/inventory.md) | `inventory`, `weapons` |
+| [army-generation.md](./army-generation.md) | [ArmyGeneration](../coding-sdk/api/army-generation.md) | `armytemplates`, `entitycost` |
+| [vehicle-system.md](./vehicle-system.md) | [Vehicle](../coding-sdk/api/vehicle.md) | `vehicle`, `twinfire` |
+| [conversation-system.md](./conversation-system.md) | [Conversation](../coding-sdk/api/conversation.md) | `conversations` |
+| [emotional-system.md](./emotional-system.md) | [Emotions](../coding-sdk/api/emotions.md) | `emotions` |
+| [blackmarket.md](./blackmarket.md) | [BlackMarket](../coding-sdk/api/black-market.md) | `blackmarket` |
+| [combat-damage.md](./combat-damage.md) | [EntityCombat](../coding-sdk/api/entity-combat.md) | `damage`, `heal`, `skills` |
+| [actor-system.md](./actor-system.md) | [EntitySpawner](../coding-sdk/api/entity-spawner.md) | `spawn`, `kill`, `actors` |
+| [turn-action-system.md](./turn-action-system.md) | [TacticalController](../coding-sdk/api/tactical-controller.md) | `tactical`, `round`, `endturn` |
 
 ## Key Offsets Reference
 
@@ -91,6 +117,16 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 - **[tile-effects.md](./tile-effects.md)** - TileEffectHandler system, effect types (fire, smoke, bleed-out, ammo crates), lifecycle callbacks
 - **[line-of-sight.md](./line-of-sight.md)** - LOS ray-tracing, visibility masks, fog of war, detection vs concealment
 - **[offmap-abilities.md](./offmap-abilities.md)** - Delayed abilities (airstrikes, artillery), round-based timing, scheduling
+- **[localization-system.md](./localization-system.md)** - LocalizedLine/LocalizedMultiLine wrapper objects, translation CSV format, why mods fail with string casts
+
+### IL2CPP Runtime
+- **[../il2cpp-runtime.md](../il2cpp-runtime.md)** - IL2CPP runtime function reference (GC, object system, strings, exceptions, method dispatch)
+
+### Reference Code
+- **[../reference-code/](../reference-code/)** - Reconstructed C# implementations for modder reference
+  - Combat system (hit chance, damage, armor)
+  - Multiplier math utilities
+  - Ready-to-use Harmony patch targets
 
 ## Key Findings
 

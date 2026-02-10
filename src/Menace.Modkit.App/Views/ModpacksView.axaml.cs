@@ -21,16 +21,32 @@ public class ModpacksView : UserControl
   {
     var mainGrid = new Grid
     {
-      ColumnDefinitions = new ColumnDefinitions("*,2*")
+      ColumnDefinitions = new ColumnDefinitions("300,4,*")
     };
 
-    // Left: Unified Modpack List
-    mainGrid.Children.Add(BuildModpackList());
-    Grid.SetColumn((Control)mainGrid.Children[0], 0);
+    // Left: Unified Modpack List (darker panel)
+    var leftPanel = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#141414")),
+      BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      BorderThickness = new Thickness(0, 0, 1, 0),
+      Child = BuildModpackList()
+    };
+    mainGrid.Children.Add(leftPanel);
+    Grid.SetColumn(leftPanel, 0);
 
-    // Right: Modpack Details
+    // Splitter
+    var splitter = new GridSplitter
+    {
+      Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      ResizeDirection = GridResizeDirection.Columns
+    };
+    mainGrid.Children.Add(splitter);
+    Grid.SetColumn(splitter, 1);
+
+    // Right: Modpack Details (lighter panel)
     mainGrid.Children.Add(BuildModpackDetails());
-    Grid.SetColumn((Control)mainGrid.Children[1], 1);
+    Grid.SetColumn((Control)mainGrid.Children[2], 2);
 
     return mainGrid;
   }
@@ -40,7 +56,7 @@ public class ModpacksView : UserControl
     var grid = new Grid
     {
       RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
-      Margin = new Thickness(16, 16, 12, 16)
+      Margin = new Thickness(12)
     };
 
     // Row 0: Title
@@ -491,9 +507,7 @@ public class ModpacksView : UserControl
   {
     var border = new Border
     {
-      Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-      BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-      BorderThickness = new Thickness(1, 0, 0, 0),
+      Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
       Padding = new Thickness(24)
     };
 
@@ -574,15 +588,12 @@ public class ModpacksView : UserControl
     {
       var btn = new Button
       {
-        Background = new SolidColorBrush(Color.Parse("#252525")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(0),
-        Padding = new Thickness(8, 4),
         Margin = new Thickness(0, 1),
         HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
         HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
         Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
       };
+      btn.Classes.Add("listItem");
       var stack = new StackPanel();
       var nameText = new TextBlock
       {
@@ -768,7 +779,7 @@ public class ModpacksView : UserControl
     var deployBgConverter = new FuncValueConverter<string, IBrush>(
       text => text == "Undeploy"
         ? new SolidColorBrush(Color.Parse("#4b0606"))
-        : new SolidColorBrush(Color.Parse("#064b48")));
+        : new SolidColorBrush(Color.Parse("#004f43")));
     deployToggleButton.Bind(Button.BackgroundProperty,
       new Avalonia.Data.Binding("DeployToggleText") { Converter = deployBgConverter });
     deployToggleButton.Bind(Button.IsEnabledProperty,

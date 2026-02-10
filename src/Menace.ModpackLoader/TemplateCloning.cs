@@ -114,7 +114,12 @@ public partial class ModpackLoaderMod
                         // Add to our local lookup so subsequent clones can reference this one
                         lookup[newName] = clone;
 
-                        LoggerInstance.Msg($"  Cloned: {sourceName} -> {newName}");
+                        // Verify registration was successful by trying to look it up
+                        var verifyLookup = Resources.FindObjectsOfTypeAll(il2cppType);
+                        var verified = verifyLookup?.Any(o => o.name == newName) ?? false;
+                        var verifyStatus = verified ? "verified in Resources" : "NOT in Resources (may still work via DataTemplateLoader)";
+
+                        LoggerInstance.Msg($"  Cloned: {sourceName} -> {newName} ({verifyStatus})");
                         clonedCount++;
                     }
                     catch (Exception ex)

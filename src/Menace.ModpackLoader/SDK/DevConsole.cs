@@ -393,6 +393,343 @@ public static class DevConsole
             _logBuffer.Clear();
             return null;
         });
+
+        // === Entity Spawner Commands ===
+
+        // spawn <template> <x> <y> [faction] - Spawn a unit
+        RegisterCommand("spawn", "<template> <x> <y> [faction]", "Spawn a unit at tile", args =>
+        {
+            if (args.Length < 3)
+                return "Usage: spawn <template> <x> <y> [faction]";
+            var template = args[0];
+            if (!int.TryParse(args[1], out int x) || !int.TryParse(args[2], out int y))
+                return "Invalid coordinates";
+            int faction = args.Length > 3 && int.TryParse(args[3], out int f) ? f : 1;
+            var result = EntitySpawner.SpawnUnit(template, x, y, faction);
+            return result.Success
+                ? $"Spawned {template} at ({x}, {y}) faction {faction}"
+                : $"Failed: {result.Error}";
+        });
+
+        // kill - Kill selected actor
+        RegisterCommand("kill", "", "Kill the selected actor", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            return EntitySpawner.DestroyEntity(actor, immediate: true)
+                ? "Actor killed"
+                : "Failed to kill actor";
+        });
+
+        // enemies - List all enemies
+        RegisterCommand("enemies", "", "List all enemy actors", args =>
+        {
+            var enemies = EntitySpawner.ListEntities(factionFilter: 1);
+            if (enemies.Length == 0) return "No enemies on map";
+            var lines = new List<string> { $"Enemies ({enemies.Length}):" };
+            foreach (var e in enemies.Take(20))
+            {
+                var info = EntitySpawner.GetEntityInfo(e);
+                lines.Add($"  {info?.Name ?? "?"} (ID: {info?.EntityId})");
+            }
+            if (enemies.Length > 20)
+                lines.Add($"  ... and {enemies.Length - 20} more");
+            return string.Join("\n", lines);
+        });
+
+        // actors [faction] - List all actors
+        RegisterCommand("actors", "[faction]", "List actors (0=player, 1=enemy)", args =>
+        {
+            int filter = args.Length > 0 && int.TryParse(args[0], out int f) ? f : -1;
+            var actors = EntitySpawner.ListEntities(factionFilter: filter);
+            if (actors.Length == 0) return "No actors found";
+            var lines = new List<string> { $"Actors ({actors.Length}):" };
+            foreach (var a in actors.Take(30))
+            {
+                var info = EntitySpawner.GetEntityInfo(a);
+                lines.Add($"  [{info?.FactionIndex}] {info?.Name ?? "?"} (ID: {info?.EntityId})");
+            }
+            if (actors.Length > 30)
+                lines.Add($"  ... and {actors.Length - 30} more");
+            return string.Join("\n", lines);
+        });
+
+        // clearwave - Clear all enemies
+        RegisterCommand("clearwave", "", "Clear all enemies from the map", args =>
+        {
+            var cleared = EntitySpawner.ClearEnemies(immediate: true);
+            return $"Cleared {cleared} enemies";
+        });
+
+        // === Entity Movement Commands ===
+
+        // move <x> <y> - Move selected actor
+        RegisterCommand("move", "<x> <y>", "Move selected actor to tile", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: move <x> <y>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Invalid coordinates";
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var result = EntityMovement.MoveTo(actor, x, y);
+            return result.Success ? $"Moving to ({x}, {y})" : $"Failed: {result.Error}";
+        });
+
+        // teleport <x> <y> - Teleport selected actor
+        RegisterCommand("teleport", "<x> <y>", "Teleport selected actor to tile", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: teleport <x> <y>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Invalid coordinates";
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var result = EntityMovement.Teleport(actor, x, y);
+            return result.Success ? $"Teleported to ({x}, {y})" : $"Failed: {result.Error}";
+        });
+
+        // pos - Show selected actor position
+        RegisterCommand("pos", "", "Show selected actor position", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var pos = EntityMovement.GetPosition(actor);
+            var facing = EntityMovement.GetFacing(actor);
+            var dirName = facing switch
+            {
+                0 => "N", 1 => "NE", 2 => "E", 3 => "SE",
+                4 => "S", 5 => "SW", 6 => "W", 7 => "NW",
+                _ => "?"
+            };
+            return pos.HasValue
+                ? $"Position: ({pos.Value.x}, {pos.Value.y}) facing {dirName}"
+                : "Could not get position";
+        });
+
+        // facing [dir] - Get/set facing direction
+        RegisterCommand("facing", "[direction]", "Get/set facing (0-7 or N/NE/E/SE/S/SW/W/NW)", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            if (args.Length == 0)
+            {
+                var f = EntityMovement.GetFacing(actor);
+                var dirName = f switch
+                {
+                    0 => "North", 1 => "Northeast", 2 => "East", 3 => "Southeast",
+                    4 => "South", 5 => "Southwest", 6 => "West", 7 => "Northwest",
+                    _ => "Unknown"
+                };
+                return $"Facing: {f} ({dirName})";
+            }
+            int dir;
+            var arg = args[0].ToUpperInvariant();
+            dir = arg switch
+            {
+                "N" or "NORTH" => 0,
+                "NE" or "NORTHEAST" => 1,
+                "E" or "EAST" => 2,
+                "SE" or "SOUTHEAST" => 3,
+                "S" or "SOUTH" => 4,
+                "SW" or "SOUTHWEST" => 5,
+                "W" or "WEST" => 6,
+                "NW" or "NORTHWEST" => 7,
+                _ => int.TryParse(arg, out int d) ? d : -1
+            };
+            if (dir < 0 || dir > 7) return "Invalid direction";
+            return EntityMovement.SetFacing(actor, dir)
+                ? $"Set facing to {dir}"
+                : "Failed to set facing";
+        });
+
+        // ap [value] - Get/set action points
+        RegisterCommand("ap", "[value]", "Get/set action points", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            if (args.Length == 0)
+                return $"AP: {EntityMovement.GetRemainingAP(actor)}";
+            if (!int.TryParse(args[0], out int ap))
+                return "Invalid AP value";
+            return EntityMovement.SetAP(actor, ap)
+                ? $"Set AP to {ap}"
+                : "Failed to set AP";
+        });
+
+        // === Entity Combat Commands ===
+
+        // skills - List skills for selected actor
+        RegisterCommand("skills", "", "List skills for selected actor", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var skills = EntityCombat.GetSkills(actor);
+            if (skills.Count == 0) return "No skills found";
+            var lines = new List<string> { $"Skills ({skills.Count}):" };
+            foreach (var s in skills)
+            {
+                var status = s.CanUse ? "ready" : "unavailable";
+                lines.Add($"  {s.Name} (AP:{s.APCost} Range:{s.Range}) - {status}");
+            }
+            return string.Join("\n", lines);
+        });
+
+        // damage <amount> - Apply damage to selected actor
+        RegisterCommand("damage", "<amount>", "Apply damage to selected actor", args =>
+        {
+            if (args.Length == 0) return "Usage: damage <amount>";
+            if (!int.TryParse(args[0], out int amount)) return "Invalid amount";
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            return EntityCombat.ApplyDamage(actor, amount)
+                ? $"Applied {amount} damage"
+                : "Failed to apply damage";
+        });
+
+        // heal <amount> - Heal selected actor
+        RegisterCommand("heal", "<amount>", "Heal selected actor", args =>
+        {
+            if (args.Length == 0) return "Usage: heal <amount>";
+            if (!int.TryParse(args[0], out int amount)) return "Invalid amount";
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            return EntityCombat.Heal(actor, amount)
+                ? $"Healed {amount}"
+                : "Failed to heal";
+        });
+
+        // suppression [value] - Get/set suppression
+        RegisterCommand("suppression", "[value]", "Get/set suppression (0-100)", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            if (args.Length == 0)
+            {
+                var info = EntityCombat.GetCombatInfo(actor);
+                return $"Suppression: {info?.Suppression:F0}% ({info?.SuppressionState})";
+            }
+            if (!float.TryParse(args[0], out float value)) return "Invalid value";
+            return EntityCombat.SetSuppression(actor, value)
+                ? $"Set suppression to {value}"
+                : "Failed to set suppression";
+        });
+
+        // morale [value] - Get/set morale
+        RegisterCommand("morale", "[value]", "Get/set morale", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            if (args.Length == 0)
+                return $"Morale: {EntityCombat.GetMorale(actor):F0}";
+            if (!float.TryParse(args[0], out float value)) return "Invalid value";
+            return EntityCombat.SetMorale(actor, value)
+                ? $"Set morale to {value}"
+                : "Failed to set morale";
+        });
+
+        // stun - Toggle stun on selected actor
+        RegisterCommand("stun", "", "Toggle stun on selected actor", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var info = EntityCombat.GetCombatInfo(actor);
+            var newState = !(info?.IsStunned ?? false);
+            return EntityCombat.SetStunned(actor, newState)
+                ? $"Actor {(newState ? "stunned" : "unstunned")}"
+                : "Failed to toggle stun";
+        });
+
+        // combat - Show combat info for selected actor
+        RegisterCommand("combat", "", "Show combat info for selected actor", args =>
+        {
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull) return "No actor selected";
+            var info = EntityCombat.GetCombatInfo(actor);
+            if (info == null) return "Could not get combat info";
+            return $"HP: {info.CurrentHP}/{info.MaxHP} ({info.HPPercent:P0})\n" +
+                   $"Suppression: {info.Suppression:F0}% ({info.SuppressionState})\n" +
+                   $"Morale: {info.Morale:F0}\n" +
+                   $"AP: {info.CurrentAP}\n" +
+                   $"Stunned: {info.IsStunned}, Turn Done: {info.IsTurnDone}";
+        });
+
+        // === Tactical Controller Commands ===
+
+        // round - Show current round
+        RegisterCommand("round", "", "Show current round number", args =>
+        {
+            return $"Round: {TacticalController.GetCurrentRound()}";
+        });
+
+        // nextround - Advance to next round
+        RegisterCommand("nextround", "", "Advance to next round", args =>
+        {
+            return TacticalController.NextRound()
+                ? $"Advanced to round {TacticalController.GetCurrentRound()}"
+                : "Failed to advance round";
+        });
+
+        // faction - Show current faction
+        RegisterCommand("faction", "", "Show current faction", args =>
+        {
+            var f = TacticalController.GetCurrentFaction();
+            var name = f switch { 0 => "Player", 1 => "Enemy", _ => $"Faction {f}" };
+            return $"Current faction: {f} ({name})";
+        });
+
+        // endturn - End current turn
+        RegisterCommand("endturn", "", "End the current turn", args =>
+        {
+            return TacticalController.EndTurn()
+                ? "Turn ended"
+                : "Failed to end turn";
+        });
+
+        // skipai - Skip AI turn
+        RegisterCommand("skipai", "", "Skip the AI turn", args =>
+        {
+            return TacticalController.SkipAITurn()
+                ? "AI turn skipped"
+                : "Not AI turn or failed";
+        });
+
+        // pause - Toggle pause
+        RegisterCommand("pause", "", "Toggle game pause", args =>
+        {
+            var paused = TacticalController.TogglePause();
+            return $"Game {(TacticalController.IsPaused() ? "paused" : "unpaused")}";
+        });
+
+        // timescale [value] - Get/set time scale
+        RegisterCommand("timescale", "[value]", "Get/set time scale (1.0 = normal)", args =>
+        {
+            if (args.Length == 0)
+                return $"Time scale: {TacticalController.GetTimeScale():F2}";
+            if (!float.TryParse(args[0], out float scale)) return "Invalid value";
+            return TacticalController.SetTimeScale(scale)
+                ? $"Time scale set to {scale:F2}"
+                : "Failed to set time scale";
+        });
+
+        // status - Show tactical state summary
+        RegisterCommand("status", "", "Show tactical state summary", args =>
+        {
+            var state = TacticalController.GetTacticalState();
+            return $"Round: {state.RoundNumber}, {state.CurrentFactionName}'s turn\n" +
+                   $"Active: {state.ActiveActorName ?? "(none)"}\n" +
+                   $"Players: {state.PlayerAliveCount} alive, {state.PlayerDeadCount} dead\n" +
+                   $"Enemies: {state.EnemyAliveCount} alive, {state.EnemyDeadCount} dead\n" +
+                   $"Paused: {state.IsPaused}, TimeScale: {state.TimeScale:F2}";
+        });
+
+        // win - Finish mission
+        RegisterCommand("win", "", "Finish mission (victory)", args =>
+        {
+            return TacticalController.FinishMission()
+                ? "Mission finished"
+                : "Failed to finish mission";
+        });
     }
 
     /// <summary>

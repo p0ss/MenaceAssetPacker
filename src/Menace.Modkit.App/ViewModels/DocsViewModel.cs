@@ -4,6 +4,8 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using ReactiveUI;
+using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Extensions;
 using Menace.Modkit.App.Models;
 
 namespace Menace.Modkit.App.ViewModels;
@@ -11,7 +13,7 @@ namespace Menace.Modkit.App.ViewModels;
 /// <summary>
 /// ViewModel for browsing and viewing documentation markdown files.
 /// </summary>
-public sealed class DocsViewModel : ViewModelBase
+public sealed class DocsViewModel : ViewModelBase, ISearchableViewModel
 {
     private string _docsPath = "";
     private DocTreeNode? _selectedNode;
@@ -22,9 +24,41 @@ public sealed class DocsViewModel : ViewModelBase
     public DocsViewModel()
     {
         DocTree = new ObservableCollection<DocTreeNode>();
+        SearchResults = new ObservableCollection<SearchResultItem>();
     }
 
     public ObservableCollection<DocTreeNode> DocTree { get; }
+
+    // ISearchableViewModel implementation
+    public ObservableCollection<SearchResultItem> SearchResults { get; }
+    public ObservableCollection<string> SectionFilters { get; } = new() { "All Sections" };
+
+    /// <summary>
+    /// True when search mode is active (3+ characters entered).
+    /// </summary>
+    public bool IsSearching => SearchText.Length >= 3;
+
+    private SearchPanelBuilder.SortOption _currentSortOption = SearchPanelBuilder.SortOption.Relevance;
+    public SearchPanelBuilder.SortOption CurrentSortOption
+    {
+        get => _currentSortOption;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _currentSortOption, value);
+            if (IsSearching) ApplySearchResultsSort();
+        }
+    }
+
+    private string? _selectedSectionFilter = "All Sections";
+    public string? SelectedSectionFilter
+    {
+        get => _selectedSectionFilter;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedSectionFilter, value);
+            if (IsSearching) GenerateSearchResults();
+        }
+    }
 
     public DocTreeNode? SelectedNode
     {
@@ -63,10 +97,216 @@ public sealed class DocsViewModel : ViewModelBase
         {
             if (_searchText != value)
             {
+                var wasSearching = IsSearching;
+                var currentSelection = _selectedNode;
+
                 this.RaiseAndSetIfChanged(ref _searchText, value);
-                ApplySearchFilter();
+                this.RaisePropertyChanged(nameof(IsSearching));
+
+                // Only generate search results when 3+ characters entered
+                if (IsSearching)
+                {
+                    GenerateSearchResults();
+                }
+                else
+                {
+                    SearchResults.Clear();
+                }
+
+                // When clearing search, preserve selection and focus it in tree
+                if (wasSearching && !IsSearching && currentSelection != null)
+                {
+                    FocusSelectedInTree();
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Forces search to execute immediately (called when Enter is pressed).
+    /// </summary>
+    public void ExecuteSearch()
+    {
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            GenerateSearchResults();
+        }
+    }
+
+    /// <summary>
+    /// Called when user clicks on a search result to select it.
+    /// </summary>
+    public void SelectSearchResult(SearchResultItem item)
+    {
+        if (item.SourceNode is DocTreeNode node)
+        {
+            SelectedNode = node;
+        }
+    }
+
+    /// <summary>
+    /// Called when user double-clicks a search result to select it and exit search mode.
+    /// </summary>
+    public void SelectAndExitSearch(SearchResultItem item)
+    {
+        if (item.SourceNode is DocTreeNode node)
+        {
+            // Clear search to switch back to tree view (use backing field to skip FocusSelectedInTree in setter)
+            _searchText = string.Empty;
+            this.RaisePropertyChanged(nameof(SearchText));
+            this.RaisePropertyChanged(nameof(IsSearching));
+            SearchResults.Clear();
+
+            // Defer expansion and selection to give TreeView time to create containers
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                // Expand ancestors first
+                ExpandToNode(node);
+
+                // Then set and notify selection
+                _selectedNode = node;
+                this.RaisePropertyChanged(nameof(SelectedNode));
+            }, Avalonia.Threading.DispatcherPriority.Background);
+        }
+    }
+
+    /// <summary>
+    /// Expands tree to show and focus the currently selected item.
+    /// </summary>
+    public void FocusSelectedInTree()
+    {
+        if (_selectedNode != null)
+        {
+            ExpandToNode(_selectedNode);
+        }
+    }
+
+    private void ExpandToNode(DocTreeNode targetNode)
+    {
+        void ExpandParentsRecursive(IEnumerable<DocTreeNode> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.IsFile) continue;
+
+                bool containsTarget = false;
+                void CheckChildren(DocTreeNode n)
+                {
+                    if (n == targetNode) { containsTarget = true; return; }
+                    foreach (var c in n.Children) CheckChildren(c);
+                }
+                CheckChildren(node);
+
+                if (containsTarget)
+                {
+                    node.IsExpanded = true;
+                    ExpandParentsRecursive(node.Children);
+                }
+            }
+        }
+        ExpandParentsRecursive(_allDocNodes);
+    }
+
+    /// <summary>
+    /// Populates the section filter dropdown based on top-level folders.
+    /// </summary>
+    private void PopulateSectionFilters()
+    {
+        SectionFilters.Clear();
+        SectionFilters.Add("All Sections");
+
+        foreach (var node in _allDocNodes.Where(n => !n.IsFile).OrderBy(n => n.Name))
+        {
+            SectionFilters.Add(node.Name);
+        }
+    }
+
+    private void GenerateSearchResults()
+    {
+        SearchResults.Clear();
+        if (string.IsNullOrWhiteSpace(_searchText)) return;
+
+        var results = new List<SearchResultItem>();
+        var searchLower = _searchText.ToLowerInvariant();
+        var sectionFilter = _selectedSectionFilter;
+        var filterBySection = !string.IsNullOrEmpty(sectionFilter) && sectionFilter != "All Sections";
+
+        void SearchNode(DocTreeNode node, string parentPath, string topLevelFolder)
+        {
+            var currentPath = string.IsNullOrEmpty(parentPath)
+                ? node.Name
+                : $"{parentPath} / {node.Name}";
+
+            if (node.IsFile)
+            {
+                // Apply section filter
+                if (filterBySection && !topLevelFolder.Equals(sectionFilter, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                var nameLower = node.Name.ToLowerInvariant();
+                if (nameLower.Contains(searchLower))
+                {
+                    var snippet = GetDocSnippet(node.FullPath);
+
+                    results.Add(new SearchResultItem
+                    {
+                        Breadcrumb = parentPath,
+                        Name = node.Name,
+                        Snippet = snippet,
+                        Score = nameLower.StartsWith(searchLower) ? 100 : 50,
+                        SourceNode = node,
+                        TypeIndicator = ".md"
+                    });
+                }
+            }
+            else
+            {
+                foreach (var child in node.Children)
+                    SearchNode(child, currentPath, topLevelFolder);
+            }
+        }
+
+        foreach (var root in _allDocNodes)
+            SearchNode(root, "", root.Name);
+
+        ApplySearchResultsSort(results);
+    }
+
+    private string GetDocSnippet(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return "";
+
+            var lines = File.ReadLines(path)
+                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
+                .Take(3)
+                .Select(l => l.Trim());
+
+            return string.Join(" ", lines).Truncate(120);
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private void ApplySearchResultsSort(List<SearchResultItem>? results = null)
+    {
+        results ??= SearchResults.ToList();
+
+        var sorted = CurrentSortOption switch
+        {
+            SearchPanelBuilder.SortOption.NameAsc => results.OrderBy(r => r.Name),
+            SearchPanelBuilder.SortOption.NameDesc => results.OrderByDescending(r => r.Name),
+            SearchPanelBuilder.SortOption.PathAsc => results.OrderBy(r => r.Breadcrumb),
+            SearchPanelBuilder.SortOption.PathDesc => results.OrderByDescending(r => r.Breadcrumb),
+            _ => results.OrderByDescending(r => r.Score)
+        };
+
+        SearchResults.Clear();
+        foreach (var item in sorted)
+            SearchResults.Add(item);
     }
 
     private void ApplySearchFilter()
@@ -210,6 +450,8 @@ public sealed class DocsViewModel : ViewModelBase
                 DocTree.Add(child);
                 _allDocNodes.Add(child);
             }
+
+            PopulateSectionFilters();
         }
         catch (Exception ex)
         {

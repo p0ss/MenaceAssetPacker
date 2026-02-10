@@ -195,4 +195,4 @@ Always check the Modkit output for warnings after saving your modpack.
 
 ---
 
-**Next:** [Textures & Icons](03-textures-icons.md)
+**Next:** [Template Cloning](03-template-cloning.md)

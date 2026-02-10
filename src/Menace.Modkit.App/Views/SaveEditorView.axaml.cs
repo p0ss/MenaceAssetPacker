@@ -95,16 +95,32 @@ public class SaveEditorView : UserControl
 
         var mainGrid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("320,*")
+            ColumnDefinitions = new ColumnDefinitions("300,4,*")
         };
 
-        // Left panel: Save list
-        mainGrid.Children.Add(BuildSaveListPanel());
-        Grid.SetColumn((Control)mainGrid.Children[0], 0);
+        // Left panel: Save list (darker panel)
+        var leftWrapper = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#141414")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = BuildSaveListPanel()
+        };
+        mainGrid.Children.Add(leftWrapper);
+        Grid.SetColumn(leftWrapper, 0);
 
-        // Right panel: Details
+        // Splitter
+        var splitter = new GridSplitter
+        {
+            Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            ResizeDirection = GridResizeDirection.Columns
+        };
+        mainGrid.Children.Add(splitter);
+        Grid.SetColumn(splitter, 1);
+
+        // Right panel: Details (lighter panel)
         mainGrid.Children.Add(BuildDetailsPanel());
-        Grid.SetColumn((Control)mainGrid.Children[1], 1);
+        Grid.SetColumn((Control)mainGrid.Children[2], 2);
 
         mainContent.Content = mainGrid;
 
@@ -175,14 +191,12 @@ public class SaveEditorView : UserControl
         var refreshButton = new Button
         {
             Content = "Refresh",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(24, 12),
+            Padding = new Thickness(24, 12),  // Larger for setup screen
             FontSize = 14,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 16, 0, 0)
         };
+        refreshButton.Classes.Add("primary");
         refreshButton.Click += (_, _) =>
         {
             try
@@ -211,7 +225,7 @@ public class SaveEditorView : UserControl
 
         var numberBorder = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
+            Background = new SolidColorBrush(Color.Parse("#004f43")),
             CornerRadius = new CornerRadius(16),
             Width = 32,
             Height = 32
@@ -241,12 +255,7 @@ public class SaveEditorView : UserControl
 
     private Control BuildSaveListPanel()
     {
-        var border = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-            BorderThickness = new Thickness(0, 0, 1, 0)
-        };
+        var border = new Border();  // No background - parent wrapper has it
 
         var grid = new Grid
         {
@@ -276,14 +285,10 @@ public class SaveEditorView : UserControl
         var refreshBtn = new Button
         {
             Content = "Refresh",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center
         };
+        refreshBtn.Classes.Add("secondary");
         refreshBtn.Click += (_, _) =>
         {
             try
@@ -306,13 +311,10 @@ public class SaveEditorView : UserControl
         var searchBox = new TextBox
         {
             Watermark = "Search saves...",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 8),
             Margin = new Thickness(8, 8, 8, 0),
             FontSize = 12
         };
+        searchBox.Classes.Add("search");
         searchBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding("SearchText")
             {
@@ -474,14 +476,10 @@ public class SaveEditorView : UserControl
         var openFolderBtn = new Button
         {
             Content = "Open Folder",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(12, 6),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Left
         };
+        openFolderBtn.Classes.Add("secondary");
         openFolderBtn.Click += (_, _) =>
         {
             try
@@ -506,7 +504,7 @@ public class SaveEditorView : UserControl
     {
         return type switch
         {
-            SaveStateType.Auto => new SolidColorBrush(Color.Parse("#064b48")),    // Teal (logo color)
+            SaveStateType.Auto => new SolidColorBrush(Color.Parse("#004f43")),    // Teal (logo color)
             SaveStateType.Quick => new SolidColorBrush(Color.Parse("#4A3068")),   // Purple
             SaveStateType.Manual => new SolidColorBrush(Color.Parse("#3A5A80")),  // Blue
             SaveStateType.Ironman => new SolidColorBrush(Color.Parse("#410511")), // Maroon
@@ -518,7 +516,7 @@ public class SaveEditorView : UserControl
     {
         var border = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
             Padding = new Thickness(24)
         };
 
@@ -599,13 +597,9 @@ public class SaveEditorView : UserControl
 
         var saveNameBox = new TextBox
         {
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8),
             FontSize = 14
         };
+        saveNameBox.Classes.Add("input");
         saveNameBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding("EditableSaveGameName")
             {
@@ -688,12 +682,9 @@ public class SaveEditorView : UserControl
         var saveButton = new Button
         {
             Content = "Save Changes",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
+        saveButton.Classes.Add("primary");
         saveButton.Click += (_, _) =>
         {
             try
@@ -711,24 +702,18 @@ public class SaveEditorView : UserControl
         var duplicateButton = new Button
         {
             Content = "Duplicate",
-            Background = new SolidColorBrush(Color.Parse("#3E3E3E")),  // Neutral grey
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
+        duplicateButton.Classes.Add("secondary");
         duplicateButton.Click += OnDuplicateClick;
         buttonPanel.Children.Add(duplicateButton);
 
         var deleteButton = new Button
         {
             Content = "Delete",
-            Background = new SolidColorBrush(Color.Parse("#410511")),  // Maroon (logo color)
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(20, 10),
             FontSize = 13
         };
+        deleteButton.Classes.Add("destructive");
         deleteButton.Click += OnDeleteClick;
         buttonPanel.Children.Add(deleteButton);
 
@@ -801,13 +786,9 @@ public class SaveEditorView : UserControl
             var nameInput = new TextBox
             {
                 Text = vm.SelectedSave.SaveGameName + " (copy)",
-                Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-                Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(8, 6),
                 FontSize = 12
             };
+            nameInput.Classes.Add("input");
             panel.Children.Add(nameInput);
 
             var buttonRow = new StackPanel
@@ -820,25 +801,18 @@ public class SaveEditorView : UserControl
             var cancelBtn = new Button
             {
                 Content = "Cancel",
-                Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-                Padding = new Thickness(16, 8),
                 FontSize = 12
             };
+            cancelBtn.Classes.Add("secondary");
             cancelBtn.Click += (_, _) => dialog.Close();
             buttonRow.Children.Add(cancelBtn);
 
             var okBtn = new Button
             {
                 Content = "Duplicate",
-                Background = new SolidColorBrush(Color.Parse("#3A5A80")),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(16, 8),
                 FontSize = 12
             };
+            okBtn.Classes.Add("primary");
             okBtn.Click += (_, _) =>
             {
                 var newName = nameInput.Text?.Trim();
@@ -912,25 +886,18 @@ public class SaveEditorView : UserControl
             var cancelBtn = new Button
             {
                 Content = "Cancel",
-                Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-                Padding = new Thickness(16, 8),
                 FontSize = 12
             };
+            cancelBtn.Classes.Add("secondary");
             cancelBtn.Click += (_, _) => dialog.Close();
             buttonRow.Children.Add(cancelBtn);
 
             var confirmBtn = new Button
             {
                 Content = "Delete",
-                Background = new SolidColorBrush(Color.Parse("#8B0000")),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(16, 8),
                 FontSize = 12
             };
+            confirmBtn.Classes.Add("destructive");
             confirmBtn.Click += (_, _) =>
             {
                 vm.DeleteSelectedSave();
@@ -992,15 +959,11 @@ public class SaveEditorView : UserControl
 
         var textBox = new TextBox
         {
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 4),
             FontSize = 12,
             Margin = new Thickness(0, 2, 16, 2),
             VerticalAlignment = VerticalAlignment.Center
         };
+        textBox.Classes.Add("input");
         textBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding(binding) { Mode = Avalonia.Data.BindingMode.TwoWay });
         grid.Children.Add(textBox);
@@ -1067,16 +1030,12 @@ public class SaveEditorView : UserControl
         // Use a TextBox for DateTime since DateTimePicker is complex
         var textBox = new TextBox
         {
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 4),
             FontSize = 12,
             Margin = new Thickness(0, 2, 16, 2),
             VerticalAlignment = VerticalAlignment.Center,
             Watermark = "yyyy-MM-dd HH:mm:ss"
         };
+        textBox.Classes.Add("input");
         // Bind with string format for display/edit
         textBox.Bind(TextBox.TextProperty,
             new Avalonia.Data.Binding(binding)
@@ -1095,15 +1054,11 @@ public class SaveEditorView : UserControl
 
         var comboBox = new ComboBox
         {
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 4),
             FontSize = 12,
             Margin = new Thickness(0, 2, 16, 2),
             VerticalAlignment = VerticalAlignment.Center
         };
+        comboBox.Classes.Add("input");
         comboBox.Bind(ComboBox.ItemsSourceProperty,
             new Avalonia.Data.Binding("SaveStateTypes"));
         comboBox.Bind(ComboBox.SelectedItemProperty,

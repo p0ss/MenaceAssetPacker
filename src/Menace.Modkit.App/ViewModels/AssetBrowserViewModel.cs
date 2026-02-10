@@ -7,19 +7,23 @@ using System.Text;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using ReactiveUI;
+using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Extensions;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using GlbLinkedTexture = Menace.Modkit.App.Services.GlbLinkedTexture;
 
 namespace Menace.Modkit.App.ViewModels;
 
-public sealed class AssetBrowserViewModel : ViewModelBase
+public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
 {
     private readonly AssetRipperService _assetRipperService;
     private readonly ModpackManager _modpackManager;
     private ReferenceGraphService? _referenceGraphService;
 
-    // Master copy of all tree nodes (unfiltered)
+    // Top-level nodes (for restoring tree view after filtering)
+    private List<AssetTreeNode> _topLevelNodes = new();
+    // Flat list of ALL nodes (for expand/collapse operations)
     private List<AssetTreeNode> _allTreeNodes = new();
     // Set of relative paths that have staging replacements
     private readonly HashSet<string> _modpackAssetPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -42,6 +46,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     public AssetBrowserViewModel()
     {
         FolderTree = new ObservableCollection<AssetTreeNode>();
+        SearchResults = new ObservableCollection<SearchResultItem>();
         _assetRipperService = new AssetRipperService();
         _modpackManager = new ModpackManager();
         AvailableModpacks = new ObservableCollection<string>();
@@ -56,6 +61,37 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     public ObservableCollection<AssetTreeNode> FolderTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
     public ObservableCollection<ReferenceEntry> AssetBacklinks { get; }
+
+    // ISearchableViewModel implementation
+    public ObservableCollection<SearchResultItem> SearchResults { get; }
+    public ObservableCollection<string> SectionFilters { get; } = new() { "All Sections" };
+
+    /// <summary>
+    /// True when search mode is active (3+ characters entered).
+    /// </summary>
+    public bool IsSearching => SearchText.Length >= 3;
+
+    private SearchPanelBuilder.SortOption _currentSortOption = SearchPanelBuilder.SortOption.Relevance;
+    public SearchPanelBuilder.SortOption CurrentSortOption
+    {
+        get => _currentSortOption;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _currentSortOption, value);
+            if (IsSearching) ApplySearchSort();
+        }
+    }
+
+    private string? _selectedSectionFilter = "All Sections";
+    public string? SelectedSectionFilter
+    {
+        get => _selectedSectionFilter;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedSectionFilter, value);
+            if (IsSearching) GenerateSearchResults();
+        }
+    }
 
     /// <summary>
     /// Set the reference graph service for querying asset backlinks.
@@ -461,6 +497,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     private void RefreshAssets()
     {
         FolderTree.Clear();
+        _topLevelNodes.Clear();
         _allTreeNodes.Clear();
         _searchEntries.Clear();
 
@@ -488,15 +525,54 @@ public sealed class AssetBrowserViewModel : ViewModelBase
     {
         var rootNode = BuildFolderTree(rootPath);
 
-        foreach (var child in rootNode.Children)
+        // Filter out excluded folders first, then check for single-child
+        var effectiveChildren = rootNode.Children
+            .Where(c => c.IsFile || !ExcludedTopLevelFolders.Contains(c.Name))
+            .ToList();
+
+        // Descend through single-child folders until we reach a level with multiple children
+        while (effectiveChildren.Count == 1 && !effectiveChildren[0].IsFile && effectiveChildren[0].Children.Count > 0)
+        {
+            effectiveChildren = effectiveChildren[0].Children.ToList();
+        }
+
+        // Build top-level list
+        _topLevelNodes = new List<AssetTreeNode>();
+        foreach (var child in effectiveChildren)
         {
             if (!child.IsFile && ExcludedTopLevelFolders.Contains(child.Name))
                 continue;
+            child.Parent = null;  // These are now top-level (clear stale parent from skipped folders)
+            _topLevelNodes.Add(child);
             FolderTree.Add(child);
         }
 
         BuildSearchIndex(FolderTree);
-        _allTreeNodes = FolderTree.ToList();
+
+        // Build flat list of ALL nodes for expand/collapse operations
+        _allTreeNodes = FlattenTree(FolderTree);
+
+        PopulateSectionFilters();
+    }
+
+    /// <summary>
+    /// Flattens the tree into a list of all nodes (including all descendants).
+    /// </summary>
+    private static List<AssetTreeNode> FlattenTree(IEnumerable<AssetTreeNode> roots)
+    {
+        var result = new List<AssetTreeNode>();
+
+        void Flatten(AssetTreeNode node)
+        {
+            result.Add(node);
+            foreach (var child in node.Children)
+                Flatten(child);
+        }
+
+        foreach (var root in roots)
+            Flatten(root);
+
+        return result;
     }
 
     private AssetTreeNode BuildFolderTree(string folderPath)
@@ -812,9 +888,165 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             if (_searchText != value)
             {
                 this.RaiseAndSetIfChanged(ref _searchText, value);
-                ApplySearchFilter();
+                this.RaisePropertyChanged(nameof(IsSearching));
+
+                // Only generate search results when 3+ characters entered
+                if (IsSearching)
+                {
+                    GenerateSearchResults();
+                }
+                else
+                {
+                    SearchResults.Clear();
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Forces search to execute immediately (called when Enter is pressed).
+    /// </summary>
+    public void ExecuteSearch()
+    {
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            GenerateSearchResults();
+        }
+    }
+
+    /// <summary>
+    /// Called when user clicks on a search result to select it.
+    /// </summary>
+    public void SelectSearchResult(SearchResultItem item)
+    {
+        if (item.SourceNode is AssetTreeNode node)
+        {
+            SelectedNode = node;
+        }
+    }
+
+    /// <summary>
+    /// Called when user double-clicks a search result to select it and exit search mode.
+    /// </summary>
+    public void SelectAndExitSearch(SearchResultItem item)
+    {
+        if (item.SourceNode is AssetTreeNode node)
+        {
+            // Clear search to switch back to tree view
+            _searchText = string.Empty;
+            this.RaisePropertyChanged(nameof(SearchText));
+            this.RaisePropertyChanged(nameof(IsSearching));
+            SearchResults.Clear();
+
+            // Defer expansion and selection to give TreeView time to create containers
+            // Use Loaded priority which fires after layout is complete
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                // Expand ancestors first
+                ExpandToNode(node);
+
+                // Then set and notify selection after another frame
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    _selectedNode = node;
+                    this.RaisePropertyChanged(nameof(SelectedNode));
+                }, Avalonia.Threading.DispatcherPriority.Background);
+            }, Avalonia.Threading.DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>
+    /// Expands tree to show and focus the currently selected item.
+    /// </summary>
+    public void FocusSelectedInTree()
+    {
+        if (_selectedNode != null)
+        {
+            ExpandToNode(_selectedNode);
+        }
+    }
+
+    /// <summary>
+    /// Populates the section filter dropdown based on top-level folders.
+    /// </summary>
+    private void PopulateSectionFilters()
+    {
+        SectionFilters.Clear();
+        SectionFilters.Add("All Sections");
+
+        // Use _topLevelNodes which contains the top-level asset categories (AudioClip, Mesh, etc.)
+        foreach (var node in _topLevelNodes.Where(n => !n.IsFile).OrderBy(n => n.Name))
+        {
+            SectionFilters.Add(node.Name);
+        }
+    }
+
+    private void GenerateSearchResults()
+    {
+        SearchResults.Clear();
+        if (string.IsNullOrWhiteSpace(_searchText)) return;
+
+        var searchLower = _searchText.ToLowerInvariant();
+        var results = new List<SearchResultItem>();
+        var sectionFilter = _selectedSectionFilter;
+        var filterBySection = !string.IsNullOrEmpty(sectionFilter) && sectionFilter != "All Sections";
+
+        void SearchNode(AssetTreeNode node, string parentPath, string topLevelFolder)
+        {
+            var currentPath = string.IsNullOrEmpty(parentPath)
+                ? node.Name
+                : $"{parentPath} / {node.Name}";
+
+            if (node.IsFile)
+            {
+                // Apply section filter
+                if (filterBySection && !topLevelFolder.Equals(sectionFilter, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                var score = ScoreMatch(node, _searchText);
+                if (score > 0)
+                {
+                    results.Add(new SearchResultItem
+                    {
+                        Breadcrumb = parentPath,
+                        Name = node.Name,
+                        Snippet = node.FileType ?? "",
+                        Score = score,
+                        SourceNode = node,
+                        TypeIndicator = Path.GetExtension(node.Name)
+                    });
+                }
+            }
+            else
+            {
+                foreach (var child in node.Children)
+                    SearchNode(child, currentPath, topLevelFolder);
+            }
+        }
+
+        // Search from top-level nodes (not flat list)
+        foreach (var root in _topLevelNodes)
+            SearchNode(root, "", root.Name);
+
+        ApplySearchSort(results);
+    }
+
+    private void ApplySearchSort(List<SearchResultItem>? results = null)
+    {
+        results ??= SearchResults.ToList();
+
+        var sorted = CurrentSortOption switch
+        {
+            SearchPanelBuilder.SortOption.NameAsc => results.OrderBy(r => r.Name),
+            SearchPanelBuilder.SortOption.NameDesc => results.OrderByDescending(r => r.Name),
+            SearchPanelBuilder.SortOption.PathAsc => results.OrderBy(r => r.Breadcrumb),
+            SearchPanelBuilder.SortOption.PathDesc => results.OrderByDescending(r => r.Breadcrumb),
+            _ => results.OrderByDescending(r => r.Score)
+        };
+
+        SearchResults.Clear();
+        foreach (var item in sorted)
+            SearchResults.Add(item);
     }
 
     private void ApplySearchFilter()
@@ -826,14 +1058,16 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
         if (!hasQuery && !_showModpackOnly)
         {
-            foreach (var node in _allTreeNodes)
+            // Restore original top-level structure
+            foreach (var node in _topLevelNodes)
                 FolderTree.Add(node);
             return;
         }
 
         var scores = new Dictionary<AssetTreeNode, int>();
 
-        foreach (var node in _allTreeNodes)
+        // Filter from top-level nodes (preserves tree structure)
+        foreach (var node in _topLevelNodes)
         {
             var filtered = FilterNode(node, query, scores);
             if (filtered != null)
@@ -851,12 +1085,22 @@ public sealed class AssetBrowserViewModel : ViewModelBase
             FolderTree.Clear();
             foreach (var n in sortedRoots)
                 FolderTree.Add(n);
-        }
 
-        // Auto-expand filtered results (multiple passes to handle TreeView container creation timing)
-        SetExpansionState(FolderTree, true);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
+            // Auto-expand filtered results only when actively filtering
+            ExpandAllInCollection(FolderTree);
+        }
+    }
+
+    private static void ExpandAllInCollection(IEnumerable<AssetTreeNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (!node.IsFile)
+            {
+                node.IsExpanded = true;
+                ExpandAllInCollection(node.Children);
+            }
+        }
     }
 
     private AssetTreeNode? FilterNode(AssetTreeNode node, string? query, Dictionary<AssetTreeNode, int> scores)
@@ -930,28 +1174,19 @@ public sealed class AssetBrowserViewModel : ViewModelBase
 
     public void ExpandAll()
     {
-        // Set expansion state multiple times with UI thread yields to allow
-        // TreeView to create containers for newly-visible children
-        SetExpansionState(FolderTree, true);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(FolderTree, true), Avalonia.Threading.DispatcherPriority.Background);
+        // Use the flat list to expand all folders at once
+        foreach (var node in _allTreeNodes.Where(n => !n.IsFile))
+        {
+            node.IsExpanded = true;
+        }
     }
 
     public void CollapseAll()
     {
-        SetExpansionState(FolderTree, false);
-    }
-
-    private static void SetExpansionState(IEnumerable<AssetTreeNode> nodes, bool expanded)
-    {
-        foreach (var node in nodes)
+        // Use the flat list to collapse all folders at once
+        foreach (var node in _allTreeNodes.Where(n => !n.IsFile))
         {
-            if (!node.IsFile)
-            {
-                node.IsExpanded = expanded;
-                SetExpansionState(node.Children, expanded);
-            }
+            node.IsExpanded = false;
         }
     }
 

@@ -3,6 +3,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
 
@@ -33,26 +35,42 @@ public class CodeEditorView : UserControl
     {
         var mainGrid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("280,*"),
+            ColumnDefinitions = new ColumnDefinitions("300,4,*"),
             RowDefinitions = new RowDefinitions("*,Auto")
         };
 
-        // Left panel: trees + toolbar
-        var leftPanel = BuildLeftPanel();
-        mainGrid.Children.Add(leftPanel);
-        Grid.SetColumn(leftPanel, 0);
-        Grid.SetRowSpan(leftPanel, 2);
+        // Left panel: trees + toolbar (darker panel)
+        var leftWrapper = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#141414")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = BuildLeftPanel()
+        };
+        mainGrid.Children.Add(leftWrapper);
+        Grid.SetColumn(leftWrapper, 0);
+        Grid.SetRowSpan(leftWrapper, 2);
 
-        // Right panel: code editor
+        // Splitter
+        var splitter = new GridSplitter
+        {
+            Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            ResizeDirection = GridResizeDirection.Columns
+        };
+        mainGrid.Children.Add(splitter);
+        Grid.SetColumn(splitter, 1);
+        Grid.SetRowSpan(splitter, 2);
+
+        // Right panel: code editor (lighter panel)
         var rightPanel = BuildRightPanel();
         mainGrid.Children.Add(rightPanel);
-        Grid.SetColumn(rightPanel, 1);
+        Grid.SetColumn(rightPanel, 2);
         Grid.SetRow(rightPanel, 0);
 
         // Bottom panel: build output
         var bottomPanel = BuildBottomPanel();
         mainGrid.Children.Add(bottomPanel);
-        Grid.SetColumn(bottomPanel, 1);
+        Grid.SetColumn(bottomPanel, 2);
         Grid.SetRow(bottomPanel, 1);
 
         return mainGrid;
@@ -60,51 +78,50 @@ public class CodeEditorView : UserControl
 
     private Control BuildLeftPanel()
     {
-        var border = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-            BorderThickness = new Thickness(0, 0, 1, 0)
-        };
+        var border = new Border();  // No background - parent wrapper has it
 
         // Use a Grid layout so TreeViews get proper height allocation
+        // Row order: Search, Expand/Collapse or Sort, Content (trees or search results)
         var grid = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,150,Auto,Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,Auto,*")
         };
 
         // Row 0: Search box
         var searchBox = new TextBox
         {
-            Watermark = "Search code...",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 8),
-            Margin = new Thickness(8, 8, 8, 4)
+            Watermark = "Search code... (3+ chars or Enter)",
+            Margin = new Thickness(8, 8, 8, 12)
         };
+        searchBox.Classes.Add("search");
         searchBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SearchText"));
+        searchBox.KeyDown += (s, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter && DataContext is CodeEditorViewModel vm)
+                vm.ExecuteSearch();
+        };
         grid.Children.Add(searchBox);
         Grid.SetRow(searchBox, 0);
 
-        // Row 1: Expand/Collapse buttons
+        // Row 1: Toggle between Expand/Collapse buttons and Sort dropdown
+        var buttonContainer = new Panel();
+
+        // Expand/Collapse buttons (shown when not searching)
         var expandCollapsePanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Margin = new Thickness(8, 4, 8, 4)
+            Margin = new Thickness(8, 4, 8, 12)
         };
+        expandCollapsePanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
         var expandAllButton = new Button
         {
             Content = "Expand All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        expandAllButton.Classes.Add("secondary");
         expandAllButton.Click += (_, _) =>
         {
             if (DataContext is CodeEditorViewModel vm)
@@ -115,13 +132,9 @@ public class CodeEditorView : UserControl
         var collapseAllButton = new Button
         {
             Content = "Collapse All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        collapseAllButton.Classes.Add("secondary");
         collapseAllButton.Click += (_, _) =>
         {
             if (DataContext is CodeEditorViewModel vm)
@@ -129,83 +142,127 @@ public class CodeEditorView : UserControl
         };
         expandCollapsePanel.Children.Add(collapseAllButton);
 
-        grid.Children.Add(expandCollapsePanel);
-        Grid.SetRow(expandCollapsePanel, 1);
+        buttonContainer.Children.Add(expandCollapsePanel);
 
-        // Row 2: Toolbar
-        var toolbar = new StackPanel
-        {
-            Margin = new Thickness(8),
-            Spacing = 8
-        };
-
-        var modpackLabel = new TextBlock
-        {
-            Text = "Modpack:",
-            FontSize = 11,
-            Foreground = Brushes.White,
-            Opacity = 0.7
-        };
-        toolbar.Children.Add(modpackLabel);
-
-        var modpackCombo = new ComboBox
-        {
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            FontSize = 12
-        };
-        modpackCombo.Bind(ComboBox.ItemsSourceProperty, new Avalonia.Data.Binding("AvailableModpacks"));
-        modpackCombo.Bind(ComboBox.SelectedItemProperty, new Avalonia.Data.Binding("SelectedModpack") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        toolbar.Children.Add(modpackCombo);
-
-        // Add/Remove file buttons
-        var fileButtonRow = new StackPanel
+        // Section filter + Sort panel (shown when searching)
+        var searchControlsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8
+            Spacing = 12,
+            Margin = new Thickness(8, 4, 8, 12)
         };
+        searchControlsPanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
 
-        var addButton = new Button
+        // Section filter dropdown
+        var sectionCombo = new ComboBox
         {
-            Content = "+ Add File",
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(10, 4)
+            MinWidth = 120
         };
-        addButton.Click += OnAddFileClick;
-        fileButtonRow.Children.Add(addButton);
+        sectionCombo.Classes.Add("input");
+        sectionCombo.Bind(ComboBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SectionFilters"));
+        sectionCombo.Bind(ComboBox.SelectedItemProperty,
+            new Avalonia.Data.Binding("SelectedSectionFilter") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        searchControlsPanel.Children.Add(sectionCombo);
 
-        var removeButton = new Button
+        // Sort dropdown
+        var sortLabel = new TextBlock
         {
-            Content = "- Remove",
+            Text = "Sort:",
             FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#4b0606")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(10, 4)
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
         };
-        removeButton.Click += OnRemoveFileClick;
-        fileButtonRow.Children.Add(removeButton);
+        searchControlsPanel.Children.Add(sortLabel);
 
-        toolbar.Children.Add(fileButtonRow);
-        grid.Children.Add(toolbar);
-        Grid.SetRow(toolbar, 2);
-
-        // Row 3: Separator
-        var sep1 = new Border
+        var sortCombo = new ComboBox
         {
-            Height = 1,
-            Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
-            Margin = new Thickness(0, 4)
+            FontSize = 11,
+            MinWidth = 100
         };
-        grid.Children.Add(sep1);
-        Grid.SetRow(sep1, 3);
+        sortCombo.Classes.Add("input");
+        sortCombo.Items.Add("Relevance");
+        sortCombo.Items.Add("Name A-Z");
+        sortCombo.Items.Add("Name Z-A");
+        sortCombo.Items.Add("Path A-Z");
+        sortCombo.Items.Add("Path Z-A");
+        sortCombo.SelectedIndex = 0;
+        sortCombo.SelectionChanged += (s, e) =>
+        {
+            if (sortCombo.SelectedIndex >= 0 && DataContext is CodeEditorViewModel vm)
+                vm.CurrentSortOption = (SearchPanelBuilder.SortOption)sortCombo.SelectedIndex;
+        };
+        searchControlsPanel.Children.Add(sortCombo);
 
-        // Row 4: Mod Source label
+        buttonContainer.Children.Add(searchControlsPanel);
+
+        grid.Children.Add(buttonContainer);
+        Grid.SetRow(buttonContainer, 1);
+
+        // Row 2: Content - toggle between trees and search results
+        var contentPanel = new Panel();
+
+        // Trees container (shown when not searching)
+        var treesContainer = BuildTreesContainer();
+        treesContainer.Bind(Control.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
+        contentPanel.Children.Add(treesContainer);
+
+        // Search Results ListBox (shown when searching)
+        var searchResultsList = new ListBox
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(8, 0)
+        };
+        searchResultsList.Bind(ListBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SearchResults"));
+        searchResultsList.Bind(ListBox.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
+
+        searchResultsList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<SearchResultItem>(
+            (item, _) => SearchPanelBuilder.CreateSearchResultControl(item), true);
+
+        searchResultsList.SelectionChanged += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is CodeEditorViewModel vm)
+            {
+                vm.SelectSearchResult(item);
+            }
+        };
+
+        // Double-click to select and exit search mode
+        searchResultsList.DoubleTapped += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is CodeEditorViewModel vm)
+            {
+                vm.SelectAndExitSearch(item);
+            }
+        };
+
+        contentPanel.Children.Add(searchResultsList);
+
+        grid.Children.Add(contentPanel);
+        Grid.SetRow(contentPanel, 2);
+
+        border.Child = grid;
+        return border;
+    }
+
+    private Control BuildTreesContainer()
+    {
+        // Sub-grid for the two trees
+        var grid = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,150,Auto,Auto,Auto,*")
+        };
+
+        // Row 0: Mod Source label
         var modSourceLabel = new TextBlock
         {
             Text = "Mod Sources",
@@ -215,9 +272,9 @@ public class CodeEditorView : UserControl
             Margin = new Thickness(8, 8, 8, 4)
         };
         grid.Children.Add(modSourceLabel);
-        Grid.SetRow(modSourceLabel, 4);
+        Grid.SetRow(modSourceLabel, 0);
 
-        // Row 5: Mod Source Tree (fixed height)
+        // Row 1: Mod Source Tree (fixed height)
         var modTree = new TreeView
         {
             Background = Brushes.Transparent,
@@ -226,15 +283,51 @@ public class CodeEditorView : UserControl
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         modTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("ModSourceTree"));
+        modTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedFile") { Mode = Avalonia.Data.BindingMode.TwoWay });
         modTree.ItemTemplate = CreateCodeTreeTemplate();
         modTree.SelectionChanged += OnTreeSelectionChanged;
         modTree.ContainerPrepared += OnTreeContainerPrepared;
 
         var modTreeScroll = new ScrollViewer { Content = modTree };
         grid.Children.Add(modTreeScroll);
-        Grid.SetRow(modTreeScroll, 5);
+        Grid.SetRow(modTreeScroll, 1);
 
-        // Row 6: Separator
+        // Row 2: Add/Remove file buttons
+        var fileButtonRow = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(8, 4, 8, 8)
+        };
+
+        var addButton = new Button
+        {
+            Content = "+ Add File",
+            FontSize = 11
+        };
+        addButton.Classes.Add("primary");
+        addButton.Click += OnAddFileClick;
+        fileButtonRow.Children.Add(addButton);
+        Grid.SetColumn(addButton, 0);
+
+        var removeButton = new Button
+        {
+            Content = "Remove",
+            FontSize = 11
+        };
+        removeButton.Classes.Add("destructive");
+        removeButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("SelectedFile")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<CodeTreeNode?, bool>(
+                node => node != null && node.IsFile && !node.IsReadOnly)
+        });
+        removeButton.Click += OnRemoveFileClick;
+        fileButtonRow.Children.Add(removeButton);
+        Grid.SetColumn(removeButton, 1);
+
+        grid.Children.Add(fileButtonRow);
+        Grid.SetRow(fileButtonRow, 2);
+
+        // Row 3: Separator
         var sep2 = new Border
         {
             Height = 1,
@@ -242,9 +335,9 @@ public class CodeEditorView : UserControl
             Margin = new Thickness(0, 4)
         };
         grid.Children.Add(sep2);
-        Grid.SetRow(sep2, 6);
+        Grid.SetRow(sep2, 3);
 
-        // Row 7: Vanilla Code label
+        // Row 4: Vanilla Code label
         var vanillaLabel = new TextBlock
         {
             Text = "Vanilla Code (read-only)",
@@ -255,9 +348,9 @@ public class CodeEditorView : UserControl
             Margin = new Thickness(8, 8, 8, 4)
         };
         grid.Children.Add(vanillaLabel);
-        Grid.SetRow(vanillaLabel, 7);
+        Grid.SetRow(vanillaLabel, 4);
 
-        // Row 8: Vanilla Code Tree (takes remaining space)
+        // Row 5: Vanilla Code Tree (takes remaining space)
         var vanillaTree = new TreeView
         {
             Background = Brushes.Transparent,
@@ -266,16 +359,16 @@ public class CodeEditorView : UserControl
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
         vanillaTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("VanillaCodeTree"));
+        vanillaTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedFile") { Mode = Avalonia.Data.BindingMode.TwoWay });
         vanillaTree.ItemTemplate = CreateCodeTreeTemplate();
         vanillaTree.SelectionChanged += OnTreeSelectionChanged;
         vanillaTree.ContainerPrepared += OnTreeContainerPrepared;
 
         var vanillaTreeScroll = new ScrollViewer { Content = vanillaTree };
         grid.Children.Add(vanillaTreeScroll);
-        Grid.SetRow(vanillaTreeScroll, 8);
+        Grid.SetRow(vanillaTreeScroll, 5);
 
-        border.Child = grid;
-        return border;
+        return grid;
     }
 
     private Avalonia.Controls.Templates.ITreeDataTemplate CreateCodeTreeTemplate()
@@ -302,7 +395,7 @@ public class CodeEditorView : UserControl
     {
         var border = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#1E1E1E"))
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A"))
         };
 
         var stack = new DockPanel();
@@ -320,6 +413,36 @@ public class CodeEditorView : UserControl
             Spacing = 12
         };
 
+        // Modpack dropdown
+        var modpackLabel = new TextBlock
+        {
+            Text = "Modpack:",
+            FontSize = 11,
+            Foreground = Brushes.White,
+            Opacity = 0.7,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        headerRow.Children.Add(modpackLabel);
+
+        var modpackCombo = new ComboBox
+        {
+            MinWidth = 150,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        modpackCombo.Classes.Add("input");
+        modpackCombo.Bind(ComboBox.ItemsSourceProperty, new Avalonia.Data.Binding("AvailableModpacks"));
+        modpackCombo.Bind(ComboBox.SelectedItemProperty, new Avalonia.Data.Binding("SelectedModpack") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        headerRow.Children.Add(modpackCombo);
+
+        // Separator
+        headerRow.Children.Add(new Border
+        {
+            Width = 1,
+            Background = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Margin = new Thickness(4, 0)
+        });
+
         var pathText = new TextBlock
         {
             FontSize = 11,
@@ -333,12 +456,9 @@ public class CodeEditorView : UserControl
         var saveButton = new Button
         {
             Content = "Save",
-            FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 4)
+            FontSize = 11
         };
+        saveButton.Classes.Add("primary");
         saveButton.Click += OnSaveClick;
         headerRow.Children.Add(saveButton);
 
@@ -346,12 +466,9 @@ public class CodeEditorView : UserControl
         var buildButton = new Button
         {
             Content = "Build",
-            FontSize = 11,
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 4)
+            FontSize = 11
         };
+        buildButton.Classes.Add("secondary");
         buildButton.Click += OnBuildClick;
         headerRow.Children.Add(buildButton);
 
@@ -485,9 +602,25 @@ public class CodeEditorView : UserControl
         }
     }
 
-    private void OnRemoveFileClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnRemoveFileClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (DataContext is CodeEditorViewModel vm)
+        if (DataContext is not CodeEditorViewModel vm || vm.SelectedFile == null || !vm.SelectedFile.IsFile)
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is not Window window)
+            return;
+
+        var fileName = vm.SelectedFile.Name;
+        var confirmed = await ConfirmationDialog.ShowAsync(
+            window,
+            "Remove File",
+            $"Are you sure you want to remove '{fileName}' from this modpack? This cannot be undone.",
+            "Remove",
+            isDestructive: true
+        );
+
+        if (confirmed)
             vm.RemoveFile();
     }
 

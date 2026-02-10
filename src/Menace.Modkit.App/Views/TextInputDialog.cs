@@ -40,13 +40,9 @@ public class TextInputDialog : Window
         _inputBox = new TextBox
         {
             Text = defaultValue,
-            Foreground = Brushes.White,
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 6),
             FontSize = 13
         };
+        _inputBox.Classes.Add("input");
         _inputBox.SelectAll();
         stack.Children.Add(_inputBox);
 
@@ -62,12 +58,9 @@ public class TextInputDialog : Window
         var okButton = new Button
         {
             Content = "OK",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        okButton.Classes.Add("primary");
         okButton.Click += (_, _) =>
         {
             var text = _inputBox.Text?.Trim();
@@ -79,13 +72,9 @@ public class TextInputDialog : Window
         var cancelButton = new Button
         {
             Content = "Cancel",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        cancelButton.Classes.Add("secondary");
         cancelButton.Click += (_, _) => Close(null);
         buttonRow.Children.Add(cancelButton);
 

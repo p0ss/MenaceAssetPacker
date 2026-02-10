@@ -60,16 +60,12 @@ public class CreateModpackDialog : Window
         _descriptionBox = new TextBox
         {
             Watermark = "Optional description...",
-            Foreground = Brushes.White,
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 6),
             FontSize = 13,
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             MinHeight = 60
         };
+        _descriptionBox.Classes.Add("input");
         stack.Children.Add(_descriptionBox);
 
         // Button row
@@ -84,12 +80,9 @@ public class CreateModpackDialog : Window
         var createButton = new Button
         {
             Content = "Create",
-            Background = new SolidColorBrush(Color.Parse("#064b48")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        createButton.Classes.Add("primary");
         createButton.Click += (_, _) =>
         {
             var name = _nameBox.Text?.Trim();
@@ -106,13 +99,9 @@ public class CreateModpackDialog : Window
         var cancelButton = new Button
         {
             Content = "Cancel",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(24, 8),
             FontSize = 13
         };
+        cancelButton.Classes.Add("secondary");
         cancelButton.Click += (_, _) => Close(null);
         buttonRow.Children.Add(cancelButton);
 
@@ -129,14 +118,14 @@ public class CreateModpackDialog : Window
         Opacity = 0.8
     };
 
-    private static TextBox CreateTextBox(string watermark = "") => new TextBox
+    private static TextBox CreateTextBox(string watermark = "")
     {
-        Watermark = watermark,
-        Foreground = Brushes.White,
-        Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-        BorderThickness = new Thickness(1),
-        Padding = new Thickness(8, 6),
-        FontSize = 13
-    };
+        var textBox = new TextBox
+        {
+            Watermark = watermark,
+            FontSize = 13
+        };
+        textBox.Classes.Add("input");
+        return textBox;
+    }
 }

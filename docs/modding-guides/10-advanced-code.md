@@ -14,7 +14,17 @@ For these cases, you'll write more advanced code or ship prebuilt DLLs.
 
 ## Harmony Patching
 
-Harmony lets you intercept and modify game methods at runtime:
+Harmony lets you intercept and modify game methods at runtime.
+
+### Patch Types
+
+| Type | When It Runs | Use Case |
+|------|--------------|----------|
+| **Prefix** | Before original method | Skip method, modify parameters |
+| **Postfix** | After original method | Modify return value, react to calls |
+| **Transpiler** | At patch time | Rewrite IL instructions (advanced) |
+
+### Basic Example
 
 ```csharp
 using HarmonyLib;
@@ -26,17 +36,30 @@ namespace MyMod;
 public class MyPatch
 {
     // Run before the original method
-    static void Prefix(SomeGameClass __instance)
+    // Return false to skip the original
+    static bool Prefix(SomeGameClass __instance, ref int damage)
     {
-        MelonLogger.Msg("Method is about to run!");
+        damage = damage / 2; // Halve incoming damage
+        return true; // Run original method
     }
 
     // Run after the original method
     static void Postfix(SomeGameClass __instance, ref int __result)
     {
-        MelonLogger.Msg($"Method returned: {__result}");
-        __result *= 2; // Modify the return value
+        __result *= 2; // Double the return value
     }
+}
+```
+
+### Setting Up Harmony
+
+Initialize Harmony in your plugin's `OnLoad`:
+
+```csharp
+public void OnLoad(string modpackName)
+{
+    var harmony = new HarmonyLib.Harmony($"com.myname.{modpackName}");
+    harmony.PatchAll(); // Apply all [HarmonyPatch] classes in this assembly
 }
 ```
 
@@ -64,6 +87,62 @@ var list = new Il2CppSystem.Collections.Generic.List<int>();
 ```
 
 The SDK handles most IL2CPP complexity. When working outside the SDK, consult the Il2CppInterop documentation.
+
+---
+
+## Building DLLs
+
+If you need prebuilt DLLs (external dependencies, complex multi-file projects, team CI/CD), here's how to set up a project.
+
+### When to Use DLLs vs Source
+
+| Use DLLs When | Use Source (.cs) When |
+|---------------|----------------------|
+| External NuGet dependencies | Single-file mods |
+| Multi-file projects with interfaces | Learning/experimenting |
+| CI/CD build pipelines | Community mods (auditable) |
+| Performance testing (Debug/Release) | SDK-based mods |
+
+**Rule of thumb:** If it can work as source files, ship it as source for SourceVerified status.
+
+### Project Setup
+
+Create a .NET Framework 4.7.2 class library:
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <OutputPath>..\MyMod-modpack\dlls\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+</Project>
+```
+
+### Required References
+
+| Assembly | Location |
+|----------|----------|
+| `MelonLoader.dll` | `<Game>/MelonLoader/net6/` |
+| `Il2CppInterop.Runtime.dll` | `<Game>/MelonLoader/net6/` |
+| `0Harmony.dll` | `<Game>/MelonLoader/net6/` |
+| `Menace.ModpackLoader.dll` | `<Game>/Mods/` |
+| `Assembly-CSharp.dll` | `<Game>/MelonLoader/Il2CppAssemblies/` |
+
+Add references with `<Private>false</Private>` (they're runtime dependencies).
+
+### Packaging
+
+Place DLLs in your modpack's `dlls/` folder and reference in `modpack.json`:
+
+```json
+{
+  "code": {
+    "dlls": ["dlls/MyMod.dll"]
+  }
+}
+```
 
 ---
 

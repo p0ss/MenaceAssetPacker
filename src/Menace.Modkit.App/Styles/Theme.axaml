@@ -36,11 +36,17 @@
     <!-- COLORS                                                              -->
     <!-- ═══════════════════════════════════════════════════════════════════ -->
 
-    <!-- Primary Brand -->
-    <SolidColorBrush x:Key="BrushPrimary" Color="#0d9488"/>
+    <!-- Primary Brand - Dark Teal -->
+    <Color x:Key="ColorPrimary">#004f43</Color>
+    <SolidColorBrush x:Key="BrushPrimary" Color="#004f43"/>
     <SolidColorBrush x:Key="BrushPrimaryLight" Color="#8ECDC8"/>
-    <SolidColorBrush x:Key="BrushPrimaryMuted" Color="#064b48"/>
-    <SolidColorBrush x:Key="BrushPrimaryHover" Color="#0f766e"/>
+    <SolidColorBrush x:Key="BrushPrimaryMuted" Color="#003d34"/>
+    <SolidColorBrush x:Key="BrushPrimaryHover" Color="#006657"/>
+
+    <!-- Secondary Brand - Maroon -->
+    <Color x:Key="ColorMaroon">#410511</Color>
+    <SolidColorBrush x:Key="BrushMaroon" Color="#410511"/>
+    <SolidColorBrush x:Key="BrushMaroonHover" Color="#5a0717"/>
 
     <!-- Semantic -->
     <SolidColorBrush x:Key="BrushSuccess" Color="#22c55e"/>
@@ -50,15 +56,23 @@
     <SolidColorBrush x:Key="BrushErrorMuted" Color="#FF8888"/>
     <SolidColorBrush x:Key="BrushInfo" Color="#8ECDC8"/>
 
-    <!-- Backgrounds -->
-    <SolidColorBrush x:Key="BrushBgBase" Color="#121212"/>
-    <SolidColorBrush x:Key="BrushBgSurface" Color="#1E1E1E"/>
+    <!-- Backgrounds - Standardized for panels -->
+    <Color x:Key="ColorBgBase">#0A0A0A</Color>
+    <Color x:Key="ColorBgSurface">#1A1A1A</Color>
+    <Color x:Key="ColorBgElevated">#252525</Color>
+    <SolidColorBrush x:Key="BrushBgBase" Color="#0A0A0A"/>
+    <SolidColorBrush x:Key="BrushBgSurface" Color="#1A1A1A"/>
     <SolidColorBrush x:Key="BrushBgElevated" Color="#252525"/>
     <SolidColorBrush x:Key="BrushBgInput" Color="#2A2A2A"/>
+
+    <!-- Panel backgrounds (left panel darker, right panel lighter) -->
+    <SolidColorBrush x:Key="BrushPanelLeft" Color="#141414"/>
+    <SolidColorBrush x:Key="BrushPanelRight" Color="#1A1A1A"/>
 
     <!-- Borders -->
     <SolidColorBrush x:Key="BrushBorder" Color="#2D2D2D"/>
     <SolidColorBrush x:Key="BrushBorderLight" Color="#3E3E3E"/>
+    <SolidColorBrush x:Key="BrushBorderPrimary" Color="#004f43"/>
 
     <!-- Text -->
     <SolidColorBrush x:Key="BrushTextPrimary" Color="#FFFFFF"/>
@@ -66,8 +80,8 @@
     <SolidColorBrush x:Key="BrushTextMuted" Color="#666666"/>
 
     <!-- Destructive -->
-    <SolidColorBrush x:Key="BrushDestructive" Color="#7f1d1d"/>
-    <SolidColorBrush x:Key="BrushDestructiveHover" Color="#991b1b"/>
+    <SolidColorBrush x:Key="BrushDestructive" Color="#410511"/>
+    <SolidColorBrush x:Key="BrushDestructiveHover" Color="#5a0717"/>
 
     <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- CORNER RADII                                                        -->

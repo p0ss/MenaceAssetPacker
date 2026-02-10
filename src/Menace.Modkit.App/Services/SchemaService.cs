@@ -245,6 +245,19 @@ public class SchemaService
     }
 
     /// <summary>
+    /// Get all fields for a template type.
+    /// </summary>
+    public List<FieldMeta> GetAllTemplateFields(string templateTypeName)
+    {
+        if (!_isLoaded) return new List<FieldMeta>();
+        if (_fieldsByTemplate.TryGetValue(templateTypeName, out var fields))
+        {
+            return new List<FieldMeta>(fields.Values);
+        }
+        return new List<FieldMeta>();
+    }
+
+    /// <summary>
     /// Get all fields tagged as unity_asset for a template type.
     /// </summary>
     public List<FieldMeta> GetAssetFields(string templateTypeName)

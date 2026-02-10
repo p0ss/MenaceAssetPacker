@@ -145,4 +145,4 @@ For 3D textures, the game uses smaller versions at distance. Your PNG will have 
 
 ---
 
-**Next:** [3D Models](04-3d-models.md)
+**Next:** [3D Models](05-3d-models.md)

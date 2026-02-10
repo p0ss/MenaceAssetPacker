@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using ReactiveUI;
+using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Extensions;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 
@@ -14,7 +17,7 @@ namespace Menace.Modkit.App.ViewModels;
 /// ViewModel for the Code tab: browse vanilla decompiled code (read-only)
 /// and edit per-modpack source files.
 /// </summary>
-public sealed class CodeEditorViewModel : ViewModelBase
+public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
 {
     private readonly ModpackManager _modpackManager;
     private readonly VanillaCodeService _vanillaCodeService;
@@ -32,6 +35,7 @@ public sealed class CodeEditorViewModel : ViewModelBase
         VanillaCodeTree = new ObservableCollection<CodeTreeNode>();
         ModSourceTree = new ObservableCollection<CodeTreeNode>();
         AvailableModpacks = new ObservableCollection<string>();
+        SearchResults = new ObservableCollection<SearchResultItem>();
 
         LoadModpacks();
         LoadVanillaTree();
@@ -42,6 +46,37 @@ public sealed class CodeEditorViewModel : ViewModelBase
     public ObservableCollection<CodeTreeNode> VanillaCodeTree { get; }
     public ObservableCollection<CodeTreeNode> ModSourceTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
+
+    // ISearchableViewModel implementation
+    public ObservableCollection<SearchResultItem> SearchResults { get; }
+    public ObservableCollection<string> SectionFilters { get; } = new() { "All Sections" };
+
+    /// <summary>
+    /// True when search mode is active (3+ characters entered).
+    /// </summary>
+    public bool IsSearching => SearchText.Length >= 3;
+
+    private SearchPanelBuilder.SortOption _currentSortOption = SearchPanelBuilder.SortOption.Relevance;
+    public SearchPanelBuilder.SortOption CurrentSortOption
+    {
+        get => _currentSortOption;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _currentSortOption, value);
+            if (IsSearching) ApplySearchResultsSort();
+        }
+    }
+
+    private string? _selectedSectionFilter = "All Sections";
+    public string? SelectedSectionFilter
+    {
+        get => _selectedSectionFilter;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedSectionFilter, value);
+            if (IsSearching) GenerateSearchResults();
+        }
+    }
 
     // ---------------------------------------------------------------
     // Selected modpack
@@ -130,10 +165,204 @@ public sealed class CodeEditorViewModel : ViewModelBase
         {
             if (_searchText != value)
             {
+                var wasSearching = IsSearching;
+                var currentSelection = _selectedFile;
+
                 this.RaiseAndSetIfChanged(ref _searchText, value);
-                ApplySearchFilter();
+                this.RaisePropertyChanged(nameof(IsSearching));
+
+                // Only generate search results when 3+ characters entered
+                if (IsSearching)
+                {
+                    GenerateSearchResults();
+                }
+                else
+                {
+                    SearchResults.Clear();
+                }
+
+                // When clearing search, preserve selection
+                if (wasSearching && !IsSearching && currentSelection != null)
+                {
+                    FocusSelectedInTree();
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Forces search to execute immediately (called when Enter is pressed).
+    /// </summary>
+    public void ExecuteSearch()
+    {
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            GenerateSearchResults();
+        }
+    }
+
+    /// <summary>
+    /// Called when user clicks on a search result to select it.
+    /// </summary>
+    public void SelectSearchResult(SearchResultItem item)
+    {
+        if (item.SourceNode is CodeTreeNode node)
+        {
+            SelectedFile = node;
+        }
+    }
+
+    /// <summary>
+    /// Called when user double-clicks a search result to select it and exit search mode.
+    /// </summary>
+    public void SelectAndExitSearch(SearchResultItem item)
+    {
+        if (item.SourceNode is CodeTreeNode node)
+        {
+            // Clear search to switch back to tree view (use backing field to skip FocusSelectedInTree in setter)
+            _searchText = string.Empty;
+            this.RaisePropertyChanged(nameof(SearchText));
+            this.RaisePropertyChanged(nameof(IsSearching));
+            SearchResults.Clear();
+
+            // Defer selection to give TreeView time to create containers
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _selectedFile = node;
+                this.RaisePropertyChanged(nameof(SelectedFile));
+            }, Avalonia.Threading.DispatcherPriority.Background);
+        }
+    }
+
+    /// <summary>
+    /// Expands tree to show and focus the currently selected file.
+    /// </summary>
+    public void FocusSelectedInTree()
+    {
+        // CodeEditorView doesn't have a single tree, but both trees are always visible
+        // The selection will be preserved and visible
+    }
+
+    /// <summary>
+    /// Populates the section filter dropdown.
+    /// </summary>
+    private void PopulateSectionFilters()
+    {
+        SectionFilters.Clear();
+        SectionFilters.Add("All Sections");
+        SectionFilters.Add("Vanilla Code");
+        SectionFilters.Add("Mod Sources");
+
+        // Add top-level vanilla folders
+        foreach (var node in _allVanillaCodeNodes.Where(n => !n.IsFile).OrderBy(n => n.Name))
+        {
+            SectionFilters.Add($"Vanilla: {node.Name}");
+        }
+    }
+
+    private void GenerateSearchResults()
+    {
+        SearchResults.Clear();
+        if (string.IsNullOrWhiteSpace(_searchText)) return;
+
+        var results = new List<SearchResultItem>();
+        var sectionFilter = _selectedSectionFilter;
+        var filterBySection = !string.IsNullOrEmpty(sectionFilter) && sectionFilter != "All Sections";
+
+        // Search vanilla code tree
+        void SearchNode(CodeTreeNode node, string parentPath, bool isVanilla, string topLevelFolder)
+        {
+            var currentPath = string.IsNullOrEmpty(parentPath)
+                ? node.Name
+                : $"{parentPath} / {node.Name}";
+
+            if (node.IsFile)
+            {
+                // Apply section filter
+                if (filterBySection)
+                {
+                    if (sectionFilter == "Vanilla Code" && !isVanilla) return;
+                    if (sectionFilter == "Mod Sources" && isVanilla) return;
+                    if (sectionFilter!.StartsWith("Vanilla: "))
+                    {
+                        var expectedFolder = sectionFilter.Substring("Vanilla: ".Length);
+                        if (!isVanilla || !topLevelFolder.Equals(expectedFolder, StringComparison.OrdinalIgnoreCase))
+                            return;
+                    }
+                }
+
+                var nameLower = node.Name.ToLowerInvariant();
+                var searchLower = _searchText.ToLowerInvariant();
+                if (nameLower.Contains(searchLower))
+                {
+                    // Lazy load snippet - only read file if needed
+                    var snippet = GetFileSnippet(node.FullPath);
+
+                    results.Add(new SearchResultItem
+                    {
+                        Breadcrumb = (isVanilla ? "[Vanilla] " : "[Mod] ") + parentPath,
+                        Name = node.Name,
+                        Snippet = snippet,
+                        Score = nameLower.StartsWith(searchLower) ? 100 : 50,
+                        SourceNode = node,
+                        TypeIndicator = Path.GetExtension(node.Name)
+                    });
+                }
+            }
+            else
+            {
+                foreach (var child in node.Children)
+                    SearchNode(child, currentPath, isVanilla, topLevelFolder);
+            }
+        }
+
+        foreach (var root in _allVanillaCodeNodes)
+            SearchNode(root, "", true, root.Name);
+
+        foreach (var root in _allModSourceNodes)
+            SearchNode(root, "", false, root.Name);
+
+        ApplySearchResultsSort(results);
+    }
+
+    private string GetFileSnippet(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return "";
+
+            using var reader = new StreamReader(path);
+            var lines = new List<string>();
+            for (int i = 0; i < 3 && !reader.EndOfStream; i++)
+            {
+                var line = reader.ReadLine()?.Trim();
+                if (!string.IsNullOrEmpty(line) && !line.StartsWith("//") && !line.StartsWith("using"))
+                    lines.Add(line);
+            }
+            return string.Join(" | ", lines).Truncate(120);
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private void ApplySearchResultsSort(List<SearchResultItem>? results = null)
+    {
+        results ??= SearchResults.ToList();
+
+        var sorted = CurrentSortOption switch
+        {
+            SearchPanelBuilder.SortOption.NameAsc => results.OrderBy(r => r.Name),
+            SearchPanelBuilder.SortOption.NameDesc => results.OrderByDescending(r => r.Name),
+            SearchPanelBuilder.SortOption.PathAsc => results.OrderBy(r => r.Breadcrumb),
+            SearchPanelBuilder.SortOption.PathDesc => results.OrderByDescending(r => r.Breadcrumb),
+            _ => results.OrderByDescending(r => r.Score)
+        };
+
+        SearchResults.Clear();
+        foreach (var item in sorted)
+            SearchResults.Add(item);
     }
 
     private void ApplySearchFilter()
@@ -301,16 +530,21 @@ public sealed class CodeEditorViewModel : ViewModelBase
         var tree = _vanillaCodeService.BuildVanillaCodeTree();
         if (tree != null)
         {
-            // Auto-expand the root node so users can see the contents
-            tree.IsExpanded = true;
+            // Add children directly (hide root folder like Assets/Data views do)
             Services.ModkitLog.Info($"[CodeEditorViewModel] Vanilla tree loaded: {tree.Name} with {tree.Children.Count} children");
-            VanillaCodeTree.Add(tree);
-            _allVanillaCodeNodes.Add(tree);
+            foreach (var child in tree.Children)
+            {
+                child.IsExpanded = true;
+                VanillaCodeTree.Add(child);
+                _allVanillaCodeNodes.Add(child);
+            }
         }
         else
         {
             Services.ModkitLog.Info("[CodeEditorViewModel] Vanilla tree is null - no decompiled code found");
         }
+
+        PopulateSectionFilters();
     }
 
     private void LoadModSourceTree()
@@ -333,11 +567,14 @@ public sealed class CodeEditorViewModel : ViewModelBase
         }
 
         var tree = VanillaCodeService.BuildModSourceTree(modpack.Path, modpack.Name);
-        // Auto-expand the root node
-        tree.IsExpanded = true;
+        // Add children directly (hide root folder like Assets/Data views do)
         Services.ModkitLog.Info($"[CodeEditorViewModel] Mod source tree loaded: {tree.Name} with {tree.Children.Count} children");
-        ModSourceTree.Add(tree);
-        _allModSourceNodes.Add(tree);
+        foreach (var child in tree.Children)
+        {
+            child.IsExpanded = true;
+            ModSourceTree.Add(child);
+            _allModSourceNodes.Add(child);
+        }
     }
 
     private void LoadFileContent()

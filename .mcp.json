@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "menace-modkit": {
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "/home/poss/Documents/Code/Menace/MenaceAssetPacker/src/Menace.Modkit.Mcp"
+      ]
+    }
+  }
+}

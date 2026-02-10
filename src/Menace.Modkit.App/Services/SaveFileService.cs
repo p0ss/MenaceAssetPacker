@@ -62,7 +62,24 @@ public class SaveFileService
             }
         }
 
-        // Check Windows Documents folder as fallback
+        // Check AppData/LocalLow (Unity's PersistentDataPath) - this is where the full game saves
+        var localLowPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrEmpty(localLowPath))
+        {
+            // LocalApplicationData gives us AppData/Local, but Unity uses AppData/LocalLow
+            var localLowParent = Path.GetDirectoryName(localLowPath);
+            if (!string.IsNullOrEmpty(localLowParent))
+            {
+                var appDataSavePath = Path.Combine(localLowParent, "LocalLow", "Overhype Studios", "Menace", "Saves");
+                if (Directory.Exists(appDataSavePath))
+                {
+                    ModkitLog.Info($"[SaveFileService] Found saves in AppData/LocalLow: {appDataSavePath}");
+                    return (appDataSavePath, "OK");
+                }
+            }
+        }
+
+        // Check Windows Documents folder as fallback (demo may use this)
         var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         if (!string.IsNullOrEmpty(documentsPath))
         {
@@ -81,9 +98,9 @@ public class SaveFileService
         var checkedPaths = $"Checked:\n- {savesPath}";
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            checkedPaths += "\n- Proton/Wine prefix paths";
+            checkedPaths += "\n- Proton/Wine prefix paths (AppData/LocalLow and Documents)";
         }
-        checkedPaths += $"\n- Documents folder";
+        checkedPaths += $"\n- AppData/LocalLow/Overhype Studios/Menace/Saves\n- Documents folder";
 
         return (null, $"Saves folder not found.\n{checkedPaths}\n\nPlay the game to create saves.");
     }
@@ -115,27 +132,125 @@ public class SaveFileService
             // Get the game folder name (e.g., "Menace" or "Menace Demo")
             var gameFolderName = Path.GetFileName(gameInstallPath);
 
-            // Search all app IDs for matching saves
-            foreach (var appIdDir in Directory.GetDirectories(compatdataDir))
+            // First, try to find the correct app ID from the manifest file
+            // This ensures we use the right compatdata folder for the installed game
+            var appId = FindAppIdForGame(steamappsDir, gameFolderName);
+            if (!string.IsNullOrEmpty(appId))
             {
-                // Try both game names
-                foreach (var gameName in new[] { gameFolderName, "Menace", "Menace Demo" })
+                var appIdCompatDir = Path.Combine(compatdataDir, appId);
+                if (Directory.Exists(appIdCompatDir))
                 {
-                    var savePath = Path.Combine(appIdDir, "pfx", "drive_c", "users", "steamuser", "Documents", gameName, "Saves");
-                    if (Directory.Exists(savePath))
+                    var pfxBase = Path.Combine(appIdCompatDir, "pfx", "drive_c", "users", "steamuser");
+
+                    // Full game uses Unity's persistent data path: AppData/LocalLow/Overhype Studios/Menace/Saves
+                    var appDataPath = Path.Combine(pfxBase, "AppData", "LocalLow", "Overhype Studios", "Menace", "Saves");
+                    if (Directory.Exists(appDataPath))
                     {
-                        return savePath;
+                        ModkitLog.Info($"[SaveFileService] Found saves via AppData path (appId {appId}): {appDataPath}");
+                        return appDataPath;
+                    }
+
+                    // Demo uses Documents folder: Documents/Menace Demo/Saves
+                    var documentsPath = Path.Combine(pfxBase, "Documents", gameFolderName, "Saves");
+                    if (Directory.Exists(documentsPath))
+                    {
+                        ModkitLog.Info($"[SaveFileService] Found saves via Documents path (appId {appId}): {documentsPath}");
+                        return documentsPath;
+                    }
+
+                    // Try other common folder names in Documents
+                    foreach (var docFolderName in new[] { "Menace", "Menace Demo" })
+                    {
+                        documentsPath = Path.Combine(pfxBase, "Documents", docFolderName, "Saves");
+                        if (Directory.Exists(documentsPath))
+                        {
+                            ModkitLog.Info($"[SaveFileService] Found saves via Documents variant (appId {appId}): {documentsPath}");
+                            return documentsPath;
+                        }
                     }
                 }
             }
 
-            return null;
+            // Fallback: search all app IDs, checking both AppData and Documents paths
+            // Prioritize AppData/LocalLow (full game) over Documents (demo)
+            string? fallbackPath = null;
+            foreach (var appIdDir in Directory.GetDirectories(compatdataDir))
+            {
+                var pfxBase = Path.Combine(appIdDir, "pfx", "drive_c", "users", "steamuser");
+
+                // First priority: AppData/LocalLow path (full game)
+                var appDataPath = Path.Combine(pfxBase, "AppData", "LocalLow", "Overhype Studios", "Menace", "Saves");
+                if (Directory.Exists(appDataPath))
+                {
+                    ModkitLog.Info($"[SaveFileService] Found saves via fallback AppData search: {appDataPath}");
+                    return appDataPath;
+                }
+
+                // Second priority: Documents path with exact game folder name
+                var documentsPath = Path.Combine(pfxBase, "Documents", gameFolderName, "Saves");
+                if (Directory.Exists(documentsPath))
+                {
+                    // For full game, return immediately; for demo, save as fallback
+                    if (gameFolderName == "Menace")
+                    {
+                        ModkitLog.Info($"[SaveFileService] Found saves via fallback Documents search: {documentsPath}");
+                        return documentsPath;
+                    }
+                    else if (fallbackPath == null)
+                    {
+                        fallbackPath = documentsPath;
+                    }
+                }
+            }
+
+            if (fallbackPath != null)
+            {
+                ModkitLog.Info($"[SaveFileService] Found saves via fallback: {fallbackPath}");
+            }
+
+            return fallbackPath;
         }
         catch (Exception ex)
         {
             ModkitLog.Warn($"[SaveFileService] Error searching Proton paths: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Finds the Steam app ID for a game by parsing appmanifest files in steamapps.
+    /// </summary>
+    private static string? FindAppIdForGame(string steamappsDir, string gameFolderName)
+    {
+        try
+        {
+            // Look for appmanifest_*.acf files that reference the game folder
+            foreach (var manifestPath in Directory.GetFiles(steamappsDir, "appmanifest_*.acf"))
+            {
+                var content = File.ReadAllText(manifestPath);
+
+                // Check if this manifest is for our game by looking for installdir
+                // Format: "installdir"		"Menace"
+                if (content.Contains($"\"installdir\"") &&
+                    content.Contains($"\"{gameFolderName}\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Extract app ID from filename: appmanifest_2337210.acf -> 2337210
+                    var fileName = Path.GetFileNameWithoutExtension(manifestPath);
+                    if (fileName.StartsWith("appmanifest_"))
+                    {
+                        var appId = fileName.Substring("appmanifest_".Length);
+                        ModkitLog.Info($"[SaveFileService] Found appId {appId} for game folder '{gameFolderName}'");
+                        return appId;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[SaveFileService] Error finding app ID: {ex.Message}");
+        }
+
+        return null;
     }
 
     /// <summary>

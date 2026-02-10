@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using MelonLoader;
@@ -119,6 +120,68 @@ public partial class ModpackLoaderMod
         return false;
     }
 
+    /// <summary>
+    /// Check if a type is a localization wrapper (LocalizedLine, LocalizedMultiLine, BaseLocalizedString).
+    /// These types store the actual text in m_DefaultTranslation at offset +0x38.
+    /// </summary>
+    private static bool IsLocalizationType(Type type)
+    {
+        if (type == null) return false;
+
+        // Check by name (faster than walking inheritance for common cases)
+        var name = type.Name;
+        if (name == "LocalizedLine" || name == "LocalizedMultiLine" || name == "BaseLocalizedString")
+            return true;
+
+        // Walk inheritance chain to find BaseLocalizedString
+        var current = type.BaseType;
+        while (current != null && current != typeof(object) && current != typeof(Il2CppObjectBase))
+        {
+            if (current.Name == "BaseLocalizedString")
+                return true;
+            current = current.BaseType;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Write a string value directly to a LocalizedLine/LocalizedMultiLine object's m_DefaultTranslation field.
+    /// This bypasses the type system since we can't construct these wrappers from strings.
+    /// Based on reverse engineering: m_DefaultTranslation is at offset +0x38.
+    /// </summary>
+    private bool WriteLocalizedStringValue(object locObject, string value)
+    {
+        if (locObject == null || !(locObject is Il2CppObjectBase il2cppObj))
+            return false;
+
+        try
+        {
+            var ptr = il2cppObj.Pointer;
+            if (ptr == IntPtr.Zero)
+                return false;
+
+            // m_DefaultTranslation is at offset +0x38 (0x38 = 56 bytes)
+            const int M_DEFAULT_TRANSLATION_OFFSET = 0x38;
+
+            // Convert managed string to IL2CPP string
+            IntPtr il2cppStr = IntPtr.Zero;
+            if (!string.IsNullOrEmpty(value))
+            {
+                il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
+            }
+
+            // Write the string pointer to the field
+            Marshal.WriteIntPtr(ptr + M_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
+            return false;
+        }
+    }
+
     private Dictionary<string, UnityEngine.Object> BuildNameLookup(Type elementType)
     {
         if (_nameLookupCache.TryGetValue(elementType, out var cached))
@@ -128,6 +191,13 @@ public partial class ModpackLoaderMod
 
         try
         {
+            // Force-load templates via DataTemplateLoader before FindObjectsOfTypeAll
+            // This ensures referenced templates are in memory
+            var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (gameAssembly != null)
+                EnsureTemplatesLoaded(gameAssembly, elementType);
+
             var il2cppType = Il2CppType.From(elementType);
             var objects = Resources.FindObjectsOfTypeAll(il2cppType);
 
@@ -248,6 +318,23 @@ public partial class ModpackLoaderMod
                         }
                     }
 
+                    // Localization types: write directly to m_DefaultTranslation
+                    if (IsLocalizationType(childProp.PropertyType))
+                    {
+                        var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
+                        var existingLoc = childProp.GetValue(parentObj);
+                        if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                        {
+                            LoggerInstance.Msg($"    {obj.name}.{fieldName}: set localized text");
+                            appliedCount++;
+                        }
+                        else
+                        {
+                            LoggerInstance.Warning($"    {obj.name}.{fieldName}: localization object is null");
+                        }
+                        continue;
+                    }
+
                     var nestedConverted = ConvertToPropertyType(rawValue, childProp.PropertyType);
                     childProp.SetValue(parentObj, nestedConverted);
                     appliedCount++;
@@ -290,6 +377,24 @@ public partial class ModpackLoaderMod
                             appliedCount++;
                         continue;
                     }
+                }
+
+                // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
+                // These are wrapper objects that can't be replaced with strings via normal property set
+                if (IsLocalizationType(prop.PropertyType))
+                {
+                    var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
+                    var existingLoc = prop.GetValue(castObj);
+                    if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                    {
+                        LoggerInstance.Msg($"    {obj.name}.{fieldName}: set localized text");
+                        appliedCount++;
+                    }
+                    else
+                    {
+                        LoggerInstance.Warning($"    {obj.name}.{fieldName}: localization object is null, cannot set text");
+                    }
+                    continue;
                 }
 
                 var convertedValue = ConvertToPropertyType(rawValue, prop.PropertyType);
@@ -726,6 +831,22 @@ public partial class ModpackLoaderMod
                     continue;
                 }
 
+                // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
+                if (IsLocalizationType(prop.PropertyType))
+                {
+                    var stringValue = value is JToken jt ? jt.Value<string>() : value?.ToString();
+                    var existingLoc = prop.GetValue(target);
+                    if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                    {
+                        // Successfully wrote to existing localization object
+                    }
+                    else
+                    {
+                        LoggerInstance.Warning($"    {targetType.Name}.{fieldName}: localization object is null");
+                    }
+                    continue;
+                }
+
                 // For everything else, use ConvertJTokenToType which handles:
                 // - Primitives, enums, strings
                 // - UnityEngine.Object references (resolved by name)
@@ -869,6 +990,16 @@ public partial class ModpackLoaderMod
                     {
                         addMethod.Invoke(list, new[] { converted });
                         opCount++;
+
+                        // Enhanced logging for ArmyEntry appends (debugging clone injection)
+                        if (elementType.Name == "ArmyEntry")
+                        {
+                            LogArmyEntryAppend(converted, item);
+                        }
+                    }
+                    else
+                    {
+                        LoggerInstance.Warning($"    {prop.Name}.$append: failed to convert item: {item}");
                     }
                 }
             }
@@ -876,5 +1007,56 @@ public partial class ModpackLoaderMod
 
         LoggerInstance.Msg($"    {prop.Name}: applied {opCount} incremental ops on List<{elementType.Name}>");
         return opCount > 0;
+    }
+
+    /// <summary>
+    /// Log detailed information about an ArmyEntry that was appended.
+    /// Helps diagnose clone injection issues.
+    /// </summary>
+    private void LogArmyEntryAppend(object armyEntry, JToken sourceItem)
+    {
+        try
+        {
+            var entryType = armyEntry.GetType();
+
+            // Get Template property
+            var templateProp = entryType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
+            var template = templateProp?.GetValue(armyEntry);
+            string templateName = "(null)";
+            if (template != null)
+            {
+                if (template is Il2CppObjectBase il2cppTemplate)
+                {
+                    var nameField = template.GetType().GetProperty("name", BindingFlags.Public | BindingFlags.Instance);
+                    templateName = nameField?.GetValue(template)?.ToString() ?? "(unnamed)";
+                }
+            }
+
+            // Get Amount/Count property
+            var amountProp = entryType.GetProperty("Amount", BindingFlags.Public | BindingFlags.Instance)
+                          ?? entryType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+            int amount = 1;
+            if (amountProp != null)
+            {
+                amount = (int)amountProp.GetValue(armyEntry);
+            }
+
+            // Log the append details
+            var sourceJson = sourceItem?.ToString();
+            if (sourceJson?.Length > 100) sourceJson = sourceJson.Substring(0, 100) + "...";
+            LoggerInstance.Msg($"      ArmyEntry appended: Template='{templateName}', Amount={amount}");
+
+            // Verify the template exists in game
+            if (template == null && sourceItem is JObject jObj && jObj.TryGetValue("Template", out var templateToken))
+            {
+                var requestedTemplate = templateToken.Value<string>();
+                LoggerInstance.Warning($"      WARNING: Template reference '{requestedTemplate}' resolved to null!");
+                LoggerInstance.Warning($"      This may indicate the clone was not registered before patching.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Warning($"      LogArmyEntryAppend failed: {ex.Message}");
+        }
     }
 }

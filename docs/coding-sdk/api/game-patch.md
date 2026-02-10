@@ -2,6 +2,17 @@
 
 `Menace.SDK.GamePatch` -- Static helpers for applying Harmony patches at runtime with safe error handling.
 
+## Overview
+
+GamePatch simplifies Harmony patching with error-safe wrappers:
+
+- **Type Resolution** - Find target types by name or GameType
+- **Method Discovery** - Locates methods across the class hierarchy with broad binding flags
+- **Error Isolation** - Failed patches log to ModError and return false, never crash
+- **Prefix/Postfix** - Standard Harmony patch types with consistent API
+
+Use GamePatch when you need to hook game methods. The API handles the complexity of finding methods in IL2CppInterop proxy types and gracefully handles failures during batch patching.
+
 All methods return `false` on failure and log details to `ModError` instead of throwing exceptions. This is by design: a single failed patch should not crash the mod loader or prevent other patches from being applied.
 
 ## Methods

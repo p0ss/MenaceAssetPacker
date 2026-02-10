@@ -3,6 +3,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
@@ -75,82 +77,80 @@ public class DocsView : UserControl
     {
         var mainGrid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("280,*")
+            ColumnDefinitions = new ColumnDefinitions("300,4,*")
         };
 
-        // Left panel: Document tree
-        mainGrid.Children.Add(BuildDocTreePanel());
-        Grid.SetColumn((Control)mainGrid.Children[0], 0);
+        // Left panel: Document tree (darker panel)
+        var leftWrapper = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#141414")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = BuildDocTreePanel()
+        };
+        mainGrid.Children.Add(leftWrapper);
+        Grid.SetColumn(leftWrapper, 0);
 
-        // Right panel: Document content
+        // Splitter
+        var splitter = new GridSplitter
+        {
+            Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+            ResizeDirection = GridResizeDirection.Columns
+        };
+        mainGrid.Children.Add(splitter);
+        Grid.SetColumn(splitter, 1);
+
+        // Right panel: Document content (lighter panel)
         mainGrid.Children.Add(BuildContentPanel());
-        Grid.SetColumn((Control)mainGrid.Children[1], 1);
+        Grid.SetColumn((Control)mainGrid.Children[2], 2);
 
         return mainGrid;
     }
 
     private Control BuildDocTreePanel()
     {
-        var border = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-            BorderThickness = new Thickness(0, 0, 1, 0)
-        };
+        var border = new Border();  // No background - parent wrapper has it
 
         var grid = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,Auto,*")
         };
 
-        // Row 0: Header
-        var header = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#252525")),
-            Padding = new Thickness(16, 12)
-        };
-        header.Child = new TextBlock
-        {
-            Text = "Documentation",
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Brushes.White
-        };
-        grid.Children.Add(header);
-        Grid.SetRow(header, 0);
-
-        // Row 1: Search box
+        // Row 0: Search box
         var searchBox = new TextBox
         {
-            Watermark = "Search docs...",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12, 8),
+            Watermark = "Search docs... (3+ chars or Enter)",
             Margin = new Thickness(8, 8, 8, 12)
         };
+        searchBox.Classes.Add("search");
         searchBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SearchText"));
+        searchBox.KeyDown += (s, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Enter && DataContext is DocsViewModel vm)
+                vm.ExecuteSearch();
+        };
         grid.Children.Add(searchBox);
-        Grid.SetRow(searchBox, 1);
+        Grid.SetRow(searchBox, 0);
 
-        // Row 2: Expand/Collapse buttons
+        // Row 1: Toggle between Expand/Collapse buttons and Sort dropdown
+        var buttonContainer = new Panel();
+
+        // Expand/Collapse buttons (shown when not searching)
         var buttonPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
             Margin = new Thickness(8, 4, 8, 12)
         };
+        buttonPanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
         var expandAllButton = new Button
         {
             Content = "Expand All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        expandAllButton.Classes.Add("secondary");
         expandAllButton.Click += (_, _) =>
         {
             if (DataContext is DocsViewModel vm)
@@ -161,13 +161,9 @@ public class DocsView : UserControl
         var collapseAllButton = new Button
         {
             Content = "Collapse All",
-            Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-            Padding = new Thickness(10, 4),
             FontSize = 11
         };
+        collapseAllButton.Classes.Add("secondary");
         collapseAllButton.Click += (_, _) =>
         {
             if (DataContext is DocsViewModel vm)
@@ -175,10 +171,70 @@ public class DocsView : UserControl
         };
         buttonPanel.Children.Add(collapseAllButton);
 
-        grid.Children.Add(buttonPanel);
-        Grid.SetRow(buttonPanel, 2);
+        buttonContainer.Children.Add(buttonPanel);
 
-        // Row 3: Document tree
+        // Section filter + Sort panel (shown when searching)
+        var searchControlsPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            Margin = new Thickness(8, 4, 8, 12)
+        };
+        searchControlsPanel.Bind(StackPanel.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
+
+        // Section filter dropdown
+        var sectionCombo = new ComboBox
+        {
+            FontSize = 11,
+            MinWidth = 120
+        };
+        sectionCombo.Classes.Add("input");
+        sectionCombo.Bind(ComboBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SectionFilters"));
+        sectionCombo.Bind(ComboBox.SelectedItemProperty,
+            new Avalonia.Data.Binding("SelectedSectionFilter") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        searchControlsPanel.Children.Add(sectionCombo);
+
+        // Sort dropdown
+        var sortLabel = new TextBlock
+        {
+            Text = "Sort:",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        searchControlsPanel.Children.Add(sortLabel);
+
+        var sortCombo = new ComboBox
+        {
+            FontSize = 11,
+            MinWidth = 100
+        };
+        sortCombo.Classes.Add("input");
+        sortCombo.Items.Add("Relevance");
+        sortCombo.Items.Add("Name A-Z");
+        sortCombo.Items.Add("Name Z-A");
+        sortCombo.Items.Add("Path A-Z");
+        sortCombo.Items.Add("Path Z-A");
+        sortCombo.SelectedIndex = 0;
+        sortCombo.SelectionChanged += (s, e) =>
+        {
+            if (sortCombo.SelectedIndex >= 0 && DataContext is DocsViewModel vm)
+                vm.CurrentSortOption = (SearchPanelBuilder.SortOption)sortCombo.SelectedIndex;
+        };
+        searchControlsPanel.Children.Add(sortCombo);
+
+        buttonContainer.Children.Add(searchControlsPanel);
+
+        grid.Children.Add(buttonContainer);
+        Grid.SetRow(buttonContainer, 1);
+
+        // Row 2: Toggle between TreeView and Search Results ListBox
+        var contentContainer = new Panel();
+
+        // Document tree (shown when not searching)
         var treeView = new TreeView
         {
             Background = Brushes.Transparent,
@@ -188,13 +244,55 @@ public class DocsView : UserControl
         };
         treeView.Bind(TreeView.ItemsSourceProperty,
             new Avalonia.Data.Binding("DocTree"));
+        treeView.Bind(TreeView.SelectedItemProperty,
+            new Avalonia.Data.Binding("SelectedNode") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        treeView.Bind(TreeView.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
         treeView.ItemTemplate = CreateDocTreeTemplate();
         treeView.SelectionChanged += OnTreeSelectionChanged;
         treeView.ContainerPrepared += OnTreeContainerPrepared;
 
-        var scrollViewer = new ScrollViewer { Content = treeView };
+        contentContainer.Children.Add(treeView);
+
+        // Search Results ListBox (shown when searching)
+        var searchResultsList = new ListBox
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(8, 0)
+        };
+        searchResultsList.Bind(ListBox.ItemsSourceProperty,
+            new Avalonia.Data.Binding("SearchResults"));
+        searchResultsList.Bind(ListBox.IsVisibleProperty,
+            new Avalonia.Data.Binding("IsSearching"));
+
+        searchResultsList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<SearchResultItem>(
+            (item, _) => SearchPanelBuilder.CreateSearchResultControl(item), true);
+
+        searchResultsList.SelectionChanged += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is DocsViewModel vm)
+            {
+                vm.SelectSearchResult(item);
+            }
+        };
+
+        // Double-click to select and exit search mode
+        searchResultsList.DoubleTapped += (s, e) =>
+        {
+            if (searchResultsList.SelectedItem is SearchResultItem item &&
+                DataContext is DocsViewModel vm)
+            {
+                vm.SelectAndExitSearch(item);
+            }
+        };
+
+        contentContainer.Children.Add(searchResultsList);
+
+        var scrollViewer = new ScrollViewer { Content = contentContainer };
         grid.Children.Add(scrollViewer);
-        Grid.SetRow(scrollViewer, 3);
+        Grid.SetRow(scrollViewer, 2);
 
         border.Child = grid;
         return border;
@@ -205,36 +303,18 @@ public class DocsView : UserControl
         return new Avalonia.Controls.Templates.FuncTreeDataTemplate<DocTreeNode>(
             (node, _) =>
             {
-                var panel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
-                    Margin = new Thickness(4, 8)
-                };
-
-                // Icon for folder/file
-                var icon = new TextBlock
-                {
-                    Text = node.IsFile ? "\ud83d\udcc4" : "\ud83d\udcc1",
-                    FontSize = 12,
-                    Foreground = new SolidColorBrush(Color.Parse("#888888")),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                panel.Children.Add(icon);
-
-                // Name
+                // Just the name - TreeViewItem provides the expansion chevron
                 var nameBlock = new TextBlock
                 {
+                    Text = node.Name,
                     FontSize = 12,
                     Foreground = Brushes.White,
                     FontWeight = node.IsFile ? FontWeight.Normal : FontWeight.SemiBold,
                     VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 8)
                 };
-                nameBlock.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Name"));
-                panel.Children.Add(nameBlock);
-
-                return panel;
+                return nameBlock;
             },
             node => node.Children);
     }
@@ -265,7 +345,7 @@ public class DocsView : UserControl
     {
         var border = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
             Padding = new Thickness(24)
         };
 

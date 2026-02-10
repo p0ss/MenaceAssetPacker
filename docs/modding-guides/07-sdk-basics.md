@@ -250,4 +250,4 @@ Explore the SDK API documentation:
 
 ---
 
-**Next:** [Advanced Code](06-advanced-code.md)
+**Next:** [Template Modding](08-template-modding.md)

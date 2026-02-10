@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Menace.Modkit.App.Controls;
+using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
@@ -46,16 +47,32 @@ public class StatsEditorView : UserControl
 
     var mainGrid = new Grid
     {
-      ColumnDefinitions = new ColumnDefinitions("*,2*")
+      ColumnDefinitions = new ColumnDefinitions("300,4,*")
     };
 
-    // Left: Navigation Tree
-    mainGrid.Children.Add(BuildNavigation());
-    Grid.SetColumn((Control)mainGrid.Children[0], 0);
+    // Left: Navigation Tree (darker panel)
+    var leftPanel = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#141414")),
+      BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      BorderThickness = new Thickness(0, 0, 1, 0),
+      Child = BuildNavigation()
+    };
+    mainGrid.Children.Add(leftPanel);
+    Grid.SetColumn(leftPanel, 0);
 
-    // Right: Detail Panel
+    // Splitter
+    var splitter = new GridSplitter
+    {
+      Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      ResizeDirection = GridResizeDirection.Columns
+    };
+    mainGrid.Children.Add(splitter);
+    Grid.SetColumn(splitter, 1);
+
+    // Right: Detail Panel (lighter panel)
     mainGrid.Children.Add(BuildDetailPanel());
-    Grid.SetColumn((Control)mainGrid.Children[1], 1);
+    Grid.SetColumn((Control)mainGrid.Children[2], 2);
 
     contentControl.Content = mainGrid;
 
@@ -136,38 +153,30 @@ public class StatsEditorView : UserControl
     var setupButton = new Button
     {
       Content = "Auto Setup (Install MelonLoader & DataExtractor)",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(24, 12),
+      Padding = new Thickness(24, 12),  // Larger for setup screen
       FontSize = 14
     };
+    setupButton.Classes.Add("primary");
     setupButton.Click += OnAutoSetupClick;
     buttonPanel.Children.Add(setupButton);
 
     var refreshButton = new Button
     {
       Content = "Refresh",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
-      Padding = new Thickness(24, 12),
+      Padding = new Thickness(24, 12),  // Larger for setup screen
       FontSize = 14
     };
+    refreshButton.Classes.Add("selected");  // Grey with teal border
     refreshButton.Click += OnRefreshClick;
     buttonPanel.Children.Add(refreshButton);
 
     var launchButton = new Button
     {
       Content = "Launch Game to Update Data",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
-      Padding = new Thickness(24, 12),
+      Padding = new Thickness(24, 12),  // Larger for setup screen
       FontSize = 14
     };
+    launchButton.Classes.Add("selected");  // Grey with teal border
     launchButton.Click += OnLaunchGameClick;
     buttonPanel.Children.Add(launchButton);
 
@@ -239,7 +248,7 @@ public class StatsEditorView : UserControl
 
     var numberBorder = new Border
     {
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
+      Background = new SolidColorBrush(Color.Parse("#004f43")),
       CornerRadius = new CornerRadius(16),
       Width = 32,
       Height = 32
@@ -277,36 +286,39 @@ public class StatsEditorView : UserControl
     // Row 0: Search Box
     var searchBox = new TextBox
     {
-      Watermark = "Search templates...",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(12, 8),
-      Margin = new Thickness(0, 0, 0, 8)
+      Watermark = "Search templates... (3+ chars or Enter)",
+      Margin = new Thickness(8, 8, 8, 12)
     };
+    searchBox.Classes.Add("search");
     searchBox.Bind(TextBox.TextProperty,
       new Avalonia.Data.Binding("SearchText"));
+    searchBox.KeyDown += (s, e) =>
+    {
+      if (e.Key == Avalonia.Input.Key.Enter && DataContext is StatsEditorViewModel vm)
+        vm.ExecuteSearch();
+    };
     grid.Children.Add(searchBox);
     Grid.SetRow(searchBox, 0);
 
-    // Row 1: Expand/Collapse buttons
+    // Row 1: Toggle between Expand/Collapse buttons and Sort dropdown
+    var buttonContainer = new Panel();
+
+    // Expand/Collapse + Modpack Only buttons (shown when not searching)
     var buttonPanel = new StackPanel
     {
       Orientation = Orientation.Horizontal,
       Spacing = 8,
-      Margin = new Thickness(0, 0, 0, 8)
+      Margin = new Thickness(8, 4, 8, 12)
     };
+    buttonPanel.Bind(StackPanel.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
     var expandAllButton = new Button
     {
       Content = "Expand All",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      Padding = new Thickness(10, 4),
       FontSize = 11
     };
+    expandAllButton.Classes.Add("secondary");
     expandAllButton.Click += (_, _) =>
     {
       if (DataContext is StatsEditorViewModel vm)
@@ -317,13 +329,9 @@ public class StatsEditorView : UserControl
     var collapseAllButton = new Button
     {
       Content = "Collapse All",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      Padding = new Thickness(10, 4),
       FontSize = 11
     };
+    collapseAllButton.Classes.Add("secondary");
     collapseAllButton.Click += (_, _) =>
     {
       if (DataContext is StatsEditorViewModel vm)
@@ -334,13 +342,9 @@ public class StatsEditorView : UserControl
     var modpackOnlyToggle = new ToggleButton
     {
       Content = "Modpack Only",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      Padding = new Thickness(10, 4),
       FontSize = 11
     };
+    modpackOnlyToggle.Classes.Add("secondary");
     modpackOnlyToggle.Bind(ToggleButton.IsCheckedProperty,
       new Avalonia.Data.Binding("ShowModpackOnly")
       {
@@ -348,10 +352,71 @@ public class StatsEditorView : UserControl
       });
     buttonPanel.Children.Add(modpackOnlyToggle);
 
-    grid.Children.Add(buttonPanel);
-    Grid.SetRow(buttonPanel, 1);
+    buttonContainer.Children.Add(buttonPanel);
 
-    // Row 2: Hierarchical TreeView (non-virtualizing so Expand All works fully)
+    // Section filter + Sort panel (shown when searching)
+    var searchControlsPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 12,
+      Margin = new Thickness(8, 4, 8, 12)
+    };
+    searchControlsPanel.Bind(StackPanel.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsSearching"));
+
+    // Section filter dropdown
+    var sectionCombo = new ComboBox
+    {
+      FontSize = 11,
+      MinWidth = 120,
+      MaxDropDownHeight = 300
+    };
+    sectionCombo.Classes.Add("input");
+    sectionCombo.Bind(ComboBox.ItemsSourceProperty,
+      new Avalonia.Data.Binding("SectionFilters"));
+    sectionCombo.Bind(ComboBox.SelectedItemProperty,
+      new Avalonia.Data.Binding("SelectedSectionFilter") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    searchControlsPanel.Children.Add(sectionCombo);
+
+    // Sort dropdown
+    var sortLabel = new TextBlock
+    {
+      Text = "Sort:",
+      FontSize = 11,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center,
+      Margin = new Thickness(8, 0, 0, 0)
+    };
+    searchControlsPanel.Children.Add(sortLabel);
+
+    var sortCombo = new ComboBox
+    {
+      FontSize = 11,
+      MinWidth = 100
+    };
+    sortCombo.Classes.Add("input");
+    sortCombo.Items.Add("Relevance");
+    sortCombo.Items.Add("Name A-Z");
+    sortCombo.Items.Add("Name Z-A");
+    sortCombo.Items.Add("Path A-Z");
+    sortCombo.Items.Add("Path Z-A");
+    sortCombo.SelectedIndex = 0;
+    sortCombo.SelectionChanged += (s, e) =>
+    {
+      if (sortCombo.SelectedIndex >= 0 && DataContext is StatsEditorViewModel vm)
+        vm.CurrentSortOption = (SearchPanelBuilder.SortOption)sortCombo.SelectedIndex;
+    };
+    searchControlsPanel.Children.Add(sortCombo);
+
+    buttonContainer.Children.Add(searchControlsPanel);
+
+    grid.Children.Add(buttonContainer);
+    Grid.SetRow(buttonContainer, 1);
+
+    // Row 2: Toggle between TreeView and Search Results ListBox
+    var contentContainer = new Panel();
+
+    // Hierarchical TreeView (non-virtualizing so Expand All works fully) - shown when not searching
     var treeView = new TreeView
     {
       Background = Brushes.Transparent,
@@ -361,7 +426,9 @@ public class StatsEditorView : UserControl
     treeView.Bind(TreeView.ItemsSourceProperty,
       new Avalonia.Data.Binding("TreeNodes"));
     treeView.Bind(TreeView.SelectedItemProperty,
-      new Avalonia.Data.Binding("SelectedNode"));
+      new Avalonia.Data.Binding("SelectedNode") { Mode = Avalonia.Data.BindingMode.TwoWay });
+    treeView.Bind(TreeView.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsSearching") { Converter = BoolInverseConverter.Instance });
 
     // Tree item template
     treeView.ItemTemplate = new Avalonia.Controls.Templates.FuncTreeDataTemplate<TreeNodeViewModel>(
@@ -373,7 +440,7 @@ public class StatsEditorView : UserControl
           FontWeight = node.IsCategory ? FontWeight.SemiBold : FontWeight.Normal,
           Foreground = Brushes.White,
           FontSize = node.IsCategory ? 13 : 12,
-          Margin = new Thickness(8, 6)
+          Margin = new Thickness(8, 8)
         };
         return text;
       },
@@ -396,8 +463,46 @@ public class StatsEditorView : UserControl
       }
     };
 
-    grid.Children.Add(treeView);
-    Grid.SetRow(treeView, 2);
+    contentContainer.Children.Add(treeView);
+
+    // Search Results ListBox - shown when searching
+    var searchResultsList = new ListBox
+    {
+      Background = Brushes.Transparent,
+      BorderThickness = new Thickness(0),
+      Margin = new Thickness(8, 0)
+    };
+    searchResultsList.Bind(ListBox.ItemsSourceProperty,
+      new Avalonia.Data.Binding("SearchResults"));
+    searchResultsList.Bind(ListBox.IsVisibleProperty,
+      new Avalonia.Data.Binding("IsSearching"));
+
+    searchResultsList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<SearchResultItem>(
+      (item, _) => SearchPanelBuilder.CreateSearchResultControl(item), true);
+
+    searchResultsList.SelectionChanged += (s, e) =>
+    {
+      if (searchResultsList.SelectedItem is SearchResultItem item &&
+          DataContext is StatsEditorViewModel vm)
+      {
+        vm.SelectSearchResult(item);
+      }
+    };
+
+    // Double-click to select and exit search mode
+    searchResultsList.DoubleTapped += (s, e) =>
+    {
+      if (searchResultsList.SelectedItem is SearchResultItem item &&
+          DataContext is StatsEditorViewModel vm)
+      {
+        vm.SelectAndExitSearch(item);
+      }
+    };
+
+    contentContainer.Children.Add(searchResultsList);
+
+    grid.Children.Add(contentContainer);
+    Grid.SetRow(contentContainer, 2);
 
     return grid;
   }
@@ -406,9 +511,7 @@ public class StatsEditorView : UserControl
   {
     var border = new Border
     {
-      Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
-      BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
-      BorderThickness = new Thickness(1, 0, 0, 0),
+      Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
       Padding = new Thickness(24)
     };
 
@@ -438,12 +541,9 @@ public class StatsEditorView : UserControl
     var modpackCombo = new ComboBox
     {
       MinWidth = 200,
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
       FontSize = 12
     };
+    modpackCombo.Classes.Add("input");
     modpackCombo.Bind(ComboBox.ItemsSourceProperty,
       new Avalonia.Data.Binding("AvailableModpacks"));
     modpackCombo.Bind(ComboBox.SelectedItemProperty,
@@ -453,38 +553,36 @@ public class StatsEditorView : UserControl
     var saveButton = new Button
     {
       Content = "Save",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(16, 6),
       FontSize = 12
     };
+    saveButton.Classes.Add("primary");
     saveButton.Click += OnSaveClick;
     toolbar.Children.Add(saveButton);
 
     var cloneButton = new Button
     {
       Content = "Clone",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#064b48")),
-      Padding = new Thickness(16, 6),
       FontSize = 12
     };
+    cloneButton.Classes.Add("secondary");
     cloneButton.Click += OnCloneClick;
     toolbar.Children.Add(cloneButton);
+
+    var cloneWizardButton = new Button
+    {
+      Content = "Clone with Wizard...",
+      FontSize = 12
+    };
+    cloneWizardButton.Classes.Add("secondary");
+    cloneWizardButton.Click += OnCloneWithWizardClick;
+    toolbar.Children.Add(cloneWizardButton);
 
     var reloadButton = new Button
     {
       Content = "Reload Data",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      Padding = new Thickness(16, 6),
       FontSize = 12
     };
+    reloadButton.Classes.Add("secondary");
     reloadButton.Click += (_, _) =>
     {
       if (DataContext is StatsEditorViewModel vm)
@@ -576,13 +674,11 @@ public class StatsEditorView : UserControl
     var resetButton = new Button
     {
       Content = "Reset to Vanilla",
-      Background = new SolidColorBrush(Color.Parse("#410511")),  // Maroon
-      Foreground = Brushes.White,
       FontSize = 11,
-      Padding = new Thickness(8, 4),
       Margin = new Thickness(12, 0, 0, 0),
       VerticalAlignment = VerticalAlignment.Center
     };
+    resetButton.Classes.Add("destructive");
     resetButton.Click += OnResetToVanillaClick;
     // Show reset button when a node is selected, enable only when there are modifications
     resetButton.Bind(Button.IsVisibleProperty,
@@ -814,13 +910,9 @@ public class StatsEditorView : UserControl
     var nameInput = new TextBox
     {
       Text = vm.SelectedNode.Template.Name + "_clone",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      BorderThickness = new Thickness(1),
-      Padding = new Thickness(8, 6),
       FontSize = 12
     };
+    nameInput.Classes.Add("input");
     panel.Children.Add(nameInput);
 
     var buttonRow = new StackPanel
@@ -833,25 +925,18 @@ public class StatsEditorView : UserControl
     var cancelBtn = new Button
     {
       Content = "Cancel",
-      Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(1),
-      BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-      Padding = new Thickness(16, 6),
       FontSize = 12
     };
+    cancelBtn.Classes.Add("secondary");
     cancelBtn.Click += (_, _) => dialog.Close();
     buttonRow.Children.Add(cancelBtn);
 
     var okBtn = new Button
     {
       Content = "Clone",
-      Background = new SolidColorBrush(Color.Parse("#064b48")),
-      Foreground = Brushes.White,
-      BorderThickness = new Thickness(0),
-      Padding = new Thickness(16, 6),
       FontSize = 12
     };
+    okBtn.Classes.Add("primary");
     okBtn.Click += (_, _) =>
     {
       var newName = nameInput.Text?.Trim();
@@ -880,6 +965,46 @@ public class StatsEditorView : UserControl
     catch (Exception ex)
     {
       Services.ModkitLog.Error($"Clone template failed: {ex.Message}");
+    }
+  }
+
+  private async void OnCloneWithWizardClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    try
+    {
+      if (DataContext is not StatsEditorViewModel vm)
+        return;
+
+      var context = vm.GetCloneWizardContext();
+      if (context == null)
+      {
+        vm.SaveStatus = "Select a template and modpack first";
+        return;
+      }
+
+      var (templateType, instanceName, modpackName, refGraph, schema, vanillaPath) = context.Value;
+
+      var dialog = new CloningWizardDialog(
+        templateType,
+        instanceName,
+        modpackName,
+        refGraph,
+        schema,
+        vanillaPath);
+
+      var topLevel = TopLevel.GetTopLevel(this);
+      if (topLevel is Window parentWindow)
+      {
+        var result = await dialog.ShowDialog<Models.CloneWizardResult?>(parentWindow);
+        if (result != null)
+        {
+          vm.ApplyCloneWizardResult(result);
+        }
+      }
+    }
+    catch (Exception ex)
+    {
+      Services.ModkitLog.Error($"Clone wizard failed: {ex.Message}");
     }
   }
 
@@ -1209,12 +1334,9 @@ public class StatsEditorView : UserControl
       var browseButton = new Button
       {
         Content = "Browse...",
-        Background = new SolidColorBrush(Color.Parse("#064b48")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(0),
-        Padding = new Thickness(10, 4),
         FontSize = 11
       };
+      browseButton.Classes.Add("primary");
       browseButton.Click += async (_, _) =>
       {
         try
@@ -1251,13 +1373,9 @@ public class StatsEditorView : UserControl
       var clearButton = new Button
       {
         Content = "Clear",
-        Background = new SolidColorBrush(Color.Parse("#2A2A2A")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(1),
-        BorderBrush = new SolidColorBrush(Color.Parse("#3E3E3E")),
-        Padding = new Thickness(10, 4),
         FontSize = 11
       };
+      clearButton.Classes.Add("secondary");
       clearButton.Click += (_, _) =>
       {
         assetValue.AssetName = null;
@@ -1406,14 +1524,11 @@ public class StatsEditorView : UserControl
       var addBtn = new Button
       {
         Content = "+",
-        Background = new SolidColorBrush(Color.Parse("#064b48")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(0),
-        Padding = new Thickness(10, 4),
         FontSize = 14,
         Margin = new Thickness(4, 0, 0, 0),
         VerticalAlignment = VerticalAlignment.Center
       };
+      addBtn.Classes.Add("primary");
       addBtn.Click += (_, _) =>
       {
         var selected = autoComplete.Text;
@@ -1712,18 +1827,15 @@ public class StatsEditorView : UserControl
       var vm = DataContext as StatsEditorViewModel;
       var hasSchema = elementTypeName != null && vm != null && vm.HasEmbeddedClassSchema(elementTypeName);
 
-      var addBtn = new Button
+      var addEntryBtn = new Button
       {
         Content = hasSchema ? $"+ Add {elementTypeName}" : "+ Add Entry",
-        Background = new SolidColorBrush(Color.Parse("#2D5A2D")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(0),
-        Padding = new Thickness(10, 6),
         FontSize = 11,
         Margin = new Thickness(0, 8, 0, 0),
         HorizontalAlignment = HorizontalAlignment.Left
       };
-      addBtn.Click += (_, _) =>
+      addEntryBtn.Classes.Add("primary");
+      addEntryBtn.Click += (_, _) =>
       {
         System.Collections.Generic.Dictionary<string, object?> newElement;
 
@@ -1748,7 +1860,7 @@ public class StatsEditorView : UserControl
         RebuildItemsPanel();
         SyncToViewModel();
       };
-      outerPanel.Children.Add(addBtn);
+      outerPanel.Children.Add(addEntryBtn);
     }
 
     initialized = true;
@@ -2190,24 +2302,21 @@ public class StatsEditorView : UserControl
 
     if (isEditable)
     {
-      var addBtn = new Button
+      var addItemBtn = new Button
       {
         Content = "+ Add",
-        Background = new SolidColorBrush(Color.Parse("#064b48")),
-        Foreground = Brushes.White,
-        BorderThickness = new Thickness(0),
-        Padding = new Thickness(10, 4),
         FontSize = 11,
         Margin = new Thickness(0, 4, 0, 0),
         HorizontalAlignment = HorizontalAlignment.Left
       };
-      addBtn.Click += (_, _) =>
+      addItemBtn.Classes.Add("primary");
+      addItemBtn.Click += (_, _) =>
       {
         items.Add("");
         RebuildItems();
         SyncItems();
       };
-      outerPanel.Children.Add(addBtn);
+      outerPanel.Children.Add(addItemBtn);
     }
 
     return outerPanel;

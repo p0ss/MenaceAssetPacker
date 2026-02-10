@@ -79,7 +79,7 @@ public class HomeView : UserControl
             "Manage load order, saves, and settings",
             "avares://Menace.Modkit.App/Assets/marines.png",
             "avares://Menace.Modkit.App/Assets/marines-alt.png",
-            "#064b48", // Teal
+            "#004f43", // Teal
             () => GetMainViewModel()?.NavigateToModLoader()
         ));
 

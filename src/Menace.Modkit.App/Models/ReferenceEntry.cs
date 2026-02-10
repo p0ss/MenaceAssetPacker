@@ -67,4 +67,40 @@ public class ReferenceGraphData
     /// </summary>
     [JsonPropertyName("assetBacklinks")]
     public Dictionary<string, List<ReferenceEntry>> AssetBacklinks { get; set; } = new();
+
+    /// <summary>
+    /// Enhanced backlinks with collection path info (v2+)
+    /// </summary>
+    [JsonPropertyName("enhancedBacklinks")]
+    public Dictionary<string, List<EnhancedReferenceEntryData>>? EnhancedBacklinks { get; set; }
+}
+
+/// <summary>
+/// Serializable version of EnhancedReferenceEntry for the cache file.
+/// </summary>
+public class EnhancedReferenceEntryData
+{
+    [JsonPropertyName("sourceType")]
+    public string SourceTemplateType { get; set; } = string.Empty;
+
+    [JsonPropertyName("sourceInstance")]
+    public string SourceInstanceName { get; set; } = string.Empty;
+
+    [JsonPropertyName("field")]
+    public string FieldName { get; set; } = string.Empty;
+
+    [JsonPropertyName("refType")]
+    public int Type { get; set; }
+
+    [JsonPropertyName("embeddedClass")]
+    public string? EmbeddedClassName { get; set; }
+
+    [JsonPropertyName("embeddedField")]
+    public string? EmbeddedFieldName { get; set; }
+
+    [JsonPropertyName("index")]
+    public int CollectionIndex { get; set; } = -1;
+
+    [JsonPropertyName("refValue")]
+    public string? ReferencedValue { get; set; }
 }
