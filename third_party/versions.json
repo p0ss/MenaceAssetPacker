@@ -23,7 +23,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "19.0.9",
+      "version": "19.0.10",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",
@@ -62,17 +62,6 @@
       "installPath": "addons/TwitchSquaddies",
       "downloads": {
         "any": { "size": 12000000 }
-      }
-    },
-    "McpServer": {
-      "version": "1.0.0",
-      "required": false,
-      "category": "addon",
-      "description": "MCP server for AI assistant integration (Claude, OpenCode, etc.)",
-      "installPath": "addons/McpServer",
-      "downloads": {
-        "win-x64": { "size": 8000000 },
-        "linux-x64": { "size": 8000000 }
       }
     },
     "DevMode": {

@@ -404,6 +404,17 @@ public class SetupViewModel : ViewModelBase
             // Refresh component status
             await LoadComponentsAsync();
 
+            // Refresh addon modpacks in staging (so newly downloaded addons appear in mod list)
+            // Run regardless of overall success - some addons may have downloaded successfully
+            try
+            {
+                new ModpackManager().SeedDownloadedAddons();
+            }
+            catch (Exception ex)
+            {
+                ModkitLog.Warn($"[Setup] Failed to seed addons: {ex.Message}");
+            }
+
             ModkitLog.Info($"[Setup] After refresh - HasRequiredPending: {HasRequiredPending}");
 
             if (success && !HasRequiredPending)

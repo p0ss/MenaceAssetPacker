@@ -118,19 +118,8 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
             CleanRedeployStatus = "Cleaning Mods directory...";
             await installer.CleanModsDirectoryAsync(s => CleanRedeployStatus = s);
 
-            if (!installer.IsMelonLoaderInstalled())
-            {
-                CleanRedeployStatus = "Installing MelonLoader...";
-                var ok = await installer.InstallMelonLoaderAsync(s => CleanRedeployStatus = s);
-                if (!ok) return;
-            }
-
-            CleanRedeployStatus = "Installing DataExtractor...";
-            if (!await installer.InstallDataExtractorAsync(s => CleanRedeployStatus = s))
-                return;
-
-            CleanRedeployStatus = "Installing ModpackLoader...";
-            if (!await installer.InstallModpackLoaderAsync(s => CleanRedeployStatus = s))
+            // Install all required components (same as Setup would)
+            if (!await installer.InstallAllRequiredAsync(s => CleanRedeployStatus = s))
                 return;
 
             CleanRedeployStatus = "✓ Clean redeploy complete. Go to Load Order and click Deploy All to redeploy your mods.";

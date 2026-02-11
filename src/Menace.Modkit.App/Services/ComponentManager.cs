@@ -635,7 +635,6 @@ public sealed class ComponentManager : IDisposable
             // Addons
             "TwitchSquaddies" => "TwitchSquaddies.zip",
             "DevMode" => "DevMode.zip",
-            "McpServer" => _platform == "win-x64" ? "McpServer-win-x64.zip" : "McpServer-linux-x64.zip",
             _ => null
         };
 

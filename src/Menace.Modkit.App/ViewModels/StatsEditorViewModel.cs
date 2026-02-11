@@ -2289,38 +2289,12 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
 
         var installer = new ModLoaderInstaller(gameInstallPath);
 
-        // Check what's already installed
-        var melonLoaderInstalled = installer.IsMelonLoaderInstalled();
-        var dataExtractorInstalled = installer.IsDataExtractorInstalled();
-
         SetupStatus = "Starting auto setup...";
 
-        // Install MelonLoader if needed
-        if (!melonLoaderInstalled)
+        // Install all required components (MelonLoader, DataExtractor, ModpackLoader)
+        if (!await installer.InstallAllRequiredAsync((status) => SetupStatus = status))
         {
-            var success = await installer.InstallMelonLoaderAsync((status) => SetupStatus = status);
-            if (!success)
-            {
-                return;
-            }
-        }
-        else
-        {
-            SetupStatus = "✓ MelonLoader already installed";
-        }
-
-        // Install DataExtractor if needed
-        if (!dataExtractorInstalled)
-        {
-            var success = await installer.InstallDataExtractorAsync((status) => SetupStatus = status);
-            if (!success)
-            {
-                return;
-            }
-        }
-        else
-        {
-            SetupStatus = "✓ DataExtractor already installed";
+            return;
         }
 
         // Offer to launch game

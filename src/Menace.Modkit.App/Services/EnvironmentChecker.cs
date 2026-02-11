@@ -35,6 +35,8 @@ public class EnvironmentChecker
         results.Add(await CheckDotNetRuntimeAsync());
         results.Add(await CheckGamePathAsync());
         results.Add(await CheckMelonLoaderAsync());
+        results.Add(await CheckDataExtractorAsync());
+        results.Add(await CheckModpackLoaderAsync());
         results.Add(await CheckIl2CppAssembliesAsync());
 
         if (OperatingSystem.IsWindows())
@@ -280,6 +282,104 @@ public class EnvironmentChecker
         return Task.FromResult(result);
     }
 
+    private Task<EnvironmentCheckResult> CheckDataExtractorAsync()
+    {
+        var result = new EnvironmentCheckResult
+        {
+            Name = "DataExtractor",
+            Category = CheckCategory.Game
+        };
+
+        var gamePath = AppSettings.Instance.GameInstallPath;
+        if (string.IsNullOrEmpty(gamePath) || !Directory.Exists(gamePath))
+        {
+            result.Status = CheckStatus.Warning;
+            result.Description = "Cannot check (no game path)";
+            result.Details = "Set the game path first.";
+            return Task.FromResult(result);
+        }
+
+        var dataExtractorDll = Path.Combine(gamePath, "Mods", "Menace.DataExtractor.dll");
+        if (!File.Exists(dataExtractorDll))
+        {
+            result.Status = CheckStatus.Failed;
+            result.Description = "Not installed";
+            result.Details = "DataExtractor is required to extract game data for modding.";
+            result.FixInstructions = "Click 'Install' to install DataExtractor.";
+            result.CanAutoFix = true;
+            result.AutoFixAction = AutoFixAction.InstallDataExtractor;
+            ModkitLog.Warn("[EnvCheck] DataExtractor not found in Mods folder");
+            return Task.FromResult(result);
+        }
+
+        result.Status = CheckStatus.Passed;
+        result.Description = "Installed";
+        result.Details = dataExtractorDll;
+        ModkitLog.Info($"[EnvCheck] DataExtractor found: {dataExtractorDll}");
+
+        return Task.FromResult(result);
+    }
+
+    private Task<EnvironmentCheckResult> CheckModpackLoaderAsync()
+    {
+        var result = new EnvironmentCheckResult
+        {
+            Name = "ModpackLoader",
+            Category = CheckCategory.Game
+        };
+
+        var gamePath = AppSettings.Instance.GameInstallPath;
+        if (string.IsNullOrEmpty(gamePath) || !Directory.Exists(gamePath))
+        {
+            result.Status = CheckStatus.Warning;
+            result.Description = "Cannot check (no game path)";
+            result.Details = "Set the game path first.";
+            return Task.FromResult(result);
+        }
+
+        var modpackLoaderDll = Path.Combine(gamePath, "Mods", "Menace.ModpackLoader.dll");
+        if (!File.Exists(modpackLoaderDll))
+        {
+            result.Status = CheckStatus.Failed;
+            result.Description = "Not installed";
+            result.Details = "ModpackLoader is required to load modpacks in-game.";
+            result.FixInstructions = "Click 'Install' to install ModpackLoader.";
+            result.CanAutoFix = true;
+            result.AutoFixAction = AutoFixAction.InstallModpackLoader;
+            ModkitLog.Warn("[EnvCheck] ModpackLoader not found in Mods folder");
+            return Task.FromResult(result);
+        }
+
+        // Check that Roslyn dependencies are in UserLibs (required for runtime compilation)
+        var userLibsPath = Path.Combine(gamePath, "UserLibs");
+        var requiredDeps = new[]
+        {
+            "Microsoft.CodeAnalysis.dll",
+            "Microsoft.CodeAnalysis.CSharp.dll",
+            "System.Collections.Immutable.dll",
+            "System.Reflection.Metadata.dll"
+        };
+        var missingDeps = requiredDeps.Where(dep => !File.Exists(Path.Combine(userLibsPath, dep))).ToList();
+        if (missingDeps.Count > 0)
+        {
+            result.Status = CheckStatus.Warning;
+            result.Description = "Missing dependencies";
+            result.Details = $"ModpackLoader dependencies not found in UserLibs: {string.Join(", ", missingDeps)}";
+            result.FixInstructions = "Click 'Install' to reinstall ModpackLoader with dependencies.";
+            result.CanAutoFix = true;
+            result.AutoFixAction = AutoFixAction.InstallModpackLoader;
+            ModkitLog.Warn($"[EnvCheck] ModpackLoader missing UserLibs dependencies: {string.Join(", ", missingDeps)}");
+            return Task.FromResult(result);
+        }
+
+        result.Status = CheckStatus.Passed;
+        result.Description = "Installed";
+        result.Details = modpackLoaderDll;
+        ModkitLog.Info($"[EnvCheck] ModpackLoader found: {modpackLoaderDll}");
+
+        return Task.FromResult(result);
+    }
+
     private Task<EnvironmentCheckResult> CheckIl2CppAssembliesAsync()
     {
         var result = new EnvironmentCheckResult
@@ -506,6 +606,15 @@ public class EnvironmentChecker
                 var deInstaller = new ModLoaderInstaller(gamePath);
                 return await deInstaller.InstallDataExtractorAsync(progressCallback);
 
+            case AutoFixAction.InstallModpackLoader:
+                if (string.IsNullOrEmpty(gamePath))
+                {
+                    progressCallback?.Invoke("Error: Game path not set");
+                    return false;
+                }
+                var mpInstaller = new ModLoaderInstaller(gamePath);
+                return await mpInstaller.InstallModpackLoaderAsync(progressCallback);
+
             default:
                 progressCallback?.Invoke("Unknown fix action");
                 return false;
@@ -615,5 +724,6 @@ public enum AutoFixAction
     None,
     InstallMelonLoader,
     LaunchGame,
-    InstallDataExtractor
+    InstallDataExtractor,
+    InstallModpackLoader
 }

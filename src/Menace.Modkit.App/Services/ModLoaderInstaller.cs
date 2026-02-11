@@ -22,6 +22,13 @@ public class ModLoaderInstaller
     {
         try
         {
+            // Check if MelonLoader is already fully installed (DLL + version.dll)
+            if (IsMelonLoaderFullyInstalled())
+            {
+                progressCallback?.Invoke("✓ MelonLoader already installed");
+                return Task.FromResult(true);
+            }
+
             progressCallback?.Invoke("Installing MelonLoader...");
 
             // MelonLoader is a required component (cached or bundled)
@@ -29,7 +36,7 @@ public class ModLoaderInstaller
 
             if (melonLoaderPath == null)
             {
-                progressCallback?.Invoke("❌ MelonLoader not found. Please go to Setup and download required components first.");
+                progressCallback?.Invoke("❌ MelonLoader component not found. Go to Setup tab to download required components.");
                 return Task.FromResult(false);
             }
 
@@ -44,6 +51,19 @@ public class ModLoaderInstaller
             progressCallback?.Invoke($"❌ Error installing MelonLoader: {ex.Message}");
             return Task.FromResult(false);
         }
+    }
+
+    /// <summary>
+    /// Check if MelonLoader is fully installed (both MelonLoader.dll and version.dll present).
+    /// This is stricter than IsMelonLoaderInstalled() which only checks for the DLL.
+    /// </summary>
+    public bool IsMelonLoaderFullyInstalled()
+    {
+        var versionDll = Path.Combine(_gameInstallPath, "version.dll");
+        if (!File.Exists(versionDll))
+            return false;
+
+        return IsMelonLoaderInstalled();
     }
 
     private void CopyDirectory(string sourceDir, string destDir, Action<string>? progressCallback = null)
@@ -136,13 +156,27 @@ public class ModLoaderInstaller
             }
 
             var modsFolder = Path.Combine(_gameInstallPath, "Mods");
+            var userLibsFolder = Path.Combine(_gameInstallPath, "UserLibs");
             Directory.CreateDirectory(modsFolder);
+            Directory.CreateDirectory(userLibsFolder);
 
-            // Copy all files (ModpackLoader.dll + Roslyn dependencies)
+            // Copy ModpackLoader.dll to Mods folder
+            // Copy dependencies (Roslyn, etc.) to UserLibs where MelonLoader can find them
             foreach (var file in Directory.GetFiles(modpackLoaderDir, "*.dll"))
             {
-                var targetPath = Path.Combine(modsFolder, Path.GetFileName(file));
-                File.Copy(file, targetPath, overwrite: true);
+                var fileName = Path.GetFileName(file);
+                if (fileName.StartsWith("Menace.ModpackLoader", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Main mod DLL goes to Mods
+                    var targetPath = Path.Combine(modsFolder, fileName);
+                    File.Copy(file, targetPath, overwrite: true);
+                }
+                else
+                {
+                    // Dependencies go to UserLibs for MelonLoader's assembly resolver
+                    var targetPath = Path.Combine(userLibsFolder, fileName);
+                    File.Copy(file, targetPath, overwrite: true);
+                }
             }
 
             progressCallback?.Invoke("✓ ModpackLoader mod installed successfully");
@@ -158,10 +192,11 @@ public class ModLoaderInstaller
     public Task CleanModsDirectoryAsync(Action<string>? progressCallback = null)
     {
         var modsFolder = Path.Combine(_gameInstallPath, "Mods");
+        var userLibsFolder = Path.Combine(_gameInstallPath, "UserLibs");
 
         if (Directory.Exists(modsFolder))
         {
-            progressCallback?.Invoke("Deleting Mods directory contents...");
+            progressCallback?.Invoke("Cleaning Mods directory...");
 
             foreach (var file in Directory.GetFiles(modsFolder))
                 File.Delete(file);
@@ -170,21 +205,57 @@ public class ModLoaderInstaller
                 Directory.Delete(dir, true);
         }
 
+        if (Directory.Exists(userLibsFolder))
+        {
+            progressCallback?.Invoke("Cleaning UserLibs directory...");
+
+            foreach (var file in Directory.GetFiles(userLibsFolder))
+                File.Delete(file);
+
+            foreach (var dir in Directory.GetDirectories(userLibsFolder))
+                Directory.Delete(dir, true);
+        }
+
         Directory.CreateDirectory(modsFolder);
-        progressCallback?.Invoke("✓ Mods directory cleaned");
+        Directory.CreateDirectory(userLibsFolder);
+        progressCallback?.Invoke("✓ Mods and UserLibs directories cleaned");
         return Task.CompletedTask;
     }
 
     public bool IsMelonLoaderInstalled()
     {
-        var melonLoaderDll = Path.Combine(_gameInstallPath, "MelonLoader", "MelonLoader.dll");
-        return File.Exists(melonLoaderDll);
+        var mlDir = Path.Combine(_gameInstallPath, "MelonLoader");
+        if (!Directory.Exists(mlDir))
+            return false;
+
+        // Check for core DLL in either root or net6 subdirectory (matches ComponentManager.IsGameMelonLoaderPresent)
+        var melonLoaderDll = Path.Combine(mlDir, "MelonLoader.dll");
+        var melonLoaderDllNet6 = Path.Combine(mlDir, "net6", "MelonLoader.dll");
+        return File.Exists(melonLoaderDll) || File.Exists(melonLoaderDllNet6);
     }
 
     public bool IsDataExtractorInstalled()
     {
         var dataExtractorDll = Path.Combine(_gameInstallPath, "Mods", "Menace.DataExtractor.dll");
         return File.Exists(dataExtractorDll);
+    }
+
+    /// <summary>
+    /// Install all required components (MelonLoader, DataExtractor, ModpackLoader).
+    /// Used by Clean Redeploy to ensure a complete installation.
+    /// </summary>
+    public async Task<bool> InstallAllRequiredAsync(Action<string>? progressCallback = null)
+    {
+        if (!await InstallMelonLoaderAsync(progressCallback))
+            return false;
+
+        if (!await InstallDataExtractorAsync(progressCallback))
+            return false;
+
+        if (!await InstallModpackLoaderAsync(progressCallback))
+            return false;
+
+        return true;
     }
 
     public Task<bool> LaunchGameAsync(Action<string>? progressCallback = null)

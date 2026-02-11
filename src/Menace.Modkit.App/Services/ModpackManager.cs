@@ -40,6 +40,7 @@ public class ModpackManager
         EnsureDirectoriesExist();
         SeedBundledRuntimeDlls();
         SeedBundledModpacks();
+        SeedDownloadedAddons();
     }
 
     public string StagingBasePath => _stagingBasePath;
@@ -997,6 +998,39 @@ public class ModpackManager
             // version is newer, so source fixes propagate without requiring
             // the user to delete their staging directory.
             UpdateDirectoryFromBundled(modpackDir, targetDir);
+        }
+    }
+
+    /// <summary>
+    /// Copies downloaded addon modpacks from the component cache into the staging
+    /// directory so they appear in the mod list and can be deployed by the user.
+    /// Called at startup and can be called after addon downloads complete.
+    /// Only seeds addons that aren't already in staging - does NOT update existing
+    /// staged addons to preserve user edits.
+    /// </summary>
+    public void SeedDownloadedAddons()
+    {
+        var addonsDir = Path.Combine(
+            ComponentManager.Instance.ComponentsCachePath, "addons");
+
+        if (!Directory.Exists(addonsDir))
+            return;
+
+        foreach (var addonDir in Directory.GetDirectories(addonsDir))
+        {
+            // Skip empty directories (addon downloaded but extraction failed)
+            var manifestPath = Path.Combine(addonDir, "modpack.json");
+            if (!File.Exists(manifestPath))
+                continue;
+
+            var dirName = Path.GetFileName(addonDir);
+            var targetDir = Path.Combine(_stagingBasePath, dirName);
+
+            // Only seed if not already in staging - don't overwrite user edits
+            if (!Directory.Exists(targetDir))
+            {
+                CopyDirectory(addonDir, targetDir);
+            }
         }
     }
 

@@ -871,6 +871,7 @@ public class SetupView : UserControl
             AutoFixAction.InstallMelonLoader => "Install",
             AutoFixAction.LaunchGame => "Launch Game",
             AutoFixAction.InstallDataExtractor => "Install",
+            AutoFixAction.InstallModpackLoader => "Install",
             _ => "Fix"
         };
     }
