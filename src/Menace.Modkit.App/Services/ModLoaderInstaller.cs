@@ -29,7 +29,7 @@ public class ModLoaderInstaller
 
             if (melonLoaderPath == null)
             {
-                progressCallback?.Invoke("❌ MelonLoader not found. Please reinstall the app.");
+                progressCallback?.Invoke("❌ MelonLoader not found. Please go to Setup and download required components first.");
                 return Task.FromResult(false);
             }
 

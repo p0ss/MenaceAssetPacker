@@ -626,11 +626,16 @@ public sealed class ComponentManager : IDisposable
     {
         var filename = componentName switch
         {
+            // Core components
             "MelonLoader" => _platform == "win-x64" ? "MelonLoader-win-x64.zip" : "MelonLoader-linux-x64.tar.gz",
             "AssetRipper" => _platform == "win-x64" ? "AssetRipper-win-x64.zip" : "AssetRipper-linux-x64.tar.gz",
             "DataExtractor" => "DataExtractor.zip",
             "ModpackLoader" => "ModpackLoader.zip",
             "DotNetRefs" => "DotNetRefs.zip",
+            // Addons
+            "TwitchSquaddies" => "TwitchSquaddies.zip",
+            "DevMode" => "DevMode.zip",
+            "McpServer" => _platform == "win-x64" ? "McpServer-win-x64.zip" : "McpServer-linux-x64.zip",
             _ => null
         };
 

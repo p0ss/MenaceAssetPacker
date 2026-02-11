@@ -237,7 +237,7 @@ public class AiAssistantService
             isInstalled,
             isConfigured,
             configPath,
-            "https://github.com/opencode-ai/opencode"
+            "https://opencode.ai/"
         );
     }
 
