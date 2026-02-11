@@ -16,8 +16,11 @@
     <!-- Repository root (auto-detected) -->
     <RepoRoot>$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), 'Menace.Modkit.sln'))</RepoRoot>
 
-    <!-- Bundled MelonLoader DLLs for compilation references -->
-    <BundledMelonLoaderPath>$(RepoRoot)/third_party/bundled/MelonLoader/net6</BundledMelonLoaderPath>
+    <!-- MelonLoader DLLs for compilation references -->
+    <!-- Primary: compile-refs (committed to git for CI) -->
+    <!-- Fallback: bundled/MelonLoader/net6 (local development) -->
+    <BundledMelonLoaderPath Condition="Exists('$(RepoRoot)/third_party/compile-refs/MelonLoader/MelonLoader.dll')">$(RepoRoot)/third_party/compile-refs/MelonLoader</BundledMelonLoaderPath>
+    <BundledMelonLoaderPath Condition="'$(BundledMelonLoaderPath)' == ''">$(RepoRoot)/third_party/bundled/MelonLoader/net6</BundledMelonLoaderPath>
 
     <!-- Game install path - override via MENACE_GAME_PATH environment variable -->
     <GameInstallPath Condition="'$(GameInstallPath)' == '' AND '$(MENACE_GAME_PATH)' != ''">$(MENACE_GAME_PATH)</GameInstallPath>
