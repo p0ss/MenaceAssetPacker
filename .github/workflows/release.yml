@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version (e.g., 1.0.0)'
+        description: 'Version (e.g., 20.0.0)'
         required: true
         type: string
 
@@ -82,7 +82,7 @@ jobs:
               public const string MelonVersion = "$LOADER_VERSION";
 
               /// <summary>
-              /// Short display version (e.g., "v19").
+              /// Short display version (e.g., "v20").
               /// </summary>
               public const string Short = "v$BUILD_NUMBER";
 
@@ -101,7 +101,6 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-      # Build GUI App
       - name: Build GUI (Linux x64)
         run: |
           dotnet publish src/Menace.Modkit.App -c Release -r linux-x64 --self-contained \
@@ -114,153 +113,46 @@ jobs:
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/gui-win-x64
 
-      # Build CLI Tool
-      - name: Build CLI (Linux x64)
+      - name: Bundle versions.json
         run: |
-          dotnet publish src/Menace.Modkit.Cli -c Release -r linux-x64 --self-contained \
-            -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
-            -o dist/cli-linux-x64
-
-      - name: Build CLI (Windows x64)
-        run: |
-          dotnet publish src/Menace.Modkit.Cli -c Release -r win-x64 --self-contained \
-            -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
-            -o dist/cli-win-x64
-
-      # Note: DataExtractor and ModpackLoader are NOT built in CI because they require
-      # Il2CppAssemblies from a game install. Pre-built DLLs are committed to
-      # third_party/bundled/ and updated via build-redistributables.sh locally.
-
-      # Bundle core files into GUI builds
-      - name: Bundle core files
-        run: |
-          # Copy versions.json
           mkdir -p dist/gui-linux-x64/third_party
           mkdir -p dist/gui-win-x64/third_party
           cp third_party/versions.json dist/gui-linux-x64/third_party/
           cp third_party/versions.json dist/gui-win-x64/third_party/
 
-          # Copy bundled components (fallback when GitHub releases unavailable)
-          cp -r third_party/bundled dist/gui-linux-x64/third_party/
-          cp -r third_party/bundled dist/gui-win-x64/third_party/
-
-          # Copy tools (doctor scripts)
-          mkdir -p dist/gui-linux-x64/tools
-          mkdir -p dist/gui-win-x64/tools
-          cp tools/doctor.sh dist/gui-linux-x64/tools/
-          cp tools/doctor.ps1 dist/gui-win-x64/tools/
-          cp tools/doctor.bat dist/gui-win-x64/tools/
-
-      # Create component archives for on-demand download
-      # Uses pre-built DLLs from third_party/bundled/ (built locally with game assemblies)
-      - name: Create component archives
-        run: |
-          mkdir -p dist/components
-
-          # DataExtractor (platform-independent) - from bundled
-          (cd third_party/bundled/DataExtractor && zip -q -r ../../../dist/components/DataExtractor.zip .)
-
-          # ModpackLoader + Roslyn + SharpGLTF (platform-independent) - from bundled
-          (cd third_party/bundled/ModpackLoader && zip -q -r ../../../dist/components/ModpackLoader.zip .)
-
-          # DotNetRefs (if exists)
+          # Copy bundled components that are in git (DataExtractor, ModpackLoader)
+          mkdir -p dist/gui-linux-x64/third_party/bundled
+          mkdir -p dist/gui-win-x64/third_party/bundled
+          cp -r third_party/bundled/DataExtractor dist/gui-linux-x64/third_party/bundled/
+          cp -r third_party/bundled/DataExtractor dist/gui-win-x64/third_party/bundled/
+          cp -r third_party/bundled/ModpackLoader dist/gui-linux-x64/third_party/bundled/
+          cp -r third_party/bundled/ModpackLoader dist/gui-win-x64/third_party/bundled/
           if [ -d "third_party/bundled/dotnet-refs" ]; then
-            (cd third_party/bundled/dotnet-refs && zip -q -r ../../../dist/components/DotNetRefs.zip .)
+            cp -r third_party/bundled/dotnet-refs dist/gui-linux-x64/third_party/bundled/
+            cp -r third_party/bundled/dotnet-refs dist/gui-win-x64/third_party/bundled/
           fi
 
-          # MelonLoader (platform-specific)
-          if [ -d "third_party/bundled/MelonLoader" ]; then
-            # Linux
-            tar -czf dist/components/MelonLoader-linux-x64.tar.gz \
-              -C third_party/bundled/MelonLoader .
-            # Windows
-            (cd third_party/bundled/MelonLoader && \
-              zip -q -r ../../../dist/components/MelonLoader-win-x64.zip .)
-          fi
-
-          # AssetRipper (platform-specific)
-          if [ -d "third_party/bundled/AssetRipper/linux" ]; then
-            # Remove debug symbols
-            find third_party/bundled/AssetRipper -name "*.pdb" -delete 2>/dev/null || true
-            find third_party/bundled/AssetRipper -name "*.dbg" -delete 2>/dev/null || true
-            # Linux
-            tar -czf dist/components/AssetRipper-linux-x64.tar.gz \
-              -C third_party/bundled/AssetRipper/linux .
-          fi
-          if [ -d "third_party/bundled/AssetRipper/windows" ]; then
-            # Windows
-            (cd third_party/bundled/AssetRipper/windows && \
-              zip -q -r ../../../../dist/components/AssetRipper-win-x64.zip .)
-          fi
-
-      # Generate checksums
-      - name: Generate checksums
-        run: |
-          cd dist/components
-          for file in *.zip *.tar.gz; do
-            if [ -f "$file" ]; then
-              sha256sum "$file" > "$file.sha256"
-            fi
-          done
-
-          # Create manifest with all checksums
-          echo "{" > manifest.json
-          echo '  "generatedAt": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",' >> manifest.json
-          echo '  "version": "${{ steps.version.outputs.VERSION }}",' >> manifest.json
-          echo '  "components": {' >> manifest.json
-          first=true
-          for file in *.sha256; do
-            if [ -f "$file" ]; then
-              base="${file%.sha256}"
-              hash=$(cat "$file" | cut -d' ' -f1)
-              size=$(stat -c%s "$base" 2>/dev/null || stat -f%z "$base")
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo ',' >> manifest.json
-              fi
-              echo -n "    \"$base\": {\"sha256\": \"$hash\", \"size\": $size}" >> manifest.json
-            fi
-          done
-          echo '' >> manifest.json
-          echo '  }' >> manifest.json
-          echo '}' >> manifest.json
-
-      # Create app archives
       - name: Create app archives
         run: |
           cd dist
-          tar -czf menace-modkit-gui-linux-x64.tar.gz -C gui-linux-x64 .
-          zip -q -r menace-modkit-gui-win-x64.zip gui-win-x64/
-          tar -czf menace-modkit-cli-linux-x64.tar.gz -C cli-linux-x64 .
-          zip -q -r menace-modkit-cli-win-x64.zip cli-win-x64/
+          tar -czf menace-modkit-linux-x64.tar.gz -C gui-linux-x64 .
+          zip -q -r menace-modkit-win-x64.zip gui-win-x64/
 
-      # Create docs archive
-      - name: Create docs archive
-        run: |
-          if [ -d "docs" ]; then
-            (cd docs && zip -q -r ../dist/docs.zip .)
-          fi
-
-      # Create Release
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: v${{ steps.version.outputs.VERSION }}
+          name: Menace Modkit v${{ steps.version.outputs.VERSION }}
           tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
-          files: |
-            dist/menace-modkit-gui-linux-x64.tar.gz
-            dist/menace-modkit-gui-win-x64.zip
-            dist/menace-modkit-cli-linux-x64.tar.gz
-            dist/menace-modkit-cli-win-x64.zip
-            dist/docs.zip
-            dist/components/*
+          body: |
+            ## Installation
 
-      - name: Print checksums
-        run: |
-          echo "=== Component Checksums ==="
-          cat dist/components/manifest.json
-          echo ""
-          echo "=== Update versions.json with these values ==="
-          echo "See dist/components/manifest.json for SHA256 and size values"
+            1. Download the archive for your platform below
+            2. Extract and run `Menace.Modkit.App`
+            3. The app will download required components on first run
+
+            **Windows**: `menace-modkit-win-x64.zip`
+            **Linux**: `menace-modkit-linux-x64.tar.gz`
+          files: |
+            dist/menace-modkit-linux-x64.tar.gz
+            dist/menace-modkit-win-x64.zip

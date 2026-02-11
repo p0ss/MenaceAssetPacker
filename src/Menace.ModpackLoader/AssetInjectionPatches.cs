@@ -266,6 +266,9 @@ public static class AssetReplacer
     // Audio replacements (WAV, OGG → AudioClip data copy)
     // ------------------------------------------------------------------
 
+    // Cache of loaded AudioClips from disk files
+    private static readonly Dictionary<string, AudioClip> _loadedAudioClips = new();
+
     private static int ApplyAudioReplacements()
     {
         var audioReplacements = _replacements.Values
@@ -275,16 +278,315 @@ public static class AssetReplacer
         if (audioReplacements.Count == 0)
             return 0;
 
-        // Audio replacement from raw files requires format-specific loading.
-        // For now, log what we found — full WAV/OGG loading will be added
-        // when the audio modding pipeline is implemented. Bundle-sourced
-        // audio replacements (below) work for all formats.
-        foreach (var r in audioReplacements)
+        MelonLogger.Msg($"  Searching for {audioReplacements.Count} audio replacement(s)...");
+
+        try
         {
-            MelonLogger.Msg($"  Audio replacement registered (pending bundle support): {r.AssetName}");
+            var il2cppType = Il2CppType.From(typeof(AudioClip));
+            var allClips = Resources.FindObjectsOfTypeAll(il2cppType);
+            if (allClips == null || allClips.Length == 0)
+            {
+                MelonLogger.Warning("  FindObjectsOfTypeAll(AudioClip) returned 0 objects");
+                return 0;
+            }
+
+            MelonLogger.Msg($"  Found {allClips.Length} AudioClip objects in memory");
+
+            // Build lookup by filename
+            var byFilename = new Dictionary<string, Replacement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in audioReplacements)
+                byFilename[r.AssetName] = r;
+
+            int replaced = 0;
+            var unmatchedNames = new HashSet<string>(
+                audioReplacements.Select(r => r.AssetName), StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < allClips.Length; i++)
+            {
+                var obj = allClips[i];
+                if (obj == null) continue;
+
+                var clipName = obj.name;
+                if (string.IsNullOrEmpty(clipName)) continue;
+
+                // Try direct match first
+                if (!byFilename.TryGetValue(clipName, out var replacement))
+                {
+                    // Fallback: extract filename from path-style names
+                    var lastSep = clipName.LastIndexOfAny(new[] { '/', '\\' });
+                    if (lastSep >= 0)
+                    {
+                        var nameOnly = clipName.Substring(lastSep + 1);
+                        byFilename.TryGetValue(nameOnly, out replacement);
+                    }
+                }
+
+                if (replacement == null || replacement.Kind != AssetKind.Audio)
+                    continue;
+
+                unmatchedNames.Remove(replacement.AssetName);
+
+                try
+                {
+                    var gameClip = obj.Cast<AudioClip>();
+                    if (gameClip == null) continue;
+
+                    // Load the replacement audio from disk
+                    var modClip = LoadAudioClipFromDisk(replacement.DiskPath, replacement.AssetName);
+                    if (modClip == null)
+                    {
+                        MelonLogger.Warning($"  Could not load audio file: {replacement.DiskPath}");
+                        continue;
+                    }
+
+                    // Copy sample data from loaded clip to game clip
+                    if (CopyAudioClipData(modClip, gameClip))
+                    {
+                        replaced++;
+                        MelonLogger.Msg($"  Replaced audio clip: {clipName}");
+                    }
+                    else
+                    {
+                        MelonLogger.Warning($"  Failed to copy audio data for '{clipName}'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"  Failed to replace audio {clipName}: {ex.Message}");
+                }
+            }
+
+            // Log unmatched replacements
+            if (unmatchedNames.Count > 0)
+            {
+                MelonLogger.Warning($"  {unmatchedNames.Count} audio replacement(s) found NO matching game clip:");
+                foreach (var name in unmatchedNames)
+                    MelonLogger.Warning($"    No match for: '{name}'");
+            }
+
+            return replaced;
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"ApplyAudioReplacements failed: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Load an AudioClip from a disk file (WAV only for now).
+    /// Uses manual WAV parsing since UnityWebRequest isn't available in IL2CPP.
+    /// </summary>
+    private static AudioClip LoadAudioClipFromDisk(string filePath, string clipName)
+    {
+        // Check cache first
+        if (_loadedAudioClips.TryGetValue(filePath, out var cached))
+            return cached;
+
+        if (!File.Exists(filePath))
+        {
+            MelonLogger.Warning($"  Audio file not found: {filePath}");
+            return null;
         }
 
-        return 0;
+        try
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+
+            AudioClip clip = ext switch
+            {
+                ".wav" => LoadWavFile(filePath, clipName),
+                ".ogg" => LoadOggFile(filePath, clipName),
+                _ => null
+            };
+
+            if (clip == null)
+            {
+                MelonLogger.Warning($"  Could not load audio format: {ext} (only WAV and OGG supported)");
+                return null;
+            }
+
+            clip.name = clipName;
+            _loadedAudioClips[filePath] = clip;
+
+            MelonLogger.Msg($"  Loaded audio from disk: {clipName} ({clip.length:F2}s, {clip.channels}ch, {clip.frequency}Hz)");
+            return clip;
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"  Failed to load audio from {filePath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Load a WAV file and create an AudioClip from it.
+    /// Supports 8-bit, 16-bit, 24-bit, and 32-bit PCM formats.
+    /// </summary>
+    private static AudioClip LoadWavFile(string filePath, string clipName)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(filePath);
+            if (bytes.Length < 44)
+            {
+                MelonLogger.Warning($"  WAV file too small: {filePath}");
+                return null;
+            }
+
+            // Verify RIFF header
+            if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F')
+            {
+                MelonLogger.Warning($"  Invalid WAV header (not RIFF): {filePath}");
+                return null;
+            }
+
+            // Verify WAVE format
+            if (bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E')
+            {
+                MelonLogger.Warning($"  Invalid WAV format (not WAVE): {filePath}");
+                return null;
+            }
+
+            // Find fmt chunk
+            int pos = 12;
+            int channels = 0;
+            int sampleRate = 0;
+            int bitsPerSample = 0;
+            int dataOffset = 0;
+            int dataSize = 0;
+
+            while (pos < bytes.Length - 8)
+            {
+                var chunkId = System.Text.Encoding.ASCII.GetString(bytes, pos, 4);
+                var chunkSize = BitConverter.ToInt32(bytes, pos + 4);
+
+                if (chunkId == "fmt ")
+                {
+                    var audioFormat = BitConverter.ToInt16(bytes, pos + 8);
+                    if (audioFormat != 1) // PCM only
+                    {
+                        MelonLogger.Warning($"  Unsupported WAV format (not PCM): {audioFormat}");
+                        return null;
+                    }
+                    channels = BitConverter.ToInt16(bytes, pos + 10);
+                    sampleRate = BitConverter.ToInt32(bytes, pos + 12);
+                    bitsPerSample = BitConverter.ToInt16(bytes, pos + 22);
+                }
+                else if (chunkId == "data")
+                {
+                    dataOffset = pos + 8;
+                    dataSize = chunkSize;
+                    break;
+                }
+
+                pos += 8 + chunkSize;
+                // Align to 2-byte boundary
+                if (chunkSize % 2 != 0) pos++;
+            }
+
+            if (channels == 0 || sampleRate == 0 || bitsPerSample == 0 || dataOffset == 0)
+            {
+                MelonLogger.Warning($"  Could not parse WAV chunks: {filePath}");
+                return null;
+            }
+
+            // Calculate sample count
+            int bytesPerSample = bitsPerSample / 8;
+            int totalSamples = dataSize / (bytesPerSample * channels);
+
+            // Convert to float samples
+            var samples = new float[totalSamples * channels];
+            int sampleIndex = 0;
+
+            for (int i = 0; i < dataSize && sampleIndex < samples.Length; i += bytesPerSample)
+            {
+                int bytePos = dataOffset + i;
+                if (bytePos >= bytes.Length) break;
+
+                float sample = bitsPerSample switch
+                {
+                    8 => (bytes[bytePos] - 128) / 128f,
+                    16 => BitConverter.ToInt16(bytes, bytePos) / 32768f,
+                    24 => ((bytes[bytePos] | (bytes[bytePos + 1] << 8) | (sbyte)bytes[bytePos + 2] << 16)) / 8388608f,
+                    32 => BitConverter.ToInt32(bytes, bytePos) / 2147483648f,
+                    _ => 0f
+                };
+
+                samples[sampleIndex++] = sample;
+            }
+
+            // Create the AudioClip
+            var clip = AudioClip.Create(clipName, totalSamples, channels, sampleRate, false);
+            clip.SetData(samples, 0);
+
+            return clip;
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"  LoadWavFile failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Load an OGG file. Currently returns null as OGG decoding requires a third-party library.
+    /// For OGG support, use asset bundles instead.
+    /// </summary>
+    private static AudioClip LoadOggFile(string filePath, string clipName)
+    {
+        // OGG decoding requires Vorbis decoder which isn't available in IL2CPP
+        // For OGG files, recommend using asset bundles or converting to WAV
+        MelonLogger.Warning($"  OGG files not supported for direct loading. Convert to WAV or use asset bundles: {filePath}");
+        return null;
+    }
+
+    /// <summary>
+    /// Copy sample data from one AudioClip to another.
+    /// </summary>
+    private static bool CopyAudioClipData(AudioClip source, AudioClip target)
+    {
+        try
+        {
+            // Get source samples
+            int sampleCount = source.samples * source.channels;
+            var samples = new float[sampleCount];
+
+            if (!source.GetData(samples, 0))
+            {
+                MelonLogger.Warning($"  Source clip GetData failed");
+                return false;
+            }
+
+            // If target has different sample count, we may need to resample
+            // For now, just copy what fits
+            int targetSampleCount = target.samples * target.channels;
+
+            if (sampleCount != targetSampleCount)
+            {
+                MelonLogger.Msg($"  Sample count mismatch: source={sampleCount}, target={targetSampleCount}");
+                // Resize samples array to match target
+                if (sampleCount > targetSampleCount)
+                {
+                    // Truncate
+                    Array.Resize(ref samples, targetSampleCount);
+                }
+                else
+                {
+                    // Pad with silence
+                    var padded = new float[targetSampleCount];
+                    Array.Copy(samples, padded, sampleCount);
+                    samples = padded;
+                }
+            }
+
+            return target.SetData(samples, 0);
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"  CopyAudioClipData failed: {ex.Message}");
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------

@@ -23,6 +23,11 @@ public sealed class ComponentManager : IDisposable
     private static readonly Lazy<ComponentManager> _instance = new(() => new ComponentManager());
     public static ComponentManager Instance => _instance.Value;
 
+    /// <summary>
+    /// Base URL for GitHub releases. Components are downloaded from components-v{version} tags.
+    /// </summary>
+    private const string GitHubReleasesBaseUrl = "https://github.com/p0ss/MenaceAssetPacker/releases/download";
+
     private readonly string _componentsCachePath;
     private readonly string _platform;
     private readonly HttpClient _httpClient;
@@ -84,7 +89,7 @@ public sealed class ComponentManager : IDisposable
                 Required = component.Required,
                 RequiredFor = component.RequiredFor,
                 LatestVersion = component.Version,
-                DownloadSize = GetDownloadSize(component),
+                DownloadSize = GetDownloadSize(name, component),
                 InstallPath = component.InstallPath
             };
 
@@ -114,6 +119,13 @@ public sealed class ComponentManager : IDisposable
                     status.InstalledVersion = component.Version;
                     status.State = ComponentState.UpToDate;
                 }
+            }
+            // Check if already installed in game directory (MelonLoader specific)
+            else if (name == "MelonLoader" && IsGameMelonLoaderPresent())
+            {
+                // User already has MelonLoader in their game - no need to download
+                status.InstalledVersion = component.Version; // Assume compatible
+                status.State = ComponentState.UpToDate;
             }
             else
             {
@@ -156,6 +168,32 @@ public sealed class ComponentManager : IDisposable
     }
 
     /// <summary>
+    /// Check if MelonLoader is installed in the game directory.
+    /// </summary>
+    private bool IsGameMelonLoaderPresent()
+    {
+        try
+        {
+            var gamePath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gamePath))
+                return false;
+
+            var mlDir = Path.Combine(gamePath, "MelonLoader");
+            if (!Directory.Exists(mlDir))
+                return false;
+
+            // Check for core DLL in either root or net6 subdirectory
+            var mlDll = Path.Combine(mlDir, "MelonLoader.dll");
+            var mlDllNet6 = Path.Combine(mlDir, "net6", "MelonLoader.dll");
+            return File.Exists(mlDll) || File.Exists(mlDllNet6);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Check if any required components need to be installed or updated.
     /// </summary>
     public async Task<bool> NeedsSetupAsync()
@@ -192,7 +230,7 @@ public sealed class ComponentManager : IDisposable
             return false;
         }
 
-        var downloadInfo = GetDownloadInfo(component);
+        var downloadInfo = GetDownloadInfo(componentName, component);
         if (downloadInfo == null)
         {
             progress?.Report(new DownloadProgress($"No download available for {_platform}", 0, 0));
@@ -558,20 +596,56 @@ public sealed class ComponentManager : IDisposable
         File.WriteAllText(path, json);
     }
 
-    private DownloadInfo? GetDownloadInfo(ComponentInfo component)
+    private DownloadInfo? GetDownloadInfo(string componentName, ComponentInfo component)
     {
+        // Get size/sha256 from versions.json if available
+        DownloadInfo? baseInfo = null;
         if (component.Downloads.TryGetValue(_platform, out var platformDownload))
-            return platformDownload;
+            baseInfo = platformDownload;
+        else if (component.Downloads.TryGetValue("any", out var anyDownload))
+            baseInfo = anyDownload;
 
-        if (component.Downloads.TryGetValue("any", out var anyDownload))
-            return anyDownload;
+        // Construct URL from app version
+        var url = BuildComponentUrl(componentName);
+        if (url == null)
+            return null;
 
-        return null;
+        return new DownloadInfo
+        {
+            Url = url,
+            Sha256 = baseInfo?.Sha256 ?? "",
+            Size = baseInfo?.Size ?? 0
+        };
     }
 
-    private long GetDownloadSize(ComponentInfo component)
+    /// <summary>
+    /// Build the download URL for a component based on app version.
+    /// URL pattern: {GitHubReleasesBaseUrl}/components-v{version}/{filename}
+    /// </summary>
+    private string? BuildComponentUrl(string componentName)
     {
-        var info = GetDownloadInfo(component);
+        var version = ModkitVersion.MelonVersion; // e.g., "19.0.5"
+        var tag = $"components-v{version}";
+
+        var filename = componentName switch
+        {
+            "MelonLoader" => _platform == "win-x64" ? "MelonLoader-win-x64.zip" : "MelonLoader-linux-x64.tar.gz",
+            "AssetRipper" => _platform == "win-x64" ? "AssetRipper-win-x64.zip" : "AssetRipper-linux-x64.tar.gz",
+            "DataExtractor" => "DataExtractor.zip",
+            "ModpackLoader" => "ModpackLoader.zip",
+            "DotNetRefs" => "DotNetRefs.zip",
+            _ => null
+        };
+
+        if (filename == null)
+            return null;
+
+        return $"{GitHubReleasesBaseUrl}/{tag}/{filename}";
+    }
+
+    private long GetDownloadSize(string componentName, ComponentInfo component)
+    {
+        var info = GetDownloadInfo(componentName, component);
         return info?.Size ?? 0;
     }
 
