@@ -139,6 +139,15 @@ public class ModLoaderInstaller
         }
     }
 
+    // Assemblies bundled with MelonLoader 0.7.2+ that we should NOT deploy
+    // (and should remove if present from previous installs)
+    private static readonly string[] MelonLoaderProvidedAssemblies = new[]
+    {
+        "System.Collections.Immutable.dll",
+        "System.Memory.dll",
+        "System.Buffers.dll"
+    };
+
     public Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
     {
         try
@@ -160,6 +169,23 @@ public class ModLoaderInstaller
             Directory.CreateDirectory(modsFolder);
             Directory.CreateDirectory(userLibsFolder);
 
+            // Remove assemblies that MelonLoader now provides (from previous installs)
+            foreach (var melonProvided in MelonLoaderProvidedAssemblies)
+            {
+                var legacyUserLibsPath = Path.Combine(userLibsFolder, melonProvided);
+                if (File.Exists(legacyUserLibsPath))
+                {
+                    File.Delete(legacyUserLibsPath);
+                    progressCallback?.Invoke($"  Removed legacy {melonProvided} (MelonLoader provides this)");
+                }
+
+                var legacyModsPath = Path.Combine(modsFolder, melonProvided);
+                if (File.Exists(legacyModsPath))
+                {
+                    File.Delete(legacyModsPath);
+                }
+            }
+
             // Copy ModpackLoader.dll to Mods folder
             // Copy dependencies (Roslyn, etc.) to UserLibs where MelonLoader can find them
             foreach (var file in Directory.GetFiles(modpackLoaderDir, "*.dll"))
@@ -176,6 +202,13 @@ public class ModLoaderInstaller
                     // Dependencies go to UserLibs for MelonLoader's assembly resolver
                     var targetPath = Path.Combine(userLibsFolder, fileName);
                     File.Copy(file, targetPath, overwrite: true);
+
+                    // Remove legacy copies from Mods to avoid duplicate load contexts.
+                    var legacyModsPath = Path.Combine(modsFolder, fileName);
+                    if (File.Exists(legacyModsPath))
+                    {
+                        File.Delete(legacyModsPath);
+                    }
                 }
             }
 

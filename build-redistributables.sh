@@ -96,14 +96,31 @@ echo ""
 echo "📦 Building ModpackLoader Mod..."
 $DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
 
-# Update source tree bundled copy (main DLL + Roslyn dependencies for REPL + SharpGLTF for GLB loading)
-mkdir -p third_party/bundled/ModpackLoader
-cp dist/ModpackLoader/Menace.ModpackLoader.dll third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/System.Collections.Immutable.dll third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/System.Reflection.Metadata.dll third_party/bundled/ModpackLoader/
-cp dist/ModpackLoader/SharpGLTF.Core.dll third_party/bundled/ModpackLoader/
+# Keep bundled ModpackLoader payload in sync with build output to avoid dependency drift.
+# Excludes assemblies already bundled with MelonLoader to avoid version conflicts.
+copy_modpackloader_payload() {
+  local dest_dir="$1"
+  mkdir -p "$dest_dir"
+  rm -f "$dest_dir"/*.dll
+
+  # Assemblies bundled with MelonLoader 0.7.2+ in Dependencies/MonoBleedingEdgePatches/
+  # These should NOT be included as MelonLoader provides them
+  local melon_provided="System.Collections.Immutable.dll System.Memory.dll System.Buffers.dll"
+
+  for dll in dist/ModpackLoader/*.dll; do
+    [ -f "$dll" ] || continue
+    local filename=$(basename "$dll")
+    # Skip if MelonLoader already provides this assembly
+    if echo "$melon_provided" | grep -qw "$filename"; then
+      echo "    (skipping $filename - provided by MelonLoader)"
+      continue
+    fi
+    cp "$dll" "$dest_dir/"
+  done
+}
+
+# Update source tree bundled copy
+copy_modpackloader_payload third_party/bundled/ModpackLoader
 
 # =============================================================================
 # Build GUI App
@@ -154,15 +171,10 @@ mkdir -p dist/component-DataExtractor
 cp dist/DataExtractor/Menace.DataExtractor.dll dist/component-DataExtractor/
 (cd dist/component-DataExtractor && zip -q -r ../components/DataExtractor.zip .)
 
-# ModpackLoader + Roslyn + SharpGLTF (platform-independent)
+# ModpackLoader + support dependencies (platform-independent)
 echo "  → ModpackLoader.zip..."
 mkdir -p dist/component-ModpackLoader
-cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/component-ModpackLoader/
-cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll dist/component-ModpackLoader/
-cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll dist/component-ModpackLoader/
-cp dist/ModpackLoader/System.Collections.Immutable.dll dist/component-ModpackLoader/
-cp dist/ModpackLoader/System.Reflection.Metadata.dll dist/component-ModpackLoader/
-cp dist/ModpackLoader/SharpGLTF.Core.dll dist/component-ModpackLoader/
+copy_modpackloader_payload dist/component-ModpackLoader
 (cd dist/component-ModpackLoader && zip -q -r ../components/ModpackLoader.zip .)
 
 # DotNetRefs (platform-independent)

@@ -639,9 +639,9 @@ public class DeployManager
     }
 
     /// <summary>
-    /// Copy runtime DLLs (ModpackLoader, DataExtractor, etc.) from the runtime/
-    /// directory to the game's Mods/ root. Compares file sizes to avoid unnecessary copies.
-    /// Returns list of deployed files (relative to modsBasePath).
+    /// Copy runtime DLLs from runtime/ into the game install.
+    /// Menace.* mod DLLs go to Mods/, support libraries go to UserLibs/.
+    /// Returns deployed file names for Mods/ tracking.
     /// </summary>
     private List<string> DeployRuntimeDlls(string modsBasePath)
     {
@@ -651,9 +651,14 @@ public class DeployManager
         if (runtimeDlls.Count == 0)
             return files;
 
+        var gameInstallPath = Path.GetDirectoryName(modsBasePath) ?? modsBasePath;
+        var userLibsPath = Path.Combine(gameInstallPath, "UserLibs");
+        Directory.CreateDirectory(userLibsPath);
+
         foreach (var (fileName, sourcePath) in runtimeDlls)
         {
-            var destPath = Path.Combine(modsBasePath, fileName);
+            var isModDll = fileName.StartsWith("Menace.", StringComparison.OrdinalIgnoreCase);
+            var destPath = Path.Combine(isModDll ? modsBasePath : userLibsPath, fileName);
             try
             {
                 // Copy if destination doesn't exist or source is different size/newer
@@ -669,10 +674,23 @@ public class DeployManager
                 if (needsCopy)
                 {
                     File.Copy(sourcePath, destPath, true);
-                    ModkitLog.Info($"[DeployManager] Deployed runtime DLL: {fileName}");
+                    ModkitLog.Info($"[DeployManager] Deployed runtime DLL: {fileName} -> {(isModDll ? "Mods" : "UserLibs")}");
                 }
 
-                files.Add(fileName);
+                // Remove legacy support-library copies from Mods/ to avoid duplicate load contexts.
+                if (!isModDll)
+                {
+                    var legacyModsPath = Path.Combine(modsBasePath, fileName);
+                    if (File.Exists(legacyModsPath))
+                    {
+                        File.Delete(legacyModsPath);
+                        ModkitLog.Info($"[DeployManager] Removed legacy dependency from Mods: {fileName}");
+                    }
+                }
+                else
+                {
+                    files.Add(fileName);
+                }
             }
             catch (Exception ex)
             {

@@ -952,6 +952,8 @@ public class ModpackManager
     private void SeedBundledRuntimeDlls()
     {
         var bundledBase = Path.Combine(AppContext.BaseDirectory, "third_party", "bundled");
+        var bundledDlls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var dirName in BundledRuntimeDllDirs)
         {
             var srcDir = Path.Combine(bundledBase, dirName);
@@ -959,17 +961,35 @@ public class ModpackManager
 
             foreach (var srcFile in Directory.GetFiles(srcDir, "*.dll"))
             {
-                var destFile = Path.Combine(RuntimeDllsPath, Path.GetFileName(srcFile));
-                bool needsCopy = !File.Exists(destFile);
-                if (!needsCopy)
-                {
-                    var srcInfo = new FileInfo(srcFile);
-                    var destInfo = new FileInfo(destFile);
-                    needsCopy = srcInfo.Length != destInfo.Length;
-                }
-                if (needsCopy)
-                    File.Copy(srcFile, destFile, true);
+                bundledDlls[Path.GetFileName(srcFile)] = srcFile;
             }
+        }
+
+        // Remove stale runtime DLLs that are no longer bundled.
+        foreach (var existingFile in Directory.GetFiles(RuntimeDllsPath, "*.dll"))
+        {
+            var fileName = Path.GetFileName(existingFile);
+            if (!bundledDlls.ContainsKey(fileName))
+            {
+                File.Delete(existingFile);
+                ModkitLog.Info($"[ModpackManager] Removed stale runtime DLL: {fileName}");
+            }
+        }
+
+        foreach (var (fileName, srcFile) in bundledDlls)
+        {
+            var destFile = Path.Combine(RuntimeDllsPath, fileName);
+            bool needsCopy = !File.Exists(destFile);
+            if (!needsCopy)
+            {
+                var srcInfo = new FileInfo(srcFile);
+                var destInfo = new FileInfo(destFile);
+                needsCopy = srcInfo.Length != destInfo.Length ||
+                            srcInfo.LastWriteTimeUtc > destInfo.LastWriteTimeUtc;
+            }
+
+            if (needsCopy)
+                File.Copy(srcFile, destFile, true);
         }
     }
 

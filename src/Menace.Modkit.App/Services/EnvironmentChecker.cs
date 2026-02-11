@@ -350,15 +350,10 @@ public class EnvironmentChecker
             return Task.FromResult(result);
         }
 
-        // Check that Roslyn dependencies are in UserLibs (required for runtime compilation)
+        // Check that ModpackLoader support dependencies are in UserLibs.
+        // Derive from bundled payload to avoid drift when dependency sets change.
         var userLibsPath = Path.Combine(gamePath, "UserLibs");
-        var requiredDeps = new[]
-        {
-            "Microsoft.CodeAnalysis.dll",
-            "Microsoft.CodeAnalysis.CSharp.dll",
-            "System.Collections.Immutable.dll",
-            "System.Reflection.Metadata.dll"
-        };
+        var requiredDeps = GetExpectedModpackLoaderDependencies();
         var missingDeps = requiredDeps.Where(dep => !File.Exists(Path.Combine(userLibsPath, dep))).ToList();
         if (missingDeps.Count > 0)
         {
@@ -372,12 +367,62 @@ public class EnvironmentChecker
             return Task.FromResult(result);
         }
 
+        // Legacy installs placed dependencies in Mods/. These can cause load-context conflicts.
+        var modsPath = Path.Combine(gamePath, "Mods");
+        var legacyDepsInMods = requiredDeps.Where(dep => File.Exists(Path.Combine(modsPath, dep))).ToList();
+        if (legacyDepsInMods.Count > 0)
+        {
+            result.Status = CheckStatus.Warning;
+            result.Description = "Legacy dependency placement";
+            result.Details = $"Dependencies should be in UserLibs, not Mods: {string.Join(", ", legacyDepsInMods)}";
+            result.FixInstructions = "Click 'Install' to reinstall ModpackLoader and clean legacy copies.";
+            result.CanAutoFix = true;
+            result.AutoFixAction = AutoFixAction.InstallModpackLoader;
+            ModkitLog.Warn($"[EnvCheck] Legacy ModpackLoader dependencies found in Mods: {string.Join(", ", legacyDepsInMods)}");
+            return Task.FromResult(result);
+        }
+
         result.Status = CheckStatus.Passed;
         result.Description = "Installed";
         result.Details = modpackLoaderDll;
         ModkitLog.Info($"[EnvCheck] ModpackLoader found: {modpackLoaderDll}");
 
         return Task.FromResult(result);
+    }
+
+    private static List<string> GetExpectedModpackLoaderDependencies()
+    {
+        var bundledDir = Path.Combine(
+            AppContext.BaseDirectory,
+            "third_party",
+            "bundled",
+            "ModpackLoader");
+
+        if (Directory.Exists(bundledDir))
+        {
+            var bundledDeps = Directory.GetFiles(bundledDir, "*.dll")
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrEmpty(name))
+                .Where(name => !name!.StartsWith("Menace.ModpackLoader", StringComparison.OrdinalIgnoreCase))
+                .Select(name => name!)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (bundledDeps.Count > 0)
+                return bundledDeps;
+        }
+
+        // Fallback for development environments with partial bundled content.
+        // Note: System.Collections.Immutable is NOT included - MelonLoader 0.7.2+ bundles it
+        return new List<string>
+        {
+            "Microsoft.CodeAnalysis.dll",
+            "Microsoft.CodeAnalysis.CSharp.dll",
+            "System.Reflection.Metadata.dll",
+            "System.Text.Encoding.CodePages.dll",
+            "Newtonsoft.Json.dll",
+            "SharpGLTF.Core.dll"
+        };
     }
 
     private Task<EnvironmentCheckResult> CheckIl2CppAssembliesAsync()

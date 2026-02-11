@@ -16,7 +16,14 @@ using UnityEngine;
 
 [assembly: MelonInfo(typeof(Menace.ModpackLoader.ModpackLoaderMod), "Menace Modpack Loader", Menace.ModkitVersion.MelonVersion, "Menace Modkit")]
 [assembly: MelonGame(null, null)]
-[assembly: MelonOptionalDependencies("Microsoft.CodeAnalysis", "Microsoft.CodeAnalysis.CSharp", "System.Collections.Immutable")]
+[assembly: MelonOptionalDependencies(
+    "Microsoft.CodeAnalysis",
+    "Microsoft.CodeAnalysis.CSharp",
+    "System.Collections.Immutable",
+    "System.Reflection.Metadata",
+    "System.Text.Encoding.CodePages",
+    "Newtonsoft.Json",
+    "SharpGLTF.Core")]
 
 namespace Menace.ModpackLoader;
 
