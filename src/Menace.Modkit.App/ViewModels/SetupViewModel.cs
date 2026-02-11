@@ -8,6 +8,15 @@ using Menace.Modkit.App.Services;
 
 namespace Menace.Modkit.App.ViewModels;
 
+public enum DownloadState
+{
+    None,
+    Downloading,
+    Success,
+    Failed,
+    Cancelled
+}
+
 /// <summary>
 /// ViewModel for the setup/update screen that shows component status and handles downloads.
 /// </summary>
@@ -96,6 +105,45 @@ public class SetupViewModel : ViewModelBase
     {
         get => _downloadSpeed;
         set => this.RaiseAndSetIfChanged(ref _downloadSpeed, value);
+    }
+
+    /// <summary>
+    /// True when there's download status to display.
+    /// </summary>
+    public bool HasDownloadStatus => !string.IsNullOrEmpty(DownloadStatus);
+
+    /// <summary>
+    /// Icon for the current download status.
+    /// </summary>
+    public string DownloadStatusIcon => _downloadState switch
+    {
+        DownloadState.Downloading => "\u21BB",  // Rotating arrows
+        DownloadState.Success => "\u2713",      // Checkmark
+        DownloadState.Failed => "\u2717",       // X
+        DownloadState.Cancelled => "\u2014",    // Em dash
+        _ => ""
+    };
+
+    /// <summary>
+    /// Color for the download status icon.
+    /// </summary>
+    public string DownloadStatusColor => _downloadState switch
+    {
+        DownloadState.Downloading => "#6B9FFF",  // Blue
+        DownloadState.Success => "#8ECDC8",      // Green
+        DownloadState.Failed => "#FF6B6B",       // Red
+        DownloadState.Cancelled => "#888888",    // Gray
+        _ => "#888888"
+    };
+
+    private DownloadState _downloadState = DownloadState.None;
+    private void SetDownloadState(DownloadState state, string message)
+    {
+        _downloadState = state;
+        DownloadStatus = message;
+        this.RaisePropertyChanged(nameof(HasDownloadStatus));
+        this.RaisePropertyChanged(nameof(DownloadStatusIcon));
+        this.RaisePropertyChanged(nameof(DownloadStatusColor));
     }
 
     /// <summary>
@@ -321,10 +369,16 @@ public class SetupViewModel : ViewModelBase
                 return;
             }
 
+            SetDownloadState(DownloadState.Downloading, $"Downloading {toDownload.Count} component(s)...");
+
             var progress = new Progress<MultiDownloadProgress>(p =>
             {
                 CurrentComponent = p.CurrentComponent;
-                DownloadStatus = p.Message;
+                _downloadState = DownloadState.Downloading;
+                DownloadStatus = $"Downloading {p.CurrentComponent}: {p.Message}";
+                this.RaisePropertyChanged(nameof(HasDownloadStatus));
+                this.RaisePropertyChanged(nameof(DownloadStatusIcon));
+                this.RaisePropertyChanged(nameof(DownloadStatusColor));
                 CurrentProgress = p.CurrentPercent;
                 OverallProgress = p.OverallPercent;
 
@@ -354,13 +408,13 @@ public class SetupViewModel : ViewModelBase
 
             if (success && !HasRequiredPending)
             {
-                DownloadStatus = "All components installed!";
+                SetDownloadState(DownloadState.Success, "All components installed!");
                 await Task.Delay(500);
                 SetupComplete?.Invoke();
             }
             else if (!success)
             {
-                DownloadStatus = "Some downloads failed. Please retry.";
+                SetDownloadState(DownloadState.Failed, "Some downloads failed. Check log for details.");
                 ModkitLog.Warn("[Setup] Some downloads failed");
             }
             else if (HasRequiredPending)
@@ -368,17 +422,17 @@ public class SetupViewModel : ViewModelBase
                 // Download succeeded but still have pending requirements - show what's still needed
                 var pending = RequiredComponents.Where(c => c.Status.State != ComponentState.UpToDate).ToList();
                 var pendingNames = string.Join(", ", pending.Select(c => c.Name));
-                DownloadStatus = $"Still need: {pendingNames}";
+                SetDownloadState(DownloadState.Failed, $"Still need: {pendingNames}");
                 ModkitLog.Warn($"[Setup] Download succeeded but still pending: {pendingNames}");
             }
         }
         catch (OperationCanceledException)
         {
-            DownloadStatus = "Download cancelled.";
+            SetDownloadState(DownloadState.Cancelled, "Download cancelled.");
         }
         catch (Exception ex)
         {
-            DownloadStatus = $"Error: {ex.Message}";
+            SetDownloadState(DownloadState.Failed, $"Error: {ex.Message}");
             ModkitLog.Error($"[SetupViewModel] Download failed: {ex}");
         }
         finally

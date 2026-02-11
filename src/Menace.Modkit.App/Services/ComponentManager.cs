@@ -24,9 +24,9 @@ public sealed class ComponentManager : IDisposable
     public static ComponentManager Instance => _instance.Value;
 
     /// <summary>
-    /// Base URL for GitHub releases. Components are downloaded from components-v{version} tags.
+    /// Base URL for component downloads from the repo.
     /// </summary>
-    private const string GitHubReleasesBaseUrl = "https://github.com/p0ss/MenaceAssetPacker/releases/download";
+    private const string GitHubRawBaseUrl = "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party/components";
 
     private readonly string _componentsCachePath;
     private readonly string _platform;
@@ -619,14 +619,11 @@ public sealed class ComponentManager : IDisposable
     }
 
     /// <summary>
-    /// Build the download URL for a component based on app version.
-    /// URL pattern: {GitHubReleasesBaseUrl}/components-v{version}/{filename}
+    /// Build the download URL for a component.
+    /// Components are downloaded directly from the repo via raw.githubusercontent.com.
     /// </summary>
     private string? BuildComponentUrl(string componentName)
     {
-        var version = ModkitVersion.MelonVersion; // e.g., "19.0.5"
-        var tag = $"components-v{version}";
-
         var filename = componentName switch
         {
             "MelonLoader" => _platform == "win-x64" ? "MelonLoader-win-x64.zip" : "MelonLoader-linux-x64.tar.gz",
@@ -640,7 +637,7 @@ public sealed class ComponentManager : IDisposable
         if (filename == null)
             return null;
 
-        return $"{GitHubReleasesBaseUrl}/{tag}/{filename}";
+        return $"{GitHubRawBaseUrl}/{filename}";
     }
 
     private long GetDownloadSize(string componentName, ComponentInfo component)

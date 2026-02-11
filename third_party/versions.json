@@ -23,7 +23,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "19.0.6",
+      "version": "19.0.8",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",

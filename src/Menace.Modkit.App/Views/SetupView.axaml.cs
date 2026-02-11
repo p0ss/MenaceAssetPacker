@@ -87,14 +87,11 @@ public class SetupView : UserControl
         // Optional Components Section (includes AI Assistant as accordion)
         contentPanel.Children.Add(BuildOptionalSection());
 
-        // Download Progress Section
-        contentPanel.Children.Add(BuildProgressSection());
-
         // Fix Progress Section
         contentPanel.Children.Add(BuildFixProgressSection());
 
-        // Action Buttons
-        contentPanel.Children.Add(BuildActionButtons());
+        // Action Buttons + Status
+        contentPanel.Children.Add(BuildActionSection());
 
         mainStack.Children.Add(contentPanel);
         mainBorder.Child = mainStack;
@@ -919,80 +916,22 @@ public class SetupView : UserControl
         return border;
     }
 
-    private Control BuildProgressSection()
+    private Control BuildActionSection()
     {
-        var border = new Border
+        var container = new StackPanel
         {
-            Background = new SolidColorBrush(Color.Parse("#1a2a3a")),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(20),
-            Margin = new Thickness(0, 8, 0, 0)
-        };
-        border.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("IsDownloading"));
-
-        var stack = new StackPanel { Spacing = 12 };
-
-        // Current component
-        var componentText = new TextBlock
-        {
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Brushes.White
-        };
-        componentText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("CurrentComponent")
-        {
-            StringFormat = "Downloading {0}..."
-        });
-        stack.Children.Add(componentText);
-
-        // Progress bar
-        var progressBar = new ProgressBar
-        {
-            Minimum = 0,
-            Maximum = 100,
-            Height = 8
-        };
-        progressBar.Bind(ProgressBar.ValueProperty, new Avalonia.Data.Binding("OverallProgress"));
-        stack.Children.Add(progressBar);
-
-        // Status text
-        var statusStack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 16
+            Spacing = 12,
+            Margin = new Thickness(0, 16, 0, 0)
         };
 
-        var statusText = new TextBlock
-        {
-            FontSize = 12,
-            Foreground = Brushes.White,
-            Opacity = 0.7
-        };
-        statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DownloadStatus"));
-        statusStack.Children.Add(statusText);
-
-        var speedText = new TextBlock
-        {
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8"))
-        };
-        speedText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DownloadSpeed"));
-        statusStack.Children.Add(speedText);
-
-        stack.Children.Add(statusStack);
-
-        border.Child = stack;
-        return border;
-    }
-
-    private Control BuildActionButtons()
-    {
-        var stack = new StackPanel
+        // ==========================================
+        // Button row
+        // ==========================================
+        var buttonStack = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Spacing = 16,
-            Margin = new Thickness(0, 16, 0, 0)
+            Spacing = 16
         };
 
         // Download button
@@ -1004,7 +943,6 @@ public class SetupView : UserControl
         };
         downloadButton.Classes.Add("primary");
 
-        // Bind content based on state
         var downloadPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -1014,16 +952,13 @@ public class SetupView : UserControl
 
         var downloadIcon = new TextBlock
         {
-            Text = "\u2193", // Down arrow
+            Text = "\u2193",
             FontSize = 16,
             VerticalAlignment = VerticalAlignment.Center
         };
         downloadPanel.Children.Add(downloadIcon);
 
-        var downloadText = new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var downloadText = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         downloadText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("TotalDownloadSize")
         {
             Converter = new Avalonia.Data.Converters.FuncValueConverter<string, string>(size =>
@@ -1043,7 +978,7 @@ public class SetupView : UserControl
                     vm.Continue();
             }
         };
-        stack.Children.Add(downloadButton);
+        buttonStack.Children.Add(downloadButton);
 
         // Cancel button (shown during download)
         var cancelButton = new Button
@@ -1059,9 +994,9 @@ public class SetupView : UserControl
             if (DataContext is SetupViewModel vm)
                 vm.CancelDownload();
         };
-        stack.Children.Add(cancelButton);
+        buttonStack.Children.Add(cancelButton);
 
-        // Skip button (shown when not downloading and no required pending)
+        // Skip button
         var skipButton = new Button
         {
             Content = "Skip for Now",
@@ -1079,8 +1014,99 @@ public class SetupView : UserControl
             if (DataContext is SetupViewModel vm)
                 vm.Skip();
         };
-        stack.Children.Add(skipButton);
+        buttonStack.Children.Add(skipButton);
 
-        return stack;
+        container.Children.Add(buttonStack);
+
+        // ==========================================
+        // Progress bar (only visible during download)
+        // ==========================================
+        var progressBar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Height = 6,
+            Margin = new Thickness(40, 0)
+        };
+        progressBar.Bind(ProgressBar.ValueProperty, new Avalonia.Data.Binding("OverallProgress"));
+        progressBar.Bind(ProgressBar.IsVisibleProperty, new Avalonia.Data.Binding("IsDownloading"));
+        container.Children.Add(progressBar);
+
+        // ==========================================
+        // Status line (always visible when there's status)
+        // ==========================================
+        var statusPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Spacing = 12
+        };
+
+        // Status icon (shows state)
+        var statusIcon = new TextBlock
+        {
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        statusIcon.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DownloadStatusIcon"));
+        statusIcon.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding("DownloadStatusColor")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<string, IBrush>(color =>
+                new SolidColorBrush(Color.Parse(color ?? "#888888")))
+        });
+        statusPanel.Children.Add(statusIcon);
+
+        // Status text
+        var statusText = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.Parse("#CCCCCC")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DownloadStatus"));
+        statusPanel.Children.Add(statusText);
+
+        // Speed text (during download)
+        var speedText = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        speedText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DownloadSpeed"));
+        speedText.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("IsDownloading"));
+        statusPanel.Children.Add(speedText);
+
+        // Separator
+        var separator = new TextBlock
+        {
+            Text = "•",
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.Parse("#666666")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        separator.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("HasDownloadStatus"));
+        statusPanel.Children.Add(separator);
+
+        // Open Log link
+        var openLogLink = new Button
+        {
+            Content = "Open Log",
+            FontSize = 12,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.Parse("#6B9FFF")),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+        };
+        openLogLink.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("HasDownloadStatus"));
+        openLogLink.Click += (_, _) => ModkitLog.OpenLogFile();
+        statusPanel.Children.Add(openLogLink);
+
+        // Hide status panel when no status
+        statusPanel.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding("HasDownloadStatus"));
+
+        container.Children.Add(statusPanel);
+
+        return container;
     }
 }

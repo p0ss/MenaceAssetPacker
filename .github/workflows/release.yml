@@ -74,7 +74,7 @@ jobs:
           tar -czf menace-modkit-linux-x64.tar.gz -C gui-linux-x64 .
           zip -q -r menace-modkit-win-x64.zip gui-win-x64/
 
-      - name: Create Release
+      - name: Create App Release
         uses: softprops/action-gh-release@v2
         with:
           name: Menace Modkit v${{ steps.version.outputs.VERSION }}

@@ -405,12 +405,18 @@ public class EnvironmentChecker
         var details = new List<string>();
         var allPresent = true;
 
-        // Check for bundled MelonLoader
+        // Check for MelonLoader (bundled, cached, or already in game)
         var mlPath = ComponentManager.Instance.GetMelonLoaderPath();
+        var mlInGame = IsGameMelonLoaderInstalled();
         if (mlPath != null && Directory.Exists(mlPath))
         {
             details.Add($"MelonLoader: {mlPath}");
             ModkitLog.Info($"[EnvCheck] MelonLoader bundled: {mlPath}");
+        }
+        else if (mlInGame)
+        {
+            details.Add("MelonLoader: installed in game");
+            ModkitLog.Info("[EnvCheck] MelonLoader already installed in game directory");
         }
         else
         {
@@ -503,6 +509,32 @@ public class EnvironmentChecker
             default:
                 progressCallback?.Invoke("Unknown fix action");
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// Check if MelonLoader is already installed in the game directory.
+    /// </summary>
+    private bool IsGameMelonLoaderInstalled()
+    {
+        try
+        {
+            var gamePath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gamePath))
+                return false;
+
+            var mlDir = Path.Combine(gamePath, "MelonLoader");
+            if (!Directory.Exists(mlDir))
+                return false;
+
+            // Check for core DLL in either root or net6 subdirectory
+            var mlDll = Path.Combine(mlDir, "MelonLoader.dll");
+            var mlDllNet6 = Path.Combine(mlDir, "net6", "MelonLoader.dll");
+            return File.Exists(mlDll) || File.Exists(mlDllNet6);
+        }
+        catch
+        {
+            return false;
         }
     }
 
