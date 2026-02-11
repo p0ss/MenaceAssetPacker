@@ -274,9 +274,27 @@ public class EnvironmentChecker
             return Task.FromResult(result);
         }
 
+        var installer = new ModLoaderInstaller(gamePath);
+        if (!installer.IsInstalledMelonLoaderVersionCompatible(out var installedVersion, out var expectedVersion, out var reason))
+        {
+            result.Status = CheckStatus.Failed;
+            result.Description = "Unsupported version";
+            result.Details = string.IsNullOrWhiteSpace(reason)
+                ? $"Installed MelonLoader version {installedVersion ?? "unknown"} is not compatible."
+                : reason!;
+            result.FixInstructions = string.IsNullOrWhiteSpace(expectedVersion)
+                ? "Click 'Install' to reinstall MelonLoader."
+                : $"Click 'Install' to install MelonLoader {expectedVersion}.";
+            result.CanAutoFix = true;
+            result.AutoFixAction = AutoFixAction.InstallMelonLoader;
+            ModkitLog.Warn($"[EnvCheck] Incompatible MelonLoader version: installed={installedVersion ?? "unknown"}, required={expectedVersion ?? "unknown"}, reason={reason ?? "n/a"}");
+            return Task.FromResult(result);
+        }
+
         result.Status = CheckStatus.Passed;
         result.Description = "Installed";
-        result.Details = mlDir;
+        var versionSuffix = string.IsNullOrWhiteSpace(installedVersion) ? "" : $" (v{installedVersion})";
+        result.Details = $"{mlDir}{versionSuffix}";
         ModkitLog.Info($"[EnvCheck] MelonLoader found: {mlDir}");
 
         return Task.FromResult(result);

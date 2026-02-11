@@ -123,9 +123,27 @@ public sealed class ComponentManager : IDisposable
             // Check if already installed in game directory (MelonLoader specific)
             else if (name == "MelonLoader" && IsGameMelonLoaderPresent())
             {
-                // User already has MelonLoader in their game - no need to download
-                status.InstalledVersion = component.Version; // Assume compatible
-                status.State = ComponentState.UpToDate;
+                // User already has MelonLoader in their game.
+                // Validate version compatibility against versions.json expectations.
+                var gamePath = AppSettings.Instance.GameInstallPath;
+                if (!string.IsNullOrWhiteSpace(gamePath))
+                {
+                    var installer = new ModLoaderInstaller(gamePath);
+                    if (installer.IsInstalledMelonLoaderVersionCompatible(out var installedVersion, out _, out _))
+                    {
+                        status.InstalledVersion = installedVersion ?? component.Version;
+                        status.State = ComponentState.UpToDate;
+                    }
+                    else
+                    {
+                        status.InstalledVersion = installedVersion;
+                        status.State = ComponentState.Outdated;
+                    }
+                }
+                else
+                {
+                    status.State = ComponentState.NotInstalled;
+                }
             }
             else
             {

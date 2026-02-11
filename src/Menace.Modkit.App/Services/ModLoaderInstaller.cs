@@ -1,7 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Menace.Modkit.App.Services;
@@ -12,6 +17,7 @@ namespace Menace.Modkit.App.Services;
 public class ModLoaderInstaller
 {
     private readonly string _gameInstallPath;
+    private static readonly string[] UnsupportedMelonLoaderVersions = { "0.9.1" };
 
     public ModLoaderInstaller(string gameInstallPath)
     {
@@ -22,6 +28,15 @@ public class ModLoaderInstaller
     {
         try
         {
+            if (IsMelonLoaderInstalled() &&
+                !IsInstalledMelonLoaderVersionCompatible(out var installedVersion, out var expectedVersion, out var reason))
+            {
+                var expectedText = string.IsNullOrWhiteSpace(expectedVersion) ? "required version" : expectedVersion;
+                progressCallback?.Invoke($"Incompatible MelonLoader detected ({installedVersion ?? "unknown"}). Reinstalling {expectedText}.");
+                if (!string.IsNullOrWhiteSpace(reason))
+                    progressCallback?.Invoke($"  Reason: {reason}");
+            }
+
             // Check if MelonLoader is already fully installed (DLL + version.dll)
             if (IsMelonLoaderFullyInstalled())
             {
@@ -63,7 +78,10 @@ public class ModLoaderInstaller
         if (!File.Exists(versionDll))
             return false;
 
-        return IsMelonLoaderInstalled();
+        if (!IsMelonLoaderInstalled())
+            return false;
+
+        return IsInstalledMelonLoaderVersionCompatible(out _, out _, out _);
     }
 
     private void CopyDirectory(string sourceDir, string destDir, Action<string>? progressCallback = null)
@@ -265,6 +283,182 @@ public class ModLoaderInstaller
         var melonLoaderDll = Path.Combine(mlDir, "MelonLoader.dll");
         var melonLoaderDllNet6 = Path.Combine(mlDir, "net6", "MelonLoader.dll");
         return File.Exists(melonLoaderDll) || File.Exists(melonLoaderDllNet6);
+    }
+
+    public string? GetInstalledMelonLoaderVersion()
+    {
+        var mlDir = Path.Combine(_gameInstallPath, "MelonLoader");
+        var candidatePaths = new[]
+        {
+            Path.Combine(mlDir, "net6", "MelonLoader.dll"),
+            Path.Combine(mlDir, "MelonLoader.dll"),
+            Path.Combine(mlDir, "net35", "MelonLoader.dll")
+        };
+
+        foreach (var path in candidatePaths)
+        {
+            if (!File.Exists(path))
+                continue;
+
+            try
+            {
+                var version = AssemblyName.GetAssemblyName(path).Version;
+                if (version != null)
+                    return version.ToString();
+            }
+            catch
+            {
+                // Fall back to file metadata below.
+            }
+
+            try
+            {
+                var fileVersion = FileVersionInfo.GetVersionInfo(path).FileVersion;
+                if (!string.IsNullOrWhiteSpace(fileVersion))
+                    return fileVersion;
+            }
+            catch
+            {
+                // Ignore and continue to next candidate.
+            }
+        }
+
+        return null;
+    }
+
+    public bool IsInstalledMelonLoaderVersionCompatible(
+        out string? installedVersion,
+        out string? expectedVersion,
+        out string? reason)
+    {
+        installedVersion = GetInstalledMelonLoaderVersion();
+        expectedVersion = GetConfiguredMelonLoaderVersion();
+        reason = null;
+
+        if (string.IsNullOrWhiteSpace(installedVersion))
+        {
+            reason = "Could not determine installed MelonLoader version.";
+            return false;
+        }
+
+        var installedParsed = ParseLooseVersion(installedVersion);
+        if (IsExplicitlyUnsupportedVersion(installedVersion, installedParsed))
+        {
+            reason = $"MelonLoader {installedVersion} is known incompatible with this Unity version.";
+            return false;
+        }
+
+        // If we can't read configured version metadata, only enforce explicit deny-list.
+        if (string.IsNullOrWhiteSpace(expectedVersion))
+            return true;
+
+        var expectedParsed = ParseLooseVersion(expectedVersion);
+        if (installedParsed == null || expectedParsed == null)
+        {
+            if (!string.Equals(installedVersion, expectedVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = $"Installed MelonLoader {installedVersion} does not match required {expectedVersion}.";
+                return false;
+            }
+            return true;
+        }
+
+        // Require same major/minor/patch family and at least required build when present.
+        if (installedParsed.Major != expectedParsed.Major ||
+            installedParsed.Minor != expectedParsed.Minor ||
+            installedParsed.Build != expectedParsed.Build)
+        {
+            reason = $"Installed MelonLoader {installedVersion} is not in the required {expectedVersion} family.";
+            return false;
+        }
+
+        if (expectedParsed.Revision > 0 && installedParsed.Revision < expectedParsed.Revision)
+        {
+            reason = $"Installed MelonLoader build {installedVersion} is older than required {expectedVersion}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsExplicitlyUnsupportedVersion(string rawVersion, Version? parsed)
+    {
+        if (parsed != null)
+        {
+            if (parsed.Major == 0 && parsed.Minor == 9 && parsed.Build == 1)
+                return true;
+        }
+
+        var normalized = NormalizeVersionFamily(rawVersion);
+        return UnsupportedMelonLoaderVersions.Contains(normalized, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeVersionFamily(string version)
+    {
+        var parsed = ParseLooseVersion(version);
+        if (parsed != null)
+            return $"{parsed.Major}.{parsed.Minor}.{parsed.Build}";
+
+        return version.Trim();
+    }
+
+    private static Version? ParseLooseVersion(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var matches = Regex.Matches(value, @"\d+");
+        if (matches.Count < 2)
+            return null;
+
+        var numbers = new List<int>(4);
+        foreach (Match match in matches)
+        {
+            if (numbers.Count == 4)
+                break;
+            if (int.TryParse(match.Value, out var parsed))
+                numbers.Add(parsed);
+        }
+
+        if (numbers.Count < 2)
+            return null;
+
+        while (numbers.Count < 4)
+            numbers.Add(0);
+
+        return new Version(numbers[0], numbers[1], numbers[2], numbers[3]);
+    }
+
+    private static string? GetConfiguredMelonLoaderVersion()
+    {
+        var candidatePaths = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "versions.json")
+        };
+
+        foreach (var path in candidatePaths)
+        {
+            if (!File.Exists(path))
+                continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty("components", out var components) &&
+                    components.TryGetProperty("MelonLoader", out var melonLoader) &&
+                    melonLoader.TryGetProperty("version", out var versionElement))
+                {
+                    return versionElement.GetString();
+                }
+            }
+            catch
+            {
+                // Ignore malformed JSON and try fallback path.
+            }
+        }
+
+        return null;
     }
 
     public bool IsDataExtractorInstalled()
