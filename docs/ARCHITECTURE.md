@@ -218,7 +218,9 @@ MenaceAssetPacker/
 ├── examples/                       # Modpack examples
 ├── tests/                          # Test suites
 └── docs/
-    └── wiki/                       # SDK documentation
+    ├── coding-sdk/                 # SDK documentation
+    ├── modding-guides/             # End-user guides
+    └── system-guide/               # Contributor documentation
 ```
 
 ## Testing Strategy

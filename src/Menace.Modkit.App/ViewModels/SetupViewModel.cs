@@ -15,15 +15,18 @@ public class SetupViewModel : ViewModelBase
 {
     private readonly ComponentManager _componentManager;
     private readonly EnvironmentChecker _environmentChecker;
+    private readonly AiAssistantService _aiAssistantService;
     private CancellationTokenSource? _downloadCts;
 
     public SetupViewModel()
     {
         _componentManager = ComponentManager.Instance;
         _environmentChecker = EnvironmentChecker.Instance;
+        _aiAssistantService = AiAssistantService.Instance;
         RequiredComponents = new ObservableCollection<ComponentStatusViewModel>();
         OptionalComponents = new ObservableCollection<ComponentStatusViewModel>();
         EnvironmentChecks = new ObservableCollection<EnvironmentCheckViewModel>();
+        AiClients = new ObservableCollection<AiClientViewModel>();
     }
 
     /// <summary>
@@ -39,6 +42,7 @@ public class SetupViewModel : ViewModelBase
     public ObservableCollection<ComponentStatusViewModel> RequiredComponents { get; }
     public ObservableCollection<ComponentStatusViewModel> OptionalComponents { get; }
     public ObservableCollection<EnvironmentCheckViewModel> EnvironmentChecks { get; }
+    public ObservableCollection<AiClientViewModel> AiClients { get; }
 
     private bool _isLoading = true;
     public bool IsLoading
@@ -137,6 +141,31 @@ public class SetupViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _hasEnvironmentFailures, value);
     }
 
+    private bool _hasAnyAiClient;
+    public bool HasAnyAiClient
+    {
+        get => _hasAnyAiClient;
+        set => this.RaiseAndSetIfChanged(ref _hasAnyAiClient, value);
+    }
+
+    private bool _isMcpEnabled;
+    public bool IsMcpEnabled
+    {
+        get => _isMcpEnabled;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isMcpEnabled, value);
+            AppSettings.Instance.SetEnableMcpServer(value);
+        }
+    }
+
+    private bool _isConfiguringAi;
+    public bool IsConfiguringAi
+    {
+        get => _isConfiguringAi;
+        set => this.RaiseAndSetIfChanged(ref _isConfiguringAi, value);
+    }
+
     private bool _isFixing;
     public bool IsFixing
     {
@@ -183,6 +212,29 @@ public class SetupViewModel : ViewModelBase
 
             HasEnvironmentIssues = envResults.Any(r => r.Status != CheckStatus.Passed);
             HasEnvironmentFailures = envResults.Any(r => r.Status == CheckStatus.Failed);
+
+            // Detect AI clients
+            var aiClients = await _aiAssistantService.DetectClientsAsync();
+            AiClients.Clear();
+            foreach (var client in aiClients)
+            {
+                AiClients.Add(new AiClientViewModel(client, this));
+            }
+            HasAnyAiClient = aiClients.Exists(c => c.IsInstalled);
+
+            // Auto-enable MCP if clients are detected and setting is null (first run)
+            var mcpSetting = AppSettings.Instance.EnableMcpServer;
+            if (mcpSetting == null && HasAnyAiClient)
+            {
+                // Auto-enable for first-time users with AI clients
+                IsMcpEnabled = true;
+                ModkitLog.Info("[Setup] Auto-enabled MCP server (AI client detected)");
+            }
+            else
+            {
+                _isMcpEnabled = mcpSetting ?? false;
+                this.RaisePropertyChanged(nameof(IsMcpEnabled));
+            }
 
             // Then load component status
             var statuses = await _componentManager.GetComponentStatusAsync(forceRemoteFetch: true);
@@ -293,8 +345,12 @@ public class SetupViewModel : ViewModelBase
 
             var success = await _componentManager.DownloadComponentsAsync(toDownload, progress, _downloadCts.Token);
 
+            ModkitLog.Info($"[Setup] Download result: {(success ? "success" : "failed")}");
+
             // Refresh component status
             await LoadComponentsAsync();
+
+            ModkitLog.Info($"[Setup] After refresh - HasRequiredPending: {HasRequiredPending}");
 
             if (success && !HasRequiredPending)
             {
@@ -305,6 +361,15 @@ public class SetupViewModel : ViewModelBase
             else if (!success)
             {
                 DownloadStatus = "Some downloads failed. Please retry.";
+                ModkitLog.Warn("[Setup] Some downloads failed");
+            }
+            else if (HasRequiredPending)
+            {
+                // Download succeeded but still have pending requirements - show what's still needed
+                var pending = RequiredComponents.Where(c => c.Status.State != ComponentState.UpToDate).ToList();
+                var pendingNames = string.Join(", ", pending.Select(c => c.Name));
+                DownloadStatus = $"Still need: {pendingNames}";
+                ModkitLog.Warn($"[Setup] Download succeeded but still pending: {pendingNames}");
             }
         }
         catch (OperationCanceledException)
@@ -420,6 +485,78 @@ public class SetupViewModel : ViewModelBase
         catch (Exception ex)
         {
             ModkitLog.Error($"Failed to open URL: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Configure MCP for a specific AI client.
+    /// </summary>
+    public async Task ConfigureAiClientAsync(string clientName)
+    {
+        if (IsConfiguringAi) return;
+
+        IsConfiguringAi = true;
+        try
+        {
+            var success = await _aiAssistantService.ConfigureClientAsync(clientName);
+            if (success)
+            {
+                ModkitLog.Info($"[Setup] Configured MCP for {clientName}");
+                // Refresh client status
+                var aiClients = await _aiAssistantService.DetectClientsAsync();
+                AiClients.Clear();
+                foreach (var client in aiClients)
+                {
+                    AiClients.Add(new AiClientViewModel(client, this));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[Setup] Failed to configure {clientName}: {ex.Message}");
+        }
+        finally
+        {
+            IsConfiguringAi = false;
+        }
+    }
+}
+
+/// <summary>
+/// ViewModel wrapper for AiClientStatus with UI-specific properties.
+/// </summary>
+public class AiClientViewModel : ViewModelBase
+{
+    private readonly SetupViewModel _parent;
+
+    public AiClientViewModel(AiClientStatus status, SetupViewModel parent)
+    {
+        Status = status;
+        _parent = parent;
+    }
+
+    public AiClientStatus Status { get; }
+
+    public string Name => Status.Name;
+    public string Description => Status.Description;
+    public bool IsInstalled => Status.IsInstalled;
+    public bool IsConfigured => Status.IsConfigured;
+    public string? ConfigPath => Status.ConfigPath;
+    public string? SetupDocsUrl => Status.SetupDocsUrl;
+
+    public bool NeedsConfiguration => IsInstalled && !IsConfigured;
+    public bool HasSetupDocs => !string.IsNullOrEmpty(SetupDocsUrl);
+
+    public async Task ConfigureAsync()
+    {
+        await _parent.ConfigureAiClientAsync(Name);
+    }
+
+    public void OpenSetupDocs()
+    {
+        if (HasSetupDocs)
+        {
+            _parent.OpenUrl(SetupDocsUrl!);
         }
     }
 }

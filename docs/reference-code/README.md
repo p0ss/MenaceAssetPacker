@@ -197,5 +197,5 @@ If you find errors or want to add systems:
 ## Related Documentation
 
 - [Reverse Engineering Notes](../reverse-engineering/README.md) - Detailed analysis docs
-- [IL2CPP Runtime Reference](../il2cpp-runtime.md) - Runtime function names
+- [IL2CPP Runtime Reference](../system-guide/il2cpp-runtime.md) - Runtime function names
 - [Offset Reference](../reverse-engineering/offsets.md) - Consolidated struct offsets

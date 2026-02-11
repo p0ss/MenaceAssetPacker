@@ -47,11 +47,13 @@ public class App : Application
             if (needsSetup)
             {
                 // Show setup window first
+                ModkitLog.Info("[App] Opening setup window");
                 ShowSetupWindow();
             }
             else
             {
                 // Go directly to main app
+                ModkitLog.Info("[App] Opening main window");
                 ShowMainWindow();
             }
         }
@@ -65,7 +67,20 @@ public class App : Application
     {
         try
         {
-            return await ComponentManager.Instance.NeedsSetupAsync();
+            ModkitLog.Info("[App] Checking setup status...");
+
+            var needsSetupTask = ComponentManager.Instance.NeedsSetupAsync();
+            var completed = await Task.WhenAny(needsSetupTask, Task.Delay(TimeSpan.FromSeconds(15)));
+
+            if (completed != needsSetupTask)
+            {
+                ModkitLog.Warn("[App] Setup check timed out after 15s, defaulting to setup screen");
+                return true;
+            }
+
+            var needsSetup = await needsSetupTask;
+            ModkitLog.Info($"[App] Setup status check complete: needsSetup={needsSetup}");
+            return needsSetup;
         }
         catch (Exception ex)
         {
@@ -116,6 +131,10 @@ public class App : Application
         if (_desktop != null)
         {
             _desktop.MainWindow = setupWindow;
+            if (!setupWindow.IsVisible)
+            {
+                setupWindow.Show();
+            }
         }
     }
 

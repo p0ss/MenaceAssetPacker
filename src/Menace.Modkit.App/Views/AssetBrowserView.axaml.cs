@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
@@ -369,6 +370,19 @@ public class AssetBrowserView : UserControl
         statusText.Bind(TextBlock.TextProperty,
             new Avalonia.Data.Binding("SaveStatus"));
         toolbar.Children.Add(statusText);
+
+        // Spacer
+        toolbar.Children.Add(new Border { Width = 1 });
+
+        // Model Replacement Wizard button
+        var modelWizardButton = new Button
+        {
+            Content = "Model Wizard...",
+            FontSize = 12,
+            Padding = new Thickness(12, 6)
+        };
+        modelWizardButton.Click += OnModelWizardClick;
+        toolbar.Children.Add(modelWizardButton);
 
         outerGrid.Children.Add(toolbar);
         Grid.SetRow(toolbar, 0);
@@ -818,23 +832,22 @@ public class AssetBrowserView : UserControl
         {
             if (DataContext is AssetBrowserViewModel vm)
             {
-                var dialog = new Avalonia.Controls.OpenFileDialog
+                var topLevel = TopLevel.GetTopLevel(this);
+                if (topLevel != null)
                 {
-                    Title = "Import Edited GLB",
-                    AllowMultiple = false,
-                    Filters = new List<FileDialogFilter>
+                    var result = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
                     {
-                        new FileDialogFilter { Name = "GLB Files", Extensions = { "glb" } }
-                    }
-                };
+                        Title = "Import Edited GLB",
+                        AllowMultiple = false,
+                        FileTypeFilter = new[]
+                        {
+                            new FilePickerFileType("GLB Files") { Patterns = new[] { "*.glb" } }
+                        }
+                    });
 
-                var window = TopLevel.GetTopLevel(this) as Window;
-                if (window != null)
-                {
-                    var result = await dialog.ShowAsync(window);
-                    if (result?.Length > 0)
+                    if (result.Count > 0)
                     {
-                        await vm.ImportGlbAsync(result[0]);
+                        await vm.ImportGlbAsync(result[0].Path.LocalPath);
                     }
                 }
             }
@@ -1119,27 +1132,32 @@ public class AssetBrowserView : UserControl
     {
         if (DataContext is AssetBrowserViewModel vm && vm.SelectedNode?.IsFile == true)
         {
-            var dialog = new OpenFileDialog
-            {
-                Title = $"Select replacement for {vm.SelectedNode.Name}"
-            };
-
             var ext = System.IO.Path.GetExtension(vm.SelectedNode.Name).ToLowerInvariant();
-            if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp")
-            {
-                dialog.Filters = new System.Collections.Generic.List<FileDialogFilter>
-                {
-                    new FileDialogFilter { Name = "Images", Extensions = { "png", "jpg", "jpeg", "bmp" } },
-                    new FileDialogFilter { Name = "All Files", Extensions = { "*" } }
-                };
-            }
+            var filters = new List<FilePickerFileType>();
 
-            if (this.VisualRoot is Window window)
+            // Add appropriate filters based on asset type
+            if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga")
+                filters.Add(new FilePickerFileType("Images") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga" } });
+            else if (ext is ".glb" or ".gltf" or ".fbx" or ".obj")
+                filters.Add(new FilePickerFileType("3D Models") { Patterns = new[] { "*.glb", "*.gltf", "*.fbx", "*.obj" } });
+            else if (ext is ".wav" or ".ogg" or ".mp3")
+                filters.Add(new FilePickerFileType("Audio") { Patterns = new[] { "*.wav", "*.ogg", "*.mp3" } });
+
+            filters.Add(new FilePickerFileType("All Files") { Patterns = new[] { "*" } });
+
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel != null)
             {
-                var files = await dialog.ShowAsync(window);
-                if (files != null && files.Length > 0)
+                var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
                 {
-                    vm.ReplaceAssetInModpack(files[0]);
+                    Title = $"Select replacement for {vm.SelectedNode.Name}",
+                    AllowMultiple = false,
+                    FileTypeFilter = filters
+                });
+
+                if (files.Count > 0)
+                {
+                    vm.ReplaceAssetInModpack(files[0].Path.LocalPath);
                 }
             }
         }
@@ -1169,19 +1187,26 @@ public class AssetBrowserView : UserControl
     {
         if (DataContext is AssetBrowserViewModel vm && vm.SelectedNode?.IsFile == true)
         {
-            var dialog = new SaveFileDialog
+            var extension = System.IO.Path.GetExtension(vm.SelectedNode.Name);
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel != null)
             {
-                Title = "Export asset",
-                DefaultExtension = System.IO.Path.GetExtension(vm.SelectedNode.Name),
-                InitialFileName = vm.SelectedNode.Name
-            };
+                var file = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = "Export asset",
+                    SuggestedFileName = vm.SelectedNode.Name,
+                    DefaultExtension = extension,
+                    ShowOverwritePrompt = true,
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType("Asset File") { Patterns = new[] { $"*{extension}" } },
+                        new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
+                    }
+                });
 
-            if (this.VisualRoot is Window window)
-            {
-                var file = await dialog.ShowAsync(window);
                 if (file != null)
                 {
-                    vm.ExportAsset(file);
+                    vm.ExportAsset(file.Path.LocalPath);
                 }
             }
         }
@@ -1195,6 +1220,38 @@ public class AssetBrowserView : UserControl
         }
     }
 
+    private async void OnModelWizardClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is AssetBrowserViewModel vm)
+        {
+            var extractedPath = AppSettings.GetEffectiveAssetsPath();
+            if (string.IsNullOrEmpty(extractedPath) || !System.IO.Directory.Exists(extractedPath))
+            {
+                var topLevel = TopLevel.GetTopLevel(this);
+                if (topLevel is Window window)
+                {
+                    await ConfirmationDialog.ShowAsync(
+                        window,
+                        "Assets Not Extracted",
+                        "Please extract game assets first using the 'Extract Assets' button.",
+                        "OK",
+                        isDestructive: false);
+                }
+                return;
+            }
+
+            var modpackManager = vm.GetModpackManager();
+            if (modpackManager == null)
+                return;
+
+            var wizard = new ModelReplacementWizard(modpackManager, extractedPath);
+            var parent = TopLevel.GetTopLevel(this) as Window;
+            if (parent != null)
+            {
+                await wizard.ShowDialog(parent);
+            }
+        }
+    }
 }
 
 /// <summary>

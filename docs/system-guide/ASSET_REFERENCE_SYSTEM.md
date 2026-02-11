@@ -209,12 +209,12 @@ The manifest tracks replacements:
 
 For developers or troubleshooting, the system can be run manually.
 
-### match_asset_references.py
+### tools/match_asset_references.py
 
 Matches extracted references to AssetRipper output files:
 
 ```bash
-python3 match_asset_references.py
+python3 tools/match_asset_references.py
 # Scans AssetRipper exports
 # Updates AssetPath fields in AssetReferences.json
 ```
@@ -230,7 +230,7 @@ If automatic extraction fails:
 
 1. Run game with DataExtractor mod
 2. Check `UserData/ExtractedData/` for output
-3. Run `python3 match_asset_references.py` to update paths
+3. Run `python3 tools/match_asset_references.py` to update paths
 4. Restart the modkit app
 
 ## Future Enhancements

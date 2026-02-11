@@ -368,6 +368,7 @@ public class CloningWizardViewModel : INotifyPropertyChanged
         var lower = fieldType.ToLowerInvariant();
         if (lower.Contains("sprite")) return "sprite";
         if (lower.Contains("texture")) return "texture";
+        if (lower.Contains("mesh") || lower.Contains("model") || lower.Contains("skinned")) return "mesh";
         if (lower.Contains("prefab") || lower.Contains("gameobject")) return "prefab";
         if (lower.Contains("audio") || lower.Contains("sound")) return "audio";
         if (lower.Contains("material")) return "material";
@@ -518,11 +519,56 @@ public class CloningWizardViewModel : INotifyPropertyChanged
             }
             else if (dep.Strategy == AssetCloneStrategy.ReplaceWithCustom && !string.IsNullOrEmpty(dep.CustomAssetPath))
             {
-                result.AssetsToCopy[dep.CustomAssetPath] = dep.NewAssetName ?? dep.FieldName;
+                // Generate proper destination path with category-based subdirectory
+                var extension = Path.GetExtension(dep.CustomAssetPath);
+                var fileName = Path.GetFileNameWithoutExtension(dep.CustomAssetPath);
+                var categoryFolder = GetCategoryFolder(dep.Category);
+                var destPath = Path.Combine("Assets", categoryFolder, $"{fileName}{extension}");
+
+                result.AssetsToCopy[dep.CustomAssetPath] = destPath;
+
+                // Also record that the clone's field should reference this new asset
+                // (stored in AssetPatches for the caller to apply)
+                AddAssetFieldPatch(result, dep.FieldName, fileName);
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Get the asset folder name for a category.
+    /// </summary>
+    private static string GetCategoryFolder(string category) => category switch
+    {
+        "sprite" => "Sprite",
+        "texture" => "Texture2D",
+        "mesh" => "Mesh",
+        "audio" => "AudioClip",
+        "material" => "Material",
+        "prefab" => "Prefab",
+        _ => "Other"
+    };
+
+    /// <summary>
+    /// Add a patch to update the clone's asset field reference.
+    /// </summary>
+    private void AddAssetFieldPatch(CloneWizardResult result, string fieldName, string newAssetName)
+    {
+        // Create a patch for the clone itself to update its asset reference
+        if (!result.AssetPatches.TryGetValue(_state.SourceTemplateType, out var typePatches))
+        {
+            typePatches = new Dictionary<string, JsonObject>();
+            result.AssetPatches[_state.SourceTemplateType] = typePatches;
+        }
+
+        if (!typePatches.TryGetValue(CloneName, out var clonePatch))
+        {
+            clonePatch = new JsonObject();
+            typePatches[CloneName] = clonePatch;
+        }
+
+        clonePatch[fieldName] = newAssetName;
     }
 
     // --- Reference Selection Helpers ---

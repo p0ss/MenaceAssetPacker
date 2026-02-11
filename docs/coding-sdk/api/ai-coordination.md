@@ -308,5 +308,5 @@ See `CombinedArmsSDK.cs` for the complete drop-in replacement.
 ## See Also
 
 - [AI](ai.md) - Core AI inspection and modification
-- [TileMap](tilemap.md) - Tile operations
+- [TileMap](tile-map.md) - Tile operations
 - [EntitySpawner](entity-spawner.md) - Entity queries

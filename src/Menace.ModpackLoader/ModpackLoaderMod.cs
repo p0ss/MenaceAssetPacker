@@ -52,6 +52,9 @@ public partial class ModpackLoaderMod : MelonMod
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
 
+        // Patch bug reporter to include mod list in all reports
+        BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
+
         // Emit startup banner to Player.log for game dev triage
         PlayerLog("========================================");
         PlayerLog("THIS GAME SESSION IS RUNNING MODDED");
@@ -218,10 +221,11 @@ public partial class ModpackLoaderMod : MelonMod
                     var vLabel = manifestVersion >= 2 ? "v2" : "v1 (legacy)";
                     SdkLogger.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");
 
-                    // V2: Load bundles and DLLs
+                    // V2: Load bundles, GLB models, and DLLs
                     if (manifestVersion >= 2 && !string.IsNullOrEmpty(modpackDir))
                     {
                         BundleLoader.LoadBundles(modpackDir, modpack.Name);
+                        GlbLoader.LoadModpackModels(modpackDir);
                         DllLoader.LoadModDlls(modpackDir, modpack.Name, modpack.SecurityStatus ?? "Unreviewed");
                     }
 
@@ -558,6 +562,19 @@ public class Modpack
     /// </summary>
     [JsonProperty("clones")]
     public Dictionary<string, Dictionary<string, string>> Clones { get; set; }
+
+    // -- Repository / Updates --
+    /// <summary>
+    /// Repository type for update checking (github, nexus, gamebanana, etc.)
+    /// </summary>
+    [JsonProperty("repositoryType")]
+    public string RepositoryType { get; set; }
+
+    /// <summary>
+    /// Repository URL for update checking and mod homepage.
+    /// </summary>
+    [JsonProperty("repositoryUrl")]
+    public string RepositoryUrl { get; set; }
 
     [JsonIgnore]
     public string DirectoryPath { get; set; }

@@ -181,34 +181,24 @@ errors
 
 ---
 
-## Advanced: Internal Tools
+## Advanced: Internal Architecture
 
-The following Python scripts are used internally by the modkit. End users typically don't need these.
+### Current Approach
 
-### generate_all_templates.py
+The modkit uses **dynamic reflection** for extracting template data at runtime. This approach:
+- Automatically discovers fields without hardcoded offsets
+- Handles game updates without regenerating extraction code
+- Works with IL2CPP's runtime type information
 
-Generates C# extraction code from IL2CPP dumps. Used when updating DataExtractor for new game versions.
+For deeper reverse engineering (memory layouts, native code), the modkit integrates with **Ghidra** via MCP.
 
-```bash
-python3 generate_all_templates.py
-# Output: generated_extraction_code.cs
-```
+### Legacy IL2CPP Dump Tools
 
-### generate_injection_code.py
+The `tools/il2cpp-dump-legacy/` directory contains Python scripts that parse IL2CPP dump files to generate extraction code. These are **preserved as a fallback** for situations where:
+- Dynamic reflection fails for specific types
+- Ghidra is unavailable
+- You need to understand structure from a fresh IL2CPP dump
 
-Generates C# injection code for template patching. Used when updating ModpackLoader.
+See `tools/il2cpp-dump-legacy/README.md` for usage instructions.
 
-```bash
-python3 generate_injection_code.py
-# Output: generated_injection_code.cs
-```
-
-### extract_template_dump.py
-
-Extracts minimal template-only dump from full IL2CPP dump (35MB → 500KB).
-
-```bash
-python3 extract_template_dump.py il2cpp_dump/dump.cs il2cpp_templates.dump
-```
-
-These scripts are primarily for modkit developers maintaining compatibility with game updates.
+These scripts are primarily for modkit developers and are not needed for normal modding workflows.

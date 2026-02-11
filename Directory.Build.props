@@ -7,6 +7,8 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
     <RootNamespace>Menace.Modkit</RootNamespace>
+    <!-- NuGet vulnerability feed lookups can be flaky and produce NU1900 noise during normal builds. -->
+    <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
   <!-- Paths for MelonLoader mod development. These can be overridden via environment variables. -->

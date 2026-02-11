@@ -63,6 +63,11 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
     /// </summary>
     public bool IsAssetRipperAvailable => _assetRipperService.IsAssetRipperAvailable();
 
+    /// <summary>
+    /// Get the ModpackManager for use by wizards and dialogs.
+    /// </summary>
+    public ModpackManager? GetModpackManager() => _modpackManager;
+
     public ObservableCollection<AssetTreeNode> FolderTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
     public ObservableCollection<ReferenceEntry> AssetBacklinks { get; }

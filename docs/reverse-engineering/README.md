@@ -42,7 +42,7 @@ This directory contains reverse-engineered documentation of Menace's game system
 | Offmap Abilities | ✅ Complete | [offmap-abilities.md](./offmap-abilities.md) |
 | BlackMarket | ✅ Complete | [blackmarket.md](./blackmarket.md) |
 | Localization System | ✅ Complete | [localization-system.md](./localization-system.md) |
-| IL2CPP Runtime | ✅ Complete | [../il2cpp-runtime.md](../il2cpp-runtime.md) |
+| IL2CPP Runtime | ✅ Complete | [../system-guide/il2cpp-runtime.md](../system-guide/il2cpp-runtime.md) |
 | Unnamed Functions Plan | 📋 Reference | [unnamed-functions-plan.md](./unnamed-functions-plan.md) |
 
 ## SDK Coverage
@@ -120,7 +120,7 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 - **[localization-system.md](./localization-system.md)** - LocalizedLine/LocalizedMultiLine wrapper objects, translation CSV format, why mods fail with string casts
 
 ### IL2CPP Runtime
-- **[../il2cpp-runtime.md](../il2cpp-runtime.md)** - IL2CPP runtime function reference (GC, object system, strings, exceptions, method dispatch)
+- **[../system-guide/il2cpp-runtime.md](../system-guide/il2cpp-runtime.md)** - IL2CPP runtime function reference (GC, object system, strings, exceptions, method dispatch)
 
 ### Reference Code
 - **[../reference-code/](../reference-code/)** - Reconstructed C# implementations for modder reference

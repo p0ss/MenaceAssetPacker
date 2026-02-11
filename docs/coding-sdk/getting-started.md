@@ -549,7 +549,7 @@ catch (Exception ex)
 }
 ```
 
-Errors appear in the DevConsole Errors panel and in MelonLoader's log.
+Errors appear in the DevConsole Log panel and in MelonLoader's log.
 Severity levels: `Info`, `Warning`, `Error`, `Fatal`.
 
 For quick status messages visible in the log panel:
@@ -567,5 +567,5 @@ ModError.Warn("MyMod", "Shotgun template not found, skipping buff");
 - Browse the `examples/` directory in the repository for complete working
   modpacks including `DevMode-modpack` (entity spawner, god mode, delete tool)
   and `PinningMod-modpack` (Harmony prefix patches for balance tweaks).
-- Use the REPL (press **~**, select the **REPL** tab) to experiment with SDK
+- Use the REPL (press **~**, open **Console**, and enter C# expressions) to experiment with SDK
   calls interactively before committing them to code.

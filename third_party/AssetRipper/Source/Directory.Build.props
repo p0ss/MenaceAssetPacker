@@ -6,6 +6,8 @@
 		<IsAotCompatible>true</IsAotCompatible>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 		<CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+		<!-- Keep local builds quiet when NuGet vulnerability endpoints are unavailable. -->
+		<NuGetAudit>false</NuGetAudit>
 
 		<Version>1.3.4</Version>
 		<AssemblyVersion>$(Version)</AssemblyVersion>

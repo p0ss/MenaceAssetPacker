@@ -166,21 +166,21 @@ Running extraction pipeline:
 
 ## External Dependencies
 
-The orchestration system relies on external tools that users must have installed:
+The orchestration system relies on components managed by the app's setup flow (`ComponentManager`):
 
 ### Required Tools
 
 | Tool | Purpose | Installation |
 |------|---------|--------------|
 | **MelonLoader** | Mod injection framework | Auto-installed by app |
-| **AssetRipper** | Asset extraction | User downloads separately |
+| **AssetRipper** | Asset extraction | Downloaded by app setup (or loaded from bundled copy) |
 | **Il2CppDumper** | IL2CPP analysis (optional) | For advanced users |
 
 ### Tool Paths
 
-Configure in Settings tab:
-- **AssetRipper Path** — Path to AssetRipper executable
-- **Game Install Path** — Auto-detected or manual
+The app resolves tool paths automatically:
+- **AssetRipper** — Component cache first, bundled fallback
+- **Game Install Path** — Auto-detected or manually configured by user
 
 The app bundles:
 - `Menace.DataExtractor.dll` — Template extraction mod

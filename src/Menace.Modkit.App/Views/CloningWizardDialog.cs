@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
@@ -446,12 +448,23 @@ public class CloningWizardDialog : Window
                     Foreground = Brushes.White,
                     FontSize = 12
                 });
-                headerRow.Children.Add(new TextBlock
+
+                // Category badge with special styling for meshes
+                var categoryBadge = new Border
                 {
-                    Text = $"({dep.Category})",
-                    Foreground = new SolidColorBrush(Color.Parse("#888888")),
-                    FontSize = 11
-                });
+                    Background = dep.Category == "mesh"
+                        ? new SolidColorBrush(Color.Parse("#3D5A80"))
+                        : new SolidColorBrush(Color.Parse("#3E3E3E")),
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(6, 2),
+                    Child = new TextBlock
+                    {
+                        Text = dep.Category,
+                        Foreground = Brushes.White,
+                        FontSize = 10
+                    }
+                };
+                headerRow.Children.Add(categoryBadge);
                 assetStack.Children.Add(headerRow);
 
                 assetStack.Children.Add(new TextBlock
@@ -473,7 +486,9 @@ public class CloningWizardDialog : Window
                     });
                 }
 
-                // Strategy selector (simplified for now - just show "Keep Original")
+                // Strategy selector row with file picker
+                var strategyRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
                 var localDep = dep;
                 var strategyCombo = new ComboBox
                 {
@@ -482,11 +497,48 @@ public class CloningWizardDialog : Window
                     ItemsSource = new[] { "Keep Original", "Clone Asset", "Replace with Custom" },
                     SelectedIndex = (int)dep.Strategy
                 };
+
+                // Browse button (initially hidden)
+                var browseButton = new Button
+                {
+                    Content = "Browse...",
+                    FontSize = 11,
+                    IsVisible = dep.Strategy == AssetCloneStrategy.ReplaceWithCustom
+                };
+                browseButton.Classes.Add("secondary");
+
+                // Path display text
+                var pathText = new TextBlock
+                {
+                    Text = dep.CustomAssetPath ?? "",
+                    Foreground = new SolidColorBrush(Color.Parse("#66BB6A")),
+                    FontSize = 10,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    MaxWidth = 200,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    IsVisible = !string.IsNullOrEmpty(dep.CustomAssetPath)
+                };
+
                 strategyCombo.SelectionChanged += (_, _) =>
                 {
                     localDep.Strategy = (AssetCloneStrategy)(strategyCombo.SelectedIndex);
+                    browseButton.IsVisible = localDep.Strategy == AssetCloneStrategy.ReplaceWithCustom;
+
+                    // Trigger validation refresh
+                    _nextButton.IsEnabled = _viewModel.CanGoNext;
+                    _errorText.Text = _viewModel.ValidationError ?? "";
+                    _errorText.IsVisible = !string.IsNullOrEmpty(_viewModel.ValidationError);
                 };
-                assetStack.Children.Add(strategyCombo);
+
+                browseButton.Click += async (_, _) =>
+                {
+                    await BrowseForAsset(localDep, pathText);
+                };
+
+                strategyRow.Children.Add(strategyCombo);
+                strategyRow.Children.Add(browseButton);
+                strategyRow.Children.Add(pathText);
+                assetStack.Children.Add(strategyRow);
 
                 assetRow.Child = assetStack;
                 _assetsPanel.Children.Add(assetRow);
@@ -501,6 +553,42 @@ public class CloningWizardDialog : Window
         }
 
         _contentPanel.Children.Add(stack);
+    }
+
+    private async System.Threading.Tasks.Task BrowseForAsset(AssetDependency dep, TextBlock pathText)
+    {
+        try
+        {
+            var extensions = dep.GetFileExtensions().Select(e => e.TrimStart('*')).ToList();
+            var patterns = dep.GetFileExtensions().ToList();
+
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = $"Select {dep.Category} replacement for {dep.FieldName}",
+                AllowMultiple = false,
+                FileTypeFilter = new List<FilePickerFileType>
+                {
+                    new(dep.GetFileTypeDescription()) { Patterns = patterns },
+                    new("All Files") { Patterns = new[] { "*" } }
+                }
+            });
+
+            if (files.Count > 0)
+            {
+                dep.CustomAssetPath = files[0].Path.LocalPath;
+                pathText.Text = System.IO.Path.GetFileName(dep.CustomAssetPath);
+                pathText.IsVisible = true;
+
+                // Refresh validation
+                _nextButton.IsEnabled = _viewModel.CanGoNext;
+                _errorText.Text = _viewModel.ValidationError ?? "";
+                _errorText.IsVisible = !string.IsNullOrEmpty(_viewModel.ValidationError);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"CloningWizardDialog.BrowseForAsset failed: {ex}");
+        }
     }
 
     private void BuildReviewStep()

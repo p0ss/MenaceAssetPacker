@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -82,7 +84,7 @@ public class SetupView : UserControl
         // Required Components Section
         contentPanel.Children.Add(BuildRequiredSection());
 
-        // Optional Components Section
+        // Optional Components Section (includes AI Assistant as accordion)
         contentPanel.Children.Add(BuildOptionalSection());
 
         // Download Progress Section
@@ -143,21 +145,8 @@ public class SetupView : UserControl
 
         var stack = new StackPanel { Spacing = 12 };
 
-        // Section header
-        var headerStack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8
-        };
-        headerStack.Children.Add(new TextBlock
-        {
-            Text = "REQUIRED COMPONENTS",
-            FontSize = 12,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        stack.Children.Add(headerStack);
+        // Section header - standardized style
+        stack.Children.Add(BuildSectionHeader("REQUIRED COMPONENTS"));
 
         // Component list
         var itemsControl = new ItemsControl();
@@ -181,14 +170,8 @@ public class SetupView : UserControl
 
         var stack = new StackPanel { Spacing = 12 };
 
-        // Section header
-        stack.Children.Add(new TextBlock
-        {
-            Text = "OPTIONAL ADD-ONS",
-            FontSize = 12,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse("#888888"))
-        });
+        // Section header - standardized style
+        stack.Children.Add(BuildSectionHeader("OPTIONAL ADD-ONS"));
 
         // Component list
         var itemsControl = new ItemsControl();
@@ -197,14 +180,23 @@ public class SetupView : UserControl
             (component, _) => BuildComponentRow(component, isRequired: false), true);
         stack.Children.Add(itemsControl);
 
-        // Hide if no optional components
-        border.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("OptionalComponents.Count")
-        {
-            Converter = new Avalonia.Data.Converters.FuncValueConverter<int, bool>(c => c > 0)
-        });
+        // AI Assistant accordion (collapsed by default, shown when MCP server component is present)
+        stack.Children.Add(BuildAiAssistantAccordion());
 
         border.Child = stack;
         return border;
+    }
+
+    private Control BuildSectionHeader(string text)
+    {
+        return new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            LetterSpacing = 1
+        };
     }
 
     private Control BuildComponentRow(ComponentStatusViewModel component, bool isRequired)
@@ -225,14 +217,14 @@ public class SetupView : UserControl
                 Margin = new Thickness(0, 0, 12, 0)
             };
 
-            // Bind icon and color based on state
+            // Bind icon and color based on state - using blue for download (not destructive)
             statusIcon.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("State")
             {
                 Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, string>(state => state switch
                 {
                     ComponentState.UpToDate => "\u2713",      // Checkmark
                     ComponentState.Outdated => "\u2191",      // Up arrow
-                    ComponentState.NotInstalled => "\u2717",  // X
+                    ComponentState.NotInstalled => "\u2193",  // Down arrow (download)
                     _ => "?"
                 })
             });
@@ -242,7 +234,7 @@ public class SetupView : UserControl
                 {
                     ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#8ECDC8")),
                     ComponentState.Outdated => new SolidColorBrush(Color.Parse("#FFD700")),
-                    ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#FF6B6B")),
+                    ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#6B9FFF")), // Blue
                     _ => Brushes.White
                 })
             });
@@ -336,14 +328,14 @@ public class SetupView : UserControl
             FontWeight = FontWeight.SemiBold
         };
 
-        // Bind badge appearance based on state
+        // Bind badge appearance based on state - using blue for download (not destructive)
         statusBadge.Bind(Border.BackgroundProperty, new Avalonia.Data.Binding("State")
         {
             Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, IBrush>(state => state switch
             {
                 ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#1a3a2a")),
                 ComponentState.Outdated => new SolidColorBrush(Color.Parse("#3a3a1a")),
-                ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#3a1a1a")),
+                ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#1a2a3a")), // Blue, not red
                 _ => Brushes.Transparent
             })
         });
@@ -354,7 +346,7 @@ public class SetupView : UserControl
             {
                 ComponentState.UpToDate => "Installed",
                 ComponentState.Outdated => "Update",
-                ComponentState.NotInstalled => "Download",
+                ComponentState.NotInstalled => "Required",
                 _ => ""
             })
         });
@@ -365,7 +357,7 @@ public class SetupView : UserControl
             {
                 ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#8ECDC8")),
                 ComponentState.Outdated => new SolidColorBrush(Color.Parse("#FFD700")),
-                ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#FF6B6B")),
+                ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#6B9FFF")), // Blue, not red
                 _ => Brushes.White
             })
         });
@@ -388,7 +380,7 @@ public class SetupView : UserControl
 
         var stack = new StackPanel { Spacing = 12 };
 
-        // Section header
+        // Section header - standardized style with status
         var headerGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto")
@@ -404,7 +396,8 @@ public class SetupView : UserControl
             Text = "ENVIRONMENT",
             FontSize = 12,
             FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse("#9999FF")),
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            LetterSpacing = 1,
             VerticalAlignment = VerticalAlignment.Center
         });
 
@@ -459,6 +452,280 @@ public class SetupView : UserControl
 
         border.Child = stack;
         return border;
+    }
+
+    private Control BuildAiAssistantAccordion()
+    {
+        var expander = new Expander
+        {
+            IsExpanded = false,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+
+        // Header row with MCP toggle
+        var headerGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto")
+        };
+
+        headerGrid.Children.Add(new TextBlock
+        {
+            Text = "Modding Assistant",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        Grid.SetColumn(headerGrid.Children[0], 0);
+
+        // Status indicator
+        var statusText = new TextBlock
+        {
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("HasAnyAiClient")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, string>(hasClient =>
+                hasClient ? "(client detected)" : "")
+        });
+        statusText.Bind(TextBlock.ForegroundProperty, new Avalonia.Data.Binding("HasAnyAiClient")
+        {
+            Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, IBrush>(hasClient =>
+                hasClient ? new SolidColorBrush(Color.Parse("#8ECDC8"))
+                          : new SolidColorBrush(Color.Parse("#888888")))
+        });
+        headerGrid.Children.Add(statusText);
+        Grid.SetColumn(statusText, 1);
+
+        expander.Header = headerGrid;
+
+        // Content panel
+        var contentStack = new StackPanel { Spacing = 12, Margin = new Thickness(0, 12, 0, 0) };
+
+        // MCP toggle row
+        var toggleRow = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto")
+        };
+
+        var toggleInfo = new StackPanel();
+        toggleInfo.Children.Add(new TextBlock
+        {
+            Text = "MCP Server",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+        toggleInfo.Children.Add(new TextBlock
+        {
+            Text = "Enables AI assistants (Claude Desktop, OpenCode, etc.) to interact with the modkit",
+            FontSize = 11,
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
+        toggleRow.Children.Add(toggleInfo);
+        Grid.SetColumn(toggleInfo, 0);
+
+        var mcpToggle = new ToggleSwitch
+        {
+            OnContent = "On",
+            OffContent = "Off",
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        mcpToggle.Bind(ToggleSwitch.IsCheckedProperty, new Avalonia.Data.Binding("IsMcpEnabled")
+        {
+            Mode = Avalonia.Data.BindingMode.TwoWay
+        });
+        toggleRow.Children.Add(mcpToggle);
+        Grid.SetColumn(mcpToggle, 1);
+
+        contentStack.Children.Add(toggleRow);
+
+        // Client list (only shown when MCP is enabled)
+        var clientsPanel = new StackPanel { Spacing = 8 };
+        clientsPanel.Bind(StackPanel.IsVisibleProperty, new Avalonia.Data.Binding("IsMcpEnabled"));
+
+        clientsPanel.Children.Add(new TextBlock
+        {
+            Text = "Detected Clients:",
+            FontSize = 11,
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+
+        var itemsControl = new ItemsControl();
+        itemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("AiClients"));
+        itemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<AiClientViewModel>(
+            (client, _) => BuildAiClientRow(client), true);
+        clientsPanel.Children.Add(itemsControl);
+
+        // Setup docs link
+        var docsLink = new Button
+        {
+            Content = "View Setup Guide",
+            FontSize = 11,
+            Padding = new Thickness(8, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        docsLink.Classes.Add("secondary");
+        docsLink.Click += (_, _) =>
+        {
+            var localDocsPath = Path.Combine(AppContext.BaseDirectory, "docs", "system-guide", "AI_ASSISTANT_SETUP.md");
+            if (!File.Exists(localDocsPath))
+            {
+                localDocsPath = Path.Combine(Environment.CurrentDirectory, "docs", "system-guide", "AI_ASSISTANT_SETUP.md");
+            }
+
+            if (File.Exists(localDocsPath))
+            {
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo(localDocsPath)
+                    {
+                        UseShellExecute = true
+                    };
+                    System.Diagnostics.Process.Start(psi);
+                }
+                catch { }
+            }
+        };
+        clientsPanel.Children.Add(docsLink);
+
+        contentStack.Children.Add(clientsPanel);
+
+        expander.Content = contentStack;
+        return expander;
+    }
+
+    private Control BuildAiClientRow(AiClientViewModel client)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            Margin = new Thickness(0, 6)
+        };
+
+        // Column 0: Status icon
+        var statusIcon = new TextBlock
+        {
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0)
+        };
+
+        if (!client.IsInstalled)
+        {
+            statusIcon.Text = "\u2014"; // Em dash (not detected)
+            statusIcon.Foreground = new SolidColorBrush(Color.Parse("#666666"));
+        }
+        else if (client.IsConfigured)
+        {
+            statusIcon.Text = "\u2713"; // Checkmark
+            statusIcon.Foreground = new SolidColorBrush(Color.Parse("#8ECDC8"));
+        }
+        else
+        {
+            statusIcon.Text = "\u26A0"; // Warning
+            statusIcon.Foreground = new SolidColorBrush(Color.Parse("#FFD700"));
+        }
+
+        grid.Children.Add(statusIcon);
+        Grid.SetColumn(statusIcon, 0);
+
+        // Column 1: Name and description
+        var infoStack = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var nameStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
+        };
+        nameStack.Children.Add(new TextBlock
+        {
+            Text = client.Name,
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = client.IsInstalled ? Brushes.White : new SolidColorBrush(Color.Parse("#666666"))
+        });
+
+        if (client.IsInstalled)
+        {
+            var statusBadge = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = client.IsConfigured
+                    ? new SolidColorBrush(Color.Parse("#1a3a2a"))
+                    : new SolidColorBrush(Color.Parse("#3a3a1a"))
+            };
+            statusBadge.Child = new TextBlock
+            {
+                Text = client.IsConfigured ? "Configured" : "Needs Setup",
+                FontSize = 10,
+                Foreground = client.IsConfigured
+                    ? new SolidColorBrush(Color.Parse("#8ECDC8"))
+                    : new SolidColorBrush(Color.Parse("#FFD700"))
+            };
+            nameStack.Children.Add(statusBadge);
+        }
+
+        infoStack.Children.Add(nameStack);
+
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = client.Description,
+            FontSize = 11,
+            Foreground = Brushes.White,
+            Opacity = client.IsInstalled ? 0.6 : 0.4
+        });
+
+        grid.Children.Add(infoStack);
+        Grid.SetColumn(infoStack, 1);
+
+        // Column 2: Action button
+        if (client.IsInstalled && !client.IsConfigured)
+        {
+            var configButton = new Button
+            {
+                Content = "Configure",
+                FontSize = 11,
+                Padding = new Thickness(8, 4)
+            };
+            configButton.Classes.Add("primary");
+            configButton.Click += async (_, _) =>
+            {
+                await client.ConfigureAsync();
+            };
+            grid.Children.Add(configButton);
+            Grid.SetColumn(configButton, 2);
+        }
+        else if (!client.IsInstalled && client.HasSetupDocs)
+        {
+            var installButton = new Button
+            {
+                Content = "Install",
+                FontSize = 11,
+                Padding = new Thickness(8, 4)
+            };
+            installButton.Classes.Add("secondary");
+            installButton.Click += (_, _) =>
+            {
+                client.OpenSetupDocs();
+            };
+            grid.Children.Add(installButton);
+            Grid.SetColumn(installButton, 2);
+        }
+
+        return grid;
     }
 
     private Control BuildEnvironmentCheckRow(EnvironmentCheckViewModel check)
@@ -760,7 +1027,7 @@ public class SetupView : UserControl
         downloadText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("TotalDownloadSize")
         {
             Converter = new Avalonia.Data.Converters.FuncValueConverter<string, string>(size =>
-                string.IsNullOrEmpty(size) ? "Continue" : $"Download ({size})")
+                string.IsNullOrEmpty(size) ? "Continue" : $"Download All ({size})")
         });
         downloadPanel.Children.Add(downloadText);
 

@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Menace.Modkit.App.Services;
 
 namespace Menace.Modkit.App.Views;
@@ -246,21 +247,25 @@ public class AssetPickerDialog : Window
                 .Select(ext => ext.TrimStart('*', '.'))
                 .ToList();
 
-            var dialog = new OpenFileDialog
+            var patterns = extensions.Select(ext => $"*.{ext}").ToList();
+            if (patterns.Count == 0)
+                patterns.Add("*");
+
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = $"Import {_assetType} asset",
-                Filters = new List<FileDialogFilter>
+                AllowMultiple = false,
+                FileTypeFilter = new List<FilePickerFileType>
                 {
-                    new FileDialogFilter { Name = $"{_assetType} Files", Extensions = extensions },
-                    new FileDialogFilter { Name = "All Files", Extensions = { "*" } }
+                    new($"{_assetType} Files") { Patterns = patterns },
+                    new("All Files") { Patterns = new[] { "*" } }
                 }
-            };
+            });
 
-            var files = await dialog.ShowAsync(this);
-            if (files == null || files.Length == 0)
+            if (files.Count == 0)
                 return;
 
-            var sourceFile = files[0];
+            var sourceFile = files[0].Path.LocalPath;
             var fileName = Path.GetFileName(sourceFile);
             var relativePath = Path.Combine("Assets", _assetType, fileName);
 
@@ -394,7 +399,7 @@ public class AssetPickerDialog : Window
             "Sprite" => new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga" },
             "Texture2D" => new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga", "*.exr" },
             "Material" => new[] { "*.mat" },
-            "Mesh" => new[] { "*.obj", "*.fbx", "*.asset" },
+            "Mesh" => new[] { "*.glb", "*.gltf", "*.obj", "*.fbx", "*.asset" },
             "AudioClip" => new[] { "*.ogg", "*.wav", "*.mp3", "*.aif" },
             "AnimationClip" => new[] { "*.anim" },
             _ => new[] { "*.*" },

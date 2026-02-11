@@ -1,12 +1,16 @@
 using System;
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using AvaloniaEdit;
+using AvaloniaEdit.TextMate;
 using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.ViewModels;
+using TextMateSharp.Grammars;
 
 namespace Menace.Modkit.App.Views;
 
@@ -16,19 +20,109 @@ namespace Menace.Modkit.App.Views;
 /// </summary>
 public class CodeEditorView : UserControl
 {
+    private TextEditor? _textEditor;
+    private CodeEditorViewModel? _boundViewModel;
+    private bool _isUpdatingText;
+    private bool _textMateReady;
 
     public CodeEditorView()
     {
         Content = BuildUI();
     }
 
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    protected override async void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
 
         // Refresh modpacks when view becomes visible
         if (DataContext is CodeEditorViewModel vm)
             vm.RefreshAll();
+
+        if (!_textMateReady)
+        {
+            await SetupTextMateAsync();
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (_boundViewModel != null)
+        {
+            _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _boundViewModel = null;
+        }
+
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        if (_boundViewModel != null)
+        {
+            _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _boundViewModel = null;
+        }
+
+        base.OnDataContextChanged(e);
+
+        if (DataContext is CodeEditorViewModel vm)
+        {
+            _boundViewModel = vm;
+            _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+            if (_textEditor != null)
+            {
+                _isUpdatingText = true;
+                _textEditor.Text = vm.FileContent ?? string.Empty;
+                _textEditor.IsReadOnly = vm.IsReadOnly;
+                _isUpdatingText = false;
+            }
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_textEditor == null || _boundViewModel == null)
+            return;
+
+        if (e.PropertyName == nameof(CodeEditorViewModel.FileContent))
+        {
+            if (_isUpdatingText)
+                return;
+
+            var vmText = _boundViewModel.FileContent ?? string.Empty;
+            if (!string.Equals(_textEditor.Text, vmText, StringComparison.Ordinal))
+            {
+                _isUpdatingText = true;
+                _textEditor.Text = vmText;
+                _isUpdatingText = false;
+            }
+        }
+        else if (e.PropertyName == nameof(CodeEditorViewModel.IsReadOnly))
+        {
+            _textEditor.IsReadOnly = _boundViewModel.IsReadOnly;
+        }
+    }
+
+    private async System.Threading.Tasks.Task SetupTextMateAsync()
+    {
+        if (_textEditor == null)
+            return;
+
+        try
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
+                var textMateInstallation = _textEditor.InstallTextMate(registryOptions);
+                textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("csharp"));
+            });
+            _textMateReady = true;
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Warn($"[CodeEditorView] TextMate setup failed: {ex.Message}");
+        }
     }
 
     private Control BuildUI()
@@ -476,25 +570,29 @@ public class CodeEditorView : UserControl
         DockPanel.SetDock(header, Dock.Top);
         stack.Children.Add(header);
 
-        // Use TextBox as fallback since TextEditor isn't rendering
-        // TODO: Debug AvaloniaEdit TextEditor rendering issue
-        var codeEditor = new TextBox
+        _textEditor = new TextEditor
         {
             FontFamily = new FontFamily("Cascadia Code, Consolas, Menlo, monospace"),
             FontSize = 13,
+            ShowLineNumbers = true,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
             Foreground = new SolidColorBrush(Color.Parse("#D4D4D4")),
             BorderThickness = new Thickness(0),
-            AcceptsReturn = true,
-            AcceptsTab = true,
-            TextWrapping = TextWrapping.NoWrap,
-            Padding = new Thickness(8),
-            Text = "// Select a .cs file from the tree to view code"
+            Padding = new Thickness(8)
         };
-        codeEditor.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("FileContent") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        codeEditor.Bind(TextBox.IsReadOnlyProperty, new Avalonia.Data.Binding("IsReadOnly"));
+        _textEditor.TextChanged += (_, _) =>
+        {
+            if (_isUpdatingText || _boundViewModel == null)
+                return;
 
-        stack.Children.Add(codeEditor);
+            _isUpdatingText = true;
+            _boundViewModel.FileContent = _textEditor.Text;
+            _isUpdatingText = false;
+        };
+
+        stack.Children.Add(_textEditor);
 
         border.Child = stack;
         return border;

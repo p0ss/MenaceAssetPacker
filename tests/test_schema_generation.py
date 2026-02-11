@@ -17,8 +17,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add tools directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 
 import generate_schema
 import validate_extraction

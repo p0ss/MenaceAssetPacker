@@ -128,16 +128,17 @@ APIs for inspecting, modifying, and coordinating AI decision-making.
 
 ### Tier 9 -- REPL
 
-The SDK embeds a Roslyn-based C# REPL that appears as the **REPL** tab in the
-DevConsole. It automatically resolves metadata references from the game's
+The SDK embeds a Roslyn-based C# REPL in the DevConsole **Console** panel. It
+automatically resolves metadata references from the game's
 runtime directory (system BCL, MelonLoader, Il2CppInterop, IL2CPP proxy
 assemblies, and loaded mod DLLs), compiles expressions or multi-statement
 blocks to in-memory assemblies, and executes them. Default `using` directives
 include `System`, `System.Linq`, `System.Collections.Generic`, `Menace.SDK`,
 and `UnityEngine`.
 
-The REPL initializes silently on startup. If Roslyn packages are not available
-(e.g., stripped deploy), the REPL tab simply does not appear.
+The REPL is initialized on startup. If Roslyn packages are not available
+(e.g., stripped deploy), unknown non-command input in the Console will not be
+evaluated as C#.
 
 ---
 
@@ -228,7 +229,7 @@ public API method:
 This means a plugin with a bug will produce diagnostic output in the console
 and MelonLoader log, but the game continues running. The `ErrorNotification`
 badge alerts the player that something went wrong; pressing **~** opens the
-console to the Errors panel for details.
+console to the Log panel for details.
 
 Rate limiting (10 errors/second per mod ID) and deduplication (5-second window)
 prevent a single broken read in an `OnUpdate` loop from flooding the log.

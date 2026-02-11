@@ -150,7 +150,7 @@ The app includes bundled dependencies that are automatically copied to the outpu
 
 ### 3. MelonLoader (IL2CPP Mod Loader)
 
-**Version:** 0.7.1 Open-Beta
+**Version:** 0.7.2-ci.2388
 **Purpose:** Enables C# mod development for IL2CPP Unity games
 
 #### How It Works:
@@ -201,7 +201,7 @@ MelonLoader/
 #### How It Works:
 
 ```csharp
-[assembly: MelonInfo(typeof(DataExtractorMod), "Menace Data Extractor", "2.0.0", "MenaceModkit")]
+[assembly: MelonInfo(typeof(DataExtractorMod), "Menace Data Extractor", "6.0.2", "MenaceModkit")]
 [assembly: MelonGame(null, null)]  // Compatible with any game
 ```
 
@@ -228,9 +228,9 @@ MelonLoader/
    ```
 
 4. **Data Serialization**
-   - Current approach: Reflection-based property extraction
-   - Challenge: IL2CPP wrappers expose `pooledPtr` and `myGcHandle` instead of actual game stats
-   - **Solution needed:** Direct memory reading using IL2CPP offsets
+   - Uses schema-driven extraction with embedded `schema.json`
+   - Reads field offsets and types from schema for IL2CPP-safe extraction
+   - Includes extraction fingerprint checks to skip unnecessary re-runs
 
 5. **JSON Output**
    ```csharp
@@ -646,10 +646,10 @@ Expected: `MinRange`, `Damage`, `ArmorPenetration`, etc.
 | Core Library | .NET | 10.0 | Shared business logic |
 | MelonLoader Mods | .NET | 6.0 | Game/MelonLoader compatibility |
 | UI Pattern | ReactiveUI | Latest | MVVM with observables |
-| Mod Loader | MelonLoader | 0.7.2 | IL2CPP mod framework |
+| Mod Loader | MelonLoader | 0.7.2-ci.2388 | IL2CPP mod framework |
 | IL2CPP Interop | Il2CppInterop | 1.5.0 | Managed ↔ IL2CPP bridge |
 | Decompiler | Cpp2IL | 2022.1.0 | IL2CPP to .NET |
-| Asset Extractor | AssetRipper | 0.3.x | Unity asset export |
+| Asset Extractor | AssetRipper | 1.3.4-patched | Unity asset export |
 | Game Engine | Unity | 6000.0.56f1 | Game runtime |
 | Serialization | System.Text.Json | .NET 10 | Template JSON |
 | Mod Serialization | Newtonsoft.Json | 13.0.3 | DataExtractor output |

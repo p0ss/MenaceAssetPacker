@@ -96,6 +96,19 @@ public static class BundleLoader
         var typeName = asset.GetIl2CppType().Name;
         MelonLogger.Msg($"    - {assetName} ({typeName})");
 
+        RegisterAssetInternal(assetName, asset, typeName, modpackName);
+    }
+
+    /// <summary>
+    /// Register an asset created outside of bundle loading (e.g., from GlbLoader).
+    /// </summary>
+    public static void RegisterAsset(string name, UnityEngine.Object asset, string typeName, string modpackName = "Runtime")
+    {
+        RegisterAssetInternal(name, asset, typeName, modpackName);
+    }
+
+    private static void RegisterAssetInternal(string assetName, UnityEngine.Object asset, string typeName, string modpackName)
+    {
         // Name-only registry (may have multiple assets with same name but different types)
         if (!_assetsByName.TryGetValue(assetName, out var list))
         {

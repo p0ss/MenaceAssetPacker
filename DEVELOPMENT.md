@@ -149,4 +149,4 @@ Output will be in `dist/`.
 - REPL code is sandboxed with blocked dangerous namespaces
 - Unverified DLLs require explicit user approval
 
-See [SECURITY.md](SECURITY.md) for the security policy and reporting process.
+See [Security Policy](docs/system-guide/SECURITY.md) for the security policy and reporting process.

@@ -20,6 +20,21 @@ public enum SecurityStatus
 }
 
 /// <summary>
+/// Repository hosting platform type for update checking
+/// </summary>
+public enum RepositoryType
+{
+    None,
+    GitHub,
+    // TODO: Future adapters
+    // Nexus,      // Requires user API key
+    // GameBanana, // Public API available
+    // ModDB,      // RSS feed only
+    // Thunderstore,
+    // Custom      // Generic version.json endpoint
+}
+
+/// <summary>
 /// Modpack manifest v2. Replaces the legacy ModpackInfo model.
 /// Supports all fields needed for the asset bundle pipeline:
 /// metadata, load ordering, dependencies, code, patches, bundles, assets, and security.
@@ -56,6 +71,19 @@ public class ModpackManifest
     // -- Security --
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public SecurityStatus SecurityStatus { get; set; } = SecurityStatus.Unreviewed;
+
+    // -- Repository / Updates --
+    /// <summary>
+    /// Repository type for update checking. Auto-detected from URL if not specified.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public RepositoryType RepositoryType { get; set; } = RepositoryType.None;
+
+    /// <summary>
+    /// Repository URL (e.g., "https://github.com/user/repo").
+    /// Used for update checking and linking to the mod's home page.
+    /// </summary>
+    public string? RepositoryUrl { get; set; }
 
     // -- Runtime only (not serialized) --
     [JsonIgnore]

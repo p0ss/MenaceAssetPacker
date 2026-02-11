@@ -135,7 +135,7 @@ public void RateLimits_ExcessiveErrors()
     for (int i = 0; i < 20; i++)
         ModError.Report("TestMod", "Same error");
 
-    var errors = ModError.GetRecent("TestMod");
+    var errors = ModError.GetErrors("TestMod");
     Assert.True(errors.Count <= 10); // Rate limited
 }
 ```
@@ -149,7 +149,7 @@ public void Compiles_SimpleExpression()
     var result = compiler.Compile("1 + 1");
 
     Assert.True(result.Success);
-    Assert.Empty(result.Diagnostics);
+    Assert.Empty(result.Errors);
 }
 ```
 

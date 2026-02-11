@@ -63,10 +63,15 @@ public sealed class ComponentManager : IDisposable
     /// <summary>
     /// Get the status of all components (what's installed, outdated, missing).
     /// </summary>
-    public async Task<List<ComponentStatus>> GetComponentStatusAsync(bool forceRemoteFetch = false)
+    public async Task<List<ComponentStatus>> GetComponentStatusAsync(
+        bool forceRemoteFetch = false,
+        bool useBundledManifestOnly = false)
     {
-        var manifest = await GetVersionsManifestAsync(forceRemoteFetch);
+        var manifest = useBundledManifestOnly
+            ? GetBundledManifest()
+            : await GetVersionsManifestAsync(forceRemoteFetch);
         var localManifest = GetLocalManifest();
+        var bundledManifest = GetBundledManifest();
         var results = new List<ComponentStatus>();
 
         foreach (var (name, component) in manifest.Components)
@@ -83,7 +88,7 @@ public sealed class ComponentManager : IDisposable
                 InstallPath = component.InstallPath
             };
 
-            // Check if installed
+            // Check if installed (downloaded to cache)
             if (localManifest.Components.TryGetValue(name, out var installed))
             {
                 status.InstalledVersion = installed.Version;
@@ -91,6 +96,24 @@ public sealed class ComponentManager : IDisposable
                 status.State = installed.Version == component.Version
                     ? ComponentState.UpToDate
                     : ComponentState.Outdated;
+            }
+            // Check if bundled with the app
+            else if (IsBundledComponentPresent(name))
+            {
+                // Use bundled version from the bundled manifest
+                if (bundledManifest.Components.TryGetValue(name, out var bundled))
+                {
+                    status.InstalledVersion = bundled.Version;
+                    status.State = bundled.Version == component.Version
+                        ? ComponentState.UpToDate
+                        : ComponentState.Outdated;
+                }
+                else
+                {
+                    // Bundled but no version info - assume it's current
+                    status.InstalledVersion = component.Version;
+                    status.State = ComponentState.UpToDate;
+                }
             }
             else
             {
@@ -104,11 +127,41 @@ public sealed class ComponentManager : IDisposable
     }
 
     /// <summary>
+    /// Check if a component is present in the bundled third_party folder.
+    /// </summary>
+    private bool IsBundledComponentPresent(string componentName)
+    {
+        switch (componentName)
+        {
+            case "MelonLoader":
+                return GetBundledPath("MelonLoader") != null;
+
+            case "DataExtractor":
+                var dePath = GetBundledPath("DataExtractor");
+                return dePath != null && File.Exists(Path.Combine(dePath, "Menace.DataExtractor.dll"));
+
+            case "ModpackLoader":
+                return GetBundledPath("ModpackLoader") != null;
+
+            case "AssetRipper":
+                return GetBundledAssetRipperPath() != null;
+
+            case "DotNetRefs":
+                return GetBundledPath("dotnet-refs") != null;
+
+            // Addons are download-only
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Check if any required components need to be installed or updated.
     /// </summary>
     public async Task<bool> NeedsSetupAsync()
     {
-        var statuses = await GetComponentStatusAsync();
+        // Startup should be fast/offline-safe: use bundled versions and avoid remote fetch here.
+        var statuses = await GetComponentStatusAsync(useBundledManifestOnly: true);
         return statuses.Any(s => s.Required && s.State != ComponentState.UpToDate);
     }
 

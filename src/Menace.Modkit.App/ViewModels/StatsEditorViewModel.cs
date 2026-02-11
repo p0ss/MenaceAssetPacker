@@ -1230,6 +1230,9 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             // Handle asset copies if any
             var assetCount = CopyWizardAssets(result);
 
+            // Apply asset patches to update the clone's asset references
+            var assetPatchCount = ApplyAssetPatches(result);
+
             var summary = $"Created clone '{result.CloneName}'";
             if (patchCount > 0)
                 summary += $" with {patchCount} patch(es)";
@@ -1245,6 +1248,45 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             SaveStatus = $"Clone wizard failed: {ex.Message}";
             return false;
         }
+    }
+
+    /// <summary>
+    /// Apply asset patches to update the clone's asset field references.
+    /// </summary>
+    private int ApplyAssetPatches(Models.CloneWizardResult result)
+    {
+        if (result.AssetPatches.Count == 0)
+            return 0;
+
+        int patchCount = 0;
+
+        foreach (var (templateType, instances) in result.AssetPatches)
+        {
+            foreach (var (instanceName, patch) in instances)
+            {
+                var compositeKey = $"{templateType}/{instanceName}";
+
+                if (!_pendingChanges.TryGetValue(compositeKey, out var changes))
+                {
+                    changes = new Dictionary<string, object?>();
+                    _pendingChanges[compositeKey] = changes;
+                }
+
+                foreach (var kvp in patch)
+                {
+                    changes[kvp.Key] = kvp.Value?.ToString();
+                }
+
+                patchCount++;
+            }
+        }
+
+        if (patchCount > 0)
+        {
+            SaveToStaging();
+        }
+
+        return patchCount;
     }
 
     /// <summary>

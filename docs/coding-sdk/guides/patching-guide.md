@@ -233,7 +233,7 @@ Common reasons `GamePatch` returns `false`:
 | No managed proxy | IL2CppInterop did not generate a proxy for this type |
 | Harmony exception | Incompatible patch signature, method already patched, etc. |
 
-All failures are logged to `ModError` with context. Open the DevConsole (~ key) and check the Errors tab to see details.
+All failures are logged to `ModError` with context. Open the DevConsole (~ key) and check the Log tab to see details.
 
 ### Safe Patch Methods
 

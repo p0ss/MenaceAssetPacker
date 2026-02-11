@@ -11,6 +11,72 @@ echo "Building Menace Modkit redistributables..."
 echo "Using: $($DOTNET --version)"
 echo ""
 
+# =============================================================================
+# Generate ModkitVersion.cs from versions.json (single source of truth)
+# =============================================================================
+
+echo "📦 Generating ModkitVersion.cs from versions.json..."
+
+# Release version for post-build instructions (overridden from versions.json when jq is available)
+RELEASE_VERSION="1.0.0"
+
+# Extract version from versions.json (requires jq)
+if command -v jq &> /dev/null; then
+  LOADER_VERSION=$(jq -r '.components.ModpackLoader.version' third_party/versions.json)
+  RELEASE_VERSION="$LOADER_VERSION"
+  # Extract major version number for BuildNumber (e.g., "19.0.0" -> 19)
+  BUILD_NUMBER=$(echo "$LOADER_VERSION" | cut -d. -f1)
+
+  echo "  → ModpackLoader version: $LOADER_VERSION (build $BUILD_NUMBER)"
+
+  cat > src/Shared/ModkitVersion.cs << EOF
+// AUTO-GENERATED from third_party/versions.json - DO NOT EDIT MANUALLY
+// Run build-redistributables.sh to regenerate
+
+namespace Menace;
+
+/// <summary>
+/// Centralized version information for the Menace Modkit ecosystem.
+/// This file is generated from versions.json and linked into both
+/// the desktop app and the in-game loader.
+/// </summary>
+public static class ModkitVersion
+{
+    /// <summary>
+    /// The current build number. Derived from ModpackLoader version in versions.json.
+    /// </summary>
+    public const int BuildNumber = $BUILD_NUMBER;
+
+    /// <summary>
+    /// Version string for MelonLoader attribute (must be compile-time constant).
+    /// </summary>
+    public const string MelonVersion = "$LOADER_VERSION";
+
+    /// <summary>
+    /// Short display version (e.g., "v19").
+    /// </summary>
+    public const string Short = "v$BUILD_NUMBER";
+
+    /// <summary>
+    /// Full version for the Modkit App.
+    /// </summary>
+    public const string AppFull = "Menace Modkit v$BUILD_NUMBER";
+
+    /// <summary>
+    /// Full version for the Modpack Loader.
+    /// </summary>
+    public const string LoaderFull = "Menace Modpack Loader v$BUILD_NUMBER";
+}
+EOF
+
+  echo "  → Generated src/Shared/ModkitVersion.cs"
+else
+  echo "  ⚠ jq not found, skipping ModkitVersion.cs generation"
+  echo "    Install jq to enable automatic version sync: apt install jq / brew install jq"
+fi
+
+echo ""
+
 # Clean previous builds
 rm -rf dist/
 mkdir -p dist
@@ -30,13 +96,14 @@ echo ""
 echo "📦 Building ModpackLoader Mod..."
 $DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
 
-# Update source tree bundled copy (main DLL + Roslyn dependencies for REPL)
+# Update source tree bundled copy (main DLL + Roslyn dependencies for REPL + SharpGLTF for GLB loading)
 mkdir -p third_party/bundled/ModpackLoader
 cp dist/ModpackLoader/Menace.ModpackLoader.dll third_party/bundled/ModpackLoader/
 cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll third_party/bundled/ModpackLoader/
 cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll third_party/bundled/ModpackLoader/
 cp dist/ModpackLoader/System.Collections.Immutable.dll third_party/bundled/ModpackLoader/
 cp dist/ModpackLoader/System.Reflection.Metadata.dll third_party/bundled/ModpackLoader/
+cp dist/ModpackLoader/SharpGLTF.Core.dll third_party/bundled/ModpackLoader/
 
 # =============================================================================
 # Build GUI App
@@ -68,7 +135,11 @@ mkdir -p dist/gui-win-x64/third_party
 cp third_party/versions.json dist/gui-linux-x64/third_party/
 cp third_party/versions.json dist/gui-win-x64/third_party/
 
-# Note: doctor scripts are no longer bundled - environment checks are now in-app via SetupView
+# Copy bundled components as fallback (used when GitHub releases aren't available yet)
+# Primary flow is download from GitHub; this enables pre-release testing
+echo "  → Copying bundled components (fallback)..."
+cp -r third_party/bundled dist/gui-linux-x64/third_party/
+cp -r third_party/bundled dist/gui-win-x64/third_party/
 
 # =============================================================================
 # Create Component Archives for GitHub Release
@@ -83,7 +154,7 @@ mkdir -p dist/component-DataExtractor
 cp dist/DataExtractor/Menace.DataExtractor.dll dist/component-DataExtractor/
 (cd dist/component-DataExtractor && zip -q -r ../components/DataExtractor.zip .)
 
-# ModpackLoader + Roslyn (platform-independent)
+# ModpackLoader + Roslyn + SharpGLTF (platform-independent)
 echo "  → ModpackLoader.zip..."
 mkdir -p dist/component-ModpackLoader
 cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/component-ModpackLoader/
@@ -91,6 +162,7 @@ cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll dist/component-ModpackLoader/
 cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll dist/component-ModpackLoader/
 cp dist/ModpackLoader/System.Collections.Immutable.dll dist/component-ModpackLoader/
 cp dist/ModpackLoader/System.Reflection.Metadata.dll dist/component-ModpackLoader/
+cp dist/ModpackLoader/SharpGLTF.Core.dll dist/component-ModpackLoader/
 (cd dist/component-ModpackLoader && zip -q -r ../components/ModpackLoader.zip .)
 
 # DotNetRefs (platform-independent)
@@ -124,6 +196,20 @@ if [ -d "third_party/bundled/AssetRipper/windows" ]; then
   echo "  → AssetRipper-win-x64.zip..."
   (cd third_party/bundled/AssetRipper/windows && \
     zip -q -r ../../../../dist/components/AssetRipper-win-x64.zip .)
+fi
+
+# DevMode modpack (source, platform-independent)
+if [ -d "third_party/bundled/modpacks/DevMode-modpack" ]; then
+  echo "  → DevMode.zip..."
+  (cd third_party/bundled/modpacks/DevMode-modpack && \
+    zip -q -r ../../../../dist/components/DevMode.zip . -x "*.obj" -x "bin/*" -x "obj/*")
+fi
+
+# TwitchSquaddies modpack (source, platform-independent)
+if [ -d "third_party/bundled/modpacks/TwitchSquaddies-modpack" ]; then
+  echo "  → TwitchSquaddies.zip..."
+  (cd third_party/bundled/modpacks/TwitchSquaddies-modpack && \
+    zip -q -r ../../../../dist/components/TwitchSquaddies.zip . -x "*.obj" -x "bin/*" -x "obj/*")
 fi
 
 # =============================================================================
@@ -221,6 +307,6 @@ cat dist/components/manifest.json
 
 echo ""
 echo "📋 Release workflow:"
-echo "   1. Push a tag (e.g., git tag v1.0.0 && git push origin v1.0.0)"
+echo "   1. Push a tag matching third_party/versions.json (e.g., git tag v$RELEASE_VERSION && git push origin v$RELEASE_VERSION)"
 echo "   2. GitHub Actions will build and create the release automatically"
-echo "   3. Or run manually: gh workflow run release.yml -f version=1.0.0"
+echo "   3. Or run manually (matching versions.json): gh workflow run release.yml -f version=$RELEASE_VERSION"

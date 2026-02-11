@@ -102,6 +102,8 @@ public static class ModpackTools
             createdDate = manifest.CreatedDate,
             modifiedDate = manifest.ModifiedDate,
             securityStatus = manifest.SecurityStatus.ToString(),
+            repositoryType = manifest.RepositoryType.ToString(),
+            repositoryUrl = manifest.RepositoryUrl,
             code = new
             {
                 sources = manifest.Code.Sources,
@@ -132,14 +134,16 @@ public static class ModpackTools
     }
 
     [McpServerTool(Name = "modpack_update", Destructive = false)]
-    [Description("Update a modpack's metadata (name, author, version, description, load order).")]
+    [Description("Update a modpack's metadata (name, author, version, description, load order, repository).")]
     public static string ModpackUpdate(
         ModpackManager modpackManager,
         [Description("The name of the modpack to update")] string name,
         [Description("New author (optional)")] string? author = null,
         [Description("New version (optional)")] string? version = null,
         [Description("New description (optional)")] string? description = null,
-        [Description("New load order (optional, lower values load first)")] int? loadOrder = null)
+        [Description("New load order (optional, lower values load first)")] int? loadOrder = null,
+        [Description("Repository type for updates: GitHub, Nexus, GameBanana, etc. (optional)")] string? repositoryType = null,
+        [Description("Repository URL for updates, e.g. https://github.com/user/repo (optional)")] string? repositoryUrl = null)
     {
         var modpacks = modpackManager.GetStagingModpacks();
         var manifest = modpacks.FirstOrDefault(m =>
@@ -154,6 +158,9 @@ public static class ModpackTools
         if (version != null) manifest.Version = version;
         if (description != null) manifest.Description = description;
         if (loadOrder.HasValue) manifest.LoadOrder = loadOrder.Value;
+        if (repositoryUrl != null) manifest.RepositoryUrl = repositoryUrl;
+        if (repositoryType != null && Enum.TryParse<RepositoryType>(repositoryType, true, out var repoType))
+            manifest.RepositoryType = repoType;
 
         modpackManager.UpdateModpackMetadata(manifest);
 
@@ -166,7 +173,9 @@ public static class ModpackTools
                 author = manifest.Author,
                 version = manifest.Version,
                 description = manifest.Description,
-                loadOrder = manifest.LoadOrder
+                loadOrder = manifest.LoadOrder,
+                repositoryType = manifest.RepositoryType.ToString(),
+                repositoryUrl = manifest.RepositoryUrl
             }
         }, JsonOptions);
     }

@@ -247,9 +247,9 @@ public class EnvironmentChecker
         if (!File.Exists(versionDll))
         {
             result.Status = CheckStatus.Failed;
-            result.Description = "Incomplete installation";
-            result.Details = "version.dll is missing - MelonLoader won't load.";
-            result.FixInstructions = "Click 'Install MelonLoader' to reinstall it.";
+            result.Description = "Missing version.dll";
+            result.Details = "The version.dll hook file is missing from the game folder.";
+            result.FixInstructions = "Click 'Install' to reinstall MelonLoader.";
             result.CanAutoFix = true;
             result.AutoFixAction = AutoFixAction.InstallMelonLoader;
             ModkitLog.Warn("[EnvCheck] version.dll missing from game directory");
@@ -257,13 +257,15 @@ public class EnvironmentChecker
         }
 
         // Check for MelonLoader.dll to verify full installation
+        // It can be in the root, or in net6/ subdirectory (newer versions)
         var mlDll = Path.Combine(mlDir, "MelonLoader.dll");
-        if (!File.Exists(mlDll))
+        var mlDllNet6 = Path.Combine(mlDir, "net6", "MelonLoader.dll");
+        if (!File.Exists(mlDll) && !File.Exists(mlDllNet6))
         {
             result.Status = CheckStatus.Warning;
-            result.Description = "May be incomplete";
-            result.Details = "MelonLoader.dll not found in MelonLoader directory.";
-            result.FixInstructions = "Try reinstalling MelonLoader.";
+            result.Description = "Missing core DLL";
+            result.Details = "MelonLoader.dll not found. Installation may be incomplete.";
+            result.FixInstructions = "Click 'Install' to reinstall MelonLoader.";
             result.CanAutoFix = true;
             result.AutoFixAction = AutoFixAction.InstallMelonLoader;
             ModkitLog.Warn("[EnvCheck] MelonLoader.dll not found");
@@ -400,53 +402,63 @@ public class EnvironmentChecker
             Category = CheckCategory.Modkit
         };
 
-        var missing = new List<string>();
-        var found = new List<string>();
+        var details = new List<string>();
+        var allPresent = true;
 
         // Check for bundled MelonLoader
         var mlPath = ComponentManager.Instance.GetMelonLoaderPath();
         if (mlPath != null && Directory.Exists(mlPath))
-            found.Add("MelonLoader");
+        {
+            details.Add($"MelonLoader: {mlPath}");
+            ModkitLog.Info($"[EnvCheck] MelonLoader bundled: {mlPath}");
+        }
         else
-            missing.Add("MelonLoader");
+        {
+            details.Add("MelonLoader: not found");
+            allPresent = false;
+            ModkitLog.Warn("[EnvCheck] MelonLoader bundle not found");
+        }
 
         // Check for bundled DataExtractor
         var dePath = ComponentManager.Instance.GetDataExtractorPath();
         if (dePath != null && File.Exists(dePath))
-            found.Add("DataExtractor");
+        {
+            details.Add($"DataExtractor: present");
+            ModkitLog.Info($"[EnvCheck] DataExtractor bundled: {dePath}");
+        }
         else
-            missing.Add("DataExtractor");
+        {
+            details.Add("DataExtractor: not found");
+            allPresent = false;
+            ModkitLog.Warn("[EnvCheck] DataExtractor bundle not found");
+        }
 
         // Check for bundled ModpackLoader
         var mpPath = ComponentManager.Instance.GetModpackLoaderPath();
         if (mpPath != null && Directory.Exists(mpPath))
-            found.Add("ModpackLoader");
+        {
+            details.Add($"ModpackLoader: present");
+            ModkitLog.Info($"[EnvCheck] ModpackLoader bundled: {mpPath}");
+        }
         else
-            missing.Add("ModpackLoader");
+        {
+            details.Add("ModpackLoader: not found");
+            allPresent = false;
+            ModkitLog.Warn("[EnvCheck] ModpackLoader bundle not found");
+        }
 
-        ModkitLog.Info($"[EnvCheck] Bundled components found: {string.Join(", ", found)}");
-        if (missing.Count > 0)
-            ModkitLog.Warn($"[EnvCheck] Bundled components missing: {string.Join(", ", missing)}");
-
-        if (missing.Count == 0)
+        if (allPresent)
         {
             result.Status = CheckStatus.Passed;
             result.Description = "All present";
-            result.Details = string.Join(", ", found);
-        }
-        else if (found.Count > 0)
-        {
-            result.Status = CheckStatus.Warning;
-            result.Description = $"Missing: {string.Join(", ", missing)}";
-            result.Details = $"Found: {string.Join(", ", found)}";
-            result.FixInstructions = "Some bundled components are missing. Try reinstalling the modkit.";
+            result.Details = "MelonLoader, DataExtractor, ModpackLoader";
         }
         else
         {
-            result.Status = CheckStatus.Failed;
-            result.Description = "All missing";
-            result.Details = "No bundled components found. The modkit installation may be corrupted.";
-            result.FixInstructions = "Reinstall the modkit from the official release.";
+            result.Status = CheckStatus.Warning;
+            result.Description = "Some components not bundled";
+            result.Details = string.Join("\n", details);
+            result.FixInstructions = "Components will be downloaded if needed. This is normal for development builds.";
         }
 
         return Task.FromResult(result);

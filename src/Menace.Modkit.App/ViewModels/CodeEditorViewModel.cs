@@ -37,6 +37,9 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         AvailableModpacks = new ObservableCollection<string>();
         SearchResults = new ObservableCollection<SearchResultItem>();
 
+        FileContent = "// Select a .cs file from the tree to view its contents";
+        IsReadOnly = true;
+
         LoadModpacks();
         LoadVanillaTree();
     }

@@ -136,7 +136,7 @@ See [TwitchSquaddies README](third_party/bundled/modpacks/TwitchSquaddies-modpac
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 
 Key libraries:
 - **Avalonia** — Cross-platform UI

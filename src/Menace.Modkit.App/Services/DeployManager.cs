@@ -346,6 +346,10 @@ public class DeployManager
                     }
                 }
             }
+
+            // Process GLB/GLTF model files
+            var glbFiles = ProcessGlbFiles(modpack, modsBasePath);
+            files.AddRange(glbFiles);
         }
 
         if (orderedPatchSets.Count == 0)
@@ -384,6 +388,63 @@ public class DeployManager
         catch
         {
             // Bundle compilation is best-effort; JSON fallback handles patches.
+        }
+
+        return files;
+    }
+
+    /// <summary>
+    /// Process GLB/GLTF 3D model files in a modpack's assets directory.
+    /// Converts them to a format the runtime loader can use (manifest + textures).
+    /// Returns list of deployed files (relative to modsBasePath).
+    /// </summary>
+    private List<string> ProcessGlbFiles(ModpackManifest modpack, string modsBasePath)
+    {
+        var files = new List<string>();
+        var assetsDir = Path.Combine(modpack.Path, "assets");
+        if (!Directory.Exists(assetsDir))
+            return files;
+
+        var gameInstallPath = _modpackManager.GetGameInstallPath() ?? "";
+        var unityVersion = DetectUnityVersion(gameInstallPath);
+
+        // Find all GLB and GLTF files
+        var glbFiles = Directory.GetFiles(assetsDir, "*.glb", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(assetsDir, "*.gltf", SearchOption.AllDirectories))
+            .ToList();
+
+        if (glbFiles.Count == 0)
+            return files;
+
+        var modelsDir = Path.Combine(modsBasePath, modpack.Name, "models");
+        Directory.CreateDirectory(modelsDir);
+
+        foreach (var glbPath in glbFiles)
+        {
+            try
+            {
+                var baseName = Path.GetFileNameWithoutExtension(glbPath);
+                var outputPath = Path.Combine(modelsDir, baseName + ".bundle");
+
+                var result = GlbBundler.ConvertToBundleAsync(glbPath, outputPath, unityVersion).Result;
+                if (result.Success)
+                {
+                    foreach (var convertedFile in result.ConvertedAssets)
+                    {
+                        var rel = Path.GetRelativePath(modsBasePath, convertedFile);
+                        files.Add(rel);
+                    }
+                    ModkitLog.Info($"[DeployManager] Converted GLB: {Path.GetFileName(glbPath)} → {result.ConvertedAssets.Count} assets");
+                }
+                else
+                {
+                    ModkitLog.Warn($"[DeployManager] GLB conversion warning for {Path.GetFileName(glbPath)}: {result.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                ModkitLog.Error($"[DeployManager] Failed to process GLB {Path.GetFileName(glbPath)}: {ex.Message}");
+            }
         }
 
         return files;

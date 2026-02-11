@@ -17,6 +17,7 @@ public class AppSettings
     private string _gameInstallPath = string.Empty;
     private string _extractedAssetsPath = string.Empty;
     private bool _enableDeveloperTools = false;
+    private bool? _enableMcpServer = null; // null = auto-detect, true/false = explicit
     private ExtractionSettings _extractionSettings = new();
 
     private class PersistedSettings
@@ -29,6 +30,9 @@ public class AppSettings
 
         [JsonPropertyName("enableDeveloperTools")]
         public bool EnableDeveloperTools { get; set; }
+
+        [JsonPropertyName("enableMcpServer")]
+        public bool? EnableMcpServer { get; set; }
     }
 
     private static string GetSettingsFilePath()
@@ -72,6 +76,10 @@ public class AppSettings
             _enableDeveloperTools = data.EnableDeveloperTools;
             if (_enableDeveloperTools)
                 ModkitLog.Info("Developer tools enabled");
+
+            _enableMcpServer = data.EnableMcpServer;
+            if (_enableMcpServer.HasValue)
+                ModkitLog.Info($"MCP server: {(_enableMcpServer.Value ? "enabled" : "disabled")}");
         }
         catch (Exception ex)
         {
@@ -92,7 +100,8 @@ public class AppSettings
             {
                 GameInstallPath = string.IsNullOrEmpty(_gameInstallPath) ? null : _gameInstallPath,
                 ExtractedAssetsPath = string.IsNullOrEmpty(_extractedAssetsPath) ? null : _extractedAssetsPath,
-                EnableDeveloperTools = _enableDeveloperTools
+                EnableDeveloperTools = _enableDeveloperTools,
+                EnableMcpServer = _enableMcpServer
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
@@ -276,10 +285,25 @@ public class AppSettings
         set => _enableDeveloperTools = value;
     }
 
+    /// <summary>
+    /// Whether the MCP server is enabled. Null means auto-detect (enable if AI clients found).
+    /// </summary>
+    public bool? EnableMcpServer
+    {
+        get => _enableMcpServer;
+        set => _enableMcpServer = value;
+    }
+
+    /// <summary>
+    /// Returns true if MCP should be enabled based on setting or auto-detection.
+    /// </summary>
+    public bool IsMcpEnabled => _enableMcpServer ?? false;
+
     public event EventHandler? GameInstallPathChanged;
     public event EventHandler? ExtractedAssetsPathChanged;
     public event EventHandler? ExtractionSettingsChanged;
     public event EventHandler? EnableDeveloperToolsChanged;
+    public event EventHandler? EnableMcpServerChanged;
 
     public void SetGameInstallPath(string path)
     {
@@ -306,6 +330,13 @@ public class AppSettings
         _enableDeveloperTools = enabled;
         SaveToDisk();
         EnableDeveloperToolsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetEnableMcpServer(bool? enabled)
+    {
+        _enableMcpServer = enabled;
+        SaveToDisk();
+        EnableMcpServerChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

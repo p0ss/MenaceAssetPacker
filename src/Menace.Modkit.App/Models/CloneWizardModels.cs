@@ -94,6 +94,7 @@ public class AssetDependency
     public bool CanBeCloned => Category switch
     {
         "sprite" or "texture" or "audio" => true,
+        "mesh" => true, // GLB/GLTF models can be replaced directly
         "prefab" or "material" => true, // Can export via modkit
         _ => false
     };
@@ -103,7 +104,31 @@ public class AssetDependency
     {
         "prefab" => "Prefabs require export and asset bundle building",
         "material" => "Materials require export and asset bundle building",
+        "mesh" => "Use GLB/GLTF format for best compatibility",
         _ => null
+    };
+
+    /// <summary>Get file extensions for this asset category</summary>
+    public string[] GetFileExtensions() => Category switch
+    {
+        "sprite" or "texture" => new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tga" },
+        "mesh" => new[] { "*.glb", "*.gltf", "*.fbx", "*.obj" },
+        "audio" => new[] { "*.ogg", "*.wav", "*.mp3", "*.aif" },
+        "material" => new[] { "*.mat" },
+        "prefab" => new[] { "*.prefab" },
+        _ => new[] { "*.*" }
+    };
+
+    /// <summary>Get file type description for file picker</summary>
+    public string GetFileTypeDescription() => Category switch
+    {
+        "sprite" => "Image Files",
+        "texture" => "Texture Files",
+        "mesh" => "3D Model Files",
+        "audio" => "Audio Files",
+        "material" => "Material Files",
+        "prefab" => "Prefab Files",
+        _ => "All Files"
     };
 
     /// <summary>Display text for the asset</summary>

@@ -14,21 +14,23 @@ Press the **~** (backtick/tilde) key to toggle the console. It renders in the to
 
 ### Built-in Panels
 
-The console ships with five built-in panels:
+The console ships with these core panels:
 
 | Tab | Purpose |
 |-----|---------|
-| **Errors** | View all `ModError` entries with severity, timestamp, and mod ID |
-| **Log** | General log buffer (up to 200 entries) |
+| **Battle Log** | View combat event telemetry with event-type filters |
+| **Log** | View `ModError` entries and `DevConsole.Log()` messages with severity/mod filters |
+| **Console** | Run SDK commands; unknown commands fall back to C# REPL evaluation when Roslyn is available |
 | **Inspector** | Inspect a `GameObj` instance -- shows all readable properties |
 | **Watch** | Live watch expressions that update every frame |
-| **REPL** | Evaluate C# expressions at runtime |
+
+The **Settings** panel is added when `ModSettings` initializes.
 
 ---
 
-## Error Panel
+## Log Panel
 
-All errors, warnings, and info messages reported via `ModError` appear here. Each entry shows:
+All errors, warnings, and info messages reported via `ModError` appear in the Log panel alongside `DevConsole.Log()` output. Each error entry shows:
 
 - Timestamp (`HH:mm:ss`)
 - Severity (`Info`, `Warning`, `Error`, `Fatal`)
@@ -38,7 +40,7 @@ All errors, warnings, and info messages reported via `ModError` appear here. Eac
 
 ### Filtering
 
-Type a mod name in the filter box to show only errors from that mod. Leave empty to show all.
+Use severity toggles (`Err`, `Warn`, `Info`) and per-mod toggles to filter entries.
 
 ### Clearing
 
@@ -162,14 +164,14 @@ Properties that throw on read show `<error reading>` instead of crashing the pan
 
 ---
 
-## REPL Panel
+## REPL in Console
 
-The REPL compiles and evaluates C# expressions at runtime using Roslyn. It is available when the runtime compiler initializes successfully (requires Roslyn assemblies to be present).
+The REPL compiles and evaluates C# expressions at runtime using Roslyn from the **Console** panel. It is available when the runtime compiler initializes successfully (requires Roslyn assemblies to be present).
 
 ### Usage
 
 1. Open the DevConsole (~ key)
-2. Switch to the **REPL** tab
+2. Switch to the **Console** tab
 3. Type an expression in the input field
 4. Press **Enter** or click **Run**
 
@@ -198,7 +200,7 @@ Use the **Up/Down** arrow keys to navigate through previous inputs.
 
 ### Limitations
 
-- Roslyn must be available at runtime. If REPL initialization fails, the tab displays "REPL not initialized."
+- Roslyn must be available at runtime. If REPL initialization fails, unknown non-command input will not evaluate as C#.
 - The REPL uses the SDK's namespace imports. You may need to fully qualify types outside `Menace.SDK`.
 - Compilation errors are shown in red. Runtime exceptions show the inner exception type and message.
 
@@ -296,9 +298,9 @@ GameState.TacticalReady += () =>
 
 ## Tips
 
-- **Start with the REPL.** Before writing code, test SDK calls interactively to verify type names, field names, and return values.
-- **Check the Errors tab first.** When something is not working, the SDK has likely already reported why.
+- **Start in Console with REPL input.** Before writing code, test SDK calls interactively to verify type names, field names, and return values.
+- **Check the Log tab first.** When something is not working, the SDK has likely already reported why.
 - **Use Watch for per-frame values.** Avoid logging per-frame values to the Log panel -- it fills the buffer quickly. Use Watch instead.
 - **Inspect before patching.** Use `DevConsole.Inspect` to examine an object's properties before writing code that reads or writes its fields.
-- **Filter errors by mod.** When debugging with multiple mods loaded, filter the Errors tab to your mod's ID.
+- **Filter errors by mod.** When debugging with multiple mods loaded, use the mod toggles in the Log tab.
 - **ModError.Report in patch methods.** Wrap patch method bodies in try/catch and report to `ModError` for visibility in the console.

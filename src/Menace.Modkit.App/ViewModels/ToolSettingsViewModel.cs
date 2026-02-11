@@ -446,7 +446,7 @@ public sealed class ToolSettingsViewModel : ViewModelBase
                 if (manifest != null)
                 {
                     manifest.AssetRipTimestamp = null;
-                    manifest.GameAssemblyHash = null;
+                    manifest.GameAssemblyHash = string.Empty;
                     var updatedJson = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
                     await File.WriteAllTextAsync(manifestPath, updatedJson);
                 }

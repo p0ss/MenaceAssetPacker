@@ -12,6 +12,8 @@ namespace Menace.Modkit.App.Views;
 
 public class ModpacksView : UserControl
 {
+  private ModpackItemViewModel? _draggedModpackItem;
+
   public ModpacksView()
   {
     Content = BuildUI();
@@ -119,11 +121,11 @@ public class ModpacksView : UserControl
     DragDrop.SetAllowDrop(modpackList, true);
     modpackList.AddHandler(DragDrop.DragOverEvent, (_, e) =>
     {
-      if (e.Data.Contains("ModpackItem"))
+      if (_draggedModpackItem != null)
       {
         e.DragEffects = DragDropEffects.Move;
       }
-      else if (e.Data.Contains(DataFormats.Files))
+      else if (e.DataTransfer.Contains(DataFormat.File))
       {
         e.DragEffects = DragDropEffects.Copy;
       }
@@ -138,21 +140,22 @@ public class ModpacksView : UserControl
         return;
 
       // Handle modpack reordering
-      if (e.Data.Get("ModpackItem") is ModpackItemViewModel draggedItem)
+      if (_draggedModpackItem != null)
       {
         var targetItem = FindDropTarget(e);
-        if (targetItem != null && targetItem != draggedItem)
+        if (targetItem != null && targetItem != _draggedModpackItem)
         {
           var targetIndex = vm.AllModpacks.IndexOf(targetItem);
-          vm.MoveItem(draggedItem, targetIndex);
+          vm.MoveItem(_draggedModpackItem, targetIndex);
         }
+        _draggedModpackItem = null;
         return;
       }
 
       // Handle archive file drops (.zip, .7z, .rar, etc.)
-      if (e.Data.Contains(DataFormats.Files))
+      if (e.DataTransfer.Contains(DataFormat.File))
       {
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files != null)
         {
           var archivePaths = files
@@ -474,9 +477,11 @@ public class ModpacksView : UserControl
           && sender is Control ctrl
           && ctrl.DataContext is ModpackItemViewModel item)
       {
-        var data = new DataObject();
-        data.Set("ModpackItem", item);
-        await DragDrop.DoDragDrop(e, data, DragDropEffects.Move);
+        _draggedModpackItem = item;
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.CreateText(item.Name));
+        await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        _draggedModpackItem = null;
       }
     };
     contentGrid.Children.Add(gripArea);

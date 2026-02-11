@@ -1,6 +1,6 @@
 # REPL
 
-The Menace SDK includes a live C# REPL (Read-Eval-Print Loop) built on Roslyn, accessible through the DevConsole's REPL tab.
+The Menace SDK includes a live C# REPL (Read-Eval-Print Loop) built on Roslyn, integrated into the DevConsole `Console` panel.
 
 ## Overview
 
@@ -12,11 +12,11 @@ The REPL system compiles and executes C# expressions and statements at runtime a
 
 ## Access
 
-Press `~` to open the DevConsole, then click the **REPL** tab.
+Press `~` to open the DevConsole and switch to the **Console** panel.
 
 Type a C# expression or statement in the input field at the bottom and press **Enter** or click **Run**. Use the **Up/Down arrow** keys to navigate input history.
 
-The REPL panel is only available when Roslyn (`Microsoft.CodeAnalysis.CSharp`) is present in the runtime. If Roslyn is not available, the REPL tab will not appear.
+Commands are resolved first. If no command matches and Roslyn (`Microsoft.CodeAnalysis.CSharp`) is available, the input is evaluated as C#.
 
 ## Auto-Imports
 
@@ -120,7 +120,7 @@ public class ConsoleEvaluator
 }
 ```
 
-`Evaluate` compiles and executes the input, catching `TargetInvocationException` to surface the inner exception cleanly. Results are stored in `History` for the REPL panel to display.
+`Evaluate` compiles and executes the input, catching `TargetInvocationException` to surface the inner exception cleanly. Results are stored in `History` for display in the Console output.
 
 ### EvalResult
 
@@ -145,7 +145,7 @@ public class EvalResult
 
 ## Examples
 
-The following are expressions and statements you can type into the REPL input field.
+The following are expressions and statements you can type into the DevConsole Console input field.
 
 ### Simple expressions
 

@@ -101,7 +101,7 @@
       "version": "1.0.0",
       "required": false,
       "category": "addon",
-      "description": "MCP server for Claude Code integration",
+      "description": "MCP server for AI assistant integration (Claude, OpenCode, etc.)",
       "installPath": "addons/McpServer",
       "downloads": {
         "win-x64": {
@@ -113,6 +113,20 @@
           "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/McpServer-linux-x64.tar.gz",
           "sha256": "",
           "size": 8000000
+        }
+      }
+    },
+    "DevMode": {
+      "version": "1.0.0",
+      "required": false,
+      "category": "addon",
+      "description": "Developer tools: cheats, god mode, entity spawning, in-game tweaks",
+      "installPath": "addons/DevMode",
+      "downloads": {
+        "any": {
+          "url": "https://github.com/p0ss/MenaceAssetPacker/releases/download/components-v1/DevMode.zip",
+          "sha256": "",
+          "size": 50000
         }
       }
     }

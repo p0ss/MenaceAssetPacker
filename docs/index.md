@@ -28,7 +28,7 @@ Start here if you want to make mods. Step-by-step tutorials from beginner to adv
 
 ### [Coding SDK](coding-sdk/index.md)
 
-Comprehensive API reference for the Menace SDK. 28 documented APIs across 8 tiers:
+Comprehensive API reference for the Menace SDK. 28 documented APIs across 9 tiers:
 
 - **Core**: GameType, GameObj, GameQuery, Templates, GameState
 - **Tactical**: EntitySpawner, EntityMovement, EntityCombat, TacticalController
@@ -41,6 +41,7 @@ All systems have console commands accessible via `~` key.
 
 **SDK Guides:**
 - [Debugging Guide](coding-sdk/guides/debugging-guide.md) - Troubleshooting mods
+- [Compilation Troubleshooting](coding-sdk/guides/compilation-troubleshooting.md) - Fix build and reference issues
 - [Patching Guide](coding-sdk/guides/patching-guide.md) - Harmony patching patterns
 - [Template Modding](coding-sdk/guides/template-modding.md) - Working with game templates
 - [Migration from Raw IL2CPP](coding-sdk/guides/migration-from-raw-il2cpp.md) - Upgrading legacy mods
@@ -56,6 +57,9 @@ All systems have console commands accessible via `~` key.
 Technical documentation for Modkit development:
 
 - [Architecture Overview](system-guide/architecture.md)
+- [Release Workflow](system-guide/RELEASE_WORKFLOW.md)
+- [Component Setup](system-guide/COMPONENT_SETUP.md)
+- [Reference Resolution](system-guide/REFERENCE_RESOLUTION.md)
 - [Asset Reference System](system-guide/ASSET_REFERENCE_SYSTEM.md)
 - [Modpack Loader Implementation](system-guide/MODPACK_LOADER_IMPLEMENTATION.md)
 - [Extraction Orchestration](system-guide/EXTRACTION_ORCHESTRATION.md)
@@ -77,10 +81,22 @@ Comprehensive notes on Menace game internals (45+ documented systems):
 
 ---
 
+## AI Assistant
+
+### [AI Assistant Setup](system-guide/AI_ASSISTANT_SETUP.md)
+
+Connect an AI assistant to help with modding. The AI can query game state, explore templates, create mods, and debug issues. Supports:
+
+- **OpenCode** — Works with Ollama (free, local) or cloud APIs
+- **Claude Code/Desktop** — Best quality, requires Anthropic subscription
+
+---
+
 ## Quick Links
 
 | I want to... | Go to... |
 |--------------|----------|
+| Set up AI assistant | [AI Assistant Setup](system-guide/AI_ASSISTANT_SETUP.md) |
 | Make my first mod | [Baby's First Mod](modding-guides/01-first-mod.md) |
 | Change unit stats | [Stat Adjustments](modding-guides/02-stat-changes.md) |
 | Create unit variants | [Template Cloning](modding-guides/03-template-cloning.md) |
