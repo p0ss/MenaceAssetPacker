@@ -137,10 +137,18 @@ public sealed class ModpacksViewModel : ViewModelBase
             _modpackManager.GetActiveMods().Select(m => m.Name),
             StringComparer.OrdinalIgnoreCase);
 
+        // Track seen modpack names to avoid duplicates from multiple directories
+        // with the same manifest Name (e.g., DevMode-modpack/ and DevMode/)
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var manifest in _modpackManager.GetStagingModpacks()
             .OrderBy(m => m.LoadOrder)
             .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase))
         {
+            // Skip duplicate modpack names (keep first by load order)
+            if (!seenNames.Add(manifest.Name))
+                continue;
+
             var vm = new ModpackItemViewModel(manifest, _modpackManager);
             vm.IsDeployed = deployedNames.Contains(manifest.Name);
             AllModpacks.Add(vm);

@@ -133,16 +133,17 @@ public class ModpackManifest
     /// <summary>
     /// Detect whether a JSON string is a v1 (legacy) manifest and migrate it.
     /// V1 manifests have no "manifestVersion" field or have "templates" instead of "patches".
+    /// Returns null if no manifest file exists or it cannot be parsed.
     /// </summary>
-    public static ModpackManifest LoadFromFile(string filePath)
+    public static ModpackManifest? LoadFromFile(string filePath)
     {
         if (!File.Exists(filePath))
-            return new ModpackManifest { Path = System.IO.Path.GetDirectoryName(filePath) ?? string.Empty };
+            return null;
 
         var json = File.ReadAllText(filePath);
         var node = JsonNode.Parse(json);
         if (node == null)
-            return new ModpackManifest { Path = System.IO.Path.GetDirectoryName(filePath) ?? string.Empty };
+            return null;
 
         var obj = node.AsObject();
 

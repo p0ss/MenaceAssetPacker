@@ -92,10 +92,15 @@ public class DeployManager
         if (string.IsNullOrEmpty(modsBasePath))
             return new DeployResult { Success = false, Message = "Game install path not set" };
 
+        // Get staging modpacks, ordered by load order, excluding dev-only unless enabled.
+        // Use DistinctBy on Name to avoid deploying duplicate modpacks if multiple
+        // staging directories have the same manifest Name.
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modpacks = _modpackManager.GetStagingModpacks()
             .Where(m => !IsDevOnlyModpack(m.Name) || AppSettings.Instance.EnableDeveloperTools)
             .OrderBy(m => m.LoadOrder)
             .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(m => seenNames.Add(m.Name)) // Keep first occurrence only
             .ToList();
 
         if (modpacks.Count == 0)
@@ -194,6 +199,7 @@ public class DeployManager
 
     /// <summary>
     /// Remove all deployed mods from the game's Mods/ folder.
+    /// Core infrastructure DLLs (ModpackLoader, DataExtractor) are preserved.
     /// </summary>
     public async Task<DeployResult> UndeployAllAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -212,17 +218,66 @@ public class DeployManager
                 // Remove deployed modpack directories
                 foreach (var mp in state.DeployedModpacks)
                 {
+                    // Skip empty/invalid names to avoid deleting Mods folder itself
+                    if (string.IsNullOrWhiteSpace(mp.Name))
+                    {
+                        ModkitLog.Warn($"[DeployManager] Skipping invalid modpack with empty name");
+                        continue;
+                    }
+
                     var dir = Path.Combine(modsBasePath, mp.Name);
+
+                    // Safety: never delete the Mods folder itself
+                    if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath))
+                    {
+                        ModkitLog.Warn($"[DeployManager] Skipping deletion of Mods folder itself");
+                        continue;
+                    }
+
                     if (Directory.Exists(dir))
+                    {
+                        ModkitLog.Info($"[DeployManager] Removing modpack directory: {mp.Name}");
                         Directory.Delete(dir, true);
+                    }
                 }
 
-                // Also remove any tracked loose files
+                // Also remove any tracked loose files, but protect core DLLs
                 foreach (var file in state.DeployedFiles)
                 {
+                    var fileName = Path.GetFileName(file);
+
+                    // Never remove core infrastructure DLLs (Menace.*.dll)
+                    if (fileName.StartsWith("Menace.", StringComparison.OrdinalIgnoreCase) &&
+                        fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ModkitLog.Info($"[DeployManager] Protected from removal: {file}");
+                        continue;
+                    }
+
                     var fullPath = Path.Combine(modsBasePath, file);
                     if (File.Exists(fullPath))
+                    {
+                        ModkitLog.Info($"[DeployManager] Removing: {file}");
                         File.Delete(fullPath);
+                    }
+                }
+
+                // Clean up deployment artifacts that shouldn't persist
+                var artifactDirs = new[] { "compiled", "dll", "dlls" };
+                foreach (var artifactName in artifactDirs)
+                {
+                    var artifactDir = Path.Combine(modsBasePath, artifactName);
+                    if (Directory.Exists(artifactDir))
+                    {
+                        ModkitLog.Info($"[DeployManager] Removing artifact directory: {artifactName}");
+                        Directory.Delete(artifactDir, true);
+                    }
+                }
+
+                // Log preserved core DLLs
+                foreach (var dllPath in Directory.GetFiles(modsBasePath, "Menace.*.dll"))
+                {
+                    ModkitLog.Info($"[DeployManager] Core DLL preserved: {Path.GetFileName(dllPath)}");
                 }
             }, ct);
 
@@ -641,15 +696,23 @@ public class DeployManager
     /// <summary>
     /// Copy runtime DLLs from runtime/ into the game install.
     /// Menace.* mod DLLs go to Mods/, support libraries go to UserLibs/.
-    /// Returns deployed file names for Mods/ tracking.
+    /// Note: Core DLLs are NOT tracked in deploy state - they are infrastructure
+    /// that should persist across undeploy/deploy cycles.
     /// </summary>
     private List<string> DeployRuntimeDlls(string modsBasePath)
     {
-        var files = new List<string>();
+        // We intentionally return an empty list - core DLLs should not be tracked
+        // in deploy state since they're infrastructure, not user content.
+        // UndeployAll should not remove them.
         var runtimeDlls = _modpackManager.GetRuntimeDlls();
 
+        ModkitLog.Info($"[DeployManager] DeployRuntimeDlls: Found {runtimeDlls.Count} runtime DLLs to deploy");
+
         if (runtimeDlls.Count == 0)
-            return files;
+        {
+            ModkitLog.Warn($"[DeployManager] DeployRuntimeDlls: No runtime DLLs found in {_modpackManager.RuntimeDllsPath}");
+            return new List<string>();
+        }
 
         var gameInstallPath = Path.GetDirectoryName(modsBasePath) ?? modsBasePath;
         var userLibsPath = Path.Combine(gameInstallPath, "UserLibs");
@@ -687,10 +750,6 @@ public class DeployManager
                         ModkitLog.Info($"[DeployManager] Removed legacy dependency from Mods: {fileName}");
                     }
                 }
-                else
-                {
-                    files.Add(fileName);
-                }
             }
             catch (Exception ex)
             {
@@ -698,16 +757,35 @@ public class DeployManager
             }
         }
 
-        return files;
+        // Return empty list - core DLLs are not tracked for undeploy
+        return new List<string>();
     }
 
     private void CleanPreviousDeployment(DeployState previousState, string modsBasePath)
     {
         foreach (var mp in previousState.DeployedModpacks)
         {
+            // Skip empty/invalid names to avoid deleting Mods folder itself
+            if (string.IsNullOrWhiteSpace(mp.Name))
+            {
+                ModkitLog.Warn($"[DeployManager] CleanPreviousDeployment: Skipping invalid modpack with empty name");
+                continue;
+            }
+
             var dir = Path.Combine(modsBasePath, mp.Name);
+
+            // Safety: never delete the Mods folder itself
+            if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath))
+            {
+                ModkitLog.Warn($"[DeployManager] CleanPreviousDeployment: Skipping deletion of Mods folder itself");
+                continue;
+            }
+
             if (Directory.Exists(dir))
+            {
+                ModkitLog.Info($"[DeployManager] CleanPreviousDeployment: Removing {mp.Name}");
                 Directory.Delete(dir, true);
+            }
         }
     }
 
@@ -731,6 +809,21 @@ public class DeployManager
         return Convert.ToHexString(hash);
     }
 
+    /// <summary>
+    /// Directories to exclude when copying modpacks to Mods/ folder.
+    /// These are development artifacts that shouldn't be deployed.
+    /// </summary>
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "src",      // Source code (compiled to build/)
+        "build",    // Build output (DLLs deployed separately via DeployDlls)
+        "obj",      // MSBuild intermediate files
+        "bin",      // MSBuild output files
+        "dll",      // Legacy DLL folder (use dlls/ instead)
+        ".git",     // Git repository data
+        ".vs",      // Visual Studio data
+    };
+
     private static void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
@@ -740,7 +833,11 @@ public class DeployManager
         }
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
-            CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
+            var dirName = Path.GetFileName(dir);
+            // Skip excluded directories
+            if (ExcludedDirectories.Contains(dirName))
+                continue;
+            CopyDirectory(dir, Path.Combine(destDir, dirName));
         }
     }
 

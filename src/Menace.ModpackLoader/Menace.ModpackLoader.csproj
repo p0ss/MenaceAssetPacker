@@ -75,10 +75,36 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <!-- Version 4.14.0 uses System.Collections.Immutable 9.0.0 to match MelonLoader 0.7.2 bundled deps -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <!--
+      Roslyn 4.3.0 uses System.Collections.Immutable 6.0.0, which is DIFFERENT from
+      MelonLoader 0.7.2's bundled 9.0.0 in MonoBleedingEdgePatches. Different versions
+      can coexist; same versions from different paths cause FileLoadException.
+      DO NOT upgrade to Roslyn 4.4+ which uses S.C.I 8.0/9.0 - it will conflict.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.0" />
     <!-- GLB/GLTF runtime parsing for 3D model imports -->
     <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+
+    <!--
+      Explicit dependencies for MelonLoader compatibility.
+      Roslyn 4.3.0 uses S.C.I/S.R.M 6.0.0, which is DIFFERENT from MelonLoader's bundled 9.0.0.
+      .NET 6 considers these framework assemblies and won't copy them, so we force it.
+    -->
+    <PackageReference Include="System.Collections.Immutable" Version="6.0.0">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.Reflection.Metadata" Version="6.0.0">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.Memory" Version="4.5.5">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.Buffers" Version="4.5.1">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
   <!-- Shared version file (single source of truth) -->

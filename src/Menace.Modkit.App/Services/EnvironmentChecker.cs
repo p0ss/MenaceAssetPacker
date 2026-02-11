@@ -431,11 +431,11 @@ public class EnvironmentChecker
         }
 
         // Fallback for development environments with partial bundled content.
-        // Note: System.Collections.Immutable is NOT included - MelonLoader 0.7.2+ bundles it
         return new List<string>
         {
             "Microsoft.CodeAnalysis.dll",
             "Microsoft.CodeAnalysis.CSharp.dll",
+            "System.Collections.Immutable.dll",
             "System.Reflection.Metadata.dll",
             "System.Text.Encoding.CodePages.dll",
             "Newtonsoft.Json.dll",

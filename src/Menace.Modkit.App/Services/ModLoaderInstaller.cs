@@ -157,13 +157,16 @@ public class ModLoaderInstaller
         }
     }
 
-    // Assemblies bundled with MelonLoader 0.7.2+ that we should NOT deploy
-    // (and should remove if present from previous installs)
-    private static readonly string[] MelonLoaderProvidedAssemblies = new[]
+    // Legacy assemblies that older versions placed in Mods/ instead of UserLibs/.
+    // These need to be cleaned from Mods/ to avoid duplicate assembly loading.
+    private static readonly string[] LegacyAssembliesToCleanFromMods = new[]
     {
         "System.Collections.Immutable.dll",
         "System.Memory.dll",
-        "System.Buffers.dll"
+        "System.Buffers.dll",
+        "System.Reflection.Metadata.dll",
+        "Microsoft.CodeAnalysis.dll",
+        "Microsoft.CodeAnalysis.CSharp.dll"
     };
 
     public Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
@@ -187,20 +190,14 @@ public class ModLoaderInstaller
             Directory.CreateDirectory(modsFolder);
             Directory.CreateDirectory(userLibsFolder);
 
-            // Remove assemblies that MelonLoader now provides (from previous installs)
-            foreach (var melonProvided in MelonLoaderProvidedAssemblies)
+            // Clean legacy dependency copies from Mods/ (older versions put them there)
+            foreach (var legacyDll in LegacyAssembliesToCleanFromMods)
             {
-                var legacyUserLibsPath = Path.Combine(userLibsFolder, melonProvided);
-                if (File.Exists(legacyUserLibsPath))
-                {
-                    File.Delete(legacyUserLibsPath);
-                    progressCallback?.Invoke($"  Removed legacy {melonProvided} (MelonLoader provides this)");
-                }
-
-                var legacyModsPath = Path.Combine(modsFolder, melonProvided);
+                var legacyModsPath = Path.Combine(modsFolder, legacyDll);
                 if (File.Exists(legacyModsPath))
                 {
                     File.Delete(legacyModsPath);
+                    progressCallback?.Invoke($"  Removed legacy {legacyDll} from Mods/");
                 }
             }
 

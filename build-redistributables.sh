@@ -96,25 +96,41 @@ echo ""
 echo "📦 Building ModpackLoader Mod..."
 $DOTNET build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
 
+# Framework assemblies: Roslyn 4.3.0 uses System.Collections.Immutable 6.0.0 which is
+# DIFFERENT from MelonLoader 0.7.2's bundled 9.0.0. Different versions can coexist.
+# See docs/DEPENDENCY-INVESTIGATION.md for the full investigation history.
+#
+# DO NOT upgrade Roslyn past 4.3.x - versions 4.4+ use S.C.I 8.0/9.0 which conflicts
+# with MelonLoader's bundled 9.0.0 (same version from different paths = FileLoadException).
+#
+# .NET 6 considers these "inbox" assemblies and won't copy them automatically,
+# so we copy from NuGet cache (netstandard2.0 builds work for MelonLoader).
+
+echo "  → Copying framework dependencies from NuGet (version 6.0.0, different from MelonLoader's 9.0.0)..."
+NUGET_CACHE="${HOME}/.nuget/packages"
+
+# System.Collections.Immutable 6.0.0 - use netstandard2.0 build
+if [ -f "${NUGET_CACHE}/system.collections.immutable/6.0.0/lib/netstandard2.0/System.Collections.Immutable.dll" ]; then
+  cp "${NUGET_CACHE}/system.collections.immutable/6.0.0/lib/netstandard2.0/System.Collections.Immutable.dll" dist/ModpackLoader/
+  echo "    ✓ System.Collections.Immutable.dll (6.0.0 from NuGet)"
+fi
+
+# System.Reflection.Metadata 6.0.0 - use netstandard2.0 build
+if [ -f "${NUGET_CACHE}/system.reflection.metadata/6.0.0/lib/netstandard2.0/System.Reflection.Metadata.dll" ]; then
+  cp "${NUGET_CACHE}/system.reflection.metadata/6.0.0/lib/netstandard2.0/System.Reflection.Metadata.dll" dist/ModpackLoader/
+  echo "    ✓ System.Reflection.Metadata.dll (6.0.0 from NuGet)"
+fi
+
 # Keep bundled ModpackLoader payload in sync with build output to avoid dependency drift.
-# Excludes assemblies already bundled with MelonLoader to avoid version conflicts.
+# We deploy all dependencies ourselves to avoid relying on MelonLoader's internal assemblies,
+# which can vary between installations.
 copy_modpackloader_payload() {
   local dest_dir="$1"
   mkdir -p "$dest_dir"
   rm -f "$dest_dir"/*.dll
 
-  # Assemblies bundled with MelonLoader 0.7.2+ in Dependencies/MonoBleedingEdgePatches/
-  # These should NOT be included as MelonLoader provides them
-  local melon_provided="System.Collections.Immutable.dll System.Memory.dll System.Buffers.dll"
-
   for dll in dist/ModpackLoader/*.dll; do
     [ -f "$dll" ] || continue
-    local filename=$(basename "$dll")
-    # Skip if MelonLoader already provides this assembly
-    if echo "$melon_provided" | grep -qw "$filename"; then
-      echo "    (skipping $filename - provided by MelonLoader)"
-      continue
-    fi
     cp "$dll" "$dest_dir/"
   done
 }

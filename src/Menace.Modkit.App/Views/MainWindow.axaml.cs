@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Menace;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
 
@@ -24,7 +25,7 @@ public class MainWindow : Window
 
         Width = 1200;
         Height = 750;
-        Title = "Menace Modkit";
+        Title = ModkitVersion.AppFull;
         Background = new SolidColorBrush(Color.Parse("#121212"));
 
         // Set app icon

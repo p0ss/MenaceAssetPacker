@@ -502,9 +502,29 @@ public partial class ModpackLoaderMod : MelonMod
             // and escapes the catch, crashing the entire OnInitializeMelon.
             InitializeReplCore();
         }
+        catch (System.IO.FileNotFoundException ex)
+        {
+            LoggerInstance.Warning($"REPL initialization failed - missing assembly: {ex.FileName}");
+            LoggerInstance.Warning($"  Message: {ex.Message}");
+            LoggerInstance.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
+        }
+        catch (System.IO.FileLoadException ex)
+        {
+            LoggerInstance.Warning($"REPL initialization failed - assembly load error: {ex.FileName}");
+            LoggerInstance.Warning($"  Message: {ex.Message}");
+            LoggerInstance.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
+        }
+        catch (System.TypeLoadException ex)
+        {
+            LoggerInstance.Warning($"REPL initialization failed - type load error: {ex.TypeName}");
+            LoggerInstance.Warning($"  Message: {ex.Message}");
+        }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"REPL initialization failed (Roslyn may not be available): {ex.Message}");
+            LoggerInstance.Warning($"REPL initialization failed: {ex.GetType().Name}");
+            LoggerInstance.Warning($"  Message: {ex.Message}");
+            if (ex.InnerException != null)
+                LoggerInstance.Warning($"  Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
         }
     }
 

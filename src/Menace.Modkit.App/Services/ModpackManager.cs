@@ -716,6 +716,9 @@ public class ModpackManager
         try
         {
             var manifest = ModpackManifest.LoadFromFile(infoPath);
+            if (manifest == null)
+                return null;
+
             manifest.Path = modpackDir;
 
             // If loaded from manifest.json, save as modpack.json for consistency
