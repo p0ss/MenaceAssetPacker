@@ -127,12 +127,9 @@ jobs:
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/cli-win-x64
 
-      # Build Mods
-      - name: Build DataExtractor
-        run: dotnet build src/Menace.DataExtractor -c Release -o dist/DataExtractor
-
-      - name: Build ModpackLoader
-        run: dotnet build src/Menace.ModpackLoader -c Release -o dist/ModpackLoader
+      # Note: DataExtractor and ModpackLoader are NOT built in CI because they require
+      # Il2CppAssemblies from a game install. Pre-built DLLs are committed to
+      # third_party/bundled/ and updated via build-redistributables.sh locally.
 
       # Bundle core files into GUI builds
       - name: Bundle core files
@@ -143,6 +140,10 @@ jobs:
           cp third_party/versions.json dist/gui-linux-x64/third_party/
           cp third_party/versions.json dist/gui-win-x64/third_party/
 
+          # Copy bundled components (fallback when GitHub releases unavailable)
+          cp -r third_party/bundled dist/gui-linux-x64/third_party/
+          cp -r third_party/bundled dist/gui-win-x64/third_party/
+
           # Copy tools (doctor scripts)
           mkdir -p dist/gui-linux-x64/tools
           mkdir -p dist/gui-win-x64/tools
@@ -151,23 +152,16 @@ jobs:
           cp tools/doctor.bat dist/gui-win-x64/tools/
 
       # Create component archives for on-demand download
+      # Uses pre-built DLLs from third_party/bundled/ (built locally with game assemblies)
       - name: Create component archives
         run: |
           mkdir -p dist/components
 
-          # DataExtractor (platform-independent)
-          mkdir -p dist/component-DataExtractor
-          cp dist/DataExtractor/Menace.DataExtractor.dll dist/component-DataExtractor/
-          (cd dist/component-DataExtractor && zip -q -r ../components/DataExtractor.zip .)
+          # DataExtractor (platform-independent) - from bundled
+          (cd third_party/bundled/DataExtractor && zip -q -r ../../../dist/components/DataExtractor.zip .)
 
-          # ModpackLoader + Roslyn (platform-independent)
-          mkdir -p dist/component-ModpackLoader
-          cp dist/ModpackLoader/Menace.ModpackLoader.dll dist/component-ModpackLoader/
-          cp dist/ModpackLoader/Microsoft.CodeAnalysis.dll dist/component-ModpackLoader/
-          cp dist/ModpackLoader/Microsoft.CodeAnalysis.CSharp.dll dist/component-ModpackLoader/
-          cp dist/ModpackLoader/System.Collections.Immutable.dll dist/component-ModpackLoader/
-          cp dist/ModpackLoader/System.Reflection.Metadata.dll dist/component-ModpackLoader/
-          (cd dist/component-ModpackLoader && zip -q -r ../components/ModpackLoader.zip .)
+          # ModpackLoader + Roslyn + SharpGLTF (platform-independent) - from bundled
+          (cd third_party/bundled/ModpackLoader && zip -q -r ../../../dist/components/ModpackLoader.zip .)
 
           # DotNetRefs (if exists)
           if [ -d "third_party/bundled/dotnet-refs" ]; then
