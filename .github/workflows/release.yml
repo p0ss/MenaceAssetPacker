@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version (e.g., 20.0.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -29,110 +23,52 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Get version from versions.json
+      - name: Get version
         id: version
         run: |
-          VERSION=$(jq -r '.components.ModpackLoader.version' third_party/versions.json)
-          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            echo "Failed to read .components.ModpackLoader.version from third_party/versions.json"
-            exit 1
-          fi
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$TAG_VERSION" >> $GITHUB_OUTPUT
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.version }}" != "$VERSION" ]; then
-              echo "workflow_dispatch input version (${{ inputs.version }}) does not match versions.json ($VERSION)"
-              exit 1
-            fi
-          else
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            if [ "$TAG_VERSION" != "$VERSION" ]; then
-              echo "Tag version ($TAG_VERSION) does not match versions.json ($VERSION)"
-              exit 1
-            fi
-          fi
-
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Generate ModkitVersion.cs from versions.json
+      - name: Generate ModkitVersion.cs
         run: |
-          LOADER_VERSION=$(jq -r '.components.ModpackLoader.version' third_party/versions.json)
-          BUILD_NUMBER=$(echo "$LOADER_VERSION" | cut -d. -f1)
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          BUILD_NUMBER=$(echo "$VERSION" | cut -d. -f1)
 
           cat > src/Shared/ModkitVersion.cs << EOF
-          // AUTO-GENERATED from third_party/versions.json - DO NOT EDIT MANUALLY
-          // Run build-redistributables.sh to regenerate
-
           namespace Menace;
-
-          /// <summary>
-          /// Centralized version information for the Menace Modkit ecosystem.
-          /// This file is generated from versions.json and linked into both
-          /// the desktop app and the in-game loader.
-          /// </summary>
           public static class ModkitVersion
           {
-              /// <summary>
-              /// The current build number. Derived from ModpackLoader version in versions.json.
-              /// </summary>
               public const int BuildNumber = $BUILD_NUMBER;
-
-              /// <summary>
-              /// Version string for MelonLoader attribute (must be compile-time constant).
-              /// </summary>
-              public const string MelonVersion = "$LOADER_VERSION";
-
-              /// <summary>
-              /// Short display version (e.g., "v20").
-              /// </summary>
+              public const string MelonVersion = "$VERSION";
               public const string Short = "v$BUILD_NUMBER";
-
-              /// <summary>
-              /// Full version for the Modkit App.
-              /// </summary>
               public const string AppFull = "Menace Modkit v$BUILD_NUMBER";
-
-              /// <summary>
-              /// Full version for the Modpack Loader.
-              /// </summary>
               public const string LoaderFull = "Menace Modpack Loader v$BUILD_NUMBER";
           }
           EOF
 
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build GUI (Linux x64)
+      - name: Build GUI (Linux)
         run: |
           dotnet publish src/Menace.Modkit.App -c Release -r linux-x64 --self-contained \
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/gui-linux-x64
 
-      - name: Build GUI (Windows x64)
+      - name: Build GUI (Windows)
         run: |
           dotnet publish src/Menace.Modkit.App -c Release -r win-x64 --self-contained \
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/gui-win-x64
 
-      - name: Bundle versions.json
+      - name: Bundle files
         run: |
-          mkdir -p dist/gui-linux-x64/third_party
-          mkdir -p dist/gui-win-x64/third_party
-          cp third_party/versions.json dist/gui-linux-x64/third_party/
-          cp third_party/versions.json dist/gui-win-x64/third_party/
+          for platform in linux-x64 win-x64; do
+            mkdir -p dist/gui-$platform/third_party/bundled
+            cp third_party/versions.json dist/gui-$platform/third_party/
+            cp -r third_party/bundled/DataExtractor dist/gui-$platform/third_party/bundled/
+            cp -r third_party/bundled/ModpackLoader dist/gui-$platform/third_party/bundled/
+            [ -d "third_party/bundled/dotnet-refs" ] && cp -r third_party/bundled/dotnet-refs dist/gui-$platform/third_party/bundled/
+          done
 
-          # Copy bundled components that are in git (DataExtractor, ModpackLoader)
-          mkdir -p dist/gui-linux-x64/third_party/bundled
-          mkdir -p dist/gui-win-x64/third_party/bundled
-          cp -r third_party/bundled/DataExtractor dist/gui-linux-x64/third_party/bundled/
-          cp -r third_party/bundled/DataExtractor dist/gui-win-x64/third_party/bundled/
-          cp -r third_party/bundled/ModpackLoader dist/gui-linux-x64/third_party/bundled/
-          cp -r third_party/bundled/ModpackLoader dist/gui-win-x64/third_party/bundled/
-          if [ -d "third_party/bundled/dotnet-refs" ]; then
-            cp -r third_party/bundled/dotnet-refs dist/gui-linux-x64/third_party/bundled/
-            cp -r third_party/bundled/dotnet-refs dist/gui-win-x64/third_party/bundled/
-          fi
-
-      - name: Create app archives
+      - name: Create archives
         run: |
           cd dist
           tar -czf menace-modkit-linux-x64.tar.gz -C gui-linux-x64 .
@@ -142,17 +78,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: Menace Modkit v${{ steps.version.outputs.VERSION }}
-          tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           body: |
-            ## Installation
+            ## Download
 
-            1. Download the archive for your platform below
-            2. Extract and run `Menace.Modkit.App`
-            3. The app will download required components on first run
+            | Platform | File |
+            |----------|------|
+            | **Windows** | `menace-modkit-win-x64.zip` |
+            | **Linux** | `menace-modkit-linux-x64.tar.gz` |
 
-            **Windows**: `menace-modkit-win-x64.zip`
-            **Linux**: `menace-modkit-linux-x64.tar.gz`
+            Extract and run. The app downloads required components on first launch.
           files: |
             dist/menace-modkit-linux-x64.tar.gz
             dist/menace-modkit-win-x64.zip

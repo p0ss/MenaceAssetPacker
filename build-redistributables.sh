@@ -305,14 +305,98 @@ echo ""
 echo "Component manifest:"
 cat dist/components/manifest.json
 
+# =============================================================================
+# Upload Components Release
+# =============================================================================
+
+REPO="p0ss/MenaceAssetPacker"
+TAG="components-v$RELEASE_VERSION"
+
 echo ""
-echo "📋 Release workflow:"
+echo "📦 Uploading components release ($TAG)..."
+
+# Get GitHub token
+if [ -n "$GITHUB_TOKEN" ]; then
+  TOKEN="$GITHUB_TOKEN"
+elif [ -n "$GH_TOKEN" ]; then
+  TOKEN="$GH_TOKEN"
+elif command -v gh &> /dev/null && gh auth status &> /dev/null; then
+  TOKEN=$(gh auth token)
+else
+  echo ""
+  echo "⚠ No GitHub token found. Set GITHUB_TOKEN environment variable."
+  echo "  You can create a token at: https://github.com/settings/tokens"
+  echo "  Or run: export GITHUB_TOKEN=ghp_your_token_here"
+  echo ""
+  echo "📋 Manual release:"
+  echo "   git tag v$RELEASE_VERSION && git push origin v$RELEASE_VERSION"
+  echo "   Then upload dist/components/* to components-v$RELEASE_VERSION release via GitHub web UI"
+  exit 0
+fi
+
+# Delete existing release if it exists
+echo "  → Checking for existing release..."
+EXISTING=$(curl -s -H "Authorization: token $TOKEN" \
+  "https://api.github.com/repos/$REPO/releases/tags/$TAG" | jq -r '.id // empty')
+
+if [ -n "$EXISTING" ]; then
+  echo "  → Deleting existing release $TAG..."
+  curl -s -X DELETE -H "Authorization: token $TOKEN" \
+    "https://api.github.com/repos/$REPO/releases/$EXISTING"
+  # Also delete the tag
+  curl -s -X DELETE -H "Authorization: token $TOKEN" \
+    "https://api.github.com/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
+fi
+
+# Create release
+echo "  → Creating release $TAG..."
+RELEASE_RESPONSE=$(curl -s -X POST -H "Authorization: token $TOKEN" \
+  -H "Content-Type: application/json" \
+  "https://api.github.com/repos/$REPO/releases" \
+  -d "{
+    \"tag_name\": \"$TAG\",
+    \"name\": \"Components for v$RELEASE_VERSION\",
+    \"body\": \"Component archives for Menace Modkit v$RELEASE_VERSION.\\n\\nThese are downloaded automatically by the app - you don't need to download them manually.\",
+    \"draft\": false,
+    \"prerelease\": false
+  }")
+
+UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | jq -r '.upload_url' | sed 's/{?name,label}//')
+
+if [ -z "$UPLOAD_URL" ] || [ "$UPLOAD_URL" = "null" ]; then
+  echo "  ✗ Failed to create release"
+  echo "$RELEASE_RESPONSE" | jq .
+  exit 1
+fi
+
+# Upload each component
+for file in dist/components/*.zip dist/components/*.tar.gz; do
+  if [ -f "$file" ]; then
+    filename=$(basename "$file")
+    echo "  → Uploading $filename..."
+
+    if [[ "$file" == *.zip ]]; then
+      content_type="application/zip"
+    else
+      content_type="application/gzip"
+    fi
+
+    curl -s -X POST -H "Authorization: token $TOKEN" \
+      -H "Content-Type: $content_type" \
+      --data-binary "@$file" \
+      "$UPLOAD_URL?name=$filename" > /dev/null
+  fi
+done
+
 echo ""
-echo "   1. Create components release (from local build):"
-echo "      gh release create components-v$RELEASE_VERSION dist/components/* --title 'Components for v$RELEASE_VERSION' --notes 'Component archives for Menace Modkit v$RELEASE_VERSION. Downloaded automatically by the app.'"
+echo "✅ Components release created: https://github.com/$REPO/releases/tag/$TAG"
+
+# =============================================================================
+# Summary
+# =============================================================================
+
 echo ""
-echo "   2. Push GUI release tag (CI builds the app):"
-echo "      git tag v$RELEASE_VERSION && git push origin v$RELEASE_VERSION"
+echo "📋 Next step - push the app release tag:"
+echo "   git tag v$RELEASE_VERSION && git push origin v$RELEASE_VERSION"
 echo ""
-echo "   Or upload components to existing release:"
-echo "      gh release upload components-v$RELEASE_VERSION dist/components/* --clobber"
+echo "   This triggers CI to build GUI apps and create the v$RELEASE_VERSION release."
