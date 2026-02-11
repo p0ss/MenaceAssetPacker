@@ -73,10 +73,10 @@ public class ModpacksView : UserControl
     grid.Children.Add(title);
     Grid.SetRow(title, 0);
 
-    // Row 1: Button row with Import and Create
+    // Row 1: Button row with Import, Create, and Update Check
     var buttonRow = new Grid
     {
-      ColumnDefinitions = new ColumnDefinitions("*,8,*"),
+      ColumnDefinitions = new ColumnDefinitions("*,8,*,8,*"),
       Margin = new Thickness(0, 0, 0, 12)
     };
 
@@ -99,6 +99,27 @@ public class ModpacksView : UserControl
     createButton.Click += (_, _) => ShowCreateDialog();
     buttonRow.Children.Add(createButton);
     Grid.SetColumn(createButton, 2);
+
+    var checkUpdatesButton = new Button
+    {
+      Content = "Check Updates",
+      HorizontalAlignment = HorizontalAlignment.Stretch
+    };
+    checkUpdatesButton.Classes.Add("secondary");
+    checkUpdatesButton.Bind(Button.ContentProperty,
+      new Avalonia.Data.Binding("IsCheckingUpdates")
+      {
+        Converter = new FuncValueConverter<bool, string>(checking => checking ? "Checking..." : "Check Updates")
+      });
+    checkUpdatesButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsCheckingUpdates") { Converter = InvertBoolConverter });
+    checkUpdatesButton.Click += async (_, _) =>
+    {
+      if (DataContext is ModpacksViewModel vm)
+        await vm.CheckForUpdatesAsync(forceRefresh: true);
+    };
+    buttonRow.Children.Add(checkUpdatesButton);
+    Grid.SetColumn(checkUpdatesButton, 4);
 
     grid.Children.Add(buttonRow);
     Grid.SetRow(buttonRow, 1);
@@ -174,11 +195,17 @@ public class ModpacksView : UserControl
     grid.Children.Add(modpackList);
     Grid.SetRow(modpackList, 2);
 
-    // Row 3: Conflict status + Refresh
+    // Row 3: Status + actions
     var bottomRow = new Grid
     {
       ColumnDefinitions = new ColumnDefinitions("*,Auto"),
       Margin = new Thickness(0, 6, 0, 0)
+    };
+
+    var statusStack = new StackPanel
+    {
+      Spacing = 2,
+      VerticalAlignment = VerticalAlignment.Center
     };
 
     var conflictStatus = new TextBlock
@@ -189,8 +216,19 @@ public class ModpacksView : UserControl
     };
     conflictStatus.Bind(TextBlock.TextProperty,
       new Avalonia.Data.Binding("LoadOrderVM.StatusText"));
-    bottomRow.Children.Add(conflictStatus);
-    Grid.SetColumn(conflictStatus, 0);
+    statusStack.Children.Add(conflictStatus);
+
+    var updateStatus = new TextBlock
+    {
+      FontSize = 10,
+      Foreground = new SolidColorBrush(Color.Parse("#A5B4FC")),
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    updateStatus.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("UpdateStatus"));
+    statusStack.Children.Add(updateStatus);
+
+    bottomRow.Children.Add(statusStack);
+    Grid.SetColumn(statusStack, 0);
 
     var refreshBtn = new Button
     {
@@ -314,6 +352,28 @@ public class ModpacksView : UserControl
     dllBadge.Bind(Border.IsVisibleProperty,
       new Avalonia.Data.Binding("IsStandalone"));
     nameRow.Children.Add(dllBadge);
+
+    // UPDATE badge when a newer release is available
+    var updateBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#3A1F00")),
+      BorderBrush = new SolidColorBrush(Color.Parse("#EAB308")),
+      BorderThickness = new Thickness(1),
+      CornerRadius = new CornerRadius(3),
+      Padding = new Thickness(4, 1),
+      VerticalAlignment = VerticalAlignment.Center,
+      Child = new TextBlock
+      {
+        Text = "UPDATE",
+        FontSize = 9,
+        Foreground = new SolidColorBrush(Color.Parse("#FACC15")),
+        FontWeight = FontWeight.SemiBold
+      }
+    };
+    ToolTip.SetTip(updateBadge, "A newer version is available for this mod");
+    updateBadge.Bind(Border.IsVisibleProperty,
+      new Avalonia.Data.Binding("HasUpdateAvailable"));
+    nameRow.Children.Add(updateBadge);
     infoStack.Children.Add(nameRow);
 
     // Author + Security Status + Conflict warning row
@@ -746,6 +806,56 @@ public class ModpacksView : UserControl
     standaloneSection.Children.Add(conflictBanner);
 
     mainStack.Children.Add(standaloneSection);
+
+    // Shared update status panel for selected modpack
+    var updateStatusPanel = new Border
+    {
+      CornerRadius = new CornerRadius(4),
+      BorderThickness = new Thickness(1),
+      Padding = new Thickness(12, 8),
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    updateStatusPanel.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.ShowUpdateStatus"));
+
+    var updateStateToBackground = new FuncValueConverter<ModUpdateState, IBrush>(state => state switch
+    {
+      ModUpdateState.UpdateAvailable => new SolidColorBrush(Color.Parse("#3A1F00")),
+      ModUpdateState.Error => new SolidColorBrush(Color.Parse("#2A1A1A")),
+      ModUpdateState.Checking => new SolidColorBrush(Color.Parse("#1F2937")),
+      ModUpdateState.UpToDate => new SolidColorBrush(Color.Parse("#0F2A1F")),
+      _ => new SolidColorBrush(Color.Parse("#252525"))
+    });
+    var updateStateToBorder = new FuncValueConverter<ModUpdateState, IBrush>(state => state switch
+    {
+      ModUpdateState.UpdateAvailable => new SolidColorBrush(Color.Parse("#EAB308")),
+      ModUpdateState.Error => new SolidColorBrush(Color.Parse("#F87171")),
+      ModUpdateState.Checking => new SolidColorBrush(Color.Parse("#60A5FA")),
+      ModUpdateState.UpToDate => new SolidColorBrush(Color.Parse("#34D399")),
+      _ => new SolidColorBrush(Color.Parse("#555555"))
+    });
+    var updateStateToText = new FuncValueConverter<ModUpdateState, IBrush>(state => state switch
+    {
+      ModUpdateState.UpdateAvailable => new SolidColorBrush(Color.Parse("#FACC15")),
+      ModUpdateState.Error => new SolidColorBrush(Color.Parse("#FCA5A5")),
+      ModUpdateState.Checking => new SolidColorBrush(Color.Parse("#93C5FD")),
+      ModUpdateState.UpToDate => new SolidColorBrush(Color.Parse("#6EE7B7")),
+      _ => new SolidColorBrush(Color.Parse("#CCCCCC"))
+    });
+    updateStatusPanel.Bind(Border.BackgroundProperty,
+      new Avalonia.Data.Binding("SelectedModpack.UpdateState") { Converter = updateStateToBackground });
+    updateStatusPanel.Bind(Border.BorderBrushProperty,
+      new Avalonia.Data.Binding("SelectedModpack.UpdateState") { Converter = updateStateToBorder });
+
+    var updateStatusText = new TextBlock
+    {
+      FontSize = 12,
+      TextWrapping = TextWrapping.Wrap
+    };
+    updateStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.UpdateSummary"));
+    updateStatusText.Bind(TextBlock.ForegroundProperty,
+      new Avalonia.Data.Binding("SelectedModpack.UpdateState") { Converter = updateStateToText });
+    updateStatusPanel.Child = updateStatusText;
+    mainStack.Children.Add(updateStatusPanel);
 
     // Per-modpack action buttons
     var buttonPanel = new StackPanel

@@ -15,15 +15,19 @@ public sealed class ModpacksViewModel : ViewModelBase
 {
     private readonly ModpackManager _modpackManager;
     private readonly DeployManager _deployManager;
+    private readonly ModUpdateChecker _modUpdateChecker;
 
     public ModpacksViewModel()
     {
         _modpackManager = new ModpackManager();
         _deployManager = new DeployManager(_modpackManager);
+        _modUpdateChecker = new ModUpdateChecker();
+        _modUpdateChecker.LoadCache();
         AllModpacks = new ObservableCollection<ModpackItemViewModel>();
         LoadOrderVM = new LoadOrderViewModel(_modpackManager);
 
         LoadModpacks();
+        QueueUpdateCheck();
     }
 
     public ModpackManager ModpackManager => _modpackManager;
@@ -43,6 +47,22 @@ public sealed class ModpacksViewModel : ViewModelBase
         get => _isDeploying;
         set => this.RaiseAndSetIfChanged(ref _isDeploying, value);
     }
+
+    private bool _isCheckingUpdates;
+    public bool IsCheckingUpdates
+    {
+        get => _isCheckingUpdates;
+        set => this.RaiseAndSetIfChanged(ref _isCheckingUpdates, value);
+    }
+
+    private string _updateStatus = "Updates not checked yet";
+    public string UpdateStatus
+    {
+        get => _updateStatus;
+        set => this.RaiseAndSetIfChanged(ref _updateStatus, value);
+    }
+
+    public int UpdateCount => AllModpacks.Count(m => m.HasUpdateAvailable);
 
     public ObservableCollection<ModpackItemViewModel> AllModpacks { get; }
 
@@ -170,6 +190,18 @@ public sealed class ModpacksViewModel : ViewModelBase
                 AllModpacks.Add(vm);
             }
         }
+
+        this.RaisePropertyChanged(nameof(UpdateCount));
+    }
+
+    private void QueueUpdateCheck(bool forceRefresh = false)
+    {
+        _ = CheckForUpdatesAsync(forceRefresh).ContinueWith(t =>
+        {
+            var ex = t.Exception?.GetBaseException();
+            if (ex != null)
+                ModkitLog.Warn($"[ModpacksViewModel] Background update check failed: {ex.Message}");
+        }, TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private List<(string Name, string Author, string Version, string Description, string DllSourcePath, string DllFileName)> GetBundledStandaloneMods()
@@ -519,7 +551,73 @@ public sealed class ModpacksViewModel : ViewModelBase
         if (selectedName != null)
             SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == selectedName);
         this.RaisePropertyChanged(nameof(DeployToggleText));
+        QueueUpdateCheck();
     }
+
+    public async Task CheckForUpdatesAsync(bool forceRefresh = false)
+    {
+        if (IsCheckingUpdates)
+            return;
+
+        IsCheckingUpdates = true;
+        if (forceRefresh)
+            _modUpdateChecker.ClearCache();
+
+        try
+        {
+            var candidates = AllModpacks.Where(m => m.CanCheckForUpdates).ToList();
+            if (candidates.Count == 0)
+            {
+                UpdateStatus = "No mods with repository URLs configured";
+                this.RaisePropertyChanged(nameof(UpdateCount));
+                return;
+            }
+
+            UpdateStatus = forceRefresh ? "Checking for updates..." : "Refreshing update status...";
+            foreach (var item in candidates)
+                item.BeginUpdateCheck();
+
+            var tasks = candidates.Select(async item =>
+                (Item: item, Info: await _modUpdateChecker.CheckForUpdateAsync(item.Manifest)));
+            var results = await Task.WhenAll(tasks);
+
+            var updates = 0;
+            var errors = 0;
+            foreach (var (item, info) in results)
+            {
+                item.ApplyUpdateInfo(info);
+                if (info.HasUpdate) updates++;
+                if (!string.IsNullOrWhiteSpace(info.Error)) errors++;
+            }
+
+            _modUpdateChecker.SaveCache();
+
+            UpdateStatus = updates > 0
+                ? $"{updates} update(s) available"
+                : errors > 0
+                    ? $"No updates found ({errors} check error(s))"
+                    : $"All {candidates.Count} tracked mod(s) are up to date";
+        }
+        catch (Exception ex)
+        {
+            UpdateStatus = $"Update check failed: {ex.Message}";
+            ModkitLog.Warn($"[ModpacksViewModel] Update check failed: {ex.Message}");
+        }
+        finally
+        {
+            IsCheckingUpdates = false;
+            this.RaisePropertyChanged(nameof(UpdateCount));
+        }
+    }
+}
+
+public enum ModUpdateState
+{
+    NoRepository,
+    Checking,
+    UpdateAvailable,
+    UpToDate,
+    Error
 }
 
 public sealed class ModpackItemViewModel : ViewModelBase
@@ -574,6 +672,59 @@ public sealed class ModpackItemViewModel : ViewModelBase
     }
 
     public bool HasConflict => !string.IsNullOrEmpty(ConflictWarning);
+
+    private bool _isCheckingForUpdate;
+    public bool IsCheckingForUpdate
+    {
+        get => _isCheckingForUpdate;
+        private set => this.RaiseAndSetIfChanged(ref _isCheckingForUpdate, value);
+    }
+
+    private bool _hasUpdateAvailable;
+    public bool HasUpdateAvailable
+    {
+        get => _hasUpdateAvailable;
+        private set => this.RaiseAndSetIfChanged(ref _hasUpdateAvailable, value);
+    }
+
+    private string _latestVersion = string.Empty;
+    public string LatestVersion
+    {
+        get => _latestVersion;
+        private set => this.RaiseAndSetIfChanged(ref _latestVersion, value);
+    }
+
+    private string? _updateCheckError;
+    public string? UpdateCheckError
+    {
+        get => _updateCheckError;
+        private set => this.RaiseAndSetIfChanged(ref _updateCheckError, value);
+    }
+
+    public bool HasUpdateCheckError => !string.IsNullOrWhiteSpace(UpdateCheckError);
+    public bool CanCheckForUpdates => !string.IsNullOrWhiteSpace(_manifest.RepositoryUrl);
+    public bool ShowUpdateStatus => IsCheckingForUpdate || HasUpdateAvailable || HasUpdateCheckError || CanCheckForUpdates;
+
+    public ModUpdateState UpdateState
+    {
+        get
+        {
+            if (IsCheckingForUpdate) return ModUpdateState.Checking;
+            if (HasUpdateCheckError) return ModUpdateState.Error;
+            if (HasUpdateAvailable) return ModUpdateState.UpdateAvailable;
+            if (CanCheckForUpdates) return ModUpdateState.UpToDate;
+            return ModUpdateState.NoRepository;
+        }
+    }
+
+    public string UpdateSummary => UpdateState switch
+    {
+        ModUpdateState.Checking => "Checking for updates...",
+        ModUpdateState.UpdateAvailable => $"Update available: {VersionDisplay} -> {FormatVersion(LatestVersion)}",
+        ModUpdateState.UpToDate => "Up to date",
+        ModUpdateState.Error => $"Update check failed: {UpdateCheckError}",
+        _ => "No repository configured"
+    };
 
     internal ModpackManifest Manifest => _manifest;
 
@@ -636,6 +787,7 @@ public sealed class ModpackItemViewModel : ViewModelBase
                 _manifest.Version = value;
                 this.RaisePropertyChanged();
                 this.RaisePropertyChanged(nameof(VersionDisplay));
+                RaiseUpdateStateProperties();
                 if (!IsStandalone) SaveMetadata();
             }
         }
@@ -776,6 +928,38 @@ public sealed class ModpackItemViewModel : ViewModelBase
     public void Export(string exportPath)
     {
         _manager.ExportModpack(_manifest.Name, exportPath);
+    }
+
+    public void BeginUpdateCheck()
+    {
+        IsCheckingForUpdate = true;
+        UpdateCheckError = null;
+        RaiseUpdateStateProperties();
+    }
+
+    public void ApplyUpdateInfo(ModUpdateInfo info)
+    {
+        IsCheckingForUpdate = false;
+        HasUpdateAvailable = info.HasUpdate;
+        LatestVersion = info.LatestVersion ?? string.Empty;
+        UpdateCheckError = string.IsNullOrWhiteSpace(info.Error) ? null : info.Error;
+        RaiseUpdateStateProperties();
+    }
+
+    private void RaiseUpdateStateProperties()
+    {
+        this.RaisePropertyChanged(nameof(HasUpdateCheckError));
+        this.RaisePropertyChanged(nameof(CanCheckForUpdates));
+        this.RaisePropertyChanged(nameof(ShowUpdateStatus));
+        this.RaisePropertyChanged(nameof(UpdateState));
+        this.RaisePropertyChanged(nameof(UpdateSummary));
+    }
+
+    private static string FormatVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return "";
+        return version.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? version : $"v{version}";
     }
 }
 
