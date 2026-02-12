@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
+using Menace.SDK;
 using UnityEngine;
 
 namespace Menace.ModpackLoader;
@@ -32,7 +33,7 @@ public partial class ModpackLoaderMod
 
         if (gameAssembly == null)
         {
-            LoggerInstance.Error("Assembly-CSharp not found, cannot apply clones");
+            SdkLogger.Error("Assembly-CSharp not found, cannot apply clones");
             return false;
         }
 
@@ -54,7 +55,7 @@ public partial class ModpackLoaderMod
 
                 if (templateType == null)
                 {
-                    LoggerInstance.Warning($"  Clone: template type '{templateTypeName}' not found");
+                    SdkLogger.Warning($"  Clone: template type '{templateTypeName}' not found");
                     allFound = false;
                     continue;
                 }
@@ -68,7 +69,7 @@ public partial class ModpackLoaderMod
 
                 if (objects == null || objects.Length == 0)
                 {
-                    LoggerInstance.Warning($"  Clone: no {templateTypeName} instances found — will retry on next scene");
+                    SdkLogger.Warning($"  Clone: no {templateTypeName} instances found — will retry on next scene");
                     allFound = false;
                     continue;
                 }
@@ -87,14 +88,14 @@ public partial class ModpackLoaderMod
                     // Skip if a template with this name already exists (already cloned or native)
                     if (lookup.ContainsKey(newName))
                     {
-                        LoggerInstance.Msg($"  Clone: '{newName}' already exists, skipping");
+                        SdkLogger.Msg($"  Clone: '{newName}' already exists, skipping");
                         clonedCount++;
                         continue;
                     }
 
                     if (!lookup.TryGetValue(sourceName, out var source))
                     {
-                        LoggerInstance.Warning($"  Clone: source '{sourceName}' not found for clone '{newName}'");
+                        SdkLogger.Warning($"  Clone: source '{sourceName}' not found for clone '{newName}'");
                         continue;
                     }
 
@@ -119,24 +120,24 @@ public partial class ModpackLoaderMod
                         var verified = verifyLookup?.Any(o => o.name == newName) ?? false;
                         var verifyStatus = verified ? "verified in Resources" : "NOT in Resources (may still work via DataTemplateLoader)";
 
-                        LoggerInstance.Msg($"  Cloned: {sourceName} -> {newName} ({verifyStatus})");
+                        SdkLogger.Msg($"  Cloned: {sourceName} -> {newName} ({verifyStatus})");
                         clonedCount++;
                     }
                     catch (Exception ex)
                     {
-                        LoggerInstance.Error($"  Clone failed: {sourceName} -> {newName}: {ex.Message}");
+                        SdkLogger.Error($"  Clone failed: {sourceName} -> {newName}: {ex.Message}");
                     }
                 }
 
                 if (clonedCount > 0)
                 {
-                    LoggerInstance.Msg($"  Applied {clonedCount} clone(s) for {templateTypeName}");
+                    SdkLogger.Msg($"  Applied {clonedCount} clone(s) for {templateTypeName}");
                     _appliedCloneKeys.Add(cloneKey);
                 }
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"  Failed to process clones for {templateTypeName}: {ex.Message}");
+                SdkLogger.Error($"  Failed to process clones for {templateTypeName}: {ex.Message}");
             }
         }
 
@@ -156,7 +157,7 @@ public partial class ModpackLoaderMod
 
             if (loaderType == null)
             {
-                LoggerInstance.Warning("  DataTemplateLoader class not found in Assembly-CSharp");
+                SdkLogger.Warning("  DataTemplateLoader class not found in Assembly-CSharp");
                 return;
             }
 
@@ -165,7 +166,7 @@ public partial class ModpackLoaderMod
 
             if (getAllMethod == null)
             {
-                LoggerInstance.Warning("  DataTemplateLoader.GetAll method not found");
+                SdkLogger.Warning("  DataTemplateLoader.GetAll method not found");
                 return;
             }
 
@@ -174,7 +175,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"  EnsureTemplatesLoaded({templateType.Name}): {ex.Message}");
+            SdkLogger.Warning($"  EnsureTemplatesLoaded({templateType.Name}): {ex.Message}");
         }
     }
 
@@ -202,14 +203,14 @@ public partial class ModpackLoaderMod
             IntPtr idField = FindField(klass, "m_ID");
             if (idField == IntPtr.Zero)
             {
-                LoggerInstance.Warning($"  SetTemplateId: m_ID field not found on {clone.name}");
+                SdkLogger.Warning($"  SetTemplateId: m_ID field not found on {clone.name}");
                 return;
             }
 
             uint offset = IL2CPP.il2cpp_field_get_offset(idField);
             if (offset == 0)
             {
-                LoggerInstance.Warning($"  SetTemplateId: m_ID offset is 0 for {clone.name}");
+                SdkLogger.Warning($"  SetTemplateId: m_ID offset is 0 for {clone.name}");
                 return;
             }
 
@@ -219,7 +220,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Error($"  SetTemplateId failed for {clone.name}: {ex.Message}");
+            SdkLogger.Error($"  SetTemplateId failed for {clone.name}: {ex.Message}");
         }
     }
 
@@ -253,7 +254,7 @@ public partial class ModpackLoaderMod
 
             if (loaderType == null)
             {
-                LoggerInstance.Warning("  RegisterInLoader: DataTemplateLoader not found");
+                SdkLogger.Warning("  RegisterInLoader: DataTemplateLoader not found");
                 return;
             }
 
@@ -291,7 +292,7 @@ public partial class ModpackLoaderMod
 
             if (singleton == null)
             {
-                LoggerInstance.Warning("  RegisterInLoader: could not get DataTemplateLoader singleton");
+                SdkLogger.Warning("  RegisterInLoader: could not get DataTemplateLoader singleton");
                 return;
             }
 
@@ -328,18 +329,18 @@ public partial class ModpackLoaderMod
                     var maps = field.GetValue(singleton);
                     if (maps != null && TryAddToTemplateMaps(maps, templateType, clone, name))
                     {
-                        LoggerInstance.Msg($"    Registered '{name}' via field '{field.Name}'");
+                        SdkLogger.Msg($"    Registered '{name}' via field '{field.Name}'");
                         return;
                     }
                 }
             }
 
-            LoggerInstance.Warning($"  RegisterInLoader: could not find template registry to add '{name}' — " +
+            SdkLogger.Warning($"  RegisterInLoader: could not find template registry to add '{name}' — " +
                 "clone exists in memory but may not be findable via DataTemplateLoader.Get()");
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"  RegisterInLoader failed for '{name}': {ex.Message}");
+            SdkLogger.Warning($"  RegisterInLoader failed for '{name}': {ex.Message}");
         }
     }
 
@@ -406,7 +407,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"    TryAddToTemplateMaps: {ex.Message}");
+            SdkLogger.Warning($"    TryAddToTemplateMaps: {ex.Message}");
         }
 
         return false;

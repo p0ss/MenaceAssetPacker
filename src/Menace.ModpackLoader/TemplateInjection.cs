@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using MelonLoader;
+using Menace.SDK;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -177,7 +178,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
+            SdkLogger.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
             return false;
         }
     }
@@ -210,11 +211,11 @@ public partial class ModpackLoaderMod
                 }
             }
 
-            LoggerInstance.Msg($"    Built name lookup for {elementType.Name}: {lookup.Count} entries");
+            SdkLogger.Msg($"    Built name lookup for {elementType.Name}: {lookup.Count} entries");
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"    Failed to build name lookup for {elementType.Name}: {ex.Message}");
+            SdkLogger.Warning($"    Failed to build name lookup for {elementType.Name}: {ex.Message}");
         }
 
         _nameLookupCache[elementType] = lookup;
@@ -232,13 +233,13 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Error($"    TryCast failed for {obj.name}: {ex.Message}");
+            SdkLogger.Error($"    TryCast failed for {obj.name}: {ex.Message}");
             return;
         }
 
         if (castObj == null)
         {
-            LoggerInstance.Error($"    TryCast returned null for {obj.name}");
+            SdkLogger.Error($"    TryCast returned null for {obj.name}");
             return;
         }
 
@@ -274,7 +275,7 @@ public partial class ModpackLoaderMod
 
                 if (!propertyMap.TryGetValue(parentFieldName, out var parentProp))
                 {
-                    LoggerInstance.Warning($"    {obj.name}: parent property '{parentFieldName}' not found on {templateType.Name}");
+                    SdkLogger.Warning($"    {obj.name}: parent property '{parentFieldName}' not found on {templateType.Name}");
                     continue;
                 }
 
@@ -283,7 +284,7 @@ public partial class ModpackLoaderMod
                     var parentObj = parentProp.GetValue(castObj);
                     if (parentObj == null)
                     {
-                        LoggerInstance.Warning($"    {obj.name}.{parentFieldName} is null, cannot set '{childFieldName}'");
+                        SdkLogger.Warning($"    {obj.name}.{parentFieldName} is null, cannot set '{childFieldName}'");
                         continue;
                     }
 
@@ -291,7 +292,7 @@ public partial class ModpackLoaderMod
                         BindingFlags.Public | BindingFlags.Instance);
                     if (childProp == null || !childProp.CanWrite)
                     {
-                        LoggerInstance.Warning($"    {obj.name}: property '{childFieldName}' not found on {parentObj.GetType().Name}");
+                        SdkLogger.Warning($"    {obj.name}: property '{childFieldName}' not found on {parentObj.GetType().Name}");
                         continue;
                     }
 
@@ -325,12 +326,12 @@ public partial class ModpackLoaderMod
                         var existingLoc = childProp.GetValue(parentObj);
                         if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
                         {
-                            LoggerInstance.Msg($"    {obj.name}.{fieldName}: set localized text");
+                            SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
                             appliedCount++;
                         }
                         else
                         {
-                            LoggerInstance.Warning($"    {obj.name}.{fieldName}: localization object is null");
+                            SdkLogger.Warning($"    {obj.name}.{fieldName}: localization object is null");
                         }
                         continue;
                     }
@@ -342,14 +343,14 @@ public partial class ModpackLoaderMod
                 catch (Exception ex)
                 {
                     var inner = ex.InnerException ?? ex;
-                    LoggerInstance.Error($"    {obj.name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
+                    SdkLogger.Error($"    {obj.name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
                 }
                 continue;
             }
 
             if (!propertyMap.TryGetValue(fieldName, out var prop))
             {
-                LoggerInstance.Warning($"    {obj.name}: property '{fieldName}' not found on {templateType.Name}");
+                SdkLogger.Warning($"    {obj.name}: property '{fieldName}' not found on {templateType.Name}");
                 continue;
             }
 
@@ -387,12 +388,12 @@ public partial class ModpackLoaderMod
                     var existingLoc = prop.GetValue(castObj);
                     if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
                     {
-                        LoggerInstance.Msg($"    {obj.name}.{fieldName}: set localized text");
+                        SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
                         appliedCount++;
                     }
                     else
                     {
-                        LoggerInstance.Warning($"    {obj.name}.{fieldName}: localization object is null, cannot set text");
+                        SdkLogger.Warning($"    {obj.name}.{fieldName}: localization object is null, cannot set text");
                     }
                     continue;
                 }
@@ -404,13 +405,13 @@ public partial class ModpackLoaderMod
             catch (Exception ex)
             {
                 var inner = ex.InnerException ?? ex;
-                LoggerInstance.Error($"    {obj.name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
+                SdkLogger.Error($"    {obj.name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
             }
         }
 
         if (appliedCount > 0)
         {
-            LoggerInstance.Msg($"    {obj.name}: set {appliedCount}/{modifications.Count} fields");
+            SdkLogger.Msg($"    {obj.name}: set {appliedCount}/{modifications.Count} fields");
         }
     }
 
@@ -443,7 +444,7 @@ public partial class ModpackLoaderMod
         var indexer = arrayType.GetProperty("Item");
         if (indexer == null)
         {
-            LoggerInstance.Warning($"    {prop.Name}: no indexer found on {arrayType.Name}");
+            SdkLogger.Warning($"    {prop.Name}: no indexer found on {arrayType.Name}");
             return false;
         }
 
@@ -454,7 +455,7 @@ public partial class ModpackLoaderMod
         }
 
         prop.SetValue(castObj, array);
-        LoggerInstance.Msg($"    {prop.Name}: set StructArray<{elementType.Name}>[{jArray.Count}]");
+        SdkLogger.Msg($"    {prop.Name}: set StructArray<{elementType.Name}>[{jArray.Count}]");
         return true;
     }
 
@@ -481,12 +482,12 @@ public partial class ModpackLoaderMod
                 }
                 else
                 {
-                    LoggerInstance.Warning($"    {prop.Name}[{i}]: could not resolve '{name}'");
+                    SdkLogger.Warning($"    {prop.Name}[{i}]: could not resolve '{name}'");
                 }
             }
 
             prop.SetValue(castObj, array);
-            LoggerInstance.Msg($"    {prop.Name}: set ReferenceArray<{elementType.Name}>[{jArray.Count}]");
+            SdkLogger.Msg($"    {prop.Name}: set ReferenceArray<{elementType.Name}>[{jArray.Count}]");
             return true;
         }
 
@@ -501,7 +502,7 @@ public partial class ModpackLoaderMod
                 indexer.SetValue(array, jArray[i].Value<string>(), new object[] { i });
 
             prop.SetValue(castObj, array);
-            LoggerInstance.Msg($"    {prop.Name}: set string array[{jArray.Count}]");
+            SdkLogger.Msg($"    {prop.Name}: set string array[{jArray.Count}]");
             return true;
         }
 
@@ -517,7 +518,7 @@ public partial class ModpackLoaderMod
         }
 
         prop.SetValue(castObj, refArray);
-        LoggerInstance.Msg($"    {prop.Name}: set ReferenceArray<{elementType.Name}>[{jArray.Count}]");
+        SdkLogger.Msg($"    {prop.Name}: set ReferenceArray<{elementType.Name}>[{jArray.Count}]");
         return true;
     }
 
@@ -533,7 +534,7 @@ public partial class ModpackLoaderMod
             }
             catch (Exception ex)
             {
-                LoggerInstance.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
+                SdkLogger.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
                 return false;
             }
         }
@@ -543,14 +544,14 @@ public partial class ModpackLoaderMod
         var clearMethod = listType.GetMethod("Clear");
         if (clearMethod == null)
         {
-            LoggerInstance.Warning($"    {prop.Name}: List has no Clear method");
+            SdkLogger.Warning($"    {prop.Name}: List has no Clear method");
             return false;
         }
 
         var addMethod = listType.GetMethod("Add");
         if (addMethod == null)
         {
-            LoggerInstance.Warning($"    {prop.Name}: List has no Add method");
+            SdkLogger.Warning($"    {prop.Name}: List has no Add method");
             return false;
         }
 
@@ -571,7 +572,7 @@ public partial class ModpackLoaderMod
                 }
                 else
                 {
-                    LoggerInstance.Warning($"    {prop.Name}: could not resolve '{name}' for List<{elementType.Name}>");
+                    SdkLogger.Warning($"    {prop.Name}: could not resolve '{name}' for List<{elementType.Name}>");
                 }
             }
         }
@@ -584,7 +585,7 @@ public partial class ModpackLoaderMod
             }
         }
 
-        LoggerInstance.Msg($"    {prop.Name}: set List<{elementType.Name}> with {jArray.Count} elements");
+        SdkLogger.Msg($"    {prop.Name}: set List<{elementType.Name}> with {jArray.Count} elements");
         return true;
     }
 
@@ -599,7 +600,7 @@ public partial class ModpackLoaderMod
         }
 
         prop.SetValue(castObj, array);
-        LoggerInstance.Msg($"    {prop.Name}: set {elementType.Name}[{jArray.Count}]");
+        SdkLogger.Msg($"    {prop.Name}: set {elementType.Name}[{jArray.Count}]");
         return true;
     }
 
@@ -705,7 +706,7 @@ public partial class ModpackLoaderMod
             catch (Exception ex)
             {
                 // Type can't be looked up via Resources - log only at debug level
-                LoggerInstance.Msg($"    [Debug] BuildNameLookup failed for {targetType.Name}: {ex.Message}");
+                SdkLogger.Msg($"    [Debug] BuildNameLookup failed for {targetType.Name}: {ex.Message}");
             }
         }
 
@@ -729,7 +730,7 @@ public partial class ModpackLoaderMod
                     if (keyProp.PropertyType == typeof(string))
                     {
                         keyProp.SetValue(obj, name);
-                        LoggerInstance.Msg($"    Constructed {targetType.Name} with Key='{name}'");
+                        SdkLogger.Msg($"    Constructed {targetType.Name} with Key='{name}'");
                         return obj;
                     }
                 }
@@ -744,7 +745,7 @@ public partial class ModpackLoaderMod
             // Construction failed - type may require special initialization
         }
 
-        LoggerInstance.Warning($"    Could not resolve '{name}' as {targetType.Name}");
+        SdkLogger.Warning($"    Could not resolve '{name}' as {targetType.Name}");
         return null;
     }
 
@@ -760,7 +761,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"    Failed to construct {targetType.Name}: {ex.Message}");
+            SdkLogger.Warning($"    Failed to construct {targetType.Name}: {ex.Message}");
             return null;
         }
 
@@ -802,7 +803,7 @@ public partial class ModpackLoaderMod
 
             if (!propertyMap.TryGetValue(fieldName, out var prop))
             {
-                LoggerInstance.Warning($"    {targetType.Name}: property '{fieldName}' not found");
+                SdkLogger.Warning($"    {targetType.Name}: property '{fieldName}' not found");
                 continue;
             }
 
@@ -842,7 +843,7 @@ public partial class ModpackLoaderMod
                     }
                     else
                     {
-                        LoggerInstance.Warning($"    {targetType.Name}.{fieldName}: localization object is null");
+                        SdkLogger.Warning($"    {targetType.Name}.{fieldName}: localization object is null");
                     }
                     continue;
                 }
@@ -857,7 +858,7 @@ public partial class ModpackLoaderMod
             catch (Exception ex)
             {
                 var inner = ex.InnerException ?? ex;
-                LoggerInstance.Warning($"    {targetType.Name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
+                SdkLogger.Warning($"    {targetType.Name}.{fieldName}: {inner.GetType().Name}: {inner.Message}");
             }
         }
     }
@@ -877,7 +878,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"    {prop.Name}: failed to construct list: {ex.Message}");
+            SdkLogger.Warning($"    {prop.Name}: failed to construct list: {ex.Message}");
         }
     }
 
@@ -897,7 +898,7 @@ public partial class ModpackLoaderMod
             }
             catch (Exception ex)
             {
-                LoggerInstance.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
+                SdkLogger.Warning($"    {prop.Name}: IL2CPP List is null and construction failed: {ex.Message}");
                 return false;
             }
         }
@@ -910,7 +911,7 @@ public partial class ModpackLoaderMod
 
         if (countProp == null || getItem == null)
         {
-            LoggerInstance.Warning($"    {prop.Name}: List missing Count or get_Item");
+            SdkLogger.Warning($"    {prop.Name}: List missing Count or get_Item");
             return false;
         }
 
@@ -921,7 +922,7 @@ public partial class ModpackLoaderMod
         {
             if (removeAt == null)
             {
-                LoggerInstance.Warning($"    {prop.Name}: List has no RemoveAt method");
+                SdkLogger.Warning($"    {prop.Name}: List has no RemoveAt method");
             }
             else
             {
@@ -937,7 +938,7 @@ public partial class ModpackLoaderMod
                     }
                     else
                     {
-                        LoggerInstance.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={count})");
+                        SdkLogger.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={count})");
                     }
                 }
             }
@@ -951,17 +952,17 @@ public partial class ModpackLoaderMod
             {
                 if (!int.TryParse(kvp.Key, out var idx))
                 {
-                    LoggerInstance.Warning($"    {prop.Name}.$update: invalid index '{kvp.Key}'");
+                    SdkLogger.Warning($"    {prop.Name}.$update: invalid index '{kvp.Key}'");
                     continue;
                 }
                 if (idx < 0 || idx >= count)
                 {
-                    LoggerInstance.Warning($"    {prop.Name}.$update: index {idx} out of range (count={count})");
+                    SdkLogger.Warning($"    {prop.Name}.$update: index {idx} out of range (count={count})");
                     continue;
                 }
                 if (kvp.Value is not JObject fieldOverrides)
                 {
-                    LoggerInstance.Warning($"    {prop.Name}.$update[{idx}]: expected object");
+                    SdkLogger.Warning($"    {prop.Name}.$update[{idx}]: expected object");
                     continue;
                 }
 
@@ -979,7 +980,7 @@ public partial class ModpackLoaderMod
         {
             if (addMethod == null)
             {
-                LoggerInstance.Warning($"    {prop.Name}: List has no Add method");
+                SdkLogger.Warning($"    {prop.Name}: List has no Add method");
             }
             else
             {
@@ -999,13 +1000,13 @@ public partial class ModpackLoaderMod
                     }
                     else
                     {
-                        LoggerInstance.Warning($"    {prop.Name}.$append: failed to convert item: {item}");
+                        SdkLogger.Warning($"    {prop.Name}.$append: failed to convert item: {item}");
                     }
                 }
             }
         }
 
-        LoggerInstance.Msg($"    {prop.Name}: applied {opCount} incremental ops on List<{elementType.Name}>");
+        SdkLogger.Msg($"    {prop.Name}: applied {opCount} incremental ops on List<{elementType.Name}>");
         return opCount > 0;
     }
 
@@ -1044,19 +1045,19 @@ public partial class ModpackLoaderMod
             // Log the append details
             var sourceJson = sourceItem?.ToString();
             if (sourceJson?.Length > 100) sourceJson = sourceJson.Substring(0, 100) + "...";
-            LoggerInstance.Msg($"      ArmyEntry appended: Template='{templateName}', Amount={amount}");
+            SdkLogger.Msg($"      ArmyEntry appended: Template='{templateName}', Amount={amount}");
 
             // Verify the template exists in game
             if (template == null && sourceItem is JObject jObj && jObj.TryGetValue("Template", out var templateToken))
             {
                 var requestedTemplate = templateToken.Value<string>();
-                LoggerInstance.Warning($"      WARNING: Template reference '{requestedTemplate}' resolved to null!");
-                LoggerInstance.Warning($"      This may indicate the clone was not registered before patching.");
+                SdkLogger.Warning($"      WARNING: Template reference '{requestedTemplate}' resolved to null!");
+                SdkLogger.Warning($"      This may indicate the clone was not registered before patching.");
             }
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"      LogArmyEntryAppend failed: {ex.Message}");
+            SdkLogger.Warning($"      LogArmyEntryAppend failed: {ex.Message}");
         }
     }
 }

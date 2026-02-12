@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MelonLoader;
+using Menace.SDK;
 
 namespace Menace.ModpackLoader;
 
@@ -59,7 +60,7 @@ public static class DllLoader
         var isUnverified = securityStatus != "SourceVerified" && securityStatus != "SourceWithWarnings";
         if (isUnverified && !forceLoad && !AllowUnverifiedDlls)
         {
-            MelonLogger.Warning($"  [{modpackName}] Skipping {dllFiles.Length} unverified DLL(s). " +
+            SdkLogger.Warning($"  [{modpackName}] Skipping {dllFiles.Length} unverified DLL(s). " +
                 "Set AllowUnverifiedDlls=true or forceLoad=true to override.");
             return;
         }
@@ -78,13 +79,13 @@ public static class DllLoader
                     _ => "UNVERIFIED"
                 };
 
-                MelonLogger.Msg($"  [{modpackName}] Loaded DLL: {Path.GetFileName(dllPath)} [{trustLabel}]");
+                SdkLogger.Msg($"  [{modpackName}] Loaded DLL: {Path.GetFileName(dllPath)} [{trustLabel}]");
 
                 DiscoverPlugins(assembly, modpackName);
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{modpackName}] Failed to load DLL {Path.GetFileName(dllPath)}: {ex.Message}");
+                SdkLogger.Error($"  [{modpackName}] Failed to load DLL {Path.GetFileName(dllPath)}: {ex.Message}");
             }
         }
     }
@@ -103,7 +104,7 @@ public static class DllLoader
         {
             // IL2CPP proxy assemblies may have types that can't be loaded
             types = ex.Types.Where(t => t != null).ToArray()!;
-            MelonLogger.Warning($"  [{modpackName}] Some types could not be loaded from {assembly.GetName().Name}, scanning partial type list");
+            SdkLogger.Warning($"  [{modpackName}] Some types could not be loaded from {assembly.GetName().Name}, scanning partial type list");
         }
 
         foreach (var type in types)
@@ -124,11 +125,11 @@ public static class DllLoader
 
                 _loadedPlugins.Add(new PluginInstance(plugin, modpackName, type.Name, harmony));
 
-                MelonLogger.Msg($"  [{modpackName}] Discovered plugin: {type.Name}");
+                SdkLogger.Msg($"  [{modpackName}] Discovered plugin: {type.Name}");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{modpackName}] Failed to instantiate plugin {type.Name}: {ex.Message}");
+                SdkLogger.Error($"  [{modpackName}] Failed to instantiate plugin {type.Name}: {ex.Message}");
             }
         }
     }
@@ -144,11 +145,11 @@ public static class DllLoader
             {
                 var logger = new MelonLogger.Instance(p.ModpackName);
                 p.Plugin.OnInitialize(logger, p.Harmony);
-                MelonLogger.Msg($"  [{p.ModpackName}] Initialized plugin: {p.TypeName}");
+                SdkLogger.Msg($"  [{p.ModpackName}] Initialized plugin: {p.TypeName}");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{p.ModpackName}] Failed to initialize plugin {p.TypeName}: {ex.Message}");
+                SdkLogger.Error($"  [{p.ModpackName}] Failed to initialize plugin {p.TypeName}: {ex.Message}");
             }
         }
     }
@@ -166,7 +167,7 @@ public static class DllLoader
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnSceneLoaded failed: {ex.Message}");
+                SdkLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnSceneLoaded failed: {ex.Message}");
             }
         }
     }
@@ -184,7 +185,7 @@ public static class DllLoader
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnUpdate failed: {ex.Message}");
+                SdkLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnUpdate failed: {ex.Message}");
             }
         }
     }
@@ -202,7 +203,7 @@ public static class DllLoader
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnGUI failed: {ex.Message}");
+                SdkLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnGUI failed: {ex.Message}");
             }
         }
     }
@@ -220,7 +221,7 @@ public static class DllLoader
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnUnload failed: {ex.Message}");
+                SdkLogger.Error($"  [{p.ModpackName}] Plugin {p.TypeName} OnUnload failed: {ex.Message}");
             }
         }
     }

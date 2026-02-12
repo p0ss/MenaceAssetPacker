@@ -419,17 +419,18 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Path to the force extraction flag file.
-    /// When this file exists, DataExtractor will trigger extraction on next game launch.
-    /// </summary>
-    private string ForceExtractionFlagPath =>
-        Path.Combine(GameInstallPath, "UserData", "ExtractedData", "_force_extraction.flag");
-
-    /// <summary>
     /// Check if extraction is pending (flag file exists).
     /// </summary>
-    public bool IsExtractionPending => !string.IsNullOrEmpty(GameInstallPath) &&
-                                        File.Exists(ForceExtractionFlagPath);
+    public bool IsExtractionPending
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(GameInstallPath))
+                return false;
+            var installer = new ModLoaderInstaller(GameInstallPath);
+            return installer.IsForceExtractionPending();
+        }
+    }
 
     private async Task ForceExtractDataAsync()
     {
@@ -466,28 +467,11 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             catch { }
         }
 
-        // Write the force extraction flag file
-        try
-        {
-            var flagDir = Path.GetDirectoryName(ForceExtractionFlagPath);
-            if (!string.IsNullOrEmpty(flagDir))
-                Directory.CreateDirectory(flagDir);
+        // Write the force extraction flag file (in case InstallDataExtractorAsync didn't already)
+        installer.WriteForceExtractionFlag();
 
-            await File.WriteAllTextAsync(ForceExtractionFlagPath,
-                $"Force extraction requested by modkit at {DateTime.UtcNow:O}\n" +
-                "This file will be deleted when extraction starts.\n" +
-                "Delete this file manually to cancel pending extraction.");
-
-            ExtractionStatus = "⏳ Extraction pending - will run on next game launch";
-            this.RaisePropertyChanged(nameof(IsExtractionPending));
-
-            ModkitLog.Info("[ToolSettings] Force extraction flag written");
-        }
-        catch (Exception ex)
-        {
-            ExtractionStatus = $"❌ Failed to set extraction flag: {ex.Message}";
-            ModkitLog.Error($"[ToolSettings] Failed to write force extraction flag: {ex}");
-        }
+        ExtractionStatus = "⏳ Extraction pending - will run on next game launch";
+        this.RaisePropertyChanged(nameof(IsExtractionPending));
     }
 
     private async Task ForceExtractAssetsAsync()

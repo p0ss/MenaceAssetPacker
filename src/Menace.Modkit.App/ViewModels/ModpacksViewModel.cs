@@ -64,6 +64,24 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public int UpdateCount => AllModpacks.Count(m => m.HasUpdateAvailable);
 
+    /// <summary>
+    /// Aggregated conflict warnings from all mods (e.g., UnityExplorer conflicts).
+    /// </summary>
+    public string ConflictWarnings
+    {
+        get
+        {
+            var warnings = AllModpacks
+                .Where(m => m.HasConflict && m.IsDeployed)
+                .Select(m => m.ConflictWarning)
+                .Where(w => !string.IsNullOrEmpty(w))
+                .ToList();
+            return warnings.Count > 0 ? string.Join("\n", warnings) : string.Empty;
+        }
+    }
+
+    public bool HasConflictWarnings => AllModpacks.Any(m => m.HasConflict && m.IsDeployed);
+
     public ObservableCollection<ModpackItemViewModel> AllModpacks { get; }
 
     /// <summary>
@@ -183,7 +201,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
                 var displayName = Path.GetFileNameWithoutExtension(fileName);
                 var vm = new ModpackItemViewModel(displayName, "Unknown", "", "",
-                    null, fileName, true, _modpackManager);
+                    null, fileName, true, _modpackManager, isExternal: true);
 
                 // Check for known-conflicting mods
                 foreach (var (substring, warning) in ConflictingMods)
@@ -273,18 +291,51 @@ public sealed class ModpacksViewModel : ViewModelBase
             if (manifest != null)
             {
                 RefreshModpacks();
-                // Select the newly imported modpack
+                // Select the newly added modpack
                 SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == manifest.Name);
-                DeployStatus = $"Imported: {manifest.Name}";
+                DeployStatus = $"Added: {manifest.Name}";
                 return true;
             }
         }
         catch (Exception ex)
         {
-            DeployStatus = $"Import failed: {ex.Message}";
-            Services.ModkitLog.Error($"[ModpacksViewModel] Import failed: {ex}");
+            DeployStatus = $"Failed to add mod: {ex.Message}";
+            Services.ModkitLog.Error($"[ModpacksViewModel] Failed to add mod: {ex}");
         }
         return false;
+    }
+
+    /// <summary>
+    /// Import a standalone DLL mod by copying it to the game's Mods directory.
+    /// Returns true if import was successful.
+    /// </summary>
+    public bool ImportDll(string dllPath)
+    {
+        var modsPath = _modpackManager.ModsBasePath;
+        if (string.IsNullOrEmpty(modsPath))
+        {
+            DeployStatus = "Game install path not set";
+            return false;
+        }
+
+        try
+        {
+            var fileName = Path.GetFileName(dllPath);
+            var destPath = Path.Combine(modsPath, fileName);
+
+            Directory.CreateDirectory(modsPath);
+            File.Copy(dllPath, destPath, overwrite: true);
+
+            RefreshModpacks();
+            DeployStatus = $"Added: {fileName}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Failed to add DLL: {ex.Message}";
+            ModkitLog.Error($"[ModpacksViewModel] Failed to add DLL: {ex}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -315,11 +366,11 @@ public sealed class ModpacksViewModel : ViewModelBase
         RefreshModpacks();
 
         if (imported > 0 && failed == 0)
-            DeployStatus = $"Imported {imported} mod(s)";
+            DeployStatus = $"Added {imported} mod(s)";
         else if (imported > 0 && failed > 0)
-            DeployStatus = $"Imported {imported} mod(s), {failed} failed";
+            DeployStatus = $"Added {imported} mod(s), {failed} failed";
         else if (failed > 0)
-            DeployStatus = $"Import failed for {failed} file(s)";
+            DeployStatus = $"Failed to add {failed} file(s)";
     }
 
     public void DeleteSelectedModpack()
@@ -559,6 +610,8 @@ public sealed class ModpacksViewModel : ViewModelBase
         if (selectedName != null)
             SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == selectedName);
         this.RaisePropertyChanged(nameof(DeployToggleText));
+        this.RaisePropertyChanged(nameof(ConflictWarnings));
+        this.RaisePropertyChanged(nameof(HasConflictWarnings));
         QueueUpdateCheck();
     }
 
@@ -646,7 +699,7 @@ public sealed class ModpackItemViewModel : ViewModelBase
     /// </summary>
     public ModpackItemViewModel(string name, string author, string version,
         string description, string? dllSourcePath, string dllFileName,
-        bool isDeployed, ModpackManager manager)
+        bool isDeployed, ModpackManager manager, bool isExternal = false)
     {
         _manifest = new ModpackManifest
         {
@@ -657,6 +710,7 @@ public sealed class ModpackItemViewModel : ViewModelBase
         };
         _manager = manager;
         IsStandalone = true;
+        IsExternalMod = isExternal;
         DllSourcePath = dllSourcePath;
         DllFileName = dllFileName;
         _isDeployed = isDeployed;
@@ -667,6 +721,17 @@ public sealed class ModpackItemViewModel : ViewModelBase
     {
         get => _isStandalone;
         set => this.RaiseAndSetIfChanged(ref _isStandalone, value);
+    }
+
+    private bool _isExternalMod;
+    /// <summary>
+    /// True if this mod was detected in the Mods directory without a known source.
+    /// These are third-party MelonLoader mods not managed by the modkit.
+    /// </summary>
+    public bool IsExternalMod
+    {
+        get => _isExternalMod;
+        set => this.RaiseAndSetIfChanged(ref _isExternalMod, value);
     }
 
     public string? DllSourcePath { get; set; }

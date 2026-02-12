@@ -150,7 +150,11 @@ public class ConflictDetector
     public List<DependencyIssue> DetectDependencyIssues(List<ModpackManifest> modpacks)
     {
         var issues = new List<DependencyIssue>();
-        var available = modpacks.ToDictionary(m => m.Name, m => m.Version, StringComparer.OrdinalIgnoreCase);
+
+        // Use GroupBy to handle duplicate modpack names (take first occurrence)
+        var available = modpacks
+            .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Version, StringComparer.OrdinalIgnoreCase);
 
         foreach (var modpack in modpacks)
         {

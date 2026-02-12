@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Il2CppInterop.Runtime;
-using MelonLoader;
+using Menace.SDK;
 using UnityEngine;
 
 namespace Menace.ModpackLoader;
@@ -61,12 +61,12 @@ public static class BundleLoader
                 if (bundle != null)
                 {
                     _loadedBundles.Add(bundle);
-                    MelonLogger.Msg($"  [{modpackName}] Loaded bundle: {Path.GetFileName(bundlePath)}");
+                    SdkLogger.Msg($"  [{modpackName}] Loaded bundle: {Path.GetFileName(bundlePath)}");
 
                     var allAssets = bundle.LoadAllAssets();
                     if (allAssets != null)
                     {
-                        MelonLogger.Msg($"    Contains {allAssets.Length} asset(s)");
+                        SdkLogger.Msg($"    Contains {allAssets.Length} asset(s)");
 
                         foreach (var asset in allAssets)
                         {
@@ -77,12 +77,12 @@ public static class BundleLoader
                 }
                 else
                 {
-                    MelonLogger.Warning($"  [{modpackName}] Failed to load bundle: {Path.GetFileName(bundlePath)}");
+                    SdkLogger.Warning($"  [{modpackName}] Failed to load bundle: {Path.GetFileName(bundlePath)}");
                 }
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"  [{modpackName}] Error loading bundle {Path.GetFileName(bundlePath)}: {ex.Message}");
+                SdkLogger.Error($"  [{modpackName}] Error loading bundle {Path.GetFileName(bundlePath)}: {ex.Message}");
             }
         }
     }
@@ -94,7 +94,7 @@ public static class BundleLoader
     {
         var assetName = asset.name;
         var typeName = asset.GetIl2CppType().Name;
-        MelonLogger.Msg($"    - {assetName} ({typeName})");
+        SdkLogger.Msg($"    - {assetName} ({typeName})");
 
         RegisterAssetInternal(assetName, asset, typeName, modpackName);
     }

@@ -137,7 +137,7 @@ public partial class ModpackLoaderMod : MelonMod
             yield return null;
         }
 
-        LoggerInstance.Msg($"Applying modpack modifications (scene: {sceneName})...");
+        SdkLogger.Msg($"Applying modpack modifications (scene: {sceneName})...");
 
         // Initialize save system watcher (tries to find saves folder)
         SaveSystemPatches.TryInitialize();
@@ -180,7 +180,7 @@ public partial class ModpackLoaderMod : MelonMod
         var modsPath = Path.Combine(Directory.GetCurrentDirectory(), "Mods");
         if (!Directory.Exists(modsPath))
         {
-            LoggerInstance.Warning($"Mods directory not found: {modsPath}");
+            SdkLogger.Warning($"Mods directory not found: {modsPath}");
             return;
         }
 
@@ -265,7 +265,7 @@ public partial class ModpackLoaderMod : MelonMod
                 var fullPath = ValidatePathWithinModpack(modpack.DirectoryPath, replacementFile);
                 if (fullPath == null)
                 {
-                    LoggerInstance.Warning($"  Path traversal blocked for asset: {replacementFile}");
+                    SdkLogger.Warning($"  Path traversal blocked for asset: {replacementFile}");
                     continue;
                 }
 
@@ -273,16 +273,16 @@ public partial class ModpackLoaderMod : MelonMod
                 {
                     _registeredAssetPaths.Add(assetPath);
                     AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
-                    LoggerInstance.Msg($"  Registered asset replacement: {assetPath}");
+                    SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
                 }
                 else
                 {
-                    LoggerInstance.Warning($"  Asset file not found: {fullPath}");
+                    SdkLogger.Warning($"  Asset file not found: {fullPath}");
                 }
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"  Failed to load asset {assetPath}: {ex.Message}");
+                SdkLogger.Error($"  Failed to load asset {assetPath}: {ex.Message}");
             }
         }
     }
@@ -324,7 +324,7 @@ public partial class ModpackLoaderMod : MelonMod
     {
         if (_loadedModpacks.Count == 0)
         {
-            LoggerInstance.Msg("No modpacks to apply");
+            SdkLogger.Msg("No modpacks to apply");
             return true;
         }
 
@@ -393,7 +393,7 @@ public partial class ModpackLoaderMod : MelonMod
 
         if (gameAssembly == null)
         {
-            LoggerInstance.Error($"Assembly-CSharp not found, cannot apply {label}");
+            SdkLogger.Error($"Assembly-CSharp not found, cannot apply {label}");
             return false;
         }
 
@@ -414,7 +414,7 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (templateType == null)
                 {
-                    LoggerInstance.Warning($"  Template type '{templateTypeName}' not found in Assembly-CSharp");
+                    SdkLogger.Warning($"  Template type '{templateTypeName}' not found in Assembly-CSharp");
                     allFound = false;
                     continue;
                 }
@@ -428,7 +428,7 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (objects == null || objects.Length == 0)
                 {
-                    LoggerInstance.Warning($"  No {templateTypeName} instances found — will retry on next scene");
+                    SdkLogger.Warning($"  No {templateTypeName} instances found — will retry on next scene");
                     allFound = false;
                     continue;
                 }
@@ -448,13 +448,13 @@ public partial class ModpackLoaderMod : MelonMod
 
                 if (appliedCount > 0)
                 {
-                    LoggerInstance.Msg($"  Applied {label} to {appliedCount} {templateTypeName} instance(s)");
+                    SdkLogger.Msg($"  Applied {label} to {appliedCount} {templateTypeName} instance(s)");
                     _appliedPatchKeys.Add(patchKey);
                 }
             }
             catch (Exception ex)
             {
-                LoggerInstance.Error($"  Failed to apply {label} to {templateTypeName}: {ex.Message}");
+                SdkLogger.Error($"  Failed to apply {label} to {templateTypeName}: {ex.Message}");
             }
         }
 
@@ -479,13 +479,13 @@ public partial class ModpackLoaderMod : MelonMod
 
     private System.Collections.IEnumerator ApplyAssetReplacementsDelayed(string sceneName)
     {
-        LoggerInstance.Msg($"Asset replacement queued for scene: {sceneName} ({AssetReplacer.RegisteredCount} disk, {BundleLoader.LoadedAssetCount} bundle)");
+        SdkLogger.Msg($"Asset replacement queued for scene: {sceneName} ({AssetReplacer.RegisteredCount} disk, {BundleLoader.LoadedAssetCount} bundle)");
 
         // Wait frames for textures to finish loading
         for (int i = 0; i < 15; i++)
             yield return null;
 
-        LoggerInstance.Msg($"Applying asset replacements for scene: {sceneName}");
+        SdkLogger.Msg($"Applying asset replacements for scene: {sceneName}");
         AssetReplacer.ApplyAllReplacements();
         PlayerLog($"Asset replacements applied for scene: {sceneName}");
     }
@@ -504,27 +504,27 @@ public partial class ModpackLoaderMod : MelonMod
         }
         catch (System.IO.FileNotFoundException ex)
         {
-            LoggerInstance.Warning($"REPL initialization failed - missing assembly: {ex.FileName}");
-            LoggerInstance.Warning($"  Message: {ex.Message}");
-            LoggerInstance.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
+            SdkLogger.Warning($"REPL initialization failed - missing assembly: {ex.FileName}");
+            SdkLogger.Warning($"  Message: {ex.Message}");
+            SdkLogger.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
         }
         catch (System.IO.FileLoadException ex)
         {
-            LoggerInstance.Warning($"REPL initialization failed - assembly load error: {ex.FileName}");
-            LoggerInstance.Warning($"  Message: {ex.Message}");
-            LoggerInstance.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
+            SdkLogger.Warning($"REPL initialization failed - assembly load error: {ex.FileName}");
+            SdkLogger.Warning($"  Message: {ex.Message}");
+            SdkLogger.Warning($"  FusionLog: {ex.FusionLog ?? "(none)"}");
         }
         catch (System.TypeLoadException ex)
         {
-            LoggerInstance.Warning($"REPL initialization failed - type load error: {ex.TypeName}");
-            LoggerInstance.Warning($"  Message: {ex.Message}");
+            SdkLogger.Warning($"REPL initialization failed - type load error: {ex.TypeName}");
+            SdkLogger.Warning($"  Message: {ex.Message}");
         }
         catch (Exception ex)
         {
-            LoggerInstance.Warning($"REPL initialization failed: {ex.GetType().Name}");
-            LoggerInstance.Warning($"  Message: {ex.Message}");
+            SdkLogger.Warning($"REPL initialization failed: {ex.GetType().Name}");
+            SdkLogger.Warning($"  Message: {ex.Message}");
             if (ex.InnerException != null)
-                LoggerInstance.Warning($"  Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                SdkLogger.Warning($"  Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
         }
     }
 
@@ -537,7 +537,7 @@ public partial class ModpackLoaderMod : MelonMod
         var evaluator = new ConsoleEvaluator(compiler);
         ReplPanel.Initialize(evaluator);
         DevConsole.SetReplEvaluator(evaluator);
-        LoggerInstance.Msg($"REPL initialized with {refs.Count} references");
+        SdkLogger.Msg($"REPL initialized with {refs.Count} references");
     }
 
     private static void PlayerLog(string message)

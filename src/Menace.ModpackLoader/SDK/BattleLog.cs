@@ -202,7 +202,7 @@ public static class BattleLog
     private static void Patch(HarmonyLib.Harmony harmony, string methodName, MethodInfo patch)
     {
         if (!GamePatch.Postfix(harmony, "DevCombatLog", methodName, patch))
-            MelonLoader.MelonLogger.Warning($"[BattleLog] Could not patch DevCombatLog.{methodName}");
+            SdkLogger.Warning($"[BattleLog] Could not patch DevCombatLog.{methodName}");
     }
 
     // ------------------------------------------------------------------ //
@@ -661,7 +661,7 @@ public static class BattleLog
         }
         catch (Exception ex)
         {
-            MelonLoader.MelonLogger.Warning($"[BattleLog] Style init failed (will retry): {ex.Message}");
+            SdkLogger.Warning($"[BattleLog] Style init failed (will retry): {ex.Message}");
         }
     }
 }

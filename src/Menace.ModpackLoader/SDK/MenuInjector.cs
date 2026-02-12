@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Il2CppInterop.Runtime;
-using MelonLoader;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -59,7 +58,7 @@ public static class MenuInjector
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
 
             // Log assemblies that might contain UI types for debugging
-            MelonLogger.Msg("[MenuInjector] Searching for UI assemblies...");
+            SdkLogger.Msg("[MenuInjector] Searching for UI assemblies...");
             foreach (var asm in assemblies)
             {
                 var asmName = asm.GetName().Name;
@@ -67,7 +66,7 @@ public static class MenuInjector
                 // Log any assembly that might contain UI
                 if (asmName.Contains("UI") || asmName.Contains("TMPro") || asmName.Contains("TextMesh"))
                 {
-                    MelonLogger.Msg($"[MenuInjector]   Found assembly: {asmName}");
+                    SdkLogger.Msg($"[MenuInjector]   Found assembly: {asmName}");
                 }
 
                 if (asmName.Contains("UnityEngine.UI") || asmName.Contains("Unity.UI"))
@@ -90,11 +89,11 @@ public static class MenuInjector
                 }
             }
 
-            MelonLogger.Msg($"[MenuInjector] UI types resolved - Button:{_buttonType != null}, Text:{_textType != null}, TMP:{_tmpTextType != null}, VLG:{_verticalLayoutGroupType != null}");
+            SdkLogger.Msg($"[MenuInjector] UI types resolved - Button:{_buttonType != null}, Text:{_textType != null}, TMP:{_tmpTextType != null}, VLG:{_verticalLayoutGroupType != null}");
         }
         catch (Exception ex)
         {
-            MelonLogger.Warning($"[MenuInjector] Failed to resolve UI types: {ex.Message}");
+            SdkLogger.Warning($"[MenuInjector] Failed to resolve UI types: {ex.Message}");
         }
     }
 
@@ -108,18 +107,18 @@ public static class MenuInjector
         _modsButton = null;
         _showSettingsPanel = false;
 
-        MelonLogger.Msg($"[MenuInjector] Scene loaded: '{sceneName}'");
-        MelonLogger.Msg($"[MenuInjector] HasAnySettings: {ModSettings.HasAnySettings()}");
-        MelonLogger.Msg($"[MenuInjector] Registered mods: {string.Join(", ", ModSettings.GetRegisteredMods())}");
+        SdkLogger.Msg($"[MenuInjector] Scene loaded: '{sceneName}'");
+        SdkLogger.Msg($"[MenuInjector] HasAnySettings: {ModSettings.HasAnySettings()}");
+        SdkLogger.Msg($"[MenuInjector] Registered mods: {string.Join(", ", ModSettings.GetRegisteredMods())}");
 
         // Check if this looks like a main menu scene
         if (!IsMainMenuScene(sceneName))
         {
-            MelonLogger.Msg($"[MenuInjector] Scene '{sceneName}' does not look like main menu, skipping");
+            SdkLogger.Msg($"[MenuInjector] Scene '{sceneName}' does not look like main menu, skipping");
             return;
         }
 
-        MelonLogger.Msg($"[MenuInjector] Scene '{sceneName}' looks like main menu, will attempt injection...");
+        SdkLogger.Msg($"[MenuInjector] Scene '{sceneName}' looks like main menu, will attempt injection...");
 
         // Delay injection to let the menu fully initialize
         GameState.RunDelayed(30, () => TryInjectMenuButton());
@@ -148,13 +147,13 @@ public static class MenuInjector
         if (!ModSettings.HasAnySettings()) return;
         if (_buttonType == null)
         {
-            MelonLogger.Msg("[MenuInjector] Button type not resolved, cannot inject");
+            SdkLogger.Msg("[MenuInjector] Button type not resolved, cannot inject");
             return;
         }
 
         try
         {
-            MelonLogger.Msg("[MenuInjector] Attempting to inject Mods menu button...");
+            SdkLogger.Msg("[MenuInjector] Attempting to inject Mods menu button...");
 
             // Strategy 1: Find a vertical layout group with Button children (common menu pattern)
             var menuContainer = FindMenuContainer();
@@ -172,11 +171,11 @@ public static class MenuInjector
                 return;
             }
 
-            MelonLogger.Msg("[MenuInjector] Could not find menu structure to inject into");
+            SdkLogger.Msg("[MenuInjector] Could not find menu structure to inject into");
         }
         catch (Exception ex)
         {
-            MelonLogger.Warning($"[MenuInjector] Injection failed: {ex.Message}");
+            SdkLogger.Warning($"[MenuInjector] Injection failed: {ex.Message}");
         }
     }
 
@@ -212,7 +211,7 @@ public static class MenuInjector
 
             if (menuLikeCount >= 2)
             {
-                MelonLogger.Msg($"[MenuInjector] Found menu container: {go.name} with {buttons.Count} buttons");
+                SdkLogger.Msg($"[MenuInjector] Found menu container: {go.name} with {buttons.Count} buttons");
                 return go;
             }
         }
@@ -253,7 +252,7 @@ public static class MenuInjector
 
                 if (text.Contains(targetName) || objName.Contains(targetName.Replace(" ", "")))
                 {
-                    MelonLogger.Msg($"[MenuInjector] Found reference button: {go.name} ('{text}')");
+                    SdkLogger.Msg($"[MenuInjector] Found reference button: {go.name} ('{text}')");
                     return btn as Component;
                 }
             }
@@ -319,7 +318,7 @@ public static class MenuInjector
         var buttons = FindComponentsInChildren(container, _buttonType);
         if (buttons.Count == 0)
         {
-            MelonLogger.Warning("[MenuInjector] No button found in container to clone");
+            SdkLogger.Warning("[MenuInjector] No button found in container to clone");
             return;
         }
 
@@ -342,7 +341,7 @@ public static class MenuInjector
         _modsButton.SetActive(true);
         _injected = true;
 
-        MelonLogger.Msg("[MenuInjector] Successfully injected Mods button into menu");
+        SdkLogger.Msg("[MenuInjector] Successfully injected Mods button into menu");
     }
 
     /// <summary>
@@ -354,7 +353,7 @@ public static class MenuInjector
         var parent = refGo.transform.parent;
         if (parent == null)
         {
-            MelonLogger.Warning("[MenuInjector] Reference button has no parent");
+            SdkLogger.Warning("[MenuInjector] Reference button has no parent");
             return;
         }
 
@@ -375,7 +374,7 @@ public static class MenuInjector
         _modsButton.SetActive(true);
         _injected = true;
 
-        MelonLogger.Msg("[MenuInjector] Successfully injected Mods button near reference button");
+        SdkLogger.Msg("[MenuInjector] Successfully injected Mods button near reference button");
     }
 
     private static void SetButtonText(GameObject buttonObj, string text)
@@ -466,7 +465,7 @@ public static class MenuInjector
 
     private static void OnModsButtonClick()
     {
-        MelonLogger.Msg("[MenuInjector] Mods button clicked");
+        SdkLogger.Msg("[MenuInjector] Mods button clicked");
         _showSettingsPanel = true;
     }
 

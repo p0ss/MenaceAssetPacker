@@ -147,7 +147,11 @@ public class ModLoaderInstaller
             var targetPath = Path.Combine(modsFolder, "Menace.DataExtractor.dll");
             File.Copy(dataExtractorDll, targetPath, overwrite: true);
 
+            // Write force extraction flag so extraction runs on next game launch
+            WriteForceExtractionFlag();
+
             progressCallback?.Invoke("✓ DataExtractor mod installed successfully");
+            progressCallback?.Invoke("  Extraction will run automatically on next game launch");
             return Task.FromResult(true);
         }
         catch (Exception ex)
@@ -462,6 +466,40 @@ public class ModLoaderInstaller
     {
         var dataExtractorDll = Path.Combine(_gameInstallPath, "Mods", "Menace.DataExtractor.dll");
         return File.Exists(dataExtractorDll);
+    }
+
+    /// <summary>
+    /// Write a flag file that tells DataExtractor to run extraction on next game launch.
+    /// </summary>
+    public void WriteForceExtractionFlag()
+    {
+        try
+        {
+            var flagPath = Path.Combine(_gameInstallPath, "UserData", "ExtractedData", "_force_extraction.flag");
+            var flagDir = Path.GetDirectoryName(flagPath);
+            if (!string.IsNullOrEmpty(flagDir))
+                Directory.CreateDirectory(flagDir);
+
+            File.WriteAllText(flagPath,
+                $"Force extraction requested by modkit at {DateTime.UtcNow:O}\n" +
+                "This file will be deleted when extraction starts.\n" +
+                "Delete this file manually to cancel pending extraction.");
+
+            ModkitLog.Info($"[ModLoaderInstaller] Force extraction flag written: {flagPath}");
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[ModLoaderInstaller] Failed to write force extraction flag: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Check if force extraction is pending.
+    /// </summary>
+    public bool IsForceExtractionPending()
+    {
+        var flagPath = Path.Combine(_gameInstallPath, "UserData", "ExtractedData", "_force_extraction.flag");
+        return File.Exists(flagPath);
     }
 
     /// <summary>

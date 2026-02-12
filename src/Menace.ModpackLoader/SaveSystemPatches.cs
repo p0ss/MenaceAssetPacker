@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
-using MelonLoader;
 using Menace.SDK;
 using Newtonsoft.Json;
 
@@ -35,18 +34,18 @@ public static class SaveSystemPatches
             _savesPath = FindSavesPath();
             if (string.IsNullOrEmpty(_savesPath))
             {
-                MelonLogger.Warning("[SaveSystemPatches] Saves directory not found, will retry later");
+                SdkLogger.Warning("[SaveSystemPatches] Saves directory not found, will retry later");
                 return;
             }
 
             SetupWatcher(_savesPath);
             _initialized = true;
-            MelonLogger.Msg($"[SaveSystemPatches] Watching for saves in: {_savesPath}");
+            SdkLogger.Msg($"[SaveSystemPatches] Watching for saves in: {_savesPath}");
             UnityEngine.Debug.Log($"[MODDED] Save tracking enabled - {ModRegistry.Count} mod(s) will be recorded");
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"[SaveSystemPatches] Failed to initialize: {ex.Message}");
+            SdkLogger.Error($"[SaveSystemPatches] Failed to initialize: {ex.Message}");
         }
     }
 
@@ -107,7 +106,7 @@ public static class SaveSystemPatches
         }
         catch (Exception ex)
         {
-            MelonLogger.Warning($"[SaveSystemPatches] Error finding saves path: {ex.Message}");
+            SdkLogger.Warning($"[SaveSystemPatches] Error finding saves path: {ex.Message}");
             return null;
         }
     }
@@ -165,7 +164,7 @@ public static class SaveSystemPatches
         }
         catch (Exception ex)
         {
-            MelonLogger.Warning($"[SaveSystemPatches] Error processing save: {ex.Message}");
+            SdkLogger.Warning($"[SaveSystemPatches] Error processing save: {ex.Message}");
         }
     }
 
@@ -199,14 +198,14 @@ public static class SaveSystemPatches
             var json = JsonConvert.SerializeObject(modmeta, Formatting.Indented);
             File.WriteAllText(modmetaPath, json, Encoding.UTF8);
 
-            MelonLogger.Msg($"[SaveSystemPatches] Wrote modmeta: {Path.GetFileName(modmetaPath)}");
+            SdkLogger.Msg($"[SaveSystemPatches] Wrote modmeta: {Path.GetFileName(modmetaPath)}");
 
             // Log to Player.log for developer triage
             UnityEngine.Debug.Log($"[MODDED] Save '{Path.GetFileNameWithoutExtension(savePath)}' created with {modmeta.Mods.Count} mod(s) active");
         }
         catch (Exception ex)
         {
-            MelonLogger.Warning($"[SaveSystemPatches] Failed to write modmeta: {ex.Message}");
+            SdkLogger.Warning($"[SaveSystemPatches] Failed to write modmeta: {ex.Message}");
         }
     }
 

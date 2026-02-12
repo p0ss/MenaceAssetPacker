@@ -15,6 +15,16 @@ namespace Menace.SDK;
 /// </summary>
 public class GameType
 {
+    private static readonly string[] FallbackAssemblies =
+    {
+        "Assembly-CSharp.dll",
+        "Assembly-CSharp",
+        "UnityEngine.CoreModule.dll",
+        "UnityEngine.CoreModule",
+        "mscorlib.dll",
+        "Il2Cppmscorlib.dll"
+    };
+
     private static readonly Dictionary<string, GameType> _nameCache = new();
     private static readonly Dictionary<IntPtr, GameType> _ptrCache = new();
 
@@ -42,6 +52,7 @@ public class GameType
         if (string.IsNullOrEmpty(fullTypeName))
             return Invalid;
 
+        assembly = string.IsNullOrWhiteSpace(assembly) ? "Assembly-CSharp" : assembly;
         var cacheKey = $"{assembly}:{fullTypeName}";
         if (_nameCache.TryGetValue(cacheKey, out var cached))
             return cached;
@@ -51,26 +62,12 @@ public class GameType
         var ns = lastDot > 0 ? fullTypeName[..lastDot] : "";
         var typeName = lastDot > 0 ? fullTypeName[(lastDot + 1)..] : fullTypeName;
 
-        // Try with provided assembly
-        var ptr = TryResolveClass(assembly, ns, typeName);
-
-        // Try common assembly variants
-        if (ptr == IntPtr.Zero && !assembly.EndsWith(".dll"))
-            ptr = TryResolveClass(assembly + ".dll", ns, typeName);
-
-        // Fallback assemblies
-        if (ptr == IntPtr.Zero)
+        var ptr = IntPtr.Zero;
+        foreach (var probeAssembly in BuildProbeAssemblies(assembly))
         {
-            string[] fallbacks = {
-                "Assembly-CSharp.dll", "Assembly-CSharp",
-                "UnityEngine.CoreModule.dll", "UnityEngine.CoreModule",
-                "mscorlib.dll", "Il2Cppmscorlib.dll"
-            };
-            foreach (var fb in fallbacks)
-            {
-                ptr = TryResolveClass(fb, ns, typeName);
-                if (ptr != IntPtr.Zero) break;
-            }
+            ptr = TryResolveClass(probeAssembly, ns, typeName);
+            if (ptr != IntPtr.Zero)
+                break;
         }
 
         var result = ptr != IntPtr.Zero ? FromPointer(ptr) : Invalid;
@@ -272,5 +269,32 @@ public class GameType
         {
             return IntPtr.Zero;
         }
+    }
+
+    private static List<string> BuildProbeAssemblies(string assembly)
+    {
+        var probes = new List<string>(8);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        AddProbe(probes, seen, assembly);
+
+        if (assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            AddProbe(probes, seen, assembly[..^4]);
+        else
+            AddProbe(probes, seen, assembly + ".dll");
+
+        foreach (var fallback in FallbackAssemblies)
+            AddProbe(probes, seen, fallback);
+
+        return probes;
+    }
+
+    private static void AddProbe(List<string> probes, HashSet<string> seen, string assembly)
+    {
+        if (string.IsNullOrWhiteSpace(assembly))
+            return;
+
+        if (seen.Add(assembly))
+            probes.Add(assembly);
     }
 }

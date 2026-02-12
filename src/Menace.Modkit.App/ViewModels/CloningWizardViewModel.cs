@@ -237,7 +237,8 @@ public class CloningWizardViewModel : INotifyPropertyChanged
     private void LoadReferences()
     {
         // Try to get actual backlinks from extracted data
-        var backlinks = _referenceGraph.GetCollectionBacklinks(
+        // Use GetEnhancedBacklinks to include all reference types (Direct, CollectionDirect, CollectionEmbedded)
+        var backlinks = _referenceGraph.GetEnhancedBacklinks(
             _state.SourceTemplateType,
             _state.SourceInstanceName);
 

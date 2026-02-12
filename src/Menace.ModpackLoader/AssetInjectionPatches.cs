@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using MelonLoader;
+using Menace.SDK;
 using UnityEngine;
 
 namespace Menace.ModpackLoader;
@@ -101,7 +101,7 @@ public static class AssetReplacer
 
         if (total > 0)
         {
-            MelonLogger.Msg($"Asset replacement complete: {total} asset(s) replaced");
+            SdkLogger.Msg($"Asset replacement complete: {total} asset(s) replaced");
             UnityEngine.Debug.Log($"[MODDED] Assets replaced in scene: {total}");
         }
     }
@@ -119,7 +119,7 @@ public static class AssetReplacer
         if (textureReplacements.Count == 0)
             return 0;
 
-        MelonLogger.Msg($"  Searching for {textureReplacements.Count} texture replacement(s)...");
+        SdkLogger.Msg($"  Searching for {textureReplacements.Count} texture replacement(s)...");
 
         try
         {
@@ -127,11 +127,11 @@ public static class AssetReplacer
             var allTextures = Resources.FindObjectsOfTypeAll(il2cppType);
             if (allTextures == null || allTextures.Length == 0)
             {
-                MelonLogger.Warning("  FindObjectsOfTypeAll(Texture2D) returned 0 objects");
+                SdkLogger.Warning("  FindObjectsOfTypeAll(Texture2D) returned 0 objects");
                 return 0;
             }
 
-            MelonLogger.Msg($"  Found {allTextures.Length} Texture2D objects in memory");
+            SdkLogger.Msg($"  Found {allTextures.Length} Texture2D objects in memory");
 
             // Build a secondary lookup: filename-only → replacement
             // Handles cases where the game texture's .name includes path components
@@ -178,11 +178,11 @@ public static class AssetReplacer
                     var bytes = GetOrLoadBytes(replacement.DiskPath);
                     if (bytes == null)
                     {
-                        MelonLogger.Warning($"  Could not read replacement file: {replacement.DiskPath}");
+                        SdkLogger.Warning($"  Could not read replacement file: {replacement.DiskPath}");
                         continue;
                     }
 
-                    MelonLogger.Msg($"  Applying texture replacement: '{texName}' ({tex.width}x{tex.height}, {tex.format}) ← {bytes.Length} bytes");
+                    SdkLogger.Msg($"  Applying texture replacement: '{texName}' ({tex.width}x{tex.height}, {tex.format}) ← {bytes.Length} bytes");
 
                     // Explicit Il2Cpp array conversion for reliability
                     var il2cppBytes = new Il2CppStructArray<byte>(bytes);
@@ -191,28 +191,28 @@ public static class AssetReplacer
                     if (success)
                     {
                         replaced++;
-                        MelonLogger.Msg($"  Replaced texture: {texName} → now {tex.width}x{tex.height}");
+                        SdkLogger.Msg($"  Replaced texture: {texName} → now {tex.width}x{tex.height}");
                     }
                     else
                     {
-                        MelonLogger.Warning($"  ImageConversion.LoadImage FAILED for '{texName}' — texture may be read-only or compressed");
+                        SdkLogger.Warning($"  ImageConversion.LoadImage FAILED for '{texName}' — texture may be read-only or compressed");
                     }
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace texture {texName}: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace texture {texName}: {ex.Message}");
                 }
             }
 
             // Log unmatched replacements to help diagnose name mismatches
             if (unmatchedNames.Count > 0)
             {
-                MelonLogger.Warning($"  {unmatchedNames.Count} texture replacement(s) found NO matching game texture:");
+                SdkLogger.Warning($"  {unmatchedNames.Count} texture replacement(s) found NO matching game texture:");
                 foreach (var name in unmatchedNames)
-                    MelonLogger.Warning($"    No match for: '{name}'");
+                    SdkLogger.Warning($"    No match for: '{name}'");
 
                 // Dump a sample of actual texture names to help debug
-                MelonLogger.Msg("  Sample of game texture names (first 30):");
+                SdkLogger.Msg("  Sample of game texture names (first 30):");
                 int dumped = 0;
                 for (int i = 0; i < allTextures.Length && dumped < 30; i++)
                 {
@@ -230,7 +230,7 @@ public static class AssetReplacer
                             n.Contains("loading", StringComparison.OrdinalIgnoreCase) ||
                             n.Contains("background", StringComparison.OrdinalIgnoreCase))
                         {
-                            MelonLogger.Msg($"    [{i}] '{n}'");
+                            SdkLogger.Msg($"    [{i}] '{n}'");
                             dumped++;
                             break;
                         }
@@ -239,7 +239,7 @@ public static class AssetReplacer
                 if (dumped == 0)
                 {
                     // Just dump the first 20 names regardless
-                    MelonLogger.Msg("  First 20 texture names:");
+                    SdkLogger.Msg("  First 20 texture names:");
                     dumped = 0;
                     for (int i = 0; i < allTextures.Length && dumped < 20; i++)
                     {
@@ -247,7 +247,7 @@ public static class AssetReplacer
                         if (obj == null) continue;
                         var n = obj.name;
                         if (string.IsNullOrEmpty(n)) continue;
-                        MelonLogger.Msg($"    [{i}] '{n}'");
+                        SdkLogger.Msg($"    [{i}] '{n}'");
                         dumped++;
                     }
                 }
@@ -257,7 +257,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyTextureReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyTextureReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -278,7 +278,7 @@ public static class AssetReplacer
         if (audioReplacements.Count == 0)
             return 0;
 
-        MelonLogger.Msg($"  Searching for {audioReplacements.Count} audio replacement(s)...");
+        SdkLogger.Msg($"  Searching for {audioReplacements.Count} audio replacement(s)...");
 
         try
         {
@@ -286,11 +286,11 @@ public static class AssetReplacer
             var allClips = Resources.FindObjectsOfTypeAll(il2cppType);
             if (allClips == null || allClips.Length == 0)
             {
-                MelonLogger.Warning("  FindObjectsOfTypeAll(AudioClip) returned 0 objects");
+                SdkLogger.Warning("  FindObjectsOfTypeAll(AudioClip) returned 0 objects");
                 return 0;
             }
 
-            MelonLogger.Msg($"  Found {allClips.Length} AudioClip objects in memory");
+            SdkLogger.Msg($"  Found {allClips.Length} AudioClip objects in memory");
 
             // Build lookup by filename
             var byFilename = new Dictionary<string, Replacement>(StringComparer.OrdinalIgnoreCase);
@@ -335,7 +335,7 @@ public static class AssetReplacer
                     var modClip = LoadAudioClipFromDisk(replacement.DiskPath, replacement.AssetName);
                     if (modClip == null)
                     {
-                        MelonLogger.Warning($"  Could not load audio file: {replacement.DiskPath}");
+                        SdkLogger.Warning($"  Could not load audio file: {replacement.DiskPath}");
                         continue;
                     }
 
@@ -343,32 +343,32 @@ public static class AssetReplacer
                     if (CopyAudioClipData(modClip, gameClip))
                     {
                         replaced++;
-                        MelonLogger.Msg($"  Replaced audio clip: {clipName}");
+                        SdkLogger.Msg($"  Replaced audio clip: {clipName}");
                     }
                     else
                     {
-                        MelonLogger.Warning($"  Failed to copy audio data for '{clipName}'");
+                        SdkLogger.Warning($"  Failed to copy audio data for '{clipName}'");
                     }
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace audio {clipName}: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace audio {clipName}: {ex.Message}");
                 }
             }
 
             // Log unmatched replacements
             if (unmatchedNames.Count > 0)
             {
-                MelonLogger.Warning($"  {unmatchedNames.Count} audio replacement(s) found NO matching game clip:");
+                SdkLogger.Warning($"  {unmatchedNames.Count} audio replacement(s) found NO matching game clip:");
                 foreach (var name in unmatchedNames)
-                    MelonLogger.Warning($"    No match for: '{name}'");
+                    SdkLogger.Warning($"    No match for: '{name}'");
             }
 
             return replaced;
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyAudioReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyAudioReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -385,7 +385,7 @@ public static class AssetReplacer
 
         if (!File.Exists(filePath))
         {
-            MelonLogger.Warning($"  Audio file not found: {filePath}");
+            SdkLogger.Warning($"  Audio file not found: {filePath}");
             return null;
         }
 
@@ -402,19 +402,19 @@ public static class AssetReplacer
 
             if (clip == null)
             {
-                MelonLogger.Warning($"  Could not load audio format: {ext} (only WAV and OGG supported)");
+                SdkLogger.Warning($"  Could not load audio format: {ext} (only WAV and OGG supported)");
                 return null;
             }
 
             clip.name = clipName;
             _loadedAudioClips[filePath] = clip;
 
-            MelonLogger.Msg($"  Loaded audio from disk: {clipName} ({clip.length:F2}s, {clip.channels}ch, {clip.frequency}Hz)");
+            SdkLogger.Msg($"  Loaded audio from disk: {clipName} ({clip.length:F2}s, {clip.channels}ch, {clip.frequency}Hz)");
             return clip;
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"  Failed to load audio from {filePath}: {ex.Message}");
+            SdkLogger.Error($"  Failed to load audio from {filePath}: {ex.Message}");
             return null;
         }
     }
@@ -430,21 +430,21 @@ public static class AssetReplacer
             var bytes = File.ReadAllBytes(filePath);
             if (bytes.Length < 44)
             {
-                MelonLogger.Warning($"  WAV file too small: {filePath}");
+                SdkLogger.Warning($"  WAV file too small: {filePath}");
                 return null;
             }
 
             // Verify RIFF header
             if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F')
             {
-                MelonLogger.Warning($"  Invalid WAV header (not RIFF): {filePath}");
+                SdkLogger.Warning($"  Invalid WAV header (not RIFF): {filePath}");
                 return null;
             }
 
             // Verify WAVE format
             if (bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E')
             {
-                MelonLogger.Warning($"  Invalid WAV format (not WAVE): {filePath}");
+                SdkLogger.Warning($"  Invalid WAV format (not WAVE): {filePath}");
                 return null;
             }
 
@@ -466,7 +466,7 @@ public static class AssetReplacer
                     var audioFormat = BitConverter.ToInt16(bytes, pos + 8);
                     if (audioFormat != 1) // PCM only
                     {
-                        MelonLogger.Warning($"  Unsupported WAV format (not PCM): {audioFormat}");
+                        SdkLogger.Warning($"  Unsupported WAV format (not PCM): {audioFormat}");
                         return null;
                     }
                     channels = BitConverter.ToInt16(bytes, pos + 10);
@@ -487,7 +487,7 @@ public static class AssetReplacer
 
             if (channels == 0 || sampleRate == 0 || bitsPerSample == 0 || dataOffset == 0)
             {
-                MelonLogger.Warning($"  Could not parse WAV chunks: {filePath}");
+                SdkLogger.Warning($"  Could not parse WAV chunks: {filePath}");
                 return null;
             }
 
@@ -524,7 +524,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"  LoadWavFile failed: {ex.Message}");
+            SdkLogger.Error($"  LoadWavFile failed: {ex.Message}");
             return null;
         }
     }
@@ -537,7 +537,7 @@ public static class AssetReplacer
     {
         // OGG decoding requires Vorbis decoder which isn't available in IL2CPP
         // For OGG files, recommend using asset bundles or converting to WAV
-        MelonLogger.Warning($"  OGG files not supported for direct loading. Convert to WAV or use asset bundles: {filePath}");
+        SdkLogger.Warning($"  OGG files not supported for direct loading. Convert to WAV or use asset bundles: {filePath}");
         return null;
     }
 
@@ -554,7 +554,7 @@ public static class AssetReplacer
 
             if (!source.GetData(samples, 0))
             {
-                MelonLogger.Warning($"  Source clip GetData failed");
+                SdkLogger.Warning($"  Source clip GetData failed");
                 return false;
             }
 
@@ -564,7 +564,7 @@ public static class AssetReplacer
 
             if (sampleCount != targetSampleCount)
             {
-                MelonLogger.Msg($"  Sample count mismatch: source={sampleCount}, target={targetSampleCount}");
+                SdkLogger.Msg($"  Sample count mismatch: source={sampleCount}, target={targetSampleCount}");
                 // Resize samples array to match target
                 if (sampleCount > targetSampleCount)
                 {
@@ -584,7 +584,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"  CopyAudioClipData failed: {ex.Message}");
+            SdkLogger.Error($"  CopyAudioClipData failed: {ex.Message}");
             return false;
         }
     }
@@ -663,11 +663,11 @@ public static class AssetReplacer
 
                     Graphics.CopyTexture(bundleTex, gameTex);
                     replaced++;
-                    MelonLogger.Msg($"  Replaced texture from bundle: {texName}");
+                    SdkLogger.Msg($"  Replaced texture from bundle: {texName}");
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace texture {texName} from bundle: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace texture {texName} from bundle: {ex.Message}");
                 }
             }
 
@@ -675,7 +675,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyBundleTextureReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyBundleTextureReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -733,11 +733,11 @@ public static class AssetReplacer
                     bundleClip.GetData(samples, 0);
                     gameClip.SetData(samples, 0);
                     replaced++;
-                    MelonLogger.Msg($"  Replaced audio clip from bundle: {clipName}");
+                    SdkLogger.Msg($"  Replaced audio clip from bundle: {clipName}");
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace audio clip {clipName} from bundle: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace audio clip {clipName} from bundle: {ex.Message}");
                 }
             }
 
@@ -745,7 +745,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyBundleAudioReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyBundleAudioReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -821,11 +821,11 @@ public static class AssetReplacer
 
                     gameMesh.RecalculateBounds();
                     replaced++;
-                    MelonLogger.Msg($"  Replaced mesh from bundle: {meshName}");
+                    SdkLogger.Msg($"  Replaced mesh from bundle: {meshName}");
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace mesh {meshName} from bundle: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace mesh {meshName} from bundle: {ex.Message}");
                 }
             }
 
@@ -833,7 +833,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyBundleMeshReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyBundleMeshReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -907,12 +907,12 @@ public static class AssetReplacer
                     {
                         renderer.sharedMaterials = materials;
                         replaced++;
-                        MelonLogger.Msg($"  Swapped material(s) on renderer: {renderer.name}");
+                        SdkLogger.Msg($"  Swapped material(s) on renderer: {renderer.name}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to swap materials on renderer: {ex.Message}");
+                    SdkLogger.Error($"  Failed to swap materials on renderer: {ex.Message}");
                 }
             }
 
@@ -920,7 +920,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyBundleMaterialReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyBundleMaterialReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -993,11 +993,11 @@ public static class AssetReplacer
 
                     CopyPrefabComponents(bundlePrefab, gameGO);
                     replaced++;
-                    MelonLogger.Msg($"  Replaced prefab from bundle: {goName}");
+                    SdkLogger.Msg($"  Replaced prefab from bundle: {goName}");
                 }
                 catch (Exception ex)
                 {
-                    MelonLogger.Error($"  Failed to replace prefab {goName} from bundle: {ex.Message}");
+                    SdkLogger.Error($"  Failed to replace prefab {goName} from bundle: {ex.Message}");
                 }
             }
 
@@ -1005,7 +1005,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"ApplyBundlePrefabReplacements failed: {ex.Message}");
+            SdkLogger.Error($"ApplyBundlePrefabReplacements failed: {ex.Message}");
             return 0;
         }
     }
@@ -1092,7 +1092,7 @@ public static class AssetReplacer
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"Failed to read {diskPath}: {ex.Message}");
+            SdkLogger.Error($"Failed to read {diskPath}: {ex.Message}");
             return null;
         }
     }
@@ -1113,14 +1113,14 @@ public static class AssetReplacer
             var il2cppBytes = new Il2CppStructArray<byte>(bytes);
             if (!ImageConversion.LoadImage(texture, il2cppBytes))
             {
-                MelonLogger.Warning($"ImageConversion.LoadImage failed for: {filePath}");
+                SdkLogger.Warning($"ImageConversion.LoadImage failed for: {filePath}");
                 return null;
             }
             return texture;
         }
         catch (Exception ex)
         {
-            MelonLogger.Error($"Failed to load texture from {filePath}: {ex.Message}");
+            SdkLogger.Error($"Failed to load texture from {filePath}: {ex.Message}");
             return null;
         }
     }

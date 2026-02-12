@@ -63,7 +63,7 @@ public static class ModSettings
         if (_initialized)
             LoadGroupValues(group);
 
-        MelonLoader.MelonLogger.Msg($"[ModSettings] Registered {group.Settings.Count} settings for '{modName}'");
+        SdkLogger.Msg($"[ModSettings] Registered {group.Settings.Count} settings for '{modName}'");
     }
 
     /// <summary>
@@ -164,7 +164,7 @@ public static class ModSettings
         // Register the Settings panel in DevConsole
         DevConsole.RegisterPanel("Settings", DrawSettingsPanel);
 
-        MelonLoader.MelonLogger.Msg($"[ModSettings] Initialized. Settings file: {_settingsPath}");
+        SdkLogger.Msg($"[ModSettings] Initialized. Settings file: {_settingsPath}");
     }
 
     internal static void Save()
@@ -192,7 +192,7 @@ public static class ModSettings
         }
         catch (Exception ex)
         {
-            MelonLoader.MelonLogger.Error($"[ModSettings] Failed to save: {ex.Message}");
+            SdkLogger.Error($"[ModSettings] Failed to save: {ex.Message}");
         }
     }
 
@@ -223,7 +223,7 @@ public static class ModSettings
         }
         catch (Exception ex)
         {
-            MelonLoader.MelonLogger.Error($"[ModSettings] Failed to load: {ex.Message}");
+            SdkLogger.Error($"[ModSettings] Failed to load: {ex.Message}");
         }
     }
 

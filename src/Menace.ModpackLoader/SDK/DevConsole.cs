@@ -1426,8 +1426,10 @@ public static class DevConsole
             $"Status: {_extractionStatus}", _labelStyle);
         y += LineHeight + 8;
 
-        // Extract Now button
-        bool canExtract = !_extractionInProgress && _triggerExtractionMethod != null;
+        // Extract Now button - allow if not extracting and either direct method or command available
+        bool hasExtractCapability = _triggerExtractionMethod != null || _commands.ContainsKey("extract");
+        bool canExtract = !_extractionInProgress && hasExtractCapability;
+
         GUI.enabled = canExtract;
 
         if (GUI.Button(new Rect(area.x, y, 150, 28), _extractionInProgress ? "Extracting..." : "Extract Now"))
@@ -1441,6 +1443,14 @@ public static class DevConsole
         }
 
         GUI.enabled = true;
+
+        // Show hint if DataExtractor not available
+        if (!hasExtractCapability)
+        {
+            y += 32;
+            GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+                "DataExtractor not found. Install it via the modkit and restart the game.", _warnStyle);
+        }
         y += 36;
 
         // Help text for extraction
