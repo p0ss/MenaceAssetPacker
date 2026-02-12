@@ -17,6 +17,8 @@ public class SaveFileService
     private const int OLDEST_SUPPORTED_VERSION = 1;
     // Minimum version for body parsing (versions < 22 have different format)
     private const int MINIMUM_BODY_VERSION = 22;
+    // Maximum version we know how to parse body data for
+    private const int MAXIMUM_BODY_VERSION = 101;
 
     /// <summary>
     /// Gets the save folder path based on the game install path.
@@ -341,10 +343,16 @@ public class SaveFileService
             header.BodyOffset = fs.Position;
             header.IsValid = true;
         }
+        catch (EndOfStreamException)
+        {
+            header.IsValid = false;
+            header.ErrorMessage = "Save file appears truncated or corrupted.";
+            ModkitLog.Warn($"[SaveFileService] End of stream parsing header for {filePath}");
+        }
         catch (Exception ex)
         {
             header.IsValid = false;
-            header.ErrorMessage = $"Failed to parse header: {ex.Message}";
+            header.ErrorMessage = "Unable to read save file.";
             ModkitLog.Error($"[SaveFileService] Error parsing header for {filePath}: {ex.Message}");
         }
 
@@ -400,8 +408,17 @@ public class SaveFileService
         if (header.Version < MINIMUM_BODY_VERSION)
         {
             body.IsValid = false;
-            body.ErrorMessage = $"Body editing not supported for save version {header.Version} (demo/old format). Minimum supported version is {MINIMUM_BODY_VERSION}.";
+            body.ErrorMessage = $"Save editing not supported for demo saves (version {header.Version}).";
             ModkitLog.Info($"[SaveFileService] Skipping body parsing for version {header.Version} (< {MINIMUM_BODY_VERSION})");
+            return body;
+        }
+
+        // Check if save is from a newer game version than we support
+        if (header.Version > MAXIMUM_BODY_VERSION)
+        {
+            body.IsValid = false;
+            body.ErrorMessage = $"Save is from a newer game version ({header.Version}). Update the modkit to edit this save.";
+            ModkitLog.Info($"[SaveFileService] Skipping body parsing for version {header.Version} (> {MAXIMUM_BODY_VERSION})");
             return body;
         }
 
@@ -414,7 +431,8 @@ public class SaveFileService
             if (header.BodyOffset >= fileLength)
             {
                 body.IsValid = false;
-                body.ErrorMessage = $"Body offset ({header.BodyOffset}) is beyond file length ({fileLength})";
+                body.ErrorMessage = "Save data could not be parsed (invalid structure).";
+                ModkitLog.Warn($"[SaveFileService] Body offset ({header.BodyOffset}) is beyond file length ({fileLength})");
                 return body;
             }
 
@@ -429,7 +447,8 @@ public class SaveFileService
             if (remainingBytes < 30) // Minimum for basic fields
             {
                 body.IsValid = false;
-                body.ErrorMessage = $"Not enough data for body parsing ({remainingBytes} bytes remaining)";
+                body.ErrorMessage = "Save data too short to parse. The file may be corrupted.";
+                ModkitLog.Warn($"[SaveFileService] Not enough data for body parsing ({remainingBytes} bytes remaining)");
                 return body;
             }
 
@@ -453,8 +472,21 @@ public class SaveFileService
             body.HasPickedInitialLeaders = reader.ReadBoolean();
             ModkitLog.Info($"[SaveFileService] @{fs.Position}: HasPickedInitialLeaders: {body.HasPickedInitialLeaders}");
 
-            body.GlobalDifficulty = reader.ReadString();
-            ModkitLog.Info($"[SaveFileService] @{fs.Position}: GlobalDifficulty: '{body.GlobalDifficulty}' (len={body.GlobalDifficulty.Length})");
+            // For version > 27, there's a boolean field then StrategyConfigName instead of GlobalDifficulty string
+            if (header.Version > 27)
+            {
+                var hasStrategyConfig = reader.ReadBoolean();
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: HasStrategyConfig: {hasStrategyConfig}");
+
+                var strategyConfigName = reader.ReadString();
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: StrategyConfigName: '{strategyConfigName}'");
+                body.GlobalDifficulty = strategyConfigName;
+            }
+            else
+            {
+                body.GlobalDifficulty = reader.ReadString();
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: GlobalDifficulty: '{body.GlobalDifficulty}' (len={body.GlobalDifficulty.Length})");
+            }
 
             // Track StrategyVars offset for surgical edits
             body.StrategyVarsOffset = fs.Position;
@@ -488,34 +520,48 @@ public class SaveFileService
             try
             {
                 // ShipUpgrades - skip
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing ShipUpgrades...");
                 SkipShipUpgrades(reader);
 
                 // OwnedItems - skip
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing OwnedItems...");
                 SkipOwnedItems(reader, header.Version);
 
                 // BlackMarket - skip
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing BlackMarket...");
                 SkipBlackMarket(reader);
 
                 // StoryFactions - skip
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing StoryFactions...");
                 SkipStoryFactions(reader);
 
                 // Squaddies
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Squaddies...");
+                // Debug: peek at next bytes
+                long peekPos = fs.Position;
+                byte[] peekBytes = reader.ReadBytes(32);
+                fs.Position = peekPos;
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies peek bytes: {BitConverter.ToString(peekBytes)}");
                 body.Squaddies = ParseSquaddies(reader);
 
                 // Roster (leaders)
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster...");
                 var roster = ParseRoster(reader, header.Version);
                 body.HiredLeaders = roster.hired;
                 body.DismissedLeaders = roster.dismissed;
                 body.DeadLeaders = roster.dead;
 
                 // BattlePlan - skip
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing BattlePlan...");
                 SkipBattlePlan(reader);
 
                 // PlanetManager - track offset for surgical edits
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing PlanetManager...");
                 body.PlanetsOffset = fs.Position;
                 body.Planets = ParsePlanetManager(reader);
 
                 // OperationsManager
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing OperationsManager...");
                 body.CurrentOperation = ParseOperationsManager(reader, header.Version);
 
                 body.BodyEndOffset = fs.Position;
@@ -524,14 +570,21 @@ public class SaveFileService
             catch (Exception extEx)
             {
                 // Extended parsing failed, but we still have the essential data
-                ModkitLog.Warn($"[SaveFileService] Extended body parsing failed (squaddies/leaders/planets): {extEx.Message}");
+                ModkitLog.Warn($"[SaveFileService] Extended body parsing failed: {extEx.Message}");
                 // Keep IsValid = true since we have resources
             }
+        }
+        catch (EndOfStreamException ex)
+        {
+            // Specific handling for truncated/incompatible saves
+            body.IsValid = false;
+            body.ErrorMessage = "Save format not compatible with this version of the modkit. Editing not available.";
+            ModkitLog.Warn($"[SaveFileService] End of stream during body parsing (save format mismatch): {ex.Message}");
         }
         catch (Exception ex)
         {
             body.IsValid = false;
-            body.ErrorMessage = $"Failed to parse body: {ex.Message}";
+            body.ErrorMessage = "Failed to parse save data. The file may be corrupted or from an unsupported version.";
             ModkitLog.Error($"[SaveFileService] Error parsing body: {ex.Message}\n{ex.StackTrace}");
         }
 
@@ -558,57 +611,132 @@ public class SaveFileService
         return arr;
     }
 
-    private static void SkipTemplateList(BinaryReader reader)
+    /// <summary>
+    /// Skip a list of template IDs. In version 101+, each entry has a byte prefix.
+    /// </summary>
+    private static void SkipTemplateList(BinaryReader reader, bool hasEntryPrefix = true)
     {
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
+        {
+            // In version 101+, each template entry has an extra byte (0x01) prefix
+            if (hasEntryPrefix)
+                reader.ReadByte();
             reader.ReadString(); // template ID
+        }
     }
 
     private static void SkipShipUpgrades(BinaryReader reader)
     {
+        var fs = reader.BaseStream;
+
         // m_SlotOverrides (template array)
-        SkipTemplateList(reader);
+        int slotOverridesCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.SlotOverrides count: {slotOverridesCount}");
+        for (int i = 0; i < slotOverridesCount; i++)
+            reader.ReadString();
+
+        // Debug: peek at next few bytes to understand structure
+        long peekPos = fs.Position;
+        byte[] peekBytes = reader.ReadBytes(8);
+        fs.Position = peekPos;
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades peek bytes: {BitConverter.ToString(peekBytes)}");
+
+        // New fields added in recent versions - multiple byte-count string lists
+        // Keep reading until we hit a count of 0 (terminator)
+        int listIndex = 0;
+        while (true)
+        {
+            int count = reader.ReadByte();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.DiceList[{listIndex}] count (byte): {count}");
+            if (count == 0)
+                break;
+            for (int i = 0; i < count; i++)
+            {
+                var str = reader.ReadString();
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.DiceList[{listIndex}][{i}]: '{str}'");
+            }
+            listIndex++;
+            if (listIndex > 20) // Safety limit
+            {
+                ModkitLog.Warn($"[SaveFileService] Too many dice lists, stopping");
+                break;
+            }
+        }
+
         // m_PermanentUpgrades (template list)
-        SkipTemplateList(reader);
+        int permUpgradesCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.PermanentUpgrades count: {permUpgradesCount}");
+        for (int i = 0; i < permUpgradesCount; i++)
+            reader.ReadString();
+
         // m_SlotLevels (int array)
-        ReadIntArray(reader);
+        int slotLevelsCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.SlotLevels count: {slotLevelsCount}");
+        for (int i = 0; i < slotLevelsCount; i++)
+            reader.ReadInt32();
+
         // m_UpgradeAmounts (dict)
         int dictCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades.UpgradeAmounts count: {dictCount}");
         for (int i = 0; i < dictCount; i++)
         {
             reader.ReadString(); // template
             reader.ReadInt32();  // amount
         }
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: ShipUpgrades done");
     }
 
     private static void SkipOwnedItems(BinaryReader reader, int version)
     {
+        var fs = reader.BaseStream;
+
+        // Debug: peek at next bytes to understand structure
+        long peekPos = fs.Position;
+        byte[] peekBytes = reader.ReadBytes(32);
+        fs.Position = peekPos;
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems peek bytes: {BitConverter.ToString(peekBytes)}");
+
         // m_PurchasedDossiers (if version > 26)
         if (version > 26)
-            ReadIntArray(reader);
+        {
+            var dossiers = ReadIntArray(reader);
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.PurchasedDossiers count: {dossiers.Length}");
+        }
 
         // Vehicles
         int vehicleCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.Vehicles count: {vehicleCount}");
         for (int i = 0; i < vehicleCount; i++)
         {
-            reader.ReadString(); // EntityTemplate
-            reader.ReadString(); // GUID
+            var template = reader.ReadString(); // EntityTemplate
+            var guid = reader.ReadString(); // GUID
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.Vehicle[{i}]: {template}");
             SkipVehicle(reader, version);
         }
 
         // Items (template -> list of GUIDs)
         int templateCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.ItemTemplates count: {templateCount}");
         for (int i = 0; i < templateCount; i++)
         {
-            reader.ReadString(); // BaseItemTemplate
+            var template = reader.ReadString(); // BaseItemTemplate
             int itemCount = reader.ReadInt32();
             for (int j = 0; j < itemCount; j++)
                 reader.ReadString(); // item GUID
+            if (i < 5) // Only log first few
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.ItemTemplate[{i}]: {template} ({itemCount} items)");
         }
+        if (templateCount > 5)
+            ModkitLog.Info($"[SaveFileService] ... and {templateCount - 5} more item templates");
 
         // m_SeenItems
-        SkipTemplateList(reader);
+        int seenCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems.SeenItems count: {seenCount}");
+        for (int i = 0; i < seenCount; i++)
+            reader.ReadString();
+
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: OwnedItems done");
     }
 
     private static void SkipVehicle(BinaryReader reader, int version)
@@ -623,6 +751,263 @@ public class SaveFileService
             reader.ReadInt32(); // old format
         }
         SkipTemplateList(reader); // m_OverrideSkills
+    }
+
+    /// <summary>
+    /// Skip the real OwnedItems data that appears after the "*" squaddie entry.
+    /// This data uses standard .NET format WITH count prefixes - the byte 0x70 is actually
+    /// the low byte of vehicle count (2), not a string length!
+    /// Format: int32 vehicle count, then vehicles, then items, then seen items.
+    /// </summary>
+    private static void SkipRealOwnedItems(BinaryReader reader)
+    {
+        var fs = reader.BaseStream;
+
+        // Peek first few bytes to understand the format
+        long startPos = fs.Position;
+        byte[] peek = reader.ReadBytes(8);
+        fs.Position = startPos;
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: RealOwnedItems peek: {BitConverter.ToString(peek)}");
+
+        // The format here is STANDARD OwnedItems with counts, but the first byte happens to be
+        // ASCII because the string happens to start with 'p' (0x70) which looks like a letter.
+        // Actually, let me re-analyze: the vehicle count should be at the START.
+
+        // Read vehicle count as int32
+        int vehicleCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: RealOwnedItems.Vehicles count: {vehicleCount}");
+
+        // Sanity check - if count is huge, we're reading the wrong format
+        if (vehicleCount < 0 || vehicleCount > 1000)
+        {
+            ModkitLog.Warn($"[SaveFileService] Vehicle count {vehicleCount} seems wrong, seeking back");
+            fs.Position = startPos;
+
+            // Try alternate format: maybe vehicles are listed without a count
+            // Each vehicle: template$guid string, health, shield, skills
+            int vehicleIdx = 0;
+            while (vehicleIdx < 50) // Safety limit
+            {
+                long checkPos = fs.Position;
+                // Read string and check if it contains '$' (vehicle identifier)
+                try
+                {
+                    var str = reader.ReadString();
+                    if (string.IsNullOrEmpty(str) || !str.Contains('$'))
+                    {
+                        // Not a vehicle - seek back and stop
+                        fs.Position = checkPos;
+                        break;
+                    }
+                    reader.ReadSingle(); // health
+                    reader.ReadSingle(); // shield
+                    SkipTemplateList(reader); // skills
+                    vehicleIdx++;
+                }
+                catch
+                {
+                    fs.Position = checkPos;
+                    break;
+                }
+            }
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: After {vehicleIdx} vehicles (alternate format)");
+        }
+        else
+        {
+            // Standard format with count
+            for (int i = 0; i < vehicleCount; i++)
+            {
+                var templateGuid = reader.ReadString(); // Combined template$guid
+                reader.ReadSingle(); // health
+                reader.ReadSingle(); // shield
+                SkipTemplateList(reader); // override skills
+                if (i < 3)
+                    ModkitLog.Info($"[SaveFileService] @{fs.Position}: Vehicle[{i}]: {templateGuid.Substring(0, Math.Min(60, templateGuid.Length))}...");
+            }
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: After {vehicleCount} vehicles");
+        }
+
+        // Items: count, then (template string, sub-count, GUIDs)
+        int itemCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: RealOwnedItems.Items count: {itemCount}");
+        if (itemCount >= 0 && itemCount < 10000)
+        {
+            for (int i = 0; i < itemCount; i++)
+            {
+                reader.ReadString(); // template
+                int subCount = reader.ReadInt32();
+                for (int j = 0; j < subCount; j++)
+                    reader.ReadString(); // GUID
+            }
+        }
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: After items");
+
+        // Seen items: count, then strings
+        int seenCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: RealOwnedItems.Seen count: {seenCount}");
+        if (seenCount >= 0 && seenCount < 10000)
+        {
+            for (int i = 0; i < seenCount; i++)
+                reader.ReadString();
+        }
+
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: RealOwnedItems done");
+    }
+
+    /// <summary>
+    /// Skip per-squaddie owned items (vehicles, equipment) in newer save format.
+    /// Format: vehicles with embedded GUIDs, items, accessories, etc.
+    /// </summary>
+    private static void SkipSquaddieOwnedItems(BinaryReader reader)
+    {
+        var fs = reader.BaseStream;
+
+        // The format seems to be:
+        // - Vehicles list (string template+GUID, float health, float shield, int skills_count, skills...)
+        // - Items list (string template, count, GUIDs...)
+        // We need to find where this ends and the next squaddie begins.
+
+        // Read until we find a pattern that looks like the start of a new section
+        // (typically a small int32 followed by byte values for gender/skin)
+
+        // For now, use a simpler approach: read the vehicle and item data using counts
+        // First check if we have int32 counts or direct string data
+
+        // Peek to see what format we have
+        long peekPos = fs.Position;
+        byte[] peek = reader.ReadBytes(8);
+        fs.Position = peekPos;
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems peek: {BitConverter.ToString(peek)}");
+
+        // Check if first 4 bytes look like a reasonable count (< 1000)
+        int possibleCount = peek[0] | (peek[1] << 8) | (peek[2] << 16) | (peek[3] << 24);
+
+        if (possibleCount < 0 || possibleCount > 1000)
+        {
+            // Doesn't look like a count, probably direct string data
+            // This format has no count prefix - we need to read strings until we hit non-string data
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems: No count prefix, scanning for structure...");
+
+            // Try to read vehicle entries directly
+            // Format appears to be: template$GUID (string), health (float), shield (float), skills (list)
+            // Followed by items and seen items
+
+            // Actually, let's try the full OwnedItems format but positioned here
+            // Read vehicles
+            int vehicleCount = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems.Vehicles raw count: {vehicleCount}");
+
+            // If count is unreasonable, this format doesn't have counts
+            if (vehicleCount < 0 || vehicleCount > 100)
+            {
+                // Seek back and try to find end by scanning
+                fs.Position = peekPos;
+                ScanToSectionEnd(reader);
+                return;
+            }
+
+            for (int i = 0; i < vehicleCount; i++)
+            {
+                reader.ReadString(); // template
+                reader.ReadString(); // GUID
+                reader.ReadSingle(); // health
+                reader.ReadSingle(); // shield
+                SkipTemplateList(reader); // skills
+            }
+
+            // Read items
+            int itemCount = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems.Items count: {itemCount}");
+            for (int i = 0; i < itemCount; i++)
+            {
+                reader.ReadString(); // template
+                int subCount = reader.ReadInt32();
+                for (int j = 0; j < subCount; j++)
+                    reader.ReadString(); // GUID
+            }
+
+            // Read seen items
+            int seenCount = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems.Seen count: {seenCount}");
+            for (int i = 0; i < seenCount; i++)
+                reader.ReadString();
+        }
+        else
+        {
+            // Looks like it has counts, use standard format
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems: Has count prefix ({possibleCount})");
+
+            // Vehicles
+            int vehicleCount = reader.ReadInt32();
+            for (int i = 0; i < vehicleCount; i++)
+            {
+                reader.ReadString(); // template
+                reader.ReadString(); // GUID
+                reader.ReadSingle(); // health
+                reader.ReadSingle(); // shield
+                SkipTemplateList(reader); // skills
+            }
+
+            // Items
+            int itemCount = reader.ReadInt32();
+            for (int i = 0; i < itemCount; i++)
+            {
+                reader.ReadString(); // template
+                int subCount = reader.ReadInt32();
+                for (int j = 0; j < subCount; j++)
+                    reader.ReadString(); // GUID
+            }
+
+            // Seen items
+            int seenCount = reader.ReadInt32();
+            for (int i = 0; i < seenCount; i++)
+                reader.ReadString();
+        }
+
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: SquaddieOwnedItems done");
+    }
+
+    /// <summary>
+    /// Scan forward to find the end of a section by looking for structure markers.
+    /// </summary>
+    private static void ScanToSectionEnd(BinaryReader reader)
+    {
+        var fs = reader.BaseStream;
+        long startPos = fs.Position;
+
+        // Look for a pattern that indicates start of next section:
+        // - A small int32 (0-100) followed by reasonable data
+        // - Or end of file
+
+        while (fs.Position < fs.Length - 8)
+        {
+            byte[] window = reader.ReadBytes(8);
+            int val = window[0] | (window[1] << 8) | (window[2] << 16) | (window[3] << 24);
+
+            // Look for a small count value (0-50) followed by patterns
+            if (val >= 0 && val <= 50)
+            {
+                // Check if following bytes look reasonable
+                // For squaddie: ID, gender byte, skin byte, etc.
+                // For dead count: just the count then similar structure
+
+                // Check if byte 4-5 could be gender/skin (0 or 1) after a small ID
+                if (window[4] == 0 && window[5] == 0)
+                {
+                    // Could be dead count = val, next ID = small value
+                    fs.Position -= 4; // Back up to re-read as dead count
+                    ModkitLog.Info($"[SaveFileService] @{fs.Position}: ScanToSectionEnd found potential section start (val={val})");
+                    return;
+                }
+            }
+
+            // Move forward 1 byte and try again
+            fs.Position -= 7;
+        }
+
+        // Didn't find anything, just use end
+        fs.Position = startPos;
+        ModkitLog.Warn($"[SaveFileService] @{fs.Position}: ScanToSectionEnd couldn't find section boundary");
     }
 
     private static void SkipBlackMarket(BinaryReader reader)
@@ -660,53 +1045,187 @@ public class SaveFileService
 
     private static List<SquaddieData> ParseSquaddies(BinaryReader reader)
     {
+        var fs = reader.BaseStream;
         var squaddies = new List<SquaddieData>();
 
         int nextId = reader.ReadInt32(); // m_NextSquaddieID
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies.NextId: {nextId}");
 
         // m_AllSquaddies
         int allCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies.AllCount: {allCount}");
         for (int i = 0; i < allCount; i++)
         {
+            long startPos = fs.Position;
+            ModkitLog.Info($"[SaveFileService] @{startPos}: Starting Squaddie[{i}]");
+
+            // Peek at first 20 bytes for debugging
+            byte[] peek = reader.ReadBytes(20);
+            fs.Position = startPos;
+            ModkitLog.Info($"[SaveFileService] @{startPos}: Squaddie[{i}] peek: {BitConverter.ToString(peek)}");
+
+            int id = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].ID = {id}");
+
+            byte gender = reader.ReadByte();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].Gender = {gender}");
+
+            byte skinColor = reader.ReadByte();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].SkinColor = {skinColor}");
+
+            int homePlanetType = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].HomePlanetType = {homePlanetType}");
+
+            int portraitIndex = reader.ReadInt32();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].PortraitIndex = {portraitIndex}");
+
+            string firstName = reader.ReadString();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].FirstName = '{firstName}' (len={firstName.Length})");
+
+            string lastName = reader.ReadString();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].LastName = '{lastName}' (len={lastName.Length})");
+
+            string templateName = reader.ReadString();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddie[{i}].TemplateName = '{templateName}' (len={templateName.Length})");
+
+            // In newer save versions, the "*" template indicates a company/squad inventory entry
+            // The data after this entry is complex (OwnedItems, BlackMarket, StoryFactions, real squaddies)
+            // but the AllCount=3 is not trustworthy. We need to skip past all this data.
+            if (templateName == "*")
+            {
+                ModkitLog.Info($"[SaveFileService] @{fs.Position}: Found company entry (template='*'), scanning for Roster start");
+
+                // Add this entry
+                squaddies.Add(new SquaddieData
+                {
+                    ID = id,
+                    Gender = gender,
+                    SkinColor = skinColor,
+                    HomePlanetType = homePlanetType,
+                    PortraitIndex = portraitIndex,
+                    FirstName = firstName,
+                    LastName = lastName,
+                    TemplateName = templateName
+                });
+
+                // The data format after "*" is complex. Scan forward to find the Roster start.
+                // The Roster section begins with HiredCount (small int32, typically 0-10) followed by
+                // ActorType string (like "Infantry") for each leader.
+                // Look for pattern: small int32 + byte < 20 + "Infantry" or similar string
+                long scanStart = fs.Position;
+                bool found = false;
+
+                // Scan byte by byte looking for Roster signature
+                while (fs.Position < fs.Length - 20)
+                {
+                    long checkPos = fs.Position;
+                    byte[] window = reader.ReadBytes(20);
+
+                    // Read potential HiredCount as int32
+                    int hiredCount = window[0] | (window[1] << 8) | (window[2] << 16) | (window[3] << 24);
+
+                    // HiredCount should be 1-15 (reasonable roster size)
+                    if (hiredCount >= 1 && hiredCount <= 15)
+                    {
+                        // Next byte should be string length for ActorType (like "Infantry" = 8 chars)
+                        int strLen = window[4];
+                        if (strLen >= 5 && strLen <= 20) // "Infantry" is 8, "Vehicle" is 7, etc.
+                        {
+                            // Check if the string looks like an ActorType
+                            // "Infantry" starts with 'I' (0x49), "Vehicle" starts with 'V' (0x56)
+                            char firstChar = (char)window[5];
+                            if (firstChar == 'I' || firstChar == 'V')
+                            {
+                                // Read the potential string to verify
+                                string potentialActorType = "";
+                                for (int j = 0; j < strLen && j < 15; j++)
+                                    potentialActorType += (char)window[5 + j];
+
+                                if (potentialActorType.StartsWith("Infantry") || potentialActorType.StartsWith("Vehicle"))
+                                {
+                                    fs.Position = checkPos;
+                                    ModkitLog.Info($"[SaveFileService] @{fs.Position}: Found Roster start: HiredCount={hiredCount}, ActorType='{potentialActorType}'");
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Move forward by 1 byte and try again
+                    fs.Position = checkPos + 1;
+                }
+
+                if (found)
+                {
+                    // We found the Roster section - the parsing will continue from here
+                    // Skip reading DeadCount since we're directly at Roster
+                    ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies done (scanned to Roster)");
+                    return squaddies;
+                }
+                else
+                {
+                    ModkitLog.Warn($"[SaveFileService] Couldn't find Roster section, returning partial data");
+                    fs.Position = scanStart;
+                    return squaddies;
+                }
+            }
+
             var squaddie = new SquaddieData
             {
-                ID = reader.ReadInt32(),
-                Gender = reader.ReadByte(),      // byte enum
-                SkinColor = reader.ReadByte(),   // byte enum
-                HomePlanetType = reader.ReadInt32(),
-                FirstName = reader.ReadString(),
-                LastName = reader.ReadString(),
-                PortraitIndex = reader.ReadInt32(),
-                TemplateName = reader.ReadString()
+                ID = id,
+                Gender = gender,
+                SkinColor = skinColor,
+                HomePlanetType = homePlanetType,
+                PortraitIndex = portraitIndex,
+                FirstName = firstName,
+                LastName = lastName,
+                TemplateName = templateName
             };
             squaddies.Add(squaddie);
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Finished Squaddie[{i}], consumed {fs.Position - startPos} bytes");
         }
 
         // m_DeadSquaddies - same format
         int deadCount = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies.DeadCount: {deadCount}");
         for (int i = 0; i < deadCount; i++)
         {
             reader.ReadInt32(); // ID
             reader.ReadByte();  // Gender (byte)
             reader.ReadByte();  // SkinColor (byte)
             reader.ReadInt32(); // HomePlanetType
+            reader.ReadInt32(); // PortraitIndex (moved before names)
             reader.ReadString(); // FirstName
             reader.ReadString(); // LastName
-            reader.ReadInt32(); // PortraitIndex
             reader.ReadString(); // Template
         }
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Squaddies done");
 
         return squaddies;
     }
 
     private static (List<LeaderData> hired, List<LeaderData> dismissed, List<LeaderData> dead) ParseRoster(BinaryReader reader, int version)
     {
-        var hired = ParseLeaderList(reader, version);
-        var dismissed = ParseLeaderList(reader, version);
-        var unburied = ParseLeaderList(reader, version); // dead unburied
-        var buried = ParseLeaderList(reader, version);   // dead buried
+        var fs = reader.BaseStream;
+
+        // Peek at the next few bytes to understand structure
+        long peekPos = fs.Position;
+        byte[] peekBytes = reader.ReadBytes(32);
+        fs.Position = peekPos;
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Roster peek bytes: {BitConverter.ToString(peekBytes)}");
+
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster.HiredLeaders...");
+        var hired = ParseLeaderList(reader, version, "Hired");
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster.DismissedLeaders...");
+        var dismissed = ParseLeaderList(reader, version, "Dismissed");
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster.UnburiedLeaders...");
+        var unburied = ParseLeaderList(reader, version, "Unburied"); // dead unburied
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster.BuriedLeaders...");
+        var buried = ParseLeaderList(reader, version, "Buried");   // dead buried
 
         // m_HirableLeaders
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing Roster.HirableLeaders...");
         SkipTemplateList(reader);
 
         // Combine dead lists
@@ -714,25 +1233,54 @@ public class SaveFileService
         dead.AddRange(unburied);
         dead.AddRange(buried);
 
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: Roster done");
         return (hired, dismissed, dead);
     }
 
-    private static List<LeaderData> ParseLeaderList(BinaryReader reader, int version)
+    private static List<LeaderData> ParseLeaderList(BinaryReader reader, int version, string listName = "")
     {
+        var fs = reader.BaseStream;
         var leaders = new List<LeaderData>();
         int count = reader.ReadInt32();
+        ModkitLog.Info($"[SaveFileService] @{fs.Position}: {listName}Leaders count: {count}");
+
+        // Sanity check
+        if (count < 0 || count > 100)
+        {
+            ModkitLog.Warn($"[SaveFileService] {listName}Leaders count {count} seems wrong, treating as 0");
+            fs.Position -= 4; // Seek back
+            return leaders;
+        }
 
         for (int i = 0; i < count; i++)
         {
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: Parsing {listName}Leader[{i}]...");
+
+            // In version 101+, ActorType is stored as a string (e.g., "Infantry", "Vehicle")
+            // instead of int32, and there's an extra byte field after it
+            string actorTypeStr = reader.ReadString();
+            int actorType = actorTypeStr switch
+            {
+                "Infantry" => 0,
+                "Vehicle" => 1,
+                _ => 0
+            };
+
+            // There's an extra byte between ActorType and TemplateName in newer versions
+            byte extraField = reader.ReadByte();
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: {listName}Leader[{i}] extraField={extraField}");
+
             var leader = new LeaderData
             {
-                ActorType = reader.ReadInt32(),
+                ActorType = actorType,
                 TemplateName = reader.ReadString()
             };
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: {listName}Leader[{i}]: ActorType='{actorTypeStr}' ({actorType}), Template='{leader.TemplateName}'");
             leaders.Add(leader);
 
             // Skip BaseUnitLeader.ProcessSaveState - this is complex
             SkipBaseUnitLeader(reader, version);
+            ModkitLog.Info($"[SaveFileService] @{fs.Position}: {listName}Leader[{i}] done");
         }
 
         return leaders;

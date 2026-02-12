@@ -1,6 +1,9 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Data;
+using Avalonia.Data.Converters;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -358,6 +361,34 @@ public class AssetBrowserView : UserControl
             new Avalonia.Data.Binding("AvailableModpacks"));
         modpackCombo.Bind(ComboBox.SelectedItemProperty,
             new Avalonia.Data.Binding("CurrentModpackName"));
+        var isHandlingCreateNew = false;
+        modpackCombo.SelectionChanged += async (sender, e) =>
+        {
+            if (isHandlingCreateNew) return;
+            if (sender is ComboBox combo &&
+                combo.SelectedItem is string selected &&
+                selected == AssetBrowserViewModel.CreateNewModOption)
+            {
+                isHandlingCreateNew = true;
+                try
+                {
+                    // Clear selection immediately to prevent re-triggering
+                    var vm = DataContext as AssetBrowserViewModel;
+
+                    // Set to first real modpack or null
+                    if (vm != null && vm.AvailableModpacks.Count > 1)
+                        vm.CurrentModpackName = vm.AvailableModpacks[1];
+                    else if (vm != null)
+                        vm.CurrentModpackName = null;
+
+                    await ShowCreateModpackDialogAsync();
+                }
+                finally
+                {
+                    isHandlingCreateNew = false;
+                }
+            }
+        };
         toolbar.Children.Add(modpackCombo);
 
         var statusText = new TextBlock
@@ -1084,6 +1115,35 @@ public class AssetBrowserView : UserControl
             Margin = new Thickness(0, 12, 0, 0)
         };
 
+        var addButton = new Button
+        {
+            Content = "Add Asset...",
+            FontSize = 13
+        };
+        addButton.Classes.Add("primary");
+        addButton.Click += OnAddAssetClick;
+        addButton.Bind(Button.IsEnabledProperty, new MultiBinding
+        {
+            Bindings =
+            {
+                new Avalonia.Data.Binding("SelectedNode"),
+                new Avalonia.Data.Binding("CurrentModpackName")
+            },
+            Converter = new FuncMultiValueConverter<object?, bool>(values =>
+            {
+                var list = values.ToList();
+                if (list.Count < 2)
+                    return false;
+                var node = list[0] as AssetTreeNode;
+                var modpackName = list[1] as string;
+                return node != null
+                    && !node.IsFile
+                    && !string.IsNullOrWhiteSpace(modpackName)
+                    && modpackName != AssetBrowserViewModel.CreateNewModOption;
+            })
+        });
+        actionStack.Children.Add(addButton);
+
         var replaceButton = new Button
         {
             Content = "Replace Asset...",
@@ -1126,6 +1186,31 @@ public class AssetBrowserView : UserControl
         Grid.SetRow(actionStack, 2);
 
         return panel;
+    }
+
+    private async void OnAddAssetClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not AssetBrowserViewModel vm)
+            return;
+        if (vm.SelectedNode == null || vm.SelectedNode.IsFile || string.IsNullOrWhiteSpace(vm.CurrentModpackName))
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null)
+            return;
+
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = $"Add asset to {vm.SelectedNode.Name}",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("All Files") { Patterns = new[] { "*" } }
+            }
+        });
+
+        if (files.Count > 0)
+            vm.AddAssetToModpackFolder(files[0].Path.LocalPath, vm.SelectedNode);
     }
 
     private async void OnReplaceAssetClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1250,6 +1335,30 @@ public class AssetBrowserView : UserControl
             {
                 await wizard.ShowDialog(parent);
             }
+        }
+    }
+
+    private async Task ShowCreateModpackDialogAsync()
+    {
+        try
+        {
+            if (DataContext is AssetBrowserViewModel vm)
+            {
+                var dialog = new CreateModpackDialog();
+                var topLevel = TopLevel.GetTopLevel(this);
+                if (topLevel is Window window)
+                {
+                    var result = await dialog.ShowDialog<CreateModpackResult?>(window);
+                    if (result != null)
+                    {
+                        vm.CreateModpack(result.Name, result.Author, result.Description);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Error($"Create modpack dialog failed: {ex.Message}");
         }
     }
 }

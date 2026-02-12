@@ -16,6 +16,11 @@ namespace Menace.Modkit.App.ViewModels;
 
 public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
 {
+    /// <summary>
+    /// Special value in the modpack dropdown that triggers the create mod dialog.
+    /// </summary>
+    public const string CreateNewModOption = "+ Create New Mod...";
+
     private DataTemplateLoader? _dataLoader;
     private readonly ModpackManager _modpackManager;
     private readonly AssetReferenceResolver _assetResolver;
@@ -104,6 +109,7 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
 
         // Populate available modpacks
         AvailableModpacks.Clear();
+        AvailableModpacks.Add(CreateNewModOption);
         foreach (var mp in _modpackManager.GetStagingModpacks())
             AvailableModpacks.Add(mp.Name);
 
@@ -858,6 +864,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
     /// </summary>
     public void UpdateCollectionProperty(string fieldName, List<string> items)
     {
+        if (_suppressPropertyUpdates)
+            return;
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
             return;
 

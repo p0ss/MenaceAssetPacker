@@ -455,7 +455,8 @@ public sealed class SaveEditorViewModel : ViewModelBase
             // Copy editable body values back
             if (SelectedSave.BodyData != null && SelectedSave.BodyData.IsValid)
             {
-                SelectedSave.BodyData.Ironman = EditableIronman;
+                // Always disable ironman when editing - can't claim ironman on modified saves
+                SelectedSave.BodyData.Ironman = false;
                 SelectedSave.BodyData.Seed = EditableSeed;
                 SelectedSave.BodyData.Credits = EditableCredits;
                 SelectedSave.BodyData.Intelligence = EditableIntelligence;
@@ -477,9 +478,11 @@ public sealed class SaveEditorViewModel : ViewModelBase
             {
                 var messages = new List<string> { "Save updated" };
 
-                if (wasIronman && !EditableIronman)
+                if (wasIronman)
                 {
                     messages.Add("ironman disabled");
+                    _editableIronman = false;
+                    this.RaisePropertyChanged(nameof(EditableIronman));
                 }
                 if (SelectedSave.BodyData != null)
                 {

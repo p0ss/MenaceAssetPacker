@@ -17,6 +17,13 @@ namespace Menace.Modkit.App.ViewModels;
 
 public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
 {
+    /// <summary>
+    /// Special value in the modpack dropdown that triggers create-mod flow.
+    /// </summary>
+    public const string CreateNewModOption = "+ Create New Mod...";
+
+    private const string ModpackNewAssetsSectionName = "Modpack New Assets";
+
     private readonly AssetRipperService _assetRipperService;
     private readonly ModpackManager _modpackManager;
     private ReferenceGraphService? _referenceGraphService;
@@ -121,6 +128,57 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
     public void RequestNavigateToTemplate(ReferenceEntry entry)
     {
         NavigateToTemplate?.Invoke(_currentModpackName, entry.SourceTemplateType, entry.SourceInstanceName);
+    }
+
+    /// <summary>
+    /// Navigate to a specific asset file from another view.
+    /// Sets the active modpack, expands the tree, and selects the target node.
+    /// </summary>
+    public void NavigateToAssetEntry(string modpackName, string assetRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(modpackName) || string.IsNullOrWhiteSpace(assetRelativePath))
+            return;
+
+        if (!AvailableModpacks.Contains(modpackName))
+            RefreshModpacks();
+
+        CurrentModpackName = modpackName;
+
+        if (_allTreeNodes.Count == 0)
+            RefreshAssets();
+
+        var normalizedRelativePath = assetRelativePath
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar);
+
+        AssetTreeNode? targetNode = null;
+        var assetRoot = AppSettings.GetEffectiveAssetsPath();
+        if (!string.IsNullOrEmpty(assetRoot))
+        {
+            var vanillaPath = Path.GetFullPath(Path.Combine(assetRoot, normalizedRelativePath));
+            targetNode = FindNodeByPath(vanillaPath);
+        }
+
+        // Staged-only asset (new file not present in extracted vanilla assets).
+        if (targetNode == null)
+        {
+            var stagingPath = _modpackManager.GetStagingAssetPath(modpackName, normalizedRelativePath);
+            if (!string.IsNullOrEmpty(stagingPath))
+            {
+                if (!ShowModpackOnly)
+                    ShowModpackOnly = true;
+                else
+                    ApplySearchFilter();
+
+                targetNode = FindNodeByPath(stagingPath);
+            }
+        }
+
+        if (targetNode == null)
+            return;
+
+        ExpandToNode(targetNode);
+        SelectedNode = targetNode;
     }
 
     private string _extractionStatus = string.Empty;
@@ -431,7 +489,17 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
 
     private AssetTreeNode? FindNodeByPath(string fullPath)
     {
-        foreach (var node in _allTreeNodes)
+        var fromAllNodes = FindNodeByPathInCollection(_allTreeNodes, fullPath);
+        if (fromAllNodes != null)
+            return fromAllNodes;
+
+        // Filtered/virtual nodes (e.g. modpack-only staged additions) live in FolderTree.
+        return FindNodeByPathInCollection(FolderTree, fullPath);
+    }
+
+    private static AssetTreeNode? FindNodeByPathInCollection(IEnumerable<AssetTreeNode> nodes, string fullPath)
+    {
+        foreach (var node in nodes)
         {
             var found = FindNodeByPathRecursive(node, fullPath);
             if (found != null)
@@ -440,9 +508,9 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         return null;
     }
 
-    private AssetTreeNode? FindNodeByPathRecursive(AssetTreeNode node, string fullPath)
+    private static AssetTreeNode? FindNodeByPathRecursive(AssetTreeNode node, string fullPath)
     {
-        if (node.IsFile && node.FullPath == fullPath)
+        if (node.IsFile && PathsEqual(node.FullPath, fullPath))
             return node;
 
         foreach (var child in node.Children)
@@ -452,6 +520,21 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
                 return found;
         }
         return null;
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            var leftPath = Path.GetFullPath(left);
+            var rightPath = Path.GetFullPath(right);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(leftPath, rightPath, comparison);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.Ordinal);
+        }
     }
 
     private void ExpandToNode(AssetTreeNode node)
@@ -475,21 +558,33 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
     {
         var previousSelection = _currentModpackName;
         AvailableModpacks.Clear();
+        AvailableModpacks.Add(CreateNewModOption);
         foreach (var mp in _modpackManager.GetStagingModpacks())
             AvailableModpacks.Add(mp.Name);
 
-        // Restore selection if it still exists, otherwise clear it
+        // Restore selection if it still exists, otherwise clear it (skip create option)
         if (previousSelection != null && AvailableModpacks.Contains(previousSelection))
             CurrentModpackName = previousSelection;
-        else if (AvailableModpacks.Count > 0)
-            CurrentModpackName = AvailableModpacks[0];
+        else if (AvailableModpacks.Count > 1)
+            CurrentModpackName = AvailableModpacks[1];
         else
             CurrentModpackName = null;
+    }
+
+    /// <summary>
+    /// Create a new modpack and select it in the dropdown.
+    /// </summary>
+    public void CreateModpack(string name, string? author, string? description)
+    {
+        var manifest = _modpackManager.CreateModpack(name, author ?? "", description ?? "");
+        RefreshModpacks();
+        CurrentModpackName = manifest.Name;
     }
 
     private void LoadModpacks()
     {
         AvailableModpacks.Clear();
+        AvailableModpacks.Add(CreateNewModOption);
         foreach (var mp in _modpackManager.GetStagingModpacks())
             AvailableModpacks.Add(mp.Name);
     }
@@ -805,10 +900,26 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
     public string? GetAssetRelativePath(string fullPath)
     {
         var assetPath = AppSettings.GetEffectiveAssetsPath();
-        if (assetPath == null)
+        if (assetPath != null)
+        {
+            var fullAssetPath = Path.GetFullPath(assetPath);
+            var fullCandidate = Path.GetFullPath(fullPath);
+            if (fullCandidate.StartsWith(fullAssetPath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                return Path.GetRelativePath(assetPath, fullPath);
+        }
+
+        if (string.IsNullOrEmpty(_currentModpackName))
             return null;
 
-        return Path.GetRelativePath(assetPath, fullPath);
+        // Fallback for staged-only assets that don't exist in extracted vanilla tree.
+        foreach (var relativePath in _modpackAssetPaths)
+        {
+            var stagingPath = _modpackManager.GetStagingAssetPath(_currentModpackName, relativePath);
+            if (!string.IsNullOrEmpty(stagingPath) && PathsEqual(stagingPath, fullPath))
+                return relativePath;
+        }
+
+        return null;
     }
 
     public bool ReplaceAssetInModpack(string sourceFilePath)
@@ -835,6 +946,48 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
+    /// <summary>
+    /// Add a new asset file to the selected folder within the current modpack.
+    /// Supports both vanilla folders and virtual "Modpack New Assets" folders.
+    /// </summary>
+    public bool AddAssetToModpackFolder(string sourceFilePath, AssetTreeNode targetFolderNode)
+    {
+        if (targetFolderNode == null || targetFolderNode.IsFile || string.IsNullOrEmpty(_currentModpackName))
+            return false;
+
+        try
+        {
+            var folderRelativePath = GetAssetRelativeFolderPath(targetFolderNode);
+            if (folderRelativePath == null)
+            {
+                SaveStatus = "Add failed: selected folder is not a valid asset target.";
+                return false;
+            }
+
+            var fileName = Path.GetFileName(sourceFilePath);
+            var relativePath = string.IsNullOrEmpty(folderRelativePath)
+                ? fileName
+                : Path.Combine(folderRelativePath, fileName);
+
+            _modpackManager.SaveStagingAsset(_currentModpackName, relativePath, sourceFilePath);
+            _modpackAssetPaths.Add(relativePath);
+
+            // Rebuild and re-focus so newly added staged-only assets appear immediately.
+            RefreshAssets();
+            if (_showModpackOnly)
+                ApplySearchFilter();
+
+            NavigateToAssetEntry(_currentModpackName, relativePath);
+            SaveStatus = $"Added: {relativePath}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SaveStatus = $"Add failed: {ex.Message}";
+            return false;
+        }
+    }
+
     public void ClearAssetReplacement()
     {
         if (_selectedNode == null || !_selectedNode.IsFile || string.IsNullOrEmpty(_currentModpackName))
@@ -855,6 +1008,43 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         {
             SaveStatus = $"Clear failed: {ex.Message}";
         }
+    }
+
+    private string? GetAssetRelativeFolderPath(AssetTreeNode folderNode)
+    {
+        if (folderNode == null || folderNode.IsFile)
+            return null;
+
+        var assetPath = AppSettings.GetEffectiveAssetsPath();
+        if (!string.IsNullOrEmpty(assetPath))
+        {
+            var fullAssetPath = Path.GetFullPath(assetPath);
+            var fullFolderPath = Path.GetFullPath(folderNode.FullPath);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (fullFolderPath.StartsWith(fullAssetPath, comparison))
+                return Path.GetRelativePath(assetPath, fullFolderPath);
+        }
+
+        // Virtual modpack-only tree: reconstruct path from node ancestry.
+        var segments = new List<string>();
+        var current = folderNode;
+        while (current != null)
+        {
+            if (string.Equals(current.Name, ModpackNewAssetsSectionName, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            segments.Add(current.Name);
+            current = current.Parent;
+        }
+
+        if (current == null)
+            return null;
+
+        if (segments.Count == 0)
+            return string.Empty;
+
+        segments.Reverse();
+        return Path.Combine(segments.ToArray());
     }
 
     public bool ExportAsset(string destinationPath)
@@ -1084,6 +1274,11 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
                 FolderTree.Add(filtered);
         }
 
+        if (_showModpackOnly && !string.IsNullOrEmpty(_currentModpackName))
+        {
+            AddMissingModpackAssetNodes(query, scores);
+        }
+
         // Sort results by score when there's an active search query
         if (hasQuery)
         {
@@ -1180,6 +1375,116 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         }
 
         return copy;
+    }
+
+    private void AddMissingModpackAssetNodes(string? query, Dictionary<AssetTreeNode, int> scores)
+    {
+        if (string.IsNullOrEmpty(_currentModpackName) || _modpackAssetPaths.Count == 0)
+            return;
+
+        var assetRoot = AppSettings.GetEffectiveAssetsPath();
+        var additionsRoot = new AssetTreeNode
+        {
+            Name = ModpackNewAssetsSectionName,
+            FullPath = $"modpack://{_currentModpackName}/new-assets",
+            IsFile = false,
+            IsExpanded = true
+        };
+
+        foreach (var relativePath in _modpackAssetPaths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            var stagingPath = _modpackManager.GetStagingAssetPath(_currentModpackName, relativePath);
+            if (string.IsNullOrEmpty(stagingPath) || !File.Exists(stagingPath))
+                continue;
+
+            var normalized = relativePath
+                .Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar);
+
+            // Only include assets that don't exist in extracted vanilla assets.
+            if (!string.IsNullOrEmpty(assetRoot))
+            {
+                var vanillaPath = Path.GetFullPath(Path.Combine(assetRoot, normalized));
+                if (File.Exists(vanillaPath))
+                    continue;
+            }
+
+            var fileName = Path.GetFileName(normalized);
+            if (!string.IsNullOrEmpty(query) &&
+                !fileName.Contains(query, StringComparison.OrdinalIgnoreCase) &&
+                !normalized.Contains(query, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            AddVirtualAssetNode(additionsRoot, normalized, stagingPath, query, scores);
+        }
+
+        if (additionsRoot.Children.Count > 0)
+        {
+            FolderTree.Add(additionsRoot);
+            if (!scores.ContainsKey(additionsRoot))
+                scores[additionsRoot] = 10;
+        }
+    }
+
+    private void AddVirtualAssetNode(
+        AssetTreeNode root,
+        string relativePath,
+        string stagingPath,
+        string? query,
+        Dictionary<AssetTreeNode, int> scores)
+    {
+        var segments = relativePath.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+            return;
+
+        var current = root;
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            var segment = segments[i];
+            var existing = current.Children.FirstOrDefault(c => !c.IsFile && c.Name.Equals(segment, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                existing = new AssetTreeNode
+                {
+                    Name = segment,
+                    FullPath = Path.Combine(current.FullPath, segment),
+                    IsFile = false,
+                    IsExpanded = true,
+                    Parent = current
+                };
+                current.Children.Add(existing);
+            }
+            current = existing;
+        }
+
+        var fileNode = new AssetTreeNode
+        {
+            Name = segments[^1],
+            FullPath = stagingPath,
+            IsFile = true,
+            FileType = GetFileType(stagingPath),
+            Size = new FileInfo(stagingPath).Length,
+            Parent = current
+        };
+        current.Children.Add(fileNode);
+
+        // Give missing-assets entries a stable score when query sorting is active.
+        var score = 10;
+        if (!string.IsNullOrEmpty(query))
+        {
+            if (fileNode.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                score = 100;
+            else if (relativePath.Contains(query, StringComparison.OrdinalIgnoreCase))
+                score = 40;
+        }
+
+        scores[fileNode] = score;
+        if (!scores.TryGetValue(current, out var existingScore) || score > existingScore)
+            scores[current] = score;
+        if (!scores.TryGetValue(root, out var rootScore) || score > rootScore)
+            scores[root] = score;
     }
 
     public void ExpandAll()

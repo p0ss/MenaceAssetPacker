@@ -363,7 +363,7 @@ public class StatsEditorView : UserControl
       FontSize = 11
     };
     createModpackButton.Classes.Add("primary");
-    createModpackButton.Click += (_, _) => ShowCreateModpackDialog();
+    createModpackButton.Click += async (_, _) => await ShowCreateModpackDialogAsync();
     buttonPanel.Children.Add(createModpackButton);
 
     buttonContainer.Children.Add(buttonPanel);
@@ -562,6 +562,35 @@ public class StatsEditorView : UserControl
       new Avalonia.Data.Binding("AvailableModpacks"));
     modpackCombo.Bind(ComboBox.SelectedItemProperty,
       new Avalonia.Data.Binding("CurrentModpackName"));
+    var isHandlingCreateNew = false;
+    modpackCombo.SelectionChanged += async (sender, e) =>
+    {
+      if (isHandlingCreateNew) return;
+      if (sender is ComboBox combo &&
+          combo.SelectedItem is string selected &&
+          selected == StatsEditorViewModel.CreateNewModOption)
+      {
+        isHandlingCreateNew = true;
+        try
+        {
+          // Clear selection immediately to prevent re-triggering
+          var vm = DataContext as StatsEditorViewModel;
+          var previousSelection = vm?.CurrentModpackName;
+
+          // Set to first real modpack or null
+          if (vm != null && vm.AvailableModpacks.Count > 1)
+            vm.CurrentModpackName = vm.AvailableModpacks[1];
+          else if (vm != null)
+            vm.CurrentModpackName = null;
+
+          await ShowCreateModpackDialogAsync();
+        }
+        finally
+        {
+          isHandlingCreateNew = false;
+        }
+      }
+    };
     toolbar.Children.Add(modpackCombo);
 
     var saveButton = new Button
@@ -2635,7 +2664,7 @@ public class StatsEditorView : UserControl
     }
   }
 
-  private async void ShowCreateModpackDialog()
+  private async Task ShowCreateModpackDialogAsync()
   {
     try
     {

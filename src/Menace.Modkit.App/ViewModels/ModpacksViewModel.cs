@@ -91,6 +91,13 @@ public sealed class ModpacksViewModel : ViewModelBase
     /// </summary>
     public Action<string, string, string>? NavigateToStatsEntry { get; set; }
 
+    /// <summary>
+    /// Callback for navigating to an asset entry in the asset browser.
+    /// Set by MainViewModel to wire up cross-tab navigation.
+    /// Parameters: modpackName, assetRelativePath.
+    /// </summary>
+    public Action<string, string>? NavigateToAssetEntry { get; set; }
+
     private ModpackItemViewModel? _selectedModpack;
     public ModpackItemViewModel? SelectedModpack
     {
@@ -936,7 +943,15 @@ public sealed class ModpackItemViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _statsPatches, value);
     }
 
+    private ObservableCollection<AssetPatchEntry> _assetPatches = new();
+    public ObservableCollection<AssetPatchEntry> AssetPatches
+    {
+        get => _assetPatches;
+        set => this.RaiseAndSetIfChanged(ref _assetPatches, value);
+    }
+
     public bool HasStatsPatches => _statsPatches.Count > 0;
+    public bool HasAssetPatches => _assetPatches.Count > 0;
 
     private void LoadFiles()
     {
@@ -955,6 +970,7 @@ public sealed class ModpackItemViewModel : ViewModelBase
     public void RefreshStatsPatches()
     {
         _statsPatches.Clear();
+        _assetPatches.Clear();
         if (IsStandalone || string.IsNullOrEmpty(_manifest.Path)) return;
 
         var statsDir = System.IO.Path.Combine(_manifest.Path, "stats");
@@ -984,7 +1000,17 @@ public sealed class ModpackItemViewModel : ViewModelBase
             }
             catch { }
         }
+
+        foreach (var relativePath in _manager.GetStagingAssetPaths(_manifest.Name).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            _assetPatches.Add(new AssetPatchEntry
+            {
+                RelativePath = relativePath
+            });
+        }
+
         this.RaisePropertyChanged(nameof(HasStatsPatches));
+        this.RaisePropertyChanged(nameof(HasAssetPatches));
     }
 
     private void SaveMetadata()
@@ -1043,4 +1069,11 @@ public class StatsPatchEntry
     public List<string> Fields { get; set; } = new();
     public string DisplayName => $"{InstanceName}";
     public string FieldSummary => string.Join(", ", Fields);
+}
+
+public class AssetPatchEntry
+{
+    public string RelativePath { get; set; } = "";
+    public string DisplayName => System.IO.Path.GetFileName(RelativePath);
+    public string PathSummary => RelativePath;
 }

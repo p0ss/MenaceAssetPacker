@@ -28,13 +28,13 @@ public class DevModePlugin : IModpackPlugin
     private MethodInfo _tacticalStateGet;
     private MethodInfo _startDevModeAction;
     private ConstructorInfo _godModeActionCtor;
-    private object _godModeTargetValue;          // GodModeAction.GodModeTarget.Target (0)
+    private object _godModeTargetValue;
     private ConstructorInfo _deleteEntityActionCtor;
     private Type _entityTemplateType;
     private ConstructorInfo _spawnEntityActionCtor;
-    private PropertyInfo _entityTypeProperty;   // EntityTemplate.Type
-    private PropertyInfo _actorTypeProperty;    // EntityTemplate.ActorType
-    private object _entityTypeActorValue;       // EntityType.Actor
+    private PropertyInfo _entityTypeProperty;
+    private PropertyInfo _actorTypeProperty;
+    private object _entityTypeActorValue;
 
     // DevSettings — enum indices looked up by name
     private int _cheatsEnabledIndex = -1;
@@ -55,17 +55,13 @@ public class DevModePlugin : IModpackPlugin
     private Assembly _gameAssembly;
     private List<UnityEngine.Object> _allEntityObjects = new();
 
-    // GUI colors (applied via content strings, not GUIStyle — avoids IL2CPP unstripping issues)
-
     public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
     {
         _log = logger;
         _harmony = harmony;
-        _log.Msg("Menace Dev Mode v1.0.0");
+        _log.Msg("Menace Dev Mode v1.1.1");
         DevConsole.RegisterPanel("Dev Mode", DrawDevModePanel);
 
-        // Register mod settings - these appear in the DevConsole "Settings" panel
-        // All of these settings actually affect behavior in the code below
         ModSettings.Register("Dev Mode", settings => {
             settings.AddHeader("Cheats");
             settings.AddToggle("AutoEnableCheats", "Auto-Enable Cheats on Load", true);
@@ -75,13 +71,15 @@ public class DevModePlugin : IModpackPlugin
                 new[] { "Enemy", "Player", "Neutral" }, "Enemy");
             settings.AddToggle("ShowAllEntityTypes", "Show All Entity Types", false);
 
+            settings.AddHeader("Recruitment");
+            settings.AddToggle("RecruitAllLeaders", "Recruit All Squad Leaders", false);
+
             settings.AddHeader("Gameplay Tweaks");
             settings.AddSlider("WeaponDamageMult", "All Weapon Damage", 0.5f, 3.0f, 1.0f);
             settings.AddSlider("PlayerAccuracyBonus", "Player Accuracy Bonus", -20f, 40f, 0f);
             settings.AddSlider("EnemyHealthMult", "Enemy Health Multiplier", 0.5f, 2.0f, 1.0f);
         });
 
-        // React to setting changes in real-time
         ModSettings.OnSettingChanged += OnSettingChanged;
     }
 
@@ -91,29 +89,241 @@ public class DevModePlugin : IModpackPlugin
 
         _log.Msg($"Setting changed: {key} = {value}");
 
-        // Handle ShowAllEntityTypes change - reload entity list
         if (key == "ShowAllEntityTypes" && _devModeReady)
         {
             _log.Msg("Reloading entity templates with new filter...");
             ReloadEntityTemplates();
         }
 
-        // Handle gameplay tweaks - these modify actual game templates
+        if (key == "RecruitAllLeaders" && _devModeReady)
+        {
+            if ((bool)value)
+            {
+                _log.Msg("Enabling recruit all leaders...");
+                ApplyRecruitAllLeaders();
+            }
+            else
+            {
+                _log.Msg("Recruit all leaders disabled");
+            }
+        }
+
         if (key == "WeaponDamageMult" || key == "PlayerAccuracyBonus" || key == "EnemyHealthMult")
         {
             ApplyGameplayTweaks();
         }
     }
 
-    // Stores original template values so we can re-apply multipliers correctly
     private Dictionary<string, float> _originalWeaponDamage = new();
     private Dictionary<string, float> _originalEntityHealth = new();
     private bool _baseValuesStored = false;
 
     /// <summary>
-    /// Applies gameplay tweak settings to actual game templates.
-    /// Uses Templates API to modify WeaponTemplate.Damage, EntityTemplate stats, etc.
+    /// Makes all UnitLeaderTemplates available for recruitment using direct field access.
     /// </summary>
+    private void ApplyRecruitAllLeaders()
+    {
+        try
+        {
+            _log.Msg("=== Recruit All Leaders ===");
+
+            // Get StrategyState via static Get() method
+            var strategyStateType = _gameAssembly?.GetTypes()
+                .FirstOrDefault(t => t.Name == "StrategyState");
+
+            if (strategyStateType == null)
+            {
+                _log.Warning("StrategyState type not found");
+                return;
+            }
+
+            var getMethod = strategyStateType.GetMethod("Get",
+                BindingFlags.Public | BindingFlags.Static);
+            if (getMethod == null)
+            {
+                _log.Warning("StrategyState.Get() method not found");
+                return;
+            }
+
+            var strategyState = getMethod.Invoke(null, null);
+            if (strategyState == null)
+            {
+                _log.Warning("StrategyState.Get() returned null - not in strategy mode?");
+                return;
+            }
+
+            _log.Msg($"StrategyState found: {strategyState.GetType().Name}");
+
+            // Get Roster from StrategyState
+            var rosterProp = strategyStateType.GetProperty("Roster",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (rosterProp == null)
+            {
+                _log.Warning("StrategyState.Roster property not found");
+                return;
+            }
+
+            var roster = rosterProp.GetValue(strategyState);
+            if (roster == null)
+            {
+                _log.Warning("Roster is null");
+                return;
+            }
+
+            _log.Msg($"Roster found: {roster.GetType().Name}");
+
+            // Get the m_HirableLeaders property (List<UnitLeaderTemplate>)
+            var rosterType = roster.GetType();
+
+            // IL2CPP exposes as m_HirableLeaders property
+            var hirableProp = rosterType.GetProperty("m_HirableLeaders",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            object hirableList = null;
+            if (hirableProp != null)
+            {
+                hirableList = hirableProp.GetValue(roster);
+                _log.Msg($"Found m_HirableLeaders property");
+            }
+            else
+            {
+                // List all fields/props for diagnostics
+                var fields = rosterType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Select(f => $"{f.Name}:{f.FieldType.Name}")
+                    .ToList();
+                var props = rosterType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(p => $"{p.Name}:{p.PropertyType.Name}")
+                    .ToList();
+                _log.Msg($"Roster fields: {string.Join(", ", fields.Take(15))}");
+                _log.Msg($"Roster props: {string.Join(", ", props.Take(15))}");
+                _log.Warning("Could not find hirable leaders list");
+                return;
+            }
+
+            if (hirableList == null)
+            {
+                _log.Warning("Hirable leaders list is null");
+                return;
+            }
+
+            // Get current count
+            var listType = hirableList.GetType();
+            var countProp = listType.GetProperty("Count");
+            int currentCount = (int)countProp.GetValue(hirableList);
+            _log.Msg($"Current hirable leaders count: {currentCount}");
+
+            // Get all UnitLeaderTemplates via SDK Templates.FindAll
+            var leaderTemplates = Templates.FindAll("UnitLeaderTemplate");
+            _log.Msg($"Templates.FindAll returned {leaderTemplates.Length} UnitLeaderTemplates");
+
+            // If SDK didn't find any, try full namespace
+            if (leaderTemplates.Length == 0)
+            {
+                leaderTemplates = Templates.FindAll("Menace.Strategy.UnitLeaderTemplate");
+                _log.Msg($"Full namespace search returned {leaderTemplates.Length} templates");
+            }
+
+            // Convert to list for iteration
+            var allLeaders = leaderTemplates.Cast<object>().ToList();
+            _log.Msg($"Found {allLeaders.Count} UnitLeaderTemplates total");
+
+            // Get the Add method on the hirable list
+            var addMethod = listType.GetMethod("Add");
+            if (addMethod == null)
+            {
+                _log.Warning("List.Add method not found");
+                return;
+            }
+
+            // Get Roster.GetLeaderByTemplate to check status
+            var getLeaderMethod = rosterType.GetMethod("GetLeaderByTemplate",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            int added = 0;
+            int alreadyHirable = 0;
+            int alreadyHired = 0;
+            int otherStatus = 0;
+
+            foreach (var leader in allLeaders)
+            {
+                try
+                {
+                    // Check leader status using GetLeaderByTemplate
+                    // Returns: 0=not found, 1=hired, 2=hirable, 3=unavailable, 4/5=dead
+                    int status = 0;
+                    if (getLeaderMethod != null)
+                    {
+                        // GetLeaderByTemplate(template, out status) returns BaseUnitLeader
+                        var parameters = getLeaderMethod.GetParameters();
+                        if (parameters.Length == 2 && parameters[1].IsOut)
+                        {
+                            var args = new object[] { leader, 0 };
+                            getLeaderMethod.Invoke(roster, args);
+                            status = (int)args[1];
+                        }
+                    }
+
+                    switch (status)
+                    {
+                        case 0: // Not found - can add
+                            addMethod.Invoke(hirableList, new[] { leader });
+                            added++;
+                            if (added <= 3)
+                            {
+                                var name = GetTemplateName(leader);
+                                _log.Msg($"  Added: {name}");
+                            }
+                            break;
+                        case 1:
+                            alreadyHired++;
+                            break;
+                        case 2:
+                            alreadyHirable++;
+                            break;
+                        default:
+                            otherStatus++;
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning($"Error processing leader: {ex.Message}");
+                }
+            }
+
+            if (added > 3)
+                _log.Msg($"  ... and {added - 3} more");
+
+            _log.Msg($"Results: {added} added, {alreadyHirable} already hirable, {alreadyHired} already hired, {otherStatus} other status");
+
+            // Verify new count
+            int newCount = (int)countProp.GetValue(hirableList);
+            _log.Msg($"New hirable leaders count: {newCount}");
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"ApplyRecruitAllLeaders error: {ex.Message}\n{ex.StackTrace}");
+        }
+    }
+
+    private string GetTemplateName(object template)
+    {
+        try
+        {
+            if (template is Il2CppObjectBase il2cppObj)
+            {
+                var unityObj = il2cppObj.TryCast<UnityEngine.Object>();
+                if (unityObj != null)
+                    return unityObj.name;
+            }
+            return template.ToString();
+        }
+        catch
+        {
+            return "(unknown)";
+        }
+    }
+
     private void ApplyGameplayTweaks()
     {
         if (_gameAssembly == null) return;
@@ -124,7 +334,6 @@ public class DevModePlugin : IModpackPlugin
 
         _log.Msg($"Applying gameplay tweaks: damage={damageMult}x, accuracy+={accuracyBonus}, health={healthMult}x");
 
-        // Apply weapon damage multiplier
         var weapons = Templates.FindAll("WeaponTemplate");
         if (weapons.Length > 0)
         {
@@ -134,7 +343,6 @@ public class DevModePlugin : IModpackPlugin
                 string name = weapon.GetName();
                 if (string.IsNullOrEmpty(name)) continue;
 
-                // Store original value on first run
                 if (!_baseValuesStored && !_originalWeaponDamage.ContainsKey(name))
                 {
                     var baseDamage = Templates.ReadField(weapon, "Damage");
@@ -142,7 +350,6 @@ public class DevModePlugin : IModpackPlugin
                         _originalWeaponDamage[name] = Convert.ToSingle(baseDamage);
                 }
 
-                // Apply multiplier from stored original
                 if (_originalWeaponDamage.TryGetValue(name, out float origDamage))
                 {
                     float newDamage = origDamage * damageMult;
@@ -154,20 +361,17 @@ public class DevModePlugin : IModpackPlugin
                 _log.Msg($"  Modified {modified} weapons (damage x{damageMult})");
         }
 
-        // Apply accuracy bonus to player weapons (those without "enemy" or "pirate" in name)
         if (Math.Abs(accuracyBonus) > 0.1f)
         {
             int modified = 0;
             foreach (var weapon in weapons)
             {
                 string name = weapon.GetName()?.ToLowerInvariant() ?? "";
-                // Skip enemy weapons
                 if (name.Contains("enemy") || name.Contains("pirate")) continue;
 
                 var currentAcc = Templates.ReadField(weapon, "AccuracyBonus");
                 if (currentAcc != null)
                 {
-                    // Add bonus on top of existing
                     float newAcc = Convert.ToSingle(currentAcc) + accuracyBonus;
                     if (Templates.WriteField(weapon, "AccuracyBonus", newAcc))
                         modified++;
@@ -177,7 +381,6 @@ public class DevModePlugin : IModpackPlugin
                 _log.Msg($"  Modified {modified} player weapons (accuracy +{accuracyBonus})");
         }
 
-        // Apply enemy health multiplier
         var entities = Templates.FindAll("EntityTemplate");
         if (entities.Length > 0)
         {
@@ -185,10 +388,8 @@ public class DevModePlugin : IModpackPlugin
             foreach (var entity in entities)
             {
                 string name = entity.GetName()?.ToLowerInvariant() ?? "";
-                // Only modify enemy entities
                 if (!name.Contains("enemy") && !name.Contains("pirate")) continue;
 
-                // Store original
                 if (!_baseValuesStored && !_originalEntityHealth.ContainsKey(name))
                 {
                     var stats = Templates.ReadField(entity, "Stats");
@@ -200,7 +401,6 @@ public class DevModePlugin : IModpackPlugin
                     }
                 }
 
-                // Apply multiplier
                 if (_originalEntityHealth.TryGetValue(name, out float origHp))
                 {
                     var stats = Templates.ReadField(entity, "Stats");
@@ -231,10 +431,6 @@ public class DevModePlugin : IModpackPlugin
         }
     }
 
-    /// <summary>
-    /// Phase 1: Enable cheats and cache action types. No FindObjectsOfTypeAll needed.
-    /// This works even on Unity versions where FindObjectsOfTypeAll crashes.
-    /// </summary>
     private System.Collections.IEnumerator WaitAndSetupCore()
     {
         for (int attempt = 0; attempt < 30; attempt++)
@@ -254,10 +450,6 @@ public class DevModePlugin : IModpackPlugin
         _devModeReady = true;
     }
 
-    /// <summary>
-    /// Core setup: resolve types, enable cheats, cache action constructors.
-    /// Does NOT call FindObjectsOfTypeAll — pure reflection against Assembly-CSharp.
-    /// </summary>
     private bool TrySetupCore()
     {
         _gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
@@ -277,7 +469,6 @@ public class DevModePlugin : IModpackPlugin
 
         if (_entityTemplateType == null)
         {
-            // Dump type names that look relevant to help diagnose renamed types
             var candidates = gameAssembly.GetTypes()
                 .Where(t => t.Name.Contains("Entity") || t.Name.Contains("Template"))
                 .Select(t => t.Name)
@@ -286,11 +477,9 @@ public class DevModePlugin : IModpackPlugin
             return false;
         }
 
-        // Resolve all enums and properties by name before using them
         if (!ResolveReflectionCache(gameAssembly))
             return false;
 
-        // Only enable cheats if the setting is on
         if (ModSettings.Get<bool>("Dev Mode", "AutoEnableCheats"))
         {
             _log.Msg("AutoEnableCheats is ON, enabling cheats...");
@@ -304,7 +493,6 @@ public class DevModePlugin : IModpackPlugin
         CacheActions(gameAssembly);
         TryLoadEntityTemplates(gameAssembly);
 
-        // Apply default faction from settings
         var defaultFaction = ModSettings.Get<string>("Dev Mode", "DefaultFaction") ?? "Enemy";
         for (int i = 0; i < _factions.Count; i++)
         {
@@ -317,16 +505,18 @@ public class DevModePlugin : IModpackPlugin
 
         _devModeReady = true;
 
-        // Apply gameplay tweaks now that templates are loaded
         GameState.RunDelayed(30, () => ApplyGameplayTweaks());
+
+        GameState.RunDelayed(60, () => {
+            if (ModSettings.Get<bool>("Dev Mode", "RecruitAllLeaders"))
+            {
+                ApplyRecruitAllLeaders();
+            }
+        });
 
         return true;
     }
 
-    /// <summary>
-    /// Loads entity templates via DataTemplateLoader.GetAll&lt;EntityTemplate&gt;().
-    /// Uses the game's own data pipeline — no FindObjectsOfTypeAll needed.
-    /// </summary>
     private void TryLoadEntityTemplates(Assembly gameAssembly)
     {
         try
@@ -338,7 +528,6 @@ public class DevModePlugin : IModpackPlugin
 
             if (loaderType == null)
             {
-                // Dump loader-like types to see what the EA build calls it
                 var loaderCandidates = gameAssembly.GetTypes()
                     .Where(t => t.Name.Contains("Loader") || t.Name.Contains("Template") || t.Name.Contains("Data"))
                     .Where(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name.Contains("Get")))
@@ -348,13 +537,11 @@ public class DevModePlugin : IModpackPlugin
                 return;
             }
 
-            // Log all public static methods on the loader
             var loaderMethods = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Select(m => $"{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))}){(m.IsGenericMethodDefinition ? "<T>" : "")}")
                 .ToList();
             _log.Msg($"DataTemplateLoader methods: {string.Join(", ", loaderMethods)}");
 
-            // DataTemplateLoader.GetAll<EntityTemplate>()
             var getAllMethod = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .FirstOrDefault(m => m.Name == "GetAll" && m.IsGenericMethodDefinition);
 
@@ -379,7 +566,6 @@ public class DevModePlugin : IModpackPlugin
 
             if (entityObjects.Count > 0)
             {
-                // Cache raw list for reloading with different filters
                 _allEntityObjects = entityObjects;
                 LoadEntityTemplates(entityObjects.ToArray());
             }
@@ -394,10 +580,6 @@ public class DevModePlugin : IModpackPlugin
         }
     }
 
-    /// <summary>
-    /// Reloads entity templates with current filter settings.
-    /// Called when ShowAllEntityTypes setting changes.
-    /// </summary>
     private void ReloadEntityTemplates()
     {
         if (_allEntityObjects.Count == 0)
@@ -406,28 +588,20 @@ public class DevModePlugin : IModpackPlugin
             return;
         }
 
-        // Clear current lists
         _entityTemplates.Clear();
         _entityNames.Clear();
         _entityActorTypes.Clear();
         _selectedEntityIndex = 0;
 
-        // Reload with current filter settings
         LoadEntityTemplates(_allEntityObjects.ToArray());
 
         _log.Msg($"Reloaded {_entityTemplates.Count} entities with current filter");
     }
 
-    /// <summary>
-    /// Enumerates an IL2CPP collection object using multiple strategies.
-    /// IL2CPP collections don't implement managed System.Collections.IEnumerable,
-    /// so we need to go through Il2CppInterop's type system.
-    /// </summary>
     private List<UnityEngine.Object> EnumerateIl2CppCollection(object collection)
     {
         var results = new List<UnityEngine.Object>();
 
-        // Strategy 1: TryCast to Il2CppSystem.Collections.IEnumerable (IL2CPP-level cast)
         if (collection is Il2CppObjectBase il2cppObj)
         {
             try
@@ -459,7 +633,6 @@ public class DevModePlugin : IModpackPlugin
             }
         }
 
-        // Strategy 2: Reflection-based GetEnumerator on the IL2CPP proxy type
         try
         {
             var collType = collection.GetType();
@@ -499,7 +672,6 @@ public class DevModePlugin : IModpackPlugin
             _log.Msg($"Reflection GetEnumerator strategy failed: {ex.Message}");
         }
 
-        // Strategy 3: Count property + indexer
         try
         {
             var collType = collection.GetType();
@@ -535,7 +707,6 @@ public class DevModePlugin : IModpackPlugin
             _log.Msg($"Count+indexer strategy failed: {ex.Message}");
         }
 
-        // Strategy 4: managed IEnumerable (last resort, works for Il2CppArrayBase etc.)
         if (collection is System.Collections.IEnumerable managedEnumerable)
         {
             foreach (var item in managedEnumerable)
@@ -566,21 +737,15 @@ public class DevModePlugin : IModpackPlugin
         }
     }
 
-    /// <summary>
-    /// Resolves all enum values, properties, and types by NAME.
-    /// No hardcoded offsets — Il2CppInterop proxy types handle offset mapping.
-    /// </summary>
     private bool ResolveReflectionCache(Assembly gameAssembly)
     {
         try
         {
-            // Log all EntityTemplate properties so we can see what the EA build has
             var etProps = _entityTemplateType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Select(p => $"{p.Name}:{p.PropertyType.Name}")
                 .ToList();
             _log.Msg($"EntityTemplate properties ({etProps.Count}): {string.Join(", ", etProps)}");
 
-            // EntityType enum — find the "Actor" value
             var entityTypeEnum = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "EntityType" && t.IsEnum);
             if (entityTypeEnum != null)
@@ -607,7 +772,6 @@ public class DevModePlugin : IModpackPlugin
                 return false;
             }
 
-            // EntityTemplate properties (Il2CppInterop exposes IL2CPP fields as properties)
             _entityTypeProperty = _entityTemplateType.GetProperty("Type",
                 BindingFlags.Public | BindingFlags.Instance);
             _actorTypeProperty = _entityTemplateType.GetProperty("ActorType",
@@ -623,14 +787,12 @@ public class DevModePlugin : IModpackPlugin
             if (_actorTypeProperty != null)
                 _log.Msg($"Resolved EntityTemplate.ActorType -> {_actorTypeProperty.PropertyType.Name}");
 
-            // DeveloperSettingType enum — look up CheatsEnabled and ShowDeveloperSettings by name
             var devSettingEnum = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "DeveloperSettingType" && t.IsEnum);
             if (devSettingEnum != null)
             {
                 var names = Enum.GetNames(devSettingEnum);
                 var values = Enum.GetValues(devSettingEnum);
-                // Log all enum values so we can see what the EA build has
                 var enumEntries = new List<string>();
                 for (int i = 0; i < names.Length; i++)
                 {
@@ -659,7 +821,6 @@ public class DevModePlugin : IModpackPlugin
             else
                 _log.Warning("ShowDeveloperSettings not found in DeveloperSettingType");
 
-            // FactionType enum — build the full list dynamically
             _factionEnumType = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "FactionType" && t.IsEnum);
             if (_factionEnumType != null)
@@ -667,7 +828,6 @@ public class DevModePlugin : IModpackPlugin
                 var names = Enum.GetNames(_factionEnumType);
                 var values = Enum.GetValues(_factionEnumType);
 
-                // Collect all, then sort: enemy-looking factions first, Player/Neutral last
                 var enemies = new List<(string Name, object Value)>();
                 var others = new List<(string Name, object Value)>();
 
@@ -688,7 +848,6 @@ public class DevModePlugin : IModpackPlugin
                 _log.Msg($"FactionType: {_factions.Count} factions ({string.Join(", ", _factions.Select(f => f.Name))})");
             }
 
-            // ActorType enum names (for display)
             var actorTypeEnum = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == "ActorType" && t.IsEnum);
             if (actorTypeEnum != null)
@@ -717,7 +876,6 @@ public class DevModePlugin : IModpackPlugin
                 .FirstOrDefault(t => t.Name == "DevSettings");
             if (devSettingsType == null)
             {
-                // Look for renamed settings types
                 var settingsCandidates = gameAssembly.GetTypes()
                     .Where(t => t.Name.Contains("Setting") || t.Name.Contains("Dev") || t.Name.Contains("Cheat"))
                     .Select(t => t.Name)
@@ -726,7 +884,6 @@ public class DevModePlugin : IModpackPlugin
                 return;
             }
 
-            // Log all fields on DevSettings so we can see what the EA build has
             var allFields = devSettingsType.GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
                 .Select(f => f.Name)
                 .ToList();
@@ -755,11 +912,9 @@ public class DevModePlugin : IModpackPlugin
             _log.Msg($"DevSettings arrayPtr = 0x{arrayPtr.ToInt64():X}");
             if (arrayPtr == IntPtr.Zero) return;
 
-            // IL2CPP array header is 0x20 bytes — this is an IL2CPP runtime constant, not game-specific
             const int headerSize = 0x20;
             const int elemSize = 4;
 
-            // Read array length from IL2CPP array header (length is at offset 0x18)
             int arrayLength = Marshal.ReadInt32(arrayPtr + 0x18);
             _log.Msg($"DevSettings VALUES array length = {arrayLength}, CheatsEnabled index = {_cheatsEnabledIndex}, ShowDevSettings index = {_showDevSettingsIndex}");
 
@@ -791,7 +946,6 @@ public class DevModePlugin : IModpackPlugin
                 .FirstOrDefault(t => t.Name == "TacticalState");
             if (tacticalStateType != null)
             {
-                // Log all public methods so we can see what's available
                 var methods = tacticalStateType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
                     .Where(m => !m.IsSpecialName)
                     .Select(m => $"{(m.IsStatic ? "static " : "")}{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})")
@@ -814,11 +968,9 @@ public class DevModePlugin : IModpackPlugin
                 _log.Warning($"TacticalState not found. Candidates: {string.Join(", ", stateCandidates)}");
             }
 
-            // GodModeAction — EA build takes GodModeTarget enum, demo was parameterless
             var godModeType = gameAssembly.GetTypes().FirstOrDefault(t => t.Name == "GodModeAction");
             if (godModeType != null)
             {
-                // Try parameterless first (demo), then 1-param (EA)
                 _godModeActionCtor = godModeType.GetConstructor(Type.EmptyTypes);
                 if (_godModeActionCtor == null)
                 {
@@ -827,7 +979,6 @@ public class DevModePlugin : IModpackPlugin
 
                     if (_godModeActionCtor != null)
                     {
-                        // Resolve GodModeTarget.Target (the "click on a unit" mode)
                         var targetEnum = godModeType.GetNestedTypes()
                             .FirstOrDefault(t => t.IsEnum && t.Name == "GodModeTarget");
                         if (targetEnum != null)
@@ -855,7 +1006,6 @@ public class DevModePlugin : IModpackPlugin
                 .FirstOrDefault(t => t.Name == "SpawnEntityAction");
             if (spawnType != null)
             {
-                // Log all constructors so we can see what signatures are available
                 var ctors = spawnType.GetConstructors()
                     .Select(c => $"({string.Join(", ", c.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"))})")
                     .ToList();
@@ -893,7 +1043,6 @@ public class DevModePlugin : IModpackPlugin
         var seenEntityTypes = new HashSet<string>();
         var entries = new List<(string name, string actorType, UnityEngine.Object obj)>();
 
-        // Check setting: show all entity types or just actors?
         bool showAllTypes = ModSettings.Get<bool>("Dev Mode", "ShowAllEntityTypes");
 
         foreach (var obj in allObjects)
@@ -908,17 +1057,14 @@ public class DevModePlugin : IModpackPlugin
                     ptr = il2cppObj.Pointer;
                 if (ptr == IntPtr.Zero) { nullPtrCount++; continue; }
 
-                // Create typed proxy for property access (no hardcoded offsets)
                 var typed = Activator.CreateInstance(_entityTemplateType, new object[] { ptr });
 
-                // Filter: only EntityType.Actor (unless ShowAllEntityTypes is on)
                 var entityTypeVal = _entityTypeProperty.GetValue(typed);
                 var entityTypeName = entityTypeVal?.ToString() ?? "null";
                 seenEntityTypes.Add(entityTypeName);
 
                 if (!showAllTypes && !Equals(entityTypeVal, _entityTypeActorValue)) { nonActorCount++; continue; }
 
-                // Read ActorType for display
                 string actorTypeName = "Unit";
                 if (_actorTypeProperty != null)
                 {
@@ -955,7 +1101,6 @@ public class DevModePlugin : IModpackPlugin
 
         _log.Msg($"Entity templates: {_entityTemplates.Count} actors (filtered from {totalCount} total)");
 
-        // Log first 20 entity names for diagnostics
         var sample = entries.Take(20).Select(e => $"{e.name} ({e.actorType})");
         _log.Msg($"First entities: {string.Join(", ", sample)}");
     }
@@ -978,7 +1123,6 @@ public class DevModePlugin : IModpackPlugin
     {
         _updateCount++;
 
-        // Early diagnostics — runs once after a few frames, regardless of scene callbacks
         if (!_earlyDiagDone && _updateCount == 60)
         {
             _earlyDiagDone = true;
@@ -1116,8 +1260,6 @@ public class DevModePlugin : IModpackPlugin
                 return;
             }
 
-            // Create action instance on demand (not ahead of time) to avoid
-            // stale IL2CPP objects persisting across scene transitions
             var action = ctorArg != null
                 ? actionCtor.Invoke(new[] { ctorArg })
                 : actionCtor.Invoke(null);
@@ -1132,11 +1274,9 @@ public class DevModePlugin : IModpackPlugin
         }
     }
 
-    // ==================== DevConsole Panel ====================
-
-    private const float LH = 22f;   // line height — enough for font size 13 + padding
-    private const float BH = 24f;   // button height
-    private const float BW = 32f;   // small nav button width
+    private const float LH = 22f;
+    private const float BH = 24f;
+    private const float BW = 32f;
 
     private void DrawDevModePanel(Rect area)
     {
@@ -1155,7 +1295,6 @@ public class DevModePlugin : IModpackPlugin
 
         if (_entityTemplates.Count > 0 && _factions.Count > 0)
         {
-            // --- Faction row: [<] FactionName [>] ---
             float btnX = cx;
             if (GUI.Button(new Rect(btnX, cy, BW, BH), "<"))
             {
@@ -1174,7 +1313,6 @@ public class DevModePlugin : IModpackPlugin
             }
             cy += BH + 4;
 
-            // --- Unit row: [<] UnitName [>] ---
             btnX = cx;
             if (GUI.Button(new Rect(btnX, cy, BW, BH), "<"))
             {
@@ -1195,7 +1333,6 @@ public class DevModePlugin : IModpackPlugin
             }
             cy += BH + 6;
 
-            // --- Action buttons ---
             float abw = 80f;
             float gap = 6f;
             float abx = cx;
@@ -1218,7 +1355,6 @@ public class DevModePlugin : IModpackPlugin
             cy += LH + 4;
         }
 
-        // --- Status message ---
         if (!string.IsNullOrEmpty(_statusMessage))
         {
             float elapsed = 0f;
@@ -1230,6 +1366,5 @@ public class DevModePlugin : IModpackPlugin
 
     public void OnGUI()
     {
-        // Drawing is handled by the DevConsole panel system
     }
 }

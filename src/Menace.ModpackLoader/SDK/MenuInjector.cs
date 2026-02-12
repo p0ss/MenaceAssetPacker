@@ -644,14 +644,37 @@ public static class MenuInjector
             case SettingType.Slider:
                 GUI.Label(new Rect(rect.x, rect.y, labelWidth, rect.height), setting.Label, _labelStyle);
                 float floatVal = setting.Value is float f ? f : Convert.ToSingle(setting.DefaultValue ?? 0f);
-                float newFloatVal = GUI.HorizontalSlider(
-                    new Rect(rect.x + labelWidth, rect.y + 8, controlWidth - 60, 12),
-                    floatVal, setting.Min, setting.Max);
-                GUI.Label(new Rect(rect.x + rect.width - 55, rect.y, 50, rect.height),
-                    newFloatVal.ToString("F2"), _valueStyle);
-                if (Math.Abs(newFloatVal - floatVal) > 0.001f)
+
+                // Use button-based slider to avoid GUI.HorizontalSlider unstripping issues
+                float sliderX = rect.x + labelWidth;
+                float step = (setting.Max - setting.Min) / 20f; // 20 steps
+
+                // << button (large decrement)
+                if (GUI.Button(new Rect(sliderX, rect.y + 2, 28, 24), "<<", _smallButtonStyle))
                 {
-                    ModSettings.Set(modName, setting.Key, newFloatVal);
+                    ModSettings.Set(modName, setting.Key, Math.Max(setting.Min, floatVal - step * 5));
+                }
+
+                // < button (small decrement)
+                if (GUI.Button(new Rect(sliderX + 30, rect.y + 2, 28, 24), "<", _smallButtonStyle))
+                {
+                    ModSettings.Set(modName, setting.Key, Math.Max(setting.Min, floatVal - step));
+                }
+
+                // Value display
+                GUI.Label(new Rect(sliderX + 62, rect.y, 55, rect.height),
+                    floatVal.ToString("F2"), _valueStyle);
+
+                // > button (small increment)
+                if (GUI.Button(new Rect(sliderX + 120, rect.y + 2, 28, 24), ">", _smallButtonStyle))
+                {
+                    ModSettings.Set(modName, setting.Key, Math.Min(setting.Max, floatVal + step));
+                }
+
+                // >> button (large increment)
+                if (GUI.Button(new Rect(sliderX + 150, rect.y + 2, 28, 24), ">>", _smallButtonStyle))
+                {
+                    ModSettings.Set(modName, setting.Key, Math.Min(setting.Max, floatVal + step * 5));
                 }
                 break;
 

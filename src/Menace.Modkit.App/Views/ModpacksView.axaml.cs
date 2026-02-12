@@ -730,6 +730,63 @@ public class ModpacksView : UserControl
     });
     editableSection.Children.Add(statsItemsControl);
 
+    // Asset Changes section
+    var assetsLabel = CreateLabel("Asset Changes");
+    assetsLabel.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasAssetPatches"));
+    editableSection.Children.Add(assetsLabel);
+
+    var assetItemsControl = new ItemsControl
+    {
+      Margin = new Thickness(0, 0, 0, 16)
+    };
+    assetItemsControl.Bind(ItemsControl.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasAssetPatches"));
+    assetItemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.AssetPatches"));
+    assetItemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<AssetPatchEntry>((entry, _) =>
+    {
+      var btn = new Button
+      {
+        Margin = new Thickness(0, 1),
+        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+      };
+      btn.Classes.Add("listItem");
+
+      var stack = new StackPanel();
+      var nameText = new TextBlock
+      {
+        FontSize = 12,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = new SolidColorBrush(Color.Parse("#81C784"))
+      };
+      nameText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("DisplayName"));
+      stack.Children.Add(nameText);
+
+      var pathText = new TextBlock
+      {
+        FontSize = 10,
+        Opacity = 0.7,
+        Foreground = Brushes.White,
+        TextWrapping = TextWrapping.Wrap
+      };
+      pathText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("PathSummary"));
+      stack.Children.Add(pathText);
+
+      btn.Content = stack;
+      btn.Click += (s, e) =>
+      {
+        if (btn.DataContext is AssetPatchEntry patch && DataContext is ModpacksViewModel vm)
+        {
+          var modpackName = vm.SelectedModpack?.Name;
+          if (modpackName != null)
+            vm.NavigateToAssetEntry?.Invoke(modpackName, patch.RelativePath);
+        }
+      };
+
+      return btn;
+    });
+    editableSection.Children.Add(assetItemsControl);
+
     // Files list
     editableSection.Children.Add(CreateLabel("Files"));
     var filesListBox = new ListBox

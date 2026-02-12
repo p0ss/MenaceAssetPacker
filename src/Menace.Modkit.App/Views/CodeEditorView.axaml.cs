@@ -565,6 +565,34 @@ public class CodeEditorView : UserControl
         modpackCombo.Classes.Add("input");
         modpackCombo.Bind(ComboBox.ItemsSourceProperty, new Avalonia.Data.Binding("AvailableModpacks"));
         modpackCombo.Bind(ComboBox.SelectedItemProperty, new Avalonia.Data.Binding("SelectedModpack") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        var isHandlingCreateNew = false;
+        modpackCombo.SelectionChanged += async (sender, e) =>
+        {
+            if (isHandlingCreateNew) return;
+            if (sender is ComboBox combo &&
+                combo.SelectedItem is string selected &&
+                selected == CodeEditorViewModel.CreateNewModOption)
+            {
+                isHandlingCreateNew = true;
+                try
+                {
+                    // Clear selection immediately to prevent re-triggering
+                    var vm = DataContext as CodeEditorViewModel;
+
+                    // Set to first real modpack or null
+                    if (vm != null && vm.AvailableModpacks.Count > 1)
+                        vm.SelectedModpack = vm.AvailableModpacks[1];
+                    else if (vm != null)
+                        vm.SelectedModpack = null;
+
+                    await ShowCreateModpackDialogAsync();
+                }
+                finally
+                {
+                    isHandlingCreateNew = false;
+                }
+            }
+        };
         headerRow.Children.Add(modpackCombo);
 
         // Separator
@@ -770,6 +798,30 @@ public class CodeEditorView : UserControl
                 {
                     Mode = Avalonia.Data.BindingMode.TwoWay
                 });
+        }
+    }
+
+    private async Task ShowCreateModpackDialogAsync()
+    {
+        try
+        {
+            if (DataContext is CodeEditorViewModel vm)
+            {
+                var dialog = new CreateModpackDialog();
+                var topLevel = TopLevel.GetTopLevel(this);
+                if (topLevel is Window window)
+                {
+                    var result = await dialog.ShowDialog<CreateModpackResult?>(window);
+                    if (result != null)
+                    {
+                        vm.CreateModpack(result.Name, result.Author, result.Description);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Error($"Create modpack dialog failed: {ex.Message}");
         }
     }
 }

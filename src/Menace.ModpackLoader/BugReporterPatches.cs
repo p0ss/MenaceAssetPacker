@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using HarmonyLib;
@@ -22,12 +23,33 @@ public static class BugReporterPatches
 
         try
         {
-            var targetType = AccessTools.TypeByName("Menace.UI.BugReporterRequest");
+            // Find Assembly-CSharp to search for the type
+            var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+
+            if (gameAssembly == null)
+            {
+                _logger.Warning("Assembly-CSharp not loaded - bug reporter patch skipped");
+                return;
+            }
+
+            // Try to find BugReporterRequest type
+            var targetType = gameAssembly.GetType("Menace.UI.BugReporterRequest");
+
+            // If not found, try searching all types (IL2CPP sometimes uses different naming)
+            if (targetType == null)
+            {
+                targetType = gameAssembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == "BugReporterRequest");
+            }
+
             if (targetType == null)
             {
                 _logger.Warning("BugReporterRequest not found - bug reporter patch skipped");
                 return;
             }
+
+            _logger.Msg($"Found BugReporterRequest: {targetType.FullName}");
 
             var targetMethod = AccessTools.Method(targetType, "Submit");
             if (targetMethod == null)

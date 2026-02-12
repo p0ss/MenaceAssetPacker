@@ -41,6 +41,14 @@ public sealed class MainViewModel : ViewModelBase
             StatsEditor.NavigateToEntry(modpackName, templateType, instanceName);
         };
 
+        // Wire up cross-tab navigation: modpacks → asset browser
+        Modpacks.NavigateToAssetEntry = (modpackName, assetRelativePath) =>
+        {
+            NavigateToModdingTools();
+            NavigateTo(AssetBrowser, "Assets");
+            AssetBrowser.NavigateToAssetEntry(modpackName, assetRelativePath);
+        };
+
         // Wire up cross-tab navigation: asset browser → stats editor
         AssetBrowser.NavigateToTemplate += (modpackName, templateType, instanceName) =>
         {

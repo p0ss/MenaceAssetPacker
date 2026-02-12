@@ -361,16 +361,49 @@ public static class ModSettings
             case SettingType.Slider:
                 GUI.Label(new Rect(rect.x, rect.y, labelWidth, rect.height), setting.Label, GetLabelStyle());
                 float floatVal = setting.Value is float f ? f : (float)(setting.DefaultValue ?? 0f);
-                float newFloatVal = GUI.HorizontalSlider(
-                    new Rect(rect.x + labelWidth, rect.y + 4, rect.width - labelWidth - 60, rect.height - 8),
-                    floatVal, setting.Min, setting.Max);
-                GUI.Label(new Rect(rect.x + rect.width - 55, rect.y, 55, rect.height),
-                    newFloatVal.ToString("F2"), GetLabelStyle());
-                if (Math.Abs(newFloatVal - floatVal) > 0.001f)
+
+                // Use button-based slider to avoid GUI.HorizontalSlider unstripping issues
+                float sliderX = rect.x + labelWidth;
+                float step = (setting.Max - setting.Min) / 20f; // 20 steps
+
+                // << button (large decrement)
+                if (GUI.Button(new Rect(sliderX, rect.y, 24, rect.height), "<<"))
                 {
-                    setting.Value = newFloatVal;
+                    float newVal = Math.Max(setting.Min, floatVal - step * 5);
+                    setting.Value = newVal;
                     _dirty = true;
-                    OnSettingChanged?.Invoke(modName, setting.Key, newFloatVal);
+                    OnSettingChanged?.Invoke(modName, setting.Key, newVal);
+                }
+
+                // < button (small decrement)
+                if (GUI.Button(new Rect(sliderX + 26, rect.y, 24, rect.height), "<"))
+                {
+                    float newVal = Math.Max(setting.Min, floatVal - step);
+                    setting.Value = newVal;
+                    _dirty = true;
+                    OnSettingChanged?.Invoke(modName, setting.Key, newVal);
+                }
+
+                // Value display
+                GUI.Label(new Rect(sliderX + 54, rect.y, 55, rect.height),
+                    floatVal.ToString("F2"), GetLabelStyle());
+
+                // > button (small increment)
+                if (GUI.Button(new Rect(sliderX + 112, rect.y, 24, rect.height), ">"))
+                {
+                    float newVal = Math.Min(setting.Max, floatVal + step);
+                    setting.Value = newVal;
+                    _dirty = true;
+                    OnSettingChanged?.Invoke(modName, setting.Key, newVal);
+                }
+
+                // >> button (large increment)
+                if (GUI.Button(new Rect(sliderX + 138, rect.y, 24, rect.height), ">>"))
+                {
+                    float newVal = Math.Min(setting.Max, floatVal + step * 5);
+                    setting.Value = newVal;
+                    _dirty = true;
+                    OnSettingChanged?.Invoke(modName, setting.Key, newVal);
                 }
                 break;
 

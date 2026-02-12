@@ -19,6 +19,11 @@ namespace Menace.Modkit.App.ViewModels;
 /// </summary>
 public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
 {
+    /// <summary>
+    /// Special value in the modpack dropdown that triggers the create mod dialog.
+    /// </summary>
+    public const string CreateNewModOption = "+ Create New Mod...";
+
     private readonly ModpackManager _modpackManager;
     private readonly VanillaCodeService _vanillaCodeService;
     private readonly CompilationService _compilationService;
@@ -527,13 +532,15 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
     private void LoadModpacks()
     {
         AvailableModpacks.Clear();
+        AvailableModpacks.Add(CreateNewModOption);
         var modpacks = _modpackManager.GetStagingModpacks();
         Services.ModkitLog.Info($"[CodeEditorViewModel] Found {modpacks.Count} modpacks");
         foreach (var mp in modpacks)
             AvailableModpacks.Add(mp.Name);
 
-        if (AvailableModpacks.Count > 0 && _selectedModpack == null)
-            SelectedModpack = AvailableModpacks[0];
+        // Select first actual modpack (skip the Create option)
+        if (AvailableModpacks.Count > 1 && _selectedModpack == null)
+            SelectedModpack = AvailableModpacks[1];
     }
 
     private void LoadVanillaTree()
@@ -780,6 +787,17 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         LoadModpacks();
         LoadVanillaTree();
         LoadModSourceTree();
+    }
+
+    /// <summary>
+    /// Create a new modpack and select it.
+    /// </summary>
+    public void CreateModpack(string name, string? author, string? description)
+    {
+        var manifest = _modpackManager.CreateModpack(name, author ?? "", description ?? "");
+        // Refresh the list and select the new modpack
+        LoadModpacks();
+        SelectedModpack = manifest.Name;
     }
 
     private string? GetModRelativePath(string fullPath)

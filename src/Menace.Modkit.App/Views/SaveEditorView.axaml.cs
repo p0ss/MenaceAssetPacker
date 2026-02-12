@@ -1120,11 +1120,11 @@ public class SaveEditorView : UserControl
         Grid.SetColumn(numericBox, col + 1);
     }
 
-    private static void AddIronmanToggle(Grid grid, int row, int col)
+    private static void AddIronmanDisplay(Grid grid, int row, int col)
     {
         AddLabel(grid, row, col, "Ironman");
 
-        var togglePanel = new StackPanel
+        var displayPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
@@ -1132,19 +1132,24 @@ public class SaveEditorView : UserControl
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var toggleSwitch = new ToggleSwitch
+        // Read-only status display
+        var statusText = new TextBlock
         {
-            OnContent = "Yes",
-            OffContent = "No"
+            Foreground = Brushes.White,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        toggleSwitch.Bind(ToggleSwitch.IsCheckedProperty,
-            new Avalonia.Data.Binding("EditableIronman") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        togglePanel.Children.Add(toggleSwitch);
+        statusText.Bind(TextBlock.TextProperty,
+            new Avalonia.Data.Binding("EditableIronman")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<bool, string>(v => v ? "Yes" : "No")
+            });
+        displayPanel.Children.Add(statusText);
 
-        // Warning text when ironman is on
+        // Warning text when ironman is on - saving will disable it
         var warningText = new TextBlock
         {
-            Text = "⚠ Editing will disable ironman",
+            Text = "(will be disabled on save)",
             Foreground = new SolidColorBrush(Color.Parse("#CCAA44")),
             FontSize = 10,
             FontStyle = FontStyle.Italic,
@@ -1152,11 +1157,11 @@ public class SaveEditorView : UserControl
         };
         warningText.Bind(TextBlock.IsVisibleProperty,
             new Avalonia.Data.Binding("EditableIronman"));
-        togglePanel.Children.Add(warningText);
+        displayPanel.Children.Add(warningText);
 
-        grid.Children.Add(togglePanel);
-        Grid.SetRow(togglePanel, row);
-        Grid.SetColumn(togglePanel, col + 1);
+        grid.Children.Add(displayPanel);
+        Grid.SetRow(displayPanel, row);
+        Grid.SetColumn(displayPanel, col + 1);
     }
 
     private Control BuildModInfoSection()
@@ -1364,7 +1369,7 @@ public class SaveEditorView : UserControl
         {
             ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,*")
         };
-        AddIronmanToggle(stateGrid, 0, 0);
+        AddIronmanDisplay(stateGrid, 0, 0);
         AddEditableSeedField(stateGrid, 0, 2, "Seed", "EditableSeed");
         resourcesStack.Children.Add(stateGrid);
 
