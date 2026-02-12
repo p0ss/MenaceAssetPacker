@@ -12,7 +12,7 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.3", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.4", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
@@ -21,10 +21,60 @@ namespace Menace.DataExtractor
     {
         private const string ExtractorVersion = "6.0.4"; // GC-skip tracking + fingerprint protection
 
+        // Singleton instance for static method access from DevConsole
+        private static DataExtractorMod _instance;
+
         private string _outputPath = "";
         private string _debugLogPath = "";
         private string _fingerprintPath = "";
         private bool _hasSaved = false;
+
+        /// <summary>
+        /// Static method for DevConsole Settings panel to trigger extraction.
+        /// </summary>
+        public static void TriggerExtraction(bool force)
+        {
+            if (_instance == null)
+            {
+                MelonLoader.MelonLogger.Warning("[DataExtractor] TriggerExtraction called but instance not ready");
+                return;
+            }
+
+            if (_instance._extractionInProgress || _instance._manualExtractionInProgress)
+            {
+                MelonLoader.MelonLogger.Msg("[DataExtractor] Extraction already in progress");
+                return;
+            }
+
+            if (force)
+            {
+                // Delete fingerprint to force re-extraction
+                try { if (File.Exists(_instance._fingerprintPath)) File.Delete(_instance._fingerprintPath); } catch { }
+            }
+
+            _instance._extractionInProgress = true;
+            _instance._isManualExtraction = false;
+            _instance.LoggerInstance.Msg($"=== EXTRACTION TRIGGERED (DevConsole, force={force}) ===");
+            _instance.ShowExtractionProgress($"Extraction started from Settings panel (force={force})...");
+            MelonCoroutines.Start(_instance.RunExtractionCoroutine(_instance._cachedFingerprint));
+        }
+
+        /// <summary>
+        /// Static method for DevConsole Settings panel to get extraction status.
+        /// </summary>
+        public static string GetExtractionStatus()
+        {
+            if (_instance == null)
+                return "DataExtractor not initialized";
+
+            if (_instance._extractionInProgress || _instance._manualExtractionInProgress)
+                return "Extraction in progress...";
+
+            if (_instance._hasSaved && _instance.IsExtractionCurrent(_instance._cachedFingerprint))
+                return "Up to date";
+
+            return "Extraction needed";
+        }
 
         // Tracking for GC-skipped instances during extraction
         // If too many objects are garbage collected between Phase 1 and Phase 2,
@@ -96,6 +146,8 @@ namespace Menace.DataExtractor
 
         public override void OnInitializeMelon()
         {
+            _instance = this;
+
             var modsDir = Path.GetDirectoryName(typeof(DataExtractorMod).Assembly.Location) ?? "";
             var rootDir = Directory.GetParent(modsDir)?.FullName ?? "";
             _outputPath = Path.Combine(rootDir, "UserData", "ExtractedData");
@@ -112,31 +164,148 @@ namespace Menace.DataExtractor
             LoadEmbeddedSchema();
 
             LoggerInstance.Msg("===========================================");
-            LoggerInstance.Msg($"Menace Data Extractor v{ExtractorVersion} (Schema-Driven Extraction)");
+            LoggerInstance.Msg($"Menace Data Extractor v{ExtractorVersion} (Manual Extraction Mode)");
             LoggerInstance.Msg($"Output path: {_outputPath}");
             LoggerInstance.Msg("===========================================");
-            PlayerLog($"Data Extractor v{ExtractorVersion} active");
 
-            // Check if extraction can be skipped (game data unchanged)
+            // Check extraction status and report to user
             var currentFingerprint = ComputeGameFingerprint(rootDir);
-            if (IsExtractionCurrent(currentFingerprint))
+            _cachedFingerprint = currentFingerprint;
+
+            // Check for force extraction flag from modkit
+            var forceExtractionFlagPath = Path.Combine(_outputPath, "_force_extraction.flag");
+            _forceExtractionPending = File.Exists(forceExtractionFlagPath);
+            if (_forceExtractionPending)
             {
-                LoggerInstance.Msg("Extracted data is up to date, skipping extraction");
-                _hasSaved = true;
-                return;
+                LoggerInstance.Msg("Force extraction flag detected from modkit!");
+                // Delete the flag file now that we've seen it
+                try { File.Delete(forceExtractionFlagPath); } catch { }
             }
 
-            LoggerInstance.Msg("Game data changed or no previous extraction, running extraction...");
+            if (IsExtractionCurrent(currentFingerprint) && !_forceExtractionPending)
+            {
+                LoggerInstance.Msg("Extracted data is up to date.");
+                _hasSaved = true;
+                PlayerLog("Data Extractor ready. Extraction up to date.");
+            }
+            else
+            {
+                var reason = _forceExtractionPending ? "force extraction requested" : "game data changed";
+                LoggerInstance.Msg($"Extraction needed ({reason}) - will auto-trigger when game is ready");
+                PlayerLog($"Data Extractor: {reason}. Extraction will start automatically.");
+                // Auto-trigger extraction when force flag is set
+                _autoExtractionPending = true;
+            }
 
-            // Try to find DevConsole via reflection (from ModpackLoader)
-            InitDevConsoleReflection();
-
-            // Open the dev console to show extraction progress to the player
-            ShowExtractionProgress("Data Extractor: Game data changed, re-extracting templates...");
-            ShowExtractionProgress("This may take a moment. The game will resume normally once complete.");
-
-            MelonCoroutines.Start(RunExtractionCoroutine(currentFingerprint));
+            // Register the extract command when DevConsole becomes available
+            // (DevConsole may not be initialized yet, so we'll retry in OnUpdate)
+            _commandRegistrationPending = true;
         }
+
+        private bool _forceExtractionPending = false;
+        private bool _autoExtractionPending = false;
+
+        // Cached fingerprint for manual extraction
+        private string _cachedFingerprint;
+        private bool _commandRegistrationPending = false;
+        private bool _commandRegistered = false;
+
+        /// <summary>
+        /// Try to register the 'extract' command with DevConsole.
+        /// Called from OnUpdate until successful.
+        /// </summary>
+        private void TryRegisterExtractCommand()
+        {
+            if (_commandRegistered) return;
+
+            InitDevConsoleReflection();
+            if (!_devConsoleAvailable) return;
+
+            try
+            {
+                // Find DevConsole.RegisterCommand via reflection
+                var registerMethod = _devConsoleType?.GetMethod("RegisterCommand",
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(string), typeof(string), typeof(string), typeof(Func<string[], string>) },
+                    null);
+
+                if (registerMethod != null)
+                {
+                    Func<string[], string> extractHandler = args =>
+                    {
+                        if (_extractionInProgress)
+                            return "Extraction already in progress.";
+
+                        bool force = args.Length > 0 && args[0].Equals("force", StringComparison.OrdinalIgnoreCase);
+
+                        if (!force && _hasSaved && IsExtractionCurrent(_cachedFingerprint))
+                            return "Extraction is already up to date. Use 'extract force' to re-extract.";
+
+                        _extractionInProgress = true;
+                        _isManualExtraction = false; // Not the F11 additive mode
+                        LoggerInstance.Msg("=== MANUAL EXTRACTION TRIGGERED (extract command) ===");
+                        MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
+                        return "Extraction started. Progress will be shown in the Log panel.";
+                    };
+
+                    registerMethod.Invoke(null, new object[]
+                    {
+                        "extract",
+                        "[force]",
+                        "Extract game templates for modding. Use 'force' to re-extract.",
+                        extractHandler
+                    });
+
+                    LoggerInstance.Msg("[DataExtractor] Registered 'extract' command with DevConsole");
+                    _commandRegistered = true;
+                    _commandRegistrationPending = false;
+
+                    // Also register an 'extractstatus' command to check status
+                    Func<string[], string> statusHandler = args =>
+                    {
+                        var lines = new List<string>();
+                        lines.Add($"=== Data Extractor v{ExtractorVersion} ===");
+
+                        if (_extractionInProgress || _manualExtractionInProgress)
+                            lines.Add("Status: Extraction in progress...");
+                        else if (_hasSaved && IsExtractionCurrent(_cachedFingerprint))
+                            lines.Add("Status: Extraction is up to date");
+                        else
+                            lines.Add("Status: Extraction needed - run 'extract' command");
+
+                        if (_totalInstancesProcessed > 0)
+                        {
+                            float gcPercent = (float)_gcSkippedInstances / _totalInstancesProcessed * 100f;
+                            lines.Add($"Last run: {_gcSkippedInstances}/{_totalInstancesProcessed} objects GC'd ({gcPercent:F1}%)");
+                            if (gcPercent > 1f)
+                                lines.Add("WARNING: High GC rate indicates unstable extraction. Run 'extract force' from stable screen.");
+                        }
+
+                        lines.Add("");
+                        lines.Add("Commands: 'extract' (normal), 'extract force' (re-extract)");
+                        lines.Add("Hotkey: F11 (additive extraction for combat templates)");
+
+                        return string.Join("\n", lines);
+                    };
+
+                    registerMethod.Invoke(null, new object[]
+                    {
+                        "extractstatus",
+                        "",
+                        "Show data extraction status and statistics",
+                        statusHandler
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[DataExtractor] Failed to register command: {ex.Message}");
+                _commandRegistrationPending = false; // Don't keep trying
+            }
+        }
+
+        private bool _extractionInProgress = false;
 
         /// <summary>
         /// Load the embedded schema.json for schema-driven extraction.
@@ -237,26 +406,57 @@ namespace Menace.DataExtractor
         private bool _manualExtractionInProgress = false;
         private bool _isManualExtraction = false; // True when triggered by F11, skips clean and merges results
 
+        // Track frames for auto-extraction delay (wait for game to stabilize)
+        private int _frameCount = 0;
+        private const int AutoExtractionDelayFrames = 300; // ~5 seconds at 60fps
+
         /// <summary>
-        /// Allow manual extraction trigger via F11 key.
-        /// Useful for extracting templates that are only loaded in specific game states (e.g., combat).
-        /// Manual extraction is ADDITIVE - it merges new templates with existing extracted data.
+        /// Allow manual extraction trigger via F11 key (additive mode) and command registration.
+        /// F11 is ADDITIVE - it merges new templates with existing extracted data.
+        /// Use 'extract' command for full extraction.
         /// </summary>
         public override void OnUpdate()
         {
-            // F11 = trigger manual extraction (captures templates currently in memory)
+            _frameCount++;
+
+            // Try to register command if pending
+            if (_commandRegistrationPending && !_commandRegistered)
+            {
+                TryRegisterExtractCommand();
+            }
+
+            // Auto-extraction when force flag was set by modkit
+            // Wait for game to stabilize (a few seconds after loading)
+            if (_autoExtractionPending && !_extractionInProgress && !_manualExtractionInProgress)
+            {
+                if (_frameCount >= AutoExtractionDelayFrames)
+                {
+                    _autoExtractionPending = false;
+                    _extractionInProgress = true;
+                    _isManualExtraction = false;
+
+                    var reason = _forceExtractionPending ? "force extraction from modkit" : "extraction needed";
+                    LoggerInstance.Msg($"=== AUTO-EXTRACTION TRIGGERED ({reason}) ===");
+
+                    // Try to find and open DevConsole to show progress
+                    InitDevConsoleReflection();
+                    ShowExtractionProgress($"Auto-extraction starting ({reason})...");
+
+                    MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
+                }
+            }
+
+            // F11 = trigger ADDITIVE manual extraction (captures templates currently in memory)
             // Can be used to extract combat templates while in battle
-            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11) && !_manualExtractionInProgress)
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11) && !_manualExtractionInProgress && !_extractionInProgress)
             {
                 _manualExtractionInProgress = true;
                 _isManualExtraction = true;
-                LoggerInstance.Msg("=== MANUAL EXTRACTION TRIGGERED (F11) ===");
+                LoggerInstance.Msg("=== ADDITIVE EXTRACTION TRIGGERED (F11) ===");
                 LoggerInstance.Msg("Additive mode: will merge with existing extracted data");
-                ShowExtractionProgress("Manual extraction triggered - merging with existing data...");
+                ShowExtractionProgress("Additive extraction triggered - merging with existing data...");
 
-                var fingerprint = ComputeGameFingerprint(
-                    Directory.GetParent(Path.GetDirectoryName(typeof(DataExtractorMod).Assembly.Location) ?? "")?.FullName ?? "");
-                MelonCoroutines.Start(RunExtractionCoroutine(fingerprint));
+                MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
             }
         }
 
@@ -862,12 +1062,12 @@ namespace Menace.DataExtractor
                         LoggerInstance.Warning($"=== EXTRACTION QUALITY WARNING ===");
                         LoggerInstance.Warning($"  {_gcSkippedInstances} instances ({gcSkipPercentage:P1}) were garbage collected during extraction.");
                         LoggerInstance.Warning($"  This indicates the game was in an unstable state (scene transition, loading, etc.).");
-                        LoggerInstance.Warning($"  Extracted data may be incomplete. Fingerprint NOT saved - extraction will retry on next launch.");
-                        LoggerInstance.Warning($"  To fix: Wait for the game to fully load to a stable screen (OCI, Barracks, etc.) before extraction.");
+                        LoggerInstance.Warning($"  Extracted data may be incomplete. Run 'extract force' from a stable screen.");
+                        LoggerInstance.Warning($"  TIP: Wait for the game to fully load (OCI, Barracks, StrategicMap) before extraction.");
                         ShowExtractionProgress("WARNING: Extraction incomplete due to game instability!");
                         ShowExtractionProgress($"{_gcSkippedInstances} objects were unloaded during extraction.");
-                        ShowExtractionProgress("Fingerprint NOT saved - will re-extract on next launch.");
-                        ShowExtractionProgress("TIP: Wait for game to reach a stable screen before extraction.");
+                        ShowExtractionProgress("Run 'extract force' from a stable screen to re-extract.");
+                        ShowExtractionProgress("TIP: OCI, Barracks, or StrategicMap are stable screens.");
                     }
 
                     ShowExtractionProgress($"Extraction complete: {successCount} template types saved");
@@ -881,13 +1081,14 @@ namespace Menace.DataExtractor
 
                     LoggerInstance.Msg($"Extraction completed on attempt {attempt}");
                     if (_isManualExtraction)
-                        ShowExtractionProgress($"Manual extraction complete! {successCount} types processed (merged with existing).");
+                        ShowExtractionProgress($"Additive extraction complete! {successCount} types processed (merged with existing).");
                     else if (!extractionUnstable)
                         ShowExtractionProgress($"Extraction complete! {successCount} template types extracted.");
                     if (!extractionUnstable)
                         ShowExtractionProgress("Game data is now ready for modding.");
                     _isManualExtraction = false;
                     _manualExtractionInProgress = false;
+                    _extractionInProgress = false;
                     yield break;
                 }
 
@@ -901,6 +1102,9 @@ namespace Menace.DataExtractor
             }
 
             LoggerInstance.Warning("Could not extract templates after 60 attempts");
+            _extractionInProgress = false;
+            _manualExtractionInProgress = false;
+            ShowExtractionProgress("Extraction failed after 60 attempts. Please try again from a stable game screen.");
         }
 
         // Holds context for a single template instance between phases

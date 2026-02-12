@@ -418,10 +418,21 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Path to the force extraction flag file.
+    /// When this file exists, DataExtractor will trigger extraction on next game launch.
+    /// </summary>
+    private string ForceExtractionFlagPath =>
+        Path.Combine(GameInstallPath, "UserData", "ExtractedData", "_force_extraction.flag");
+
+    /// <summary>
+    /// Check if extraction is pending (flag file exists).
+    /// </summary>
+    public bool IsExtractionPending => !string.IsNullOrEmpty(GameInstallPath) &&
+                                        File.Exists(ForceExtractionFlagPath);
+
     private async Task ForceExtractDataAsync()
     {
-        ClearCache();
-
         if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
         {
             ExtractionStatus = "❌ Set game installation path in Loader Settings first";
@@ -444,29 +455,38 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             await installer.InstallDataExtractorAsync(s => ExtractionStatus = s);
         }
 
-        // Delete old extracted data to force full re-extraction
-        var extractedDataPath = Path.Combine(GameInstallPath, "UserData", "ExtractedData");
-        if (Directory.Exists(extractedDataPath))
+        // Delete fingerprint to force re-extraction
+        var fingerprintPath = Path.Combine(GameInstallPath, "UserData", "ExtractedData", "_extraction_fingerprint.txt");
+        if (File.Exists(fingerprintPath))
         {
             try
             {
-                Directory.Delete(extractedDataPath, true);
-                ExtractionStatus = "Cleared old extracted data";
+                File.Delete(fingerprintPath);
             }
-            catch (Exception ex)
-            {
-                ExtractionStatus = $"Warning: could not clear old data: {ex.Message}";
-            }
+            catch { }
         }
 
-        // Launch game to extract fresh data
-        ExtractionStatus = "Launching game to re-extract template data...";
-        var launched = await installer.LaunchGameAsync(s => ExtractionStatus = s);
-        if (launched)
+        // Write the force extraction flag file
+        try
         {
-            ExtractionStatus = "Game launched. Close it after reaching the main menu, then refresh the Data editor.";
-            // Re-validate after user might have re-extracted
-            ValidateExtractedData();
+            var flagDir = Path.GetDirectoryName(ForceExtractionFlagPath);
+            if (!string.IsNullOrEmpty(flagDir))
+                Directory.CreateDirectory(flagDir);
+
+            await File.WriteAllTextAsync(ForceExtractionFlagPath,
+                $"Force extraction requested by modkit at {DateTime.UtcNow:O}\n" +
+                "This file will be deleted when extraction starts.\n" +
+                "Delete this file manually to cancel pending extraction.");
+
+            ExtractionStatus = "⏳ Extraction pending - will run on next game launch";
+            this.RaisePropertyChanged(nameof(IsExtractionPending));
+
+            ModkitLog.Info("[ToolSettings] Force extraction flag written");
+        }
+        catch (Exception ex)
+        {
+            ExtractionStatus = $"❌ Failed to set extraction flag: {ex.Message}";
+            ModkitLog.Error($"[ToolSettings] Failed to write force extraction flag: {ex}");
         }
     }
 

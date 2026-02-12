@@ -68,9 +68,9 @@ def parse_class_from_dump(content, class_name, allow_abstract=False):
             base_class = base_match.group(1)
             break
 
-    # Parse fields
+    # Parse fields (both public and private - private with [SerializeField] are Unity-serialized)
     fields = []
-    field_pattern = r"public\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+    field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
     for m in re.finditer(field_pattern, class_body):
         field_type = m.group(1)
@@ -235,7 +235,7 @@ def parse_all_structs(content):
         struct_body = m.group(2)
 
         fields = []
-        field_pattern = r"public\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+        field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
         for fm in re.finditer(field_pattern, struct_body):
             field_type = fm.group(1)
@@ -250,7 +250,7 @@ def parse_all_structs(content):
             # Skip statics (offset 0x0 can be legitimate for struct field 0,
             # but also static. Check if there's a 'static' keyword.)
             line_match = re.search(
-                rf"public static\s+.*\s+{re.escape(field_name)};", struct_body)
+                rf"(?:public|private) static\s+.*\s+{re.escape(field_name)};", struct_body)
             if line_match:
                 continue
 
@@ -309,9 +309,9 @@ def parse_embedded_class(content, class_name):
     base_match = re.search(rf"public class {re.escape(class_name)}.*?:\s+(\w+)", content)
     base_class = base_match.group(1) if base_match else None
 
-    # Parse fields
+    # Parse fields (both public and private - private with [SerializeField] are Unity-serialized)
     fields = []
-    field_pattern = r"public\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+    field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
     for m in re.finditer(field_pattern, class_body):
         field_type = m.group(1)

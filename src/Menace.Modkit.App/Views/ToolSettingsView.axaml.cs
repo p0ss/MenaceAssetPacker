@@ -447,6 +447,18 @@ public class ToolSettingsView : UserControl
         forceExtractDataButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("ForceExtractDataCommand"));
         buttonStack.Children.Add(forceExtractDataButton);
 
+        // Pending extraction indicator
+        var pendingIndicator = new TextBlock
+        {
+            Text = "⏳ Pending",
+            Foreground = new SolidColorBrush(Color.Parse("#FFB347")), // Orange
+            FontWeight = FontWeight.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        pendingIndicator.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("IsExtractionPending"));
+        buttonStack.Children.Add(pendingIndicator);
+
         var forceExtractAssetsButton = new Button
         {
             Content = "Force Extract Assets"

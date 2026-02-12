@@ -270,6 +270,7 @@ public static class DevConsole
         _panels.Add(new PanelEntry { Name = "Console", DrawCallback = DrawConsolePanel });
         _panels.Add(new PanelEntry { Name = "Inspector", DrawCallback = DrawInspectorPanel });
         _panels.Add(new PanelEntry { Name = "Watch", DrawCallback = DrawWatchPanel });
+        _panels.Add(new PanelEntry { Name = "Settings", DrawCallback = DrawSettingsPanel });
 
         RegisterCoreCommands();
 
@@ -1345,6 +1346,210 @@ public static class DevConsole
             y += LineHeight;
 
             if (y > area.yMax) break;
+        }
+    }
+
+    // --- Settings panel ---
+
+    // Extraction state (populated via reflection from DataExtractor)
+    private static bool _extractionInProgress = false;
+    private static string _extractionStatus = "Unknown";
+    private static int _lastExtractionCheck = 0;
+    private static MethodInfo _triggerExtractionMethod;
+    private static MethodInfo _getExtractionStatusMethod;
+    private static bool _extractorReflectionInitialized = false;
+
+    private static void InitExtractorReflection()
+    {
+        if (_extractorReflectionInitialized) return;
+        _extractorReflectionInitialized = true;
+
+        try
+        {
+            // Find DataExtractorMod type
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var extractorType = asm.GetType("Menace.DataExtractor.DataExtractorMod");
+                    if (extractorType != null)
+                    {
+                        // Look for TriggerExtraction and GetExtractionStatus methods
+                        _triggerExtractionMethod = extractorType.GetMethod("TriggerExtraction",
+                            BindingFlags.Public | BindingFlags.Static);
+                        _getExtractionStatusMethod = extractorType.GetMethod("GetExtractionStatus",
+                            BindingFlags.Public | BindingFlags.Static);
+
+                        if (_triggerExtractionMethod != null)
+                            MelonLoader.MelonLogger.Msg("[DevConsole] Found DataExtractor.TriggerExtraction");
+                        if (_getExtractionStatusMethod != null)
+                            MelonLoader.MelonLogger.Msg("[DevConsole] Found DataExtractor.GetExtractionStatus");
+
+                        return;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            MelonLoader.MelonLogger.Warning($"[DevConsole] DataExtractor reflection failed: {ex.Message}");
+        }
+    }
+
+    private static void DrawSettingsPanel(Rect area)
+    {
+        InitializeStyles();
+        InitExtractorReflection();
+
+        float y = area.y;
+
+        // Help text
+        GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+            "Modkit settings and data extraction controls.", _helpStyle);
+        y += LineHeight + 8;
+
+        // === Data Extraction Section ===
+        GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+            "Data Extraction", _headerStyle);
+        y += LineHeight + 4;
+
+        // Update extraction status periodically
+        if (Time.frameCount - _lastExtractionCheck > 60) // Check every ~1 second
+        {
+            _lastExtractionCheck = Time.frameCount;
+            UpdateExtractionStatus();
+        }
+
+        // Status display
+        GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+            $"Status: {_extractionStatus}", _labelStyle);
+        y += LineHeight + 8;
+
+        // Extract Now button
+        bool canExtract = !_extractionInProgress && _triggerExtractionMethod != null;
+        GUI.enabled = canExtract;
+
+        if (GUI.Button(new Rect(area.x, y, 150, 28), _extractionInProgress ? "Extracting..." : "Extract Now"))
+        {
+            TriggerExtraction(force: false);
+        }
+
+        if (GUI.Button(new Rect(area.x + 160, y, 150, 28), "Force Re-Extract"))
+        {
+            TriggerExtraction(force: true);
+        }
+
+        GUI.enabled = true;
+        y += 36;
+
+        // Help text for extraction
+        GUI.Label(new Rect(area.x, y, area.width, LineHeight * 2),
+            "TIP: Run extraction from a stable screen (OCI, Barracks, StrategicMap).\n" +
+            "F11 = additive extraction (merges with existing data).",
+            _helpStyle);
+        y += LineHeight * 2 + 16;
+
+        // === Scene Info Section ===
+        GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+            "Current Scene", _headerStyle);
+        y += LineHeight + 4;
+
+        try
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+                $"{scene.name} (index {scene.buildIndex})", _labelStyle);
+        }
+        catch
+        {
+            GUI.Label(new Rect(area.x, y, area.width, LineHeight),
+                "(unable to get scene)", _labelStyle);
+        }
+    }
+
+    private static void UpdateExtractionStatus()
+    {
+        if (_getExtractionStatusMethod != null)
+        {
+            try
+            {
+                var result = _getExtractionStatusMethod.Invoke(null, null);
+                if (result is string status)
+                {
+                    _extractionStatus = status;
+                    _extractionInProgress = status.Contains("progress", StringComparison.OrdinalIgnoreCase);
+                    return;
+                }
+            }
+            catch { }
+        }
+
+        // Fallback: check if extract command exists
+        if (_commands.TryGetValue("extractstatus", out var cmd))
+        {
+            try
+            {
+                var result = cmd.Handler(Array.Empty<string>());
+                if (!string.IsNullOrEmpty(result))
+                {
+                    // Parse first status line
+                    var lines = result.Split('\n');
+                    foreach (var line in lines)
+                    {
+                        if (line.StartsWith("Status:"))
+                        {
+                            _extractionStatus = line.Substring(7).Trim();
+                            _extractionInProgress = _extractionStatus.Contains("progress", StringComparison.OrdinalIgnoreCase);
+                            return;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        _extractionStatus = "DataExtractor not loaded";
+    }
+
+    private static void TriggerExtraction(bool force)
+    {
+        // Try direct method call first
+        if (_triggerExtractionMethod != null)
+        {
+            try
+            {
+                _triggerExtractionMethod.Invoke(null, new object[] { force });
+                _extractionInProgress = true;
+                _extractionStatus = "Extraction starting...";
+                Log($"Extraction triggered (force={force})");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Log($"Direct extraction call failed: {ex.Message}");
+            }
+        }
+
+        // Fallback: use extract command
+        if (_commands.TryGetValue("extract", out var cmd))
+        {
+            try
+            {
+                var args = force ? new[] { "force" } : Array.Empty<string>();
+                var result = cmd.Handler(args);
+                _extractionInProgress = true;
+                _extractionStatus = "Extraction starting...";
+                Log(result ?? "Extraction triggered");
+            }
+            catch (Exception ex)
+            {
+                Log($"Extract command failed: {ex.Message}");
+            }
+        }
+        else
+        {
+            Log("DataExtractor not available - install and restart the game");
         }
     }
 

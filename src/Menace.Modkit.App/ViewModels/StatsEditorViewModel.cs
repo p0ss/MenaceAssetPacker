@@ -1741,16 +1741,32 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             this.RaisePropertyChanged(nameof(IsSearching));
             SearchResults.Clear();
 
+            // Ensure TreeNodes contains the original tree structure
+            // (may have been modified by filters)
+            if (TreeNodes.Count == 0 || !TreeNodes.SequenceEqual(_topLevelNodes))
+            {
+                TreeNodes.Clear();
+                foreach (var n in _topLevelNodes)
+                    TreeNodes.Add(n);
+            }
+
             // Defer expansion and selection to give TreeView time to create containers
+            // Use Loaded priority to run after layout/render passes complete
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 // Expand ancestors first
                 ExpandToNode(node);
 
-                // Then set and notify selection
+                // Set selection immediately
                 _selectedNode = node;
                 this.RaisePropertyChanged(nameof(SelectedNode));
-            }, Avalonia.Threading.DispatcherPriority.Background);
+
+                // Post a second update at lower priority to ensure TreeView has processed the change
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    this.RaisePropertyChanged(nameof(SelectedNode));
+                }, Avalonia.Threading.DispatcherPriority.Background);
+            }, Avalonia.Threading.DispatcherPriority.Loaded);
         }
     }
 
