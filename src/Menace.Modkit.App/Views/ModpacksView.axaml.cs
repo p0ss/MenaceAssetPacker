@@ -1076,13 +1076,11 @@ public class ModpacksView : UserControl
     Grid.SetColumn(warningsPanel, 0);
 
     // Right side: Action buttons in a WrapPanel so they flow at narrow widths
-    // MaxWidth forces wrapping when space is limited, ensuring warnings panel gets room
     var buttonsWrap = new WrapPanel
     {
       Orientation = Orientation.Horizontal,
       HorizontalAlignment = HorizontalAlignment.Right,
-      VerticalAlignment = VerticalAlignment.Center,
-      MaxWidth = 450
+      VerticalAlignment = VerticalAlignment.Center
     };
 
     // Refresh button

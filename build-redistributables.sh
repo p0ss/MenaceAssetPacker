@@ -17,13 +17,18 @@ echo ""
 
 echo "📦 Generating ModkitVersion.cs from versions.json..."
 
-# Release version for post-build instructions (overridden from versions.json when jq is available)
-RELEASE_VERSION="1.0.0"
-
-# Extract version from versions.json (requires jq)
+# Extract version from versions.json
+# Try jq first (fast), fall back to grep/sed (always available)
 if command -v jq &> /dev/null; then
   LOADER_VERSION=$(jq -r '.components.ModpackLoader.version' third_party/versions.json)
-  RELEASE_VERSION="$LOADER_VERSION"
+else
+  # Fallback: extract version using grep/sed (works without jq)
+  LOADER_VERSION=$(grep -A1 '"ModpackLoader"' third_party/versions.json | grep '"version"' | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+fi
+RELEASE_VERSION="$LOADER_VERSION"
+
+# Generate ModkitVersion.cs (requires jq for full generation)
+if command -v jq &> /dev/null; then
   # Extract major version number for BuildNumber (e.g., "19.0.0" -> 19)
   BUILD_NUMBER=$(echo "$LOADER_VERSION" | cut -d. -f1)
 
