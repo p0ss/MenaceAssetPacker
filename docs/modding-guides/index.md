@@ -44,13 +44,22 @@ This guide is organized by complexity:
 
 ### Tier 3: SDK Coding
 
-- [SDK Basics](07-sdk-basics.md) - Query game state, react to events
-- [Template Modding](08-template-modding.md) - Programmatically modify game data
-- [UI Modifications](09-ui-modifications.md) - Add custom interface elements
+- [SDK Getting Started](../coding-sdk/getting-started.md) - Canonical entry point for current plugin lifecycle and setup
+- [What Is the SDK?](../coding-sdk/what-is-sdk.md) - Runtime model, scope, and when to use SDK vs patches
+- [SDK API Reference](../coding-sdk/index.md) - Full API surface across all tiers
 
 ### Tier 4: Advanced Code
 
 - [Advanced Code & Security](10-advanced-code.md) - DLLs, Harmony, and security considerations
+
+## Legacy SDK Guides
+
+These pages are kept for historical context and examples, but some snippets use older API names:
+
+- [SDK Basics](07-sdk-basics.md)
+- [Template Modding](08-template-modding.md)
+- [UI Modifications](09-ui-modifications.md)
+- [Advanced Code & Security](10-advanced-code.md)
 
 ## Getting Started
 

@@ -2,6 +2,8 @@ using ReactiveUI;
 using System;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reactive;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -21,8 +23,16 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     private string _extractionStatus = string.Empty;
     private string _dependencyVersionsText = string.Empty;
     private string _validationStatus = string.Empty;
+    private string _appUpdateStatus = string.Empty;
+    private bool _hasAppUpdate = false;
+    private string _latestAppVersion = string.Empty;
+    private string _appDownloadUrl = string.Empty;
     private readonly SchemaService _schemaService;
     private readonly ExtractionValidator _validator;
+
+    // GitHub repo for app update checks
+    private const string AppGitHubOwner = "p0ss";
+    private const string AppGitHubRepo = "MenaceAssetPacker";
 
     public ToolSettingsViewModel(IServiceProvider serviceProvider)
     {
@@ -48,6 +58,11 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         ForceExtractDataCommand = ReactiveCommand.CreateFromTask(ForceExtractDataAsync);
         ForceExtractAssetsCommand = ReactiveCommand.CreateFromTask(ForceExtractAssetsAsync);
         ValidateExtractionCommand = ReactiveCommand.Create(ValidateExtractedData);
+        CheckForAppUpdateCommand = ReactiveCommand.CreateFromTask(CheckForAppUpdateAsync);
+        OpenDownloadPageCommand = ReactiveCommand.Create(OpenDownloadPage);
+
+        // Check for app updates on load
+        _ = CheckForAppUpdateAsync();
     }
 
     public string ExtractedAssetsPath
@@ -189,12 +204,41 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _validationStatus, value);
     }
 
+    // App Version & Update properties
+    public string CurrentAppVersion => ModkitVersion.MelonVersion;
+
+    public string AppUpdateStatus
+    {
+        get => _appUpdateStatus;
+        private set => this.RaiseAndSetIfChanged(ref _appUpdateStatus, value);
+    }
+
+    public bool HasAppUpdate
+    {
+        get => _hasAppUpdate;
+        private set => this.RaiseAndSetIfChanged(ref _hasAppUpdate, value);
+    }
+
+    public string LatestAppVersion
+    {
+        get => _latestAppVersion;
+        private set => this.RaiseAndSetIfChanged(ref _latestAppVersion, value);
+    }
+
+    public string AppDownloadUrl
+    {
+        get => _appDownloadUrl;
+        private set => this.RaiseAndSetIfChanged(ref _appDownloadUrl, value);
+    }
+
     // Commands
     public ReactiveCommand<Unit, Unit> ViewCacheDetailsCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearCacheCommand { get; }
     public ReactiveCommand<Unit, Unit> ForceExtractDataCommand { get; }
     public ReactiveCommand<Unit, Unit> ForceExtractAssetsCommand { get; }
     public ReactiveCommand<Unit, Unit> ValidateExtractionCommand { get; }
+    public ReactiveCommand<Unit, Unit> CheckForAppUpdateCommand { get; }
+    public ReactiveCommand<Unit, Unit> OpenDownloadPageCommand { get; }
 
     private string GameInstallPath => AppSettings.Instance.GameInstallPath;
 
@@ -467,6 +511,121 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             ValidateAssetsPath();
             UpdateCacheStatus();
         }
+    }
+
+    private async Task CheckForAppUpdateAsync()
+    {
+        AppUpdateStatus = "Checking for updates...";
+        HasAppUpdate = false;
+
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.UserAgent.Add(
+                new ProductInfoHeaderValue("MenaceModkit", ModkitVersion.Short));
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+            var apiUrl = $"https://api.github.com/repos/{AppGitHubOwner}/{AppGitHubRepo}/releases/latest";
+            var response = await httpClient.GetAsync(apiUrl);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                AppUpdateStatus = response.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.NotFound => "No releases found",
+                    System.Net.HttpStatusCode.Forbidden => "Rate limited - try again later",
+                    _ => $"Could not check for updates ({response.StatusCode})"
+                };
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var tagName = root.GetProperty("tag_name").GetString() ?? "";
+            var htmlUrl = root.TryGetProperty("html_url", out var urlProp) ? urlProp.GetString() : null;
+
+            // Normalize versions for comparison (remove 'v' prefix)
+            var latestVersion = tagName.TrimStart('v', 'V');
+            var currentVersion = ModkitVersion.MelonVersion;
+
+            // Compare versions
+            var hasUpdate = CompareVersions(latestVersion, currentVersion) > 0;
+
+            LatestAppVersion = tagName;
+            HasAppUpdate = hasUpdate;
+            AppDownloadUrl = htmlUrl ?? $"https://github.com/{AppGitHubOwner}/{AppGitHubRepo}/releases/latest";
+
+            if (hasUpdate)
+            {
+                AppUpdateStatus = $"Update available: {tagName}";
+            }
+            else
+            {
+                AppUpdateStatus = "You're up to date";
+            }
+        }
+        catch (Exception ex)
+        {
+            AppUpdateStatus = $"Update check failed: {ex.Message}";
+            ModkitLog.Error($"[ToolSettingsViewModel] App update check failed: {ex}");
+        }
+    }
+
+    private void OpenDownloadPage()
+    {
+        if (string.IsNullOrEmpty(AppDownloadUrl))
+            return;
+
+        try
+        {
+            // Cross-platform way to open URL
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = AppDownloadUrl,
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsViewModel] Failed to open download page: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Compare two semver-ish version strings.
+    /// Returns: positive if a > b, negative if a < b, 0 if equal.
+    /// </summary>
+    private static int CompareVersions(string a, string b)
+    {
+        var partsA = a.Split('.', '-', '+');
+        var partsB = b.Split('.', '-', '+');
+
+        var maxParts = Math.Max(partsA.Length, partsB.Length);
+
+        for (int i = 0; i < maxParts; i++)
+        {
+            var partA = i < partsA.Length ? partsA[i] : "0";
+            var partB = i < partsB.Length ? partsB[i] : "0";
+
+            // Try numeric comparison first
+            if (int.TryParse(partA, out var numA) && int.TryParse(partB, out var numB))
+            {
+                if (numA != numB)
+                    return numA.CompareTo(numB);
+            }
+            else
+            {
+                // Fall back to string comparison
+                var cmp = string.Compare(partA, partB, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0)
+                    return cmp;
+            }
+        }
+
+        return 0;
     }
 
     private static long GetDirectorySize(string path)

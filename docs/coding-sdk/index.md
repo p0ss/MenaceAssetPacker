@@ -11,6 +11,16 @@ Everything lives under the `Menace.SDK` namespace.
 
 ---
 
+## Start Here
+
+If you are new to SDK code mods, read these in order:
+
+1. [What Is the SDK?](what-is-sdk.md)
+2. [Getting Started: Your First Plugin](getting-started.md)
+3. [API Reference](#api-reference)
+
+---
+
 ## Architecture
 
 ```
@@ -36,7 +46,7 @@ modpack's `dlls/` folder, and let the loader discover it automatically.
 
 ## Tier Structure
 
-The SDK is organized into four tiers, from low-level IL2CPP access up to
+The SDK is organized into nine tiers, from low-level IL2CPP access up to
 interactive tooling.
 
 ### Tier 1 -- IL2CPP Runtime Access

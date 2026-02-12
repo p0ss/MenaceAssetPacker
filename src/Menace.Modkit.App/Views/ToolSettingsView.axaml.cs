@@ -70,8 +70,90 @@ public class ToolSettingsView : UserControl
 
         stack.Children.Add(new TextBlock
         {
-            Text = "Component Versions",
+            Text = "Modkit Version",
             FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+
+        // Current version display
+        var versionRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12
+        };
+
+        var currentVersionLabel = new TextBlock
+        {
+            Text = "Current Version:",
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        versionRow.Children.Add(currentVersionLabel);
+
+        var currentVersionText = new TextBlock
+        {
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#4EC9B0")), // Teal color
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        currentVersionText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("CurrentAppVersion"));
+        versionRow.Children.Add(currentVersionText);
+
+        stack.Children.Add(versionRow);
+
+        // Update status row
+        var updateRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12
+        };
+
+        var updateStatusText = new TextBlock
+        {
+            Foreground = Brushes.White,
+            Opacity = 0.8,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        updateStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("AppUpdateStatus"));
+        updateRow.Children.Add(updateStatusText);
+
+        // Download button (only visible when update available)
+        var downloadButton = new Button
+        {
+            Content = "Download Update",
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        downloadButton.Classes.Add("primary");
+        downloadButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenDownloadPageCommand"));
+        downloadButton.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("HasAppUpdate"));
+        updateRow.Children.Add(downloadButton);
+
+        // Check for updates button
+        var checkButton = new Button
+        {
+            Content = "Check for Updates",
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        checkButton.Classes.Add("secondary");
+        checkButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("CheckForAppUpdateCommand"));
+        updateRow.Children.Add(checkButton);
+
+        stack.Children.Add(updateRow);
+
+        // Separator
+        stack.Children.Add(new Border
+        {
+            Height = 1,
+            Background = new SolidColorBrush(Color.Parse("#3E3E3E")),
+            Margin = new Thickness(0, 8, 0, 8)
+        });
+
+        // Component versions header
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Component Versions",
+            FontSize = 14,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White
         });
@@ -81,7 +163,8 @@ public class ToolSettingsView : UserControl
             Text = "Bundled dependency versions tracked by the modkit.",
             Opacity = 0.7,
             Foreground = Brushes.White,
-            TextWrapping = TextWrapping.Wrap
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12
         });
 
         var versionsText = new TextBlock

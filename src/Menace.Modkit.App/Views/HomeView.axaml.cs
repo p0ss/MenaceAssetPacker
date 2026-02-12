@@ -100,7 +100,7 @@ public class HomeView : UserControl
         // Version info at bottom
         var versionText = new TextBlock
         {
-            Text = ModkitVersion.Short,
+            Text = $"v{ModkitVersion.MelonVersion}",
             FontSize = 11,
             Foreground = Brushes.White,
             Opacity = 0.3,

@@ -2,6 +2,10 @@
 
 Data patches are great for static changes, but sometimes you need dynamic control. The Templates API lets you read, write, and clone game templates programmatically at runtime.
 
+> [!WARNING]
+> This guide is legacy and may include outdated lifecycle/API examples.
+> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md), [Template Modding Guide](../coding-sdk/guides/template-modding.md), and [Templates API](../coding-sdk/api/templates.md) for current behavior.
+
 ## Why Use Code for Templates?
 
 Code-based template modification excels when you need:

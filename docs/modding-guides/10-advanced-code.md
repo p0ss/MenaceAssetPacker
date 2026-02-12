@@ -2,6 +2,10 @@
 
 This guide covers advanced modding techniques and the important security considerations around code mods.
 
+> [!WARNING]
+> This guide is legacy and may include outdated lifecycle examples (for example `OnLoad`).
+> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md) and [Patching Guide](../coding-sdk/guides/patching-guide.md) for current SDK integration.
+
 ## When You Need More Than the SDK
 
 The SDK covers common use cases, but sometimes you need:

@@ -1978,6 +1978,20 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
+    /// <summary>
+    /// Create a new modpack and add it to the available modpacks list.
+    /// </summary>
+    public void CreateModpack(string name, string author, string description)
+    {
+        var manifest = _modpackManager.CreateModpack(name, author, description);
+        if (!AvailableModpacks.Contains(manifest.Name))
+        {
+            AvailableModpacks.Add(manifest.Name);
+        }
+        // Select the newly created modpack
+        CurrentModpackName = manifest.Name;
+    }
+
     private TreeNodeViewModel? FilterNode(TreeNodeViewModel node, string? query, Dictionary<TreeNodeViewModel, int> scores)
     {
         // Leaf node

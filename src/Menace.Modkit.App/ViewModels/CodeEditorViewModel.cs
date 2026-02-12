@@ -50,6 +50,16 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
     public ObservableCollection<CodeTreeNode> ModSourceTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
 
+    private bool _showVanillaCodeWarning;
+    /// <summary>
+    /// True when no decompiled vanilla code is available (AssetRipper extraction not done).
+    /// </summary>
+    public bool ShowVanillaCodeWarning
+    {
+        get => _showVanillaCodeWarning;
+        private set => this.RaiseAndSetIfChanged(ref _showVanillaCodeWarning, value);
+    }
+
     // ISearchableViewModel implementation
     public ObservableCollection<SearchResultItem> SearchResults { get; }
     public ObservableCollection<string> SectionFilters { get; } = new() { "All Sections" };
@@ -531,7 +541,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         VanillaCodeTree.Clear();
         _allVanillaCodeNodes.Clear();
         var tree = _vanillaCodeService.BuildVanillaCodeTree();
-        if (tree != null)
+        if (tree != null && tree.Children.Count > 0)
         {
             // Add children directly (hide root folder like Assets/Data views do)
             Services.ModkitLog.Info($"[CodeEditorViewModel] Vanilla tree loaded: {tree.Name} with {tree.Children.Count} children");
@@ -541,10 +551,12 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
                 VanillaCodeTree.Add(child);
                 _allVanillaCodeNodes.Add(child);
             }
+            ShowVanillaCodeWarning = false;
         }
         else
         {
-            Services.ModkitLog.Info("[CodeEditorViewModel] Vanilla tree is null - no decompiled code found");
+            Services.ModkitLog.Info("[CodeEditorViewModel] Vanilla tree is null or empty - no decompiled code found");
+            ShowVanillaCodeWarning = true;
         }
 
         PopulateSectionFilters();

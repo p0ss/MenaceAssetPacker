@@ -19,9 +19,9 @@ Start here if you want to make mods. Step-by-step tutorials from beginner to adv
 - [Audio](modding-guides/06-audio.md)
 
 **Tier 3 - SDK Coding:**
-- [SDK Basics](modding-guides/07-sdk-basics.md)
-- [Template Modding](modding-guides/08-template-modding.md)
-- [UI Modifications](modding-guides/09-ui-modifications.md)
+- [SDK Getting Started](coding-sdk/getting-started.md)
+- [What Is the SDK?](coding-sdk/what-is-sdk.md)
+- [SDK API Reference](coding-sdk/index.md)
 
 **Tier 4 - Advanced:**
 - [Advanced Code & Security](modding-guides/10-advanced-code.md)
@@ -29,6 +29,10 @@ Start here if you want to make mods. Step-by-step tutorials from beginner to adv
 ### [Coding SDK](coding-sdk/index.md)
 
 Comprehensive API reference for the Menace SDK. 28 documented APIs across 9 tiers:
+
+Start here for code mods:
+- [What Is the SDK?](coding-sdk/what-is-sdk.md)
+- [Getting Started: Your First Plugin](coding-sdk/getting-started.md)
 
 - **Core**: GameType, GameObj, GameQuery, Templates, GameState
 - **Tactical**: EntitySpawner, EntityMovement, EntityCombat, TacticalController
@@ -102,9 +106,9 @@ Connect an AI assistant to help with modding. The AI can query game state, explo
 | Create unit variants | [Template Cloning](modding-guides/03-template-cloning.md) |
 | Replace textures | [Textures & Icons](modding-guides/04-textures-icons.md) |
 | Replace sounds | [Audio](modding-guides/06-audio.md) |
-| Write code mods | [SDK Basics](modding-guides/07-sdk-basics.md) |
-| Add custom UI | [UI Modifications](modding-guides/09-ui-modifications.md) |
-| Use Harmony patches | [Advanced Code](modding-guides/10-advanced-code.md) |
+| Write code mods | [SDK Getting Started](coding-sdk/getting-started.md) |
+| Add custom UI | [DevConsole API](coding-sdk/api/dev-console.md) |
+| Use Harmony patches | [Patching Guide](coding-sdk/guides/patching-guide.md) |
 | Look up an API | [Coding SDK](coding-sdk/index.md) |
 | Debug my mod | [Debugging Guide](coding-sdk/guides/debugging-guide.md) |
 | Understand security | [Advanced Code](modding-guides/10-advanced-code.md) |

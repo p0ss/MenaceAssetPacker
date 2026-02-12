@@ -5,6 +5,8 @@ from scratch. By the end you will have a working modpack that queries game
 objects, patches a method, modifies template data, and hooks up live debug
 output in the developer console.
 
+If you need the architectural overview first, read [What Is the Menace SDK?](what-is-sdk.md).
+
 ---
 
 ## Prerequisites

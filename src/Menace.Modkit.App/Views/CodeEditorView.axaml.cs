@@ -431,7 +431,7 @@ public class CodeEditorView : UserControl
         grid.Children.Add(sep2);
         Grid.SetRow(sep2, 3);
 
-        // Row 4: Vanilla Code label
+        // Row 4: Vanilla Code label (hidden when no code available)
         var vanillaLabel = new TextBlock
         {
             Text = "Vanilla Code (read-only)",
@@ -441,10 +441,12 @@ public class CodeEditorView : UserControl
             Opacity = 0.7,
             Margin = new Thickness(8, 8, 8, 4)
         };
+        vanillaLabel.Bind(TextBlock.IsVisibleProperty,
+            new Avalonia.Data.Binding("ShowVanillaCodeWarning") { Converter = BoolInverseConverter.Instance });
         grid.Children.Add(vanillaLabel);
         Grid.SetRow(vanillaLabel, 4);
 
-        // Row 5: Vanilla Code Tree (takes remaining space)
+        // Row 5: Vanilla Code Tree (takes remaining space, hidden when no code available)
         var vanillaTree = new TreeView
         {
             Background = Brushes.Transparent,
@@ -459,8 +461,44 @@ public class CodeEditorView : UserControl
         vanillaTree.ContainerPrepared += OnTreeContainerPrepared;
 
         var vanillaTreeScroll = new ScrollViewer { Content = vanillaTree };
+        vanillaTreeScroll.Bind(ScrollViewer.IsVisibleProperty,
+            new Avalonia.Data.Binding("ShowVanillaCodeWarning") { Converter = BoolInverseConverter.Instance });
         grid.Children.Add(vanillaTreeScroll);
         Grid.SetRow(vanillaTreeScroll, 5);
+
+        // Row 5 (overlay): Message when no vanilla code available
+        var noCodePanel = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
+            Padding = new Thickness(16),
+            Margin = new Thickness(8)
+        };
+        var noCodeStack = new StackPanel { Spacing = 12 };
+        noCodeStack.Children.Add(new TextBlock
+        {
+            Text = "No Decompiled Code Found",
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap
+        });
+        noCodeStack.Children.Add(new TextBlock
+        {
+            Text = "To browse vanilla game code, run asset extraction first:\n\n" +
+                   "1. Go to Tool Settings (under Modding Tools)\n" +
+                   "2. Click 'Force Extract Assets'\n" +
+                   "3. Wait for AssetRipper to complete\n\n" +
+                   "This extracts decompiled C# source files from the game.\n\n" +
+                   "You can still create and edit modpack source files in the panel above.",
+            FontSize = 12,
+            Foreground = Brushes.White,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+        noCodePanel.Child = noCodeStack;
+        noCodePanel.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("ShowVanillaCodeWarning"));
+        grid.Children.Add(noCodePanel);
+        Grid.SetRow(noCodePanel, 5);
 
         return grid;
     }

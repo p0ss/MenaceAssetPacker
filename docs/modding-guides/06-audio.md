@@ -381,4 +381,4 @@ If you use sounds from libraries, note where they came from for licensing compli
 
 ---
 
-**Next:** [SDK Basics](07-sdk-basics.md)
+**Next:** [SDK Getting Started](../coding-sdk/getting-started.md)

@@ -2,6 +2,10 @@
 
 Data patches and asset replacements can do a lot, but sometimes you need code. The Menace SDK provides a safe, high-level API for interacting with the game.
 
+> [!WARNING]
+> This guide is legacy and includes older SDK snippets (for example `OnLoad`, `GameObj.Get<T>()`, and `GameObj.Set()`).
+> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md) and [What Is the SDK?](../coding-sdk/what-is-sdk.md) for current lifecycle and API signatures.
+
 ## Why Code Mods?
 
 Code lets you:

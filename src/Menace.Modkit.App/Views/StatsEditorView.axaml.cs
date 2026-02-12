@@ -1,3 +1,4 @@
+using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -7,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
+using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
 
@@ -351,6 +353,18 @@ public class StatsEditorView : UserControl
         Mode = Avalonia.Data.BindingMode.TwoWay
       });
     buttonPanel.Children.Add(modpackOnlyToggle);
+
+    // Spacer to push Create Modpack to the right
+    buttonPanel.Children.Add(new Border { Width = 8 });
+
+    var createModpackButton = new Button
+    {
+      Content = "+ Create Modpack",
+      FontSize = 11
+    };
+    createModpackButton.Classes.Add("primary");
+    createModpackButton.Click += (_, _) => ShowCreateModpackDialog();
+    buttonPanel.Children.Add(createModpackButton);
 
     buttonContainer.Children.Add(buttonPanel);
 
@@ -2618,6 +2632,30 @@ public class StatsEditorView : UserControl
     if (sender is TextBox tb && tb.Tag is string fieldName && DataContext is StatsEditorViewModel vm)
     {
       vm.UpdateModifiedProperty(fieldName, tb.Text ?? "");
+    }
+  }
+
+  private async void ShowCreateModpackDialog()
+  {
+    try
+    {
+      if (DataContext is StatsEditorViewModel vm)
+      {
+        var dialog = new CreateModpackDialog();
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is Window window)
+        {
+          var result = await dialog.ShowDialog<CreateModpackResult?>(window);
+          if (result != null)
+          {
+            vm.CreateModpack(result.Name, result.Author, result.Description);
+          }
+        }
+      }
+    }
+    catch (Exception ex)
+    {
+      ModkitLog.Error($"Create modpack dialog failed: {ex.Message}");
     }
   }
 }

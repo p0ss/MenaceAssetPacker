@@ -2,6 +2,10 @@
 
 Custom UI lets you display debug info, create configuration menus, and add in-game overlays. The Menace SDK provides several approaches depending on your needs.
 
+> [!WARNING]
+> This guide is legacy and may include outdated plugin lifecycle snippets.
+> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md), [DevConsole API](../coding-sdk/api/dev-console.md), and [ModSettings API](../coding-sdk/api/mod-settings.md) for current patterns.
+
 ## UI Options Overview
 
 | Approach | Best For | Complexity |

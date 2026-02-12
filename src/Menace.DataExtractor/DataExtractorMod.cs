@@ -12,14 +12,14 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.2", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.3", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "6.0.2"; // Cleaned up debug logging
+        private const string ExtractorVersion = "6.0.3"; // Scene-aware extraction + GC protection
 
         private string _outputPath = "";
         private string _debugLogPath = "";
@@ -420,17 +420,82 @@ namespace Menace.DataExtractor
         private MethodInfo _findObjectsMethod;
         private Type _loaderType;
 
+        // Scenes that are considered stable for data extraction (no active scene transitions)
+        private static readonly HashSet<string> StableScenes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "OCI",           // Operation Command Interface - user confirmed stable
+            "Tactical",      // Tactical combat - should be stable
+            "MainMenu",      // Main menu - stable
+            "SplashScreen",  // Initial splash - stable but early
+            "StrategicMap",  // Strategy layer - stable
+            "Barracks",      // Unit management - stable
+        };
+
         private System.Collections.IEnumerator RunExtractionCoroutine(string fingerprint = null)
         {
-            LoggerInstance.Msg("Waiting for game to load...");
-            ShowExtractionProgress("Waiting for game to initialize...");
+            LoggerInstance.Msg("Waiting for stable game state...");
+            ShowExtractionProgress("Waiting for game to reach a stable screen...");
 
-            // Wait ~8 seconds on the main thread (yield each frame)
+            // Wait for a stable scene before extraction to avoid GC during scene transitions
+            // Scene transitions cause Unity's GC to be very active, which can collect
+            // objects we're trying to extract, causing AccessViolationException.
             float waited = 0f;
-            while (waited < 8f)
+            float maxWait = 120f; // 2 minute timeout
+            string lastScene = "";
+            float sceneStableTime = 0f;
+            float requiredStableTime = 3f; // Scene must be stable for 3 seconds
+
+            while (waited < maxWait)
             {
                 yield return null;
                 waited += Time.deltaTime;
+
+                // Get current scene name
+                string currentScene = "";
+                try
+                {
+                    var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                    currentScene = scene.name ?? "";
+                }
+                catch { }
+
+                // Track scene stability
+                if (currentScene == lastScene)
+                {
+                    sceneStableTime += Time.deltaTime;
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(currentScene) && currentScene != lastScene)
+                        LoggerInstance.Msg($"Scene changed: {lastScene} -> {currentScene}");
+                    lastScene = currentScene;
+                    sceneStableTime = 0f;
+                }
+
+                // Check if we're in a stable scene that has been stable for long enough
+                if (StableScenes.Contains(currentScene) && sceneStableTime >= requiredStableTime)
+                {
+                    LoggerInstance.Msg($"Scene '{currentScene}' stable for {sceneStableTime:F1}s, starting extraction");
+                    break;
+                }
+
+                // Also allow extraction after minimum wait if scene has been stable (even if not in our list)
+                if (waited >= 10f && sceneStableTime >= 5f && !string.IsNullOrEmpty(currentScene))
+                {
+                    LoggerInstance.Msg($"Scene '{currentScene}' stable for {sceneStableTime:F1}s (unknown scene, using extended stability), starting extraction");
+                    break;
+                }
+
+                // Log progress every 10 seconds
+                if ((int)waited % 10 == 0 && waited > 0 && Time.deltaTime > 0)
+                {
+                    ShowExtractionProgress($"Waiting for stable scene... (current: {currentScene}, {waited:F0}s)");
+                }
+            }
+
+            if (waited >= maxWait)
+            {
+                LoggerInstance.Warning($"Timeout waiting for stable scene after {maxWait}s, proceeding anyway");
             }
 
             // Retry DevConsole lookup after game has loaded (ModpackLoader may have initialized by now)
@@ -535,6 +600,15 @@ namespace Menace.DataExtractor
                             instIdx++;
                             if (instIdx % 50 == 0 || instIdx >= typeCtx.Instances.Count - 20)
                                 LoggerInstance.Msg($"    P2 [{instIdx}/{typeCtx.Instances.Count}] {inst.Name}...");
+
+                            // Pre-flight check: skip objects that were garbage collected between phases
+                            if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                            {
+                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst.Name} - SKIPPED (garbage collected)");
+                                yieldCounter++;
+                                continue;
+                            }
+
                             try
                             {
                                 FillReferenceProperties(inst, templateType);
@@ -684,6 +758,15 @@ namespace Menace.DataExtractor
                             // Log first instance and every 50
                             if (instIdx == 1 || instIdx % 50 == 0 || instIdx >= totalInstances - 20)
                                 LoggerInstance.Msg($"    P2 [{instIdx}/{totalInstances}] {inst?.Name ?? "NULL"}...");
+
+                            // Pre-flight check: skip objects that were garbage collected between phases
+                            if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                            {
+                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst?.Name ?? "NULL"} - SKIPPED (garbage collected)");
+                                yieldCounter++;
+                                continue;
+                            }
+
                             try
                             {
                                 FillReferenceProperties(inst, templateType);
@@ -1786,6 +1869,14 @@ namespace Menace.DataExtractor
 
             if (inst.Pointer == IntPtr.Zero)
                 return false;
+
+            // Check if the Il2Cpp object was garbage collected between Phase 1 and Phase 2.
+            // Reading from a collected object's pointer causes AccessViolationException.
+            if (inst.CastObj is Il2CppObjectBase il2cppObj && il2cppObj.WasCollected)
+            {
+                DebugLog($"    [{inst.Name}] object was garbage collected, skipping");
+                return false;
+            }
 
             // Use cached class pointer (no il2cpp_object_get_class on data pointer)
             IntPtr klass = IntPtr.Zero;
