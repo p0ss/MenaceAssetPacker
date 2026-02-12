@@ -6,6 +6,80 @@ This document collects Tier 6 feature ideas that would improve the modding ecosy
 
 ---
 
+## Tier 0: SDK Quality and Release Hardening
+
+Before adding new ecosystem features, prioritize SDK reliability and developer ergonomics. This track addresses the recurring issues we have seen in recent releases: dependency load failures, weak diagnostics, and doc/runtime drift.
+
+### Priority Plan
+
+| Priority | Area | Why It Matters | Status |
+|---|---|---|---|
+| P0 | Dependency reliability | Prevent REPL/mod loader breakage from assembly version conflicts | Planned |
+| P0 | Runtime diagnostics | Turn silent failures into actionable error reports | Planned |
+| P1 | Cross-platform smoke tests | Catch Linux/Windows resolver differences before release | Planned |
+| P1 | Documentation consistency | Keep onboarding/lifecycle docs aligned with current SDK APIs | In progress |
+| P2 | API ergonomics | Reduce stringly-typed footguns for common tasks | Backlog |
+
+### P0: Dependency Reliability
+
+1. Establish and document one supported dependency policy for ModpackLoader runtime assemblies (what is bundled vs what is expected from MelonLoader).
+2. Add a build-time validation step that inspects the final ModpackLoader payload and fails if required assemblies are missing or banned assemblies are present.
+3. Record effective dependency versions in release artifacts (with assembly version + file version + hash) for reproducible troubleshooting.
+
+Acceptance criteria:
+- `build-redistributables.sh` fails fast on invalid ModpackLoader payload composition.
+- Release artifact includes a machine-readable dependency manifest for ModpackLoader.
+- Clean install smoke test can initialize REPL on both Linux and Windows with no `FileLoadException`/`FileNotFoundException`.
+
+### P0: Runtime Diagnostics
+
+1. Remove or minimize silent catch blocks in reference/dependency resolution paths.
+2. Add structured startup diagnostics for REPL initialization:
+   - requested assembly name/version
+   - resolved path
+   - loaded assembly identity
+   - inner exception details
+3. Add an in-game diagnostics command/panel to dump resolver search paths and currently loaded assembly identities.
+
+Acceptance criteria:
+- REPL failure logs always include at least one concrete assembly identity and path mismatch.
+- A tester can capture one diagnostic dump and determine missing vs conflicting vs unreadable assembly states.
+
+### P1: Cross-Platform Smoke Tests
+
+1. Add CI/manual release-gate smoke tests that deploy into a clean game directory (or representative fixture layout) and verify:
+   - ModpackLoader load
+   - DevConsole open
+   - REPL initialization
+2. Keep tests explicit about MelonLoader version from `third_party/versions.json`.
+3. Include at least one "upgrade over existing install" test and one "clean install" test.
+
+Acceptance criteria:
+- Release workflow blocks on failed smoke test.
+- Test output identifies environment and dependency set used.
+
+### P1: Documentation Consistency
+
+1. Maintain canonical code-modding entry points in `coding-sdk/` docs.
+2. Mark legacy guides with warnings and links to current lifecycle/API docs.
+3. Add lightweight docs lint checks for known stale patterns (`OnLoad`, old `GameObj.Get/Set` examples in canonical docs).
+
+Acceptance criteria:
+- Top-level "write code mods" links land on canonical SDK docs.
+- No canonical getting-started docs contain outdated lifecycle signatures.
+
+### P2: API Ergonomics
+
+1. Introduce optional helper abstractions for common operations to reduce raw string field access.
+2. Add "safe patterns" snippets for high-frequency operations (query + null checks + write + error reporting).
+3. Provide a maintained plugin template project aligned with current `IModpackPlugin`.
+
+Acceptance criteria:
+- New mod template compiles and runs without manual lifecycle guessing.
+- Common beginner mistakes (wrong lifecycle method, wrong field API) are reduced in tester feedback.
+
+---
+
 ## Event Bus
 
 **Goal:** Centralized publish/subscribe system for cross-mod communication.

@@ -73,6 +73,13 @@ public class ReferenceGraphData
     /// </summary>
     [JsonPropertyName("enhancedBacklinks")]
     public Dictionary<string, List<EnhancedReferenceEntryData>>? EnhancedBacklinks { get; set; }
+
+    /// <summary>
+    /// Instance name to concrete template type index (v4+).
+    /// Used to resolve collections with abstract base types.
+    /// </summary>
+    [JsonPropertyName("instanceToType")]
+    public Dictionary<string, string>? InstanceToType { get; set; }
 }
 
 /// <summary>

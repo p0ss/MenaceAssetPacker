@@ -19,12 +19,19 @@ namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "6.0.3"; // Scene-aware extraction + GC protection
+        private const string ExtractorVersion = "6.0.4"; // GC-skip tracking + fingerprint protection
 
         private string _outputPath = "";
         private string _debugLogPath = "";
         private string _fingerprintPath = "";
         private bool _hasSaved = false;
+
+        // Tracking for GC-skipped instances during extraction
+        // If too many objects are garbage collected between Phase 1 and Phase 2,
+        // we don't save the fingerprint so re-extraction happens on next launch.
+        private int _totalInstancesProcessed = 0;
+        private int _gcSkippedInstances = 0;
+        private const float MaxGcSkipPercentage = 0.01f; // 1% threshold - any higher indicates unstable extraction
 
         // Properties to skip during extraction
         private static readonly HashSet<string> SkipProperties = new(StringComparer.Ordinal)
@@ -518,6 +525,10 @@ namespace Menace.DataExtractor
 
                     DebugLog("=== INCREMENTAL EXTRACTION: Two-pass mode ===");
 
+                    // Reset GC-skip counters for this extraction run
+                    _totalInstancesProcessed = 0;
+                    _gcSkippedInstances = 0;
+
                     // Partition templates by whether they have a GetBaseFolder path
                     var templatesWithPath = new List<Type>();
                     var templatesWithoutPath = new List<Type>();
@@ -602,8 +613,10 @@ namespace Menace.DataExtractor
                                 LoggerInstance.Msg($"    P2 [{instIdx}/{typeCtx.Instances.Count}] {inst.Name}...");
 
                             // Pre-flight check: skip objects that were garbage collected between phases
+                            _totalInstancesProcessed++;
                             if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
                             {
+                                _gcSkippedInstances++;
                                 LoggerInstance.Msg($"    P2 [{instIdx}] {inst.Name} - SKIPPED (garbage collected)");
                                 yieldCounter++;
                                 continue;
@@ -622,7 +635,7 @@ namespace Menace.DataExtractor
                             }
                             yieldCounter++;
                         }
-                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed");
+                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed (GC-skipped: {_gcSkippedInstances})");
 
                         // Yield after phase 2 (and give proportional frames for large types)
                         int extraYields = yieldCounter / 50;
@@ -760,8 +773,10 @@ namespace Menace.DataExtractor
                                 LoggerInstance.Msg($"    P2 [{instIdx}/{totalInstances}] {inst?.Name ?? "NULL"}...");
 
                             // Pre-flight check: skip objects that were garbage collected between phases
+                            _totalInstancesProcessed++;
                             if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
                             {
+                                _gcSkippedInstances++;
                                 LoggerInstance.Msg($"    P2 [{instIdx}] {inst?.Name ?? "NULL"} - SKIPPED (garbage collected)");
                                 yieldCounter++;
                                 continue;
@@ -780,7 +795,7 @@ namespace Menace.DataExtractor
                             }
                             yieldCounter++;
                         }
-                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed");
+                        LoggerInstance.Msg($"  Phase 2 complete: {instIdx} instances processed (GC-skipped: {_gcSkippedInstances})");
 
                         // Yield after phase 2 (and give proportional frames for large types)
                         int extraYields = yieldCounter / 50;
@@ -833,17 +848,44 @@ namespace Menace.DataExtractor
 
                     DebugLog($"=== Extraction complete: {successCount} types saved, {skippedCount} skipped ===");
                     LoggerInstance.Msg($"Extraction complete: {successCount} types saved, {skippedCount} skipped");
+                    LoggerInstance.Msg($"GC statistics: {_gcSkippedInstances}/{_totalInstancesProcessed} instances garbage collected during extraction");
+
+                    // Check if too many instances were GC'd during extraction
+                    // This indicates the game was in an unstable state (scene transition, etc.)
+                    float gcSkipPercentage = _totalInstancesProcessed > 0
+                        ? (float)_gcSkippedInstances / _totalInstancesProcessed
+                        : 0f;
+                    bool extractionUnstable = gcSkipPercentage > MaxGcSkipPercentage;
+
+                    if (extractionUnstable)
+                    {
+                        LoggerInstance.Warning($"=== EXTRACTION QUALITY WARNING ===");
+                        LoggerInstance.Warning($"  {_gcSkippedInstances} instances ({gcSkipPercentage:P1}) were garbage collected during extraction.");
+                        LoggerInstance.Warning($"  This indicates the game was in an unstable state (scene transition, loading, etc.).");
+                        LoggerInstance.Warning($"  Extracted data may be incomplete. Fingerprint NOT saved - extraction will retry on next launch.");
+                        LoggerInstance.Warning($"  To fix: Wait for the game to fully load to a stable screen (OCI, Barracks, etc.) before extraction.");
+                        ShowExtractionProgress("WARNING: Extraction incomplete due to game instability!");
+                        ShowExtractionProgress($"{_gcSkippedInstances} objects were unloaded during extraction.");
+                        ShowExtractionProgress("Fingerprint NOT saved - will re-extract on next launch.");
+                        ShowExtractionProgress("TIP: Wait for game to reach a stable screen before extraction.");
+                    }
+
                     ShowExtractionProgress($"Extraction complete: {successCount} template types saved");
 
                     _hasSaved = successCount > 0;
-                    if (_hasSaved && !_isManualExtraction)
+                    // Only save fingerprint if extraction was stable (few or no GC-skipped instances)
+                    if (_hasSaved && !_isManualExtraction && !extractionUnstable)
                         SaveFingerprint(fingerprint);
-                    LoggerInstance.Msg($"Extraction completed successfully on attempt {attempt}");
+                    else if (extractionUnstable)
+                        LoggerInstance.Msg("Fingerprint NOT saved due to extraction instability");
+
+                    LoggerInstance.Msg($"Extraction completed on attempt {attempt}");
                     if (_isManualExtraction)
                         ShowExtractionProgress($"Manual extraction complete! {successCount} types processed (merged with existing).");
-                    else
+                    else if (!extractionUnstable)
                         ShowExtractionProgress($"Extraction complete! {successCount} template types extracted.");
-                    ShowExtractionProgress("Game data is now ready for modding.");
+                    if (!extractionUnstable)
+                        ShowExtractionProgress("Game data is now ready for modding.");
                     _isManualExtraction = false;
                     _manualExtractionInProgress = false;
                     yield break;

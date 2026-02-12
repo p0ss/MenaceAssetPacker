@@ -32,6 +32,7 @@ This directory contains reverse-engineered documentation of Menace's game system
 | Operation System | ✅ Complete | [operation-system.md](./operation-system.md) |
 | Army Generation | ✅ Complete | [army-generation.md](./army-generation.md) |
 | Roster & Unit Management | ✅ Complete | [roster-system.md](./roster-system.md) |
+| Supply Cost System | ✅ Complete | [supply-cost-system.md](./supply-cost-system.md) |
 | Item System | ✅ Complete | [item-system.md](./item-system.md) |
 | Vehicle System | ✅ Complete | [vehicle-system.md](./vehicle-system.md) |
 | Conversation System | ✅ Complete | [conversation-system.md](./conversation-system.md) |
@@ -94,6 +95,7 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 - **[operation-system.md](./operation-system.md)** - Operation lifecycle, faction trust, strategic assets, time management
 - **[army-generation.md](./army-generation.md)** - Budget-based army generation, weighted selection, progress scaling
 - **[roster-system.md](./roster-system.md)** - Roster, BaseUnitLeader, Squaddie, perks, deployment costs
+- **[supply-cost-system.md](./supply-cost-system.md)** - Player vs enemy cost fields, FixedSupplyCost, DeployCostsPerElement, runtime modifiers
 
 ### Items & Equipment
 - **[item-system.md](./item-system.md)** - Item, ItemContainer, BaseItemTemplate, 11 slot types, skill management

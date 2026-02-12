@@ -55,7 +55,7 @@ public class EnhancedReferenceEntry : ReferenceEntry
 public class ReferenceGraphService
 {
     private const string ReferenceFileName = "references.json";
-    private const int CurrentVersion = 3; // Bumped for ArmyTemplate schema addition
+    private const int CurrentVersion = 5; // Added fallback detection for unknown fields via instance lookup
 
     // Template backlinks: "TemplateType/InstanceName" → list of references
     private readonly Dictionary<string, List<ReferenceEntry>> _templateBacklinks = new(StringComparer.Ordinal);
@@ -68,6 +68,10 @@ public class ReferenceGraphService
 
     // Set of known template types for reference detection
     private readonly HashSet<string> _knownTemplateTypes = new(StringComparer.Ordinal);
+
+    // Index from instance name to its concrete template type
+    // Used to resolve collections with abstract base types (e.g., BaseItemTemplate → WeaponTemplate)
+    private readonly Dictionary<string, string> _instanceToType = new(StringComparer.Ordinal);
 
     // Reference to schema service for embedded class lookups
     private SchemaService? _schemaService;
@@ -100,6 +104,7 @@ public class ReferenceGraphService
         _enhancedBacklinks.Clear();
         _assetBacklinks.Clear();
         _knownTemplateTypes.Clear();
+        _instanceToType.Clear();
         _schemaRelationshipHints.Clear();
         _schemaService = schemaService;
         _isLoaded = false;
@@ -110,15 +115,37 @@ public class ReferenceGraphService
             return;
         }
 
-        // First pass: collect all template type names
+        // First pass: collect all template type names and build instance-to-type index
         foreach (var file in Directory.GetFiles(extractedDataPath, "*.json"))
         {
             var templateType = Path.GetFileNameWithoutExtension(file);
             if (templateType != null && templateType != "AssetReferences" && templateType != "menu")
+            {
                 _knownTemplateTypes.Add(templateType);
+
+                // Index all instance names to their concrete type
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var elem in doc.RootElement.EnumerateArray())
+                        {
+                            if (elem.TryGetProperty("name", out var nameProp))
+                            {
+                                var instanceName = nameProp.GetString();
+                                if (!string.IsNullOrEmpty(instanceName))
+                                    _instanceToType[instanceName] = templateType;
+                            }
+                        }
+                    }
+                }
+                catch { /* Ignore errors during indexing */ }
+            }
         }
 
-        ModkitLog.Info($"[ReferenceGraphService] Found {_knownTemplateTypes.Count} template types");
+        ModkitLog.Info($"[ReferenceGraphService] Found {_knownTemplateTypes.Count} template types, indexed {_instanceToType.Count} instances");
 
         // Second pass: scan each template file for references
         foreach (var file in Directory.GetFiles(extractedDataPath, "*.json"))
@@ -389,6 +416,34 @@ public class ReferenceGraphService
                     index++;
                 }
             }
+            // Check if element type is an abstract base type (e.g., BaseItemTemplate)
+            // In this case, we need to look up each instance's concrete type
+            else if (value.ValueKind == JsonValueKind.Array && IsAbstractOrBaseType(fieldMeta.ElementType, schemaService))
+            {
+                int index = 0;
+                foreach (var item in value.EnumerateArray())
+                {
+                    var refValue = ExtractStringValue(item);
+                    if (!string.IsNullOrEmpty(refValue))
+                    {
+                        // Look up the concrete type from our instance index
+                        if (_instanceToType.TryGetValue(refValue, out var concreteType))
+                        {
+                            AddTemplateBacklink(concreteType, refValue, templateType, instanceName, fieldName);
+                            AddEnhancedBacklink(concreteType, refValue, templateType, instanceName, fieldName,
+                                ReferenceType.CollectionDirect, null, null, index);
+                        }
+                        else
+                        {
+                            // Fall back to the declared element type (may be abstract, but better than nothing)
+                            AddTemplateBacklink(fieldMeta.ElementType, refValue, templateType, instanceName, fieldName);
+                            AddEnhancedBacklink(fieldMeta.ElementType, refValue, templateType, instanceName, fieldName,
+                                ReferenceType.CollectionDirect, null, null, index);
+                        }
+                    }
+                    index++;
+                }
+            }
             // Check if element type is an embedded class (embedded collection)
             else if (schemaService.IsEmbeddedClass(fieldMeta.ElementType) && value.ValueKind == JsonValueKind.Array)
             {
@@ -421,6 +476,18 @@ public class ReferenceGraphService
                 }
             }
         }
+        // Fallback: check if a string value matches a known template instance
+        // Handles fields without schema metadata that reference templates
+        else if (fieldMeta == null && value.ValueKind == JsonValueKind.String)
+        {
+            var refValue = value.GetString();
+            if (!string.IsNullOrEmpty(refValue) && _instanceToType.TryGetValue(refValue, out var concreteType))
+            {
+                AddTemplateBacklink(concreteType, refValue, templateType, instanceName, fieldName);
+                AddEnhancedBacklink(concreteType, refValue, templateType, instanceName, fieldName,
+                    ReferenceType.Direct, null, null, -1);
+            }
+        }
         // Also check for string arrays that might be template references (Tags, Skills, etc.)
         else if (value.ValueKind == JsonValueKind.Array)
         {
@@ -436,6 +503,24 @@ public class ReferenceGraphService
                     {
                         AddTemplateBacklink(possibleElementType, refValue, templateType, instanceName, fieldName);
                         AddEnhancedBacklink(possibleElementType, refValue, templateType, instanceName, fieldName,
+                            ReferenceType.CollectionDirect, null, null, index);
+                    }
+                    index++;
+                }
+            }
+            else
+            {
+                // Fallback: check if array values are known instance names
+                // This handles cases like DossierItemTemplate.m_UnlockedLeaders → UnitLeaderTemplate[]
+                // where we don't have schema metadata but values match known instances
+                int index = 0;
+                foreach (var item in value.EnumerateArray())
+                {
+                    var refValue = ExtractStringValue(item);
+                    if (!string.IsNullOrEmpty(refValue) && _instanceToType.TryGetValue(refValue, out var concreteType))
+                    {
+                        AddTemplateBacklink(concreteType, refValue, templateType, instanceName, fieldName);
+                        AddEnhancedBacklink(concreteType, refValue, templateType, instanceName, fieldName,
                             ReferenceType.CollectionDirect, null, null, index);
                     }
                     index++;
@@ -511,6 +596,18 @@ public class ReferenceGraphService
                             ReferenceType.CollectionEmbedded, embeddedClassName, field.Name, index);
                     }
                 }
+                // Handle direct reference fields with abstract/base types
+                else if (field.Category == "reference" && IsAbstractOrBaseType(field.Type, schemaService))
+                {
+                    var refName = ExtractStringValue(fieldValue);
+                    if (!string.IsNullOrEmpty(refName) && _instanceToType.TryGetValue(refName, out var concreteType))
+                    {
+                        var fullPath = $"{itemPath}.{field.Name}";
+                        AddTemplateBacklink(concreteType, refName, templateType, instanceName, fullPath);
+                        AddEnhancedBacklink(concreteType, refName, templateType, instanceName, rootFieldName,
+                            ReferenceType.CollectionEmbedded, embeddedClassName, field.Name, index);
+                    }
+                }
                 // Handle nested collections of templates
                 else if (field.Category == "collection" && !string.IsNullOrEmpty(field.ElementType))
                 {
@@ -533,6 +630,23 @@ public class ReferenceGraphService
                                 nestedIndex++;
                             }
                         }
+                        // Collection with abstract/base element type - resolve via instance lookup
+                        else if (IsAbstractOrBaseType(field.ElementType, schemaService))
+                        {
+                            int nestedIndex = 0;
+                            foreach (var nestedItem in fieldValue.EnumerateArray())
+                            {
+                                var refName = ExtractStringValue(nestedItem);
+                                if (!string.IsNullOrEmpty(refName) && _instanceToType.TryGetValue(refName, out var concreteType))
+                                {
+                                    var fullPath = $"{itemPath}.{field.Name}[{nestedIndex}]";
+                                    AddTemplateBacklink(concreteType, refName, templateType, instanceName, fullPath);
+                                    AddEnhancedBacklink(concreteType, refName, templateType, instanceName, rootFieldName,
+                                        ReferenceType.CollectionEmbedded, embeddedClassName, $"{field.Name}[{nestedIndex}]", index);
+                                }
+                                nestedIndex++;
+                            }
+                        }
                         // Nested embedded class collection - recurse!
                         else if (schemaService.IsEmbeddedClass(field.ElementType))
                         {
@@ -544,8 +658,68 @@ public class ReferenceGraphService
                     }
                 }
             }
+
+            // Also check for non-schema fields that might be template references
+            // This handles embedded objects that have fields not defined in the schema
+            var schemaFieldNames = new HashSet<string>(embeddedFields.Select(f => f.Name));
+            foreach (var prop in item.EnumerateObject())
+            {
+                if (schemaFieldNames.Contains(prop.Name))
+                    continue; // Already handled above
+
+                // Check single string values
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    var refValue = prop.Value.GetString();
+                    if (!string.IsNullOrEmpty(refValue) && _instanceToType.TryGetValue(refValue, out var concreteType))
+                    {
+                        var fullPath = $"{itemPath}.{prop.Name}";
+                        AddTemplateBacklink(concreteType, refValue, templateType, instanceName, fullPath);
+                        AddEnhancedBacklink(concreteType, refValue, templateType, instanceName, rootFieldName,
+                            ReferenceType.CollectionEmbedded, embeddedClassName, prop.Name, index);
+                    }
+                }
+                // Check string arrays
+                else if (prop.Value.ValueKind == JsonValueKind.Array)
+                {
+                    int nestedIndex = 0;
+                    foreach (var arrItem in prop.Value.EnumerateArray())
+                    {
+                        var refValue = ExtractStringValue(arrItem);
+                        if (!string.IsNullOrEmpty(refValue) && _instanceToType.TryGetValue(refValue, out var concreteType))
+                        {
+                            var fullPath = $"{itemPath}.{prop.Name}[{nestedIndex}]";
+                            AddTemplateBacklink(concreteType, refValue, templateType, instanceName, fullPath);
+                            AddEnhancedBacklink(concreteType, refValue, templateType, instanceName, rootFieldName,
+                                ReferenceType.CollectionEmbedded, embeddedClassName, $"{prop.Name}[{nestedIndex}]", index);
+                        }
+                        nestedIndex++;
+                    }
+                }
+            }
+
             index++;
         }
+    }
+
+    /// <summary>
+    /// Check if a type is abstract or a base type that known template types inherit from.
+    /// Used to detect when a collection's element type needs instance-level type resolution.
+    /// </summary>
+    private bool IsAbstractOrBaseType(string typeName, SchemaService schemaService)
+    {
+        // If it's already a known template type, it's concrete
+        if (_knownTemplateTypes.Contains(typeName))
+            return false;
+
+        // Check if any known template inherits from this type
+        foreach (var knownType in _knownTemplateTypes)
+        {
+            if (schemaService.InheritsFrom(knownType, typeName))
+                return true;
+        }
+
+        return false;
     }
 
     private static string? InferElementType(string fieldName)
@@ -813,7 +987,8 @@ public class ReferenceGraphService
             BuildDate = DateTime.UtcNow.ToString("O"),
             TemplateBacklinks = _templateBacklinks,
             AssetBacklinks = _assetBacklinks,
-            EnhancedBacklinks = enhancedData
+            EnhancedBacklinks = enhancedData,
+            InstanceToType = _instanceToType
         };
 
         try
@@ -867,6 +1042,7 @@ public class ReferenceGraphService
             _templateBacklinks.Clear();
             _enhancedBacklinks.Clear();
             _assetBacklinks.Clear();
+            _instanceToType.Clear();
 
             foreach (var kvp in data.TemplateBacklinks)
                 _templateBacklinks[kvp.Key] = kvp.Value;
@@ -893,8 +1069,15 @@ public class ReferenceGraphService
                 }
             }
 
+            // Load instance-to-type index if present (v4+)
+            if (data.InstanceToType != null)
+            {
+                foreach (var kvp in data.InstanceToType)
+                    _instanceToType[kvp.Key] = kvp.Value;
+            }
+
             _isLoaded = true;
-            ModkitLog.Info($"[ReferenceGraphService] Loaded reference graph from cache");
+            ModkitLog.Info($"[ReferenceGraphService] Loaded reference graph from cache ({_instanceToType.Count} instances indexed)");
             return true;
         }
         catch (Exception ex)

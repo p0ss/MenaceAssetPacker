@@ -334,6 +334,35 @@ public class SchemaService
     }
 
     /// <summary>
+    /// Check if a template type inherits from a base type (directly or indirectly).
+    /// </summary>
+    public bool InheritsFrom(string derivedType, string baseType)
+    {
+        if (derivedType == baseType)
+            return true;
+
+        if (_inheritanceChains.TryGetValue(derivedType, out var chain))
+            return chain.Contains(baseType);
+
+        return false;
+    }
+
+    /// <summary>
+    /// Get all concrete template types that inherit from a given base type.
+    /// Useful for finding what types can appear in a collection with an abstract element type.
+    /// </summary>
+    public List<string> GetDerivedTypes(string baseType, IEnumerable<string> knownTemplateTypes)
+    {
+        var result = new List<string>();
+        foreach (var templateType in knownTemplateTypes)
+        {
+            if (InheritsFrom(templateType, baseType))
+                result.Add(templateType);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Check if a class name is a known embedded class (non-template class used in collections).
     /// </summary>
     public bool IsEmbeddedClass(string className)
