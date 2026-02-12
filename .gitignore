@@ -37,3 +37,4 @@ third_party/GameAssemblies
 # Dependency lock files (generated, can regenerate with `dotnet restore --use-lock-file`)
 packages.lock.json
 
+PLAN.md

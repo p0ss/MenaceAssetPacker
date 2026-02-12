@@ -9,6 +9,18 @@
 </p>
 
 <p align="center">
+  <img src="img/homescreen.png" alt="Menace Modkit Homepage" width="800"/>
+</p>
+
+<p align="center">
+  Load mods, handle conlficts and load order, modify saves and check if mods are safe
+</p>
+
+<p align="center">
+  <img src="img/loadorder.png" alt="Menace Modkit Loadorder" width="800"/>
+</p>
+
+<p align="center">
   Create mods without touching game files. Tweak stats, replace textures, add custom code — all through a visual editor.
 </p>
 
@@ -18,16 +30,18 @@
 
 ## What's Included
 
+
+**ModpackLoader** — A runtime mod that loads your modpacks into the game:
+- Applies stat patches and asset replacements at startup
+- Provides an [SDK](docs/coding-sdk/index.md) for C# mods to interact with the game
+- Includes an in-game [Dev Console](docs/coding-sdk/api/dev-console.md) (press `~`) for debugging and live commands
+
 **Modkit App** — A desktop application for creating and managing mods:
 - **Stats Editor** — Browse and edit game data (weapons, armor, units) with side-by-side vanilla comparison
 - **Asset Browser** — View extracted game assets and set up texture/model/audio replacements
 - **Code Editor** — Write C# mod code with compilation, security scanning, and error checking
 - **Modpack Manager** — Create, organize, and deploy modpacks with one click
 
-**ModpackLoader** — A runtime mod that loads your modpacks into the game:
-- Applies stat patches and asset replacements at startup
-- Provides an [SDK](docs/coding-sdk/index.md) for C# mods to interact with the game
-- Includes an in-game [Dev Console](docs/coding-sdk/api/dev-console.md) (press `~`) for debugging and live commands
 
 ## Documentation
 

@@ -204,6 +204,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             if (_currentModpackName != value)
             {
                 this.RaiseAndSetIfChanged(ref _currentModpackName, value);
+                this.RaisePropertyChanged(nameof(CanAddAsset));
                 LoadModpackAssetPaths();
                 LoadModifiedPreview();
                 if (_showModpackOnly)
@@ -275,11 +276,17 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             if (_selectedNode != value)
             {
                 this.RaiseAndSetIfChanged(ref _selectedNode, value);
+                this.RaisePropertyChanged(nameof(CanAddAsset));
                 LoadAssetPreview();
                 LoadModifiedPreview();
             }
         }
     }
+
+    /// <summary>
+    /// Returns true when an asset can be added - requires a modpack selected and a folder/file selected.
+    /// </summary>
+    public bool CanAddAsset => !string.IsNullOrEmpty(_currentModpackName) && _selectedNode != null;
 
     // --- Vanilla preview ---
 
@@ -986,6 +993,19 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             SaveStatus = $"Add failed: {ex.Message}";
             return false;
         }
+    }
+
+    /// <summary>
+    /// Gets the target folder node for adding a new asset.
+    /// If a file is selected, returns its parent folder.
+    /// If a folder is selected, returns that folder.
+    /// </summary>
+    public AssetTreeNode? GetTargetFolderForAdd()
+    {
+        if (_selectedNode == null)
+            return null;
+
+        return _selectedNode.IsFile ? _selectedNode.Parent : _selectedNode;
     }
 
     public void ClearAssetReplacement()

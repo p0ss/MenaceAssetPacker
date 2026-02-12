@@ -143,6 +143,21 @@ public class AssetBrowserView : UserControl
             });
         buttonPanel.Children.Add(modpackOnlyToggle);
 
+        var addAssetButton = new Button
+        {
+            Content = "Add Asset",
+            FontSize = 11
+        };
+        addAssetButton.Classes.Add("secondary");
+        addAssetButton.Bind(Button.IsEnabledProperty,
+            new Avalonia.Data.Binding("CanAddAsset"));
+        addAssetButton.Click += async (_, _) =>
+        {
+            if (DataContext is AssetBrowserViewModel vm)
+                await AddAssetAsync(vm);
+        };
+        buttonPanel.Children.Add(addAssetButton);
+
         buttonContainer.Children.Add(buttonPanel);
 
         // Sort and filter panel (shown when searching)
@@ -1186,6 +1201,38 @@ public class AssetBrowserView : UserControl
         Grid.SetRow(actionStack, 2);
 
         return panel;
+    }
+
+    private async Task AddAssetAsync(AssetBrowserViewModel vm)
+    {
+        var targetFolder = vm.GetTargetFolderForAdd();
+        if (targetFolder == null || string.IsNullOrWhiteSpace(vm.CurrentModpackName))
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null)
+            return;
+
+        // Only include file types that ModpackLoader actually supports at runtime:
+        // - PNG/JPG: LoadTextureFromFile uses Unity's ImageConversion.LoadImage
+        // - WAV: Full LoadWavFile implementation
+        // - GLB: Full GlbLoader implementation
+        // Note: OGG/MP3/GLTF/FBX/OBJ are categorized but not actually implemented
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = $"Add asset to {targetFolder.Name}",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("All Supported") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.wav", "*.glb" } },
+                new FilePickerFileType("Images") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg" } },
+                new FilePickerFileType("Audio") { Patterns = new[] { "*.wav" } },
+                new FilePickerFileType("3D Models") { Patterns = new[] { "*.glb" } }
+            }
+        });
+
+        if (files.Count > 0)
+            vm.AddAssetToModpackFolder(files[0].Path.LocalPath, targetFolder);
     }
 
     private async void OnAddAssetClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
