@@ -86,6 +86,24 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     }
 
     // Extraction Settings Properties
+
+    /// <summary>
+    /// When enabled, game data extraction runs automatically on game launch.
+    /// Disable to prevent the freeze for users who only play mods (don't create them).
+    /// </summary>
+    public bool EnableAutoExtraction
+    {
+        get => AppSettings.Instance.HasUsedModdingTools;
+        set
+        {
+            if (AppSettings.Instance.HasUsedModdingTools != value)
+            {
+                AppSettings.Instance.SetHasUsedModdingTools(value);
+                this.RaisePropertyChanged();
+            }
+        }
+    }
+
     public bool AutoUpdateOnGameChange
     {
         get => AppSettings.Instance.ExtractionSettings.AutoUpdateOnGameChange;
@@ -442,18 +460,18 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
         var installer = new ModLoaderInstaller(GameInstallPath);
 
-        // Ensure DataExtractor mod is deployed
+        // Ensure DataExtractor mod is deployed (force extraction since user explicitly requested it)
         ExtractionStatus = "Deploying DataExtractor mod...";
         if (!installer.IsDataExtractorInstalled())
         {
-            var installed = await installer.InstallDataExtractorAsync(s => ExtractionStatus = s);
+            var installed = await installer.InstallDataExtractorAsync(s => ExtractionStatus = s, forceExtraction: true);
             if (!installed)
                 return;
         }
         else
         {
             // Update to latest version
-            await installer.InstallDataExtractorAsync(s => ExtractionStatus = s);
+            await installer.InstallDataExtractorAsync(s => ExtractionStatus = s, forceExtraction: true);
         }
 
         // Delete fingerprint to force re-extraction

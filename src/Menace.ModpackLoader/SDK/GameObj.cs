@@ -230,6 +230,66 @@ public readonly struct GameObj : IEquatable<GameObj>
     }
 
     /// <summary>
+    /// Convert this GameObj to its managed IL2CPP proxy type.
+    /// Returns null if conversion fails.
+    /// </summary>
+    public object ToManaged()
+    {
+        if (Pointer == IntPtr.Zero) return null;
+
+        try
+        {
+            var gameType = GetGameType();
+            var managedType = gameType?.ManagedType;
+            if (managedType == null)
+            {
+                ModError.WarnInternal("GameObj.ToManaged", $"No managed type for {gameType?.FullName}");
+                return null;
+            }
+
+            var ptrCtor = managedType.GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null)
+            {
+                ModError.WarnInternal("GameObj.ToManaged", $"No IntPtr constructor on {managedType.Name}");
+                return null;
+            }
+
+            return ptrCtor.Invoke(new object[] { Pointer });
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("GameObj.ToManaged", "Conversion failed", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Convert this GameObj to a specific managed IL2CPP proxy type.
+    /// Returns null if conversion fails or type doesn't match.
+    /// </summary>
+    public T As<T>() where T : class
+    {
+        if (Pointer == IntPtr.Zero) return null;
+
+        try
+        {
+            var ptrCtor = typeof(T).GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null)
+            {
+                ModError.WarnInternal("GameObj.As<T>", $"No IntPtr constructor on {typeof(T).Name}");
+                return null;
+            }
+
+            return (T)ptrCtor.Invoke(new object[] { Pointer });
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("GameObj.As<T>", $"Conversion to {typeof(T).Name} failed", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Get the Unity object name (reads the "name" IL2CPP string field
     /// on UnityEngine.Object-derived objects).
     /// </summary>

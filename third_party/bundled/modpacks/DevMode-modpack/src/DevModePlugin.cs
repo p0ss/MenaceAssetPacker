@@ -212,77 +212,55 @@ public class DevModePlugin : IModpackPlugin
             int currentCount = (int)countProp.GetValue(hirableList);
             _log.Msg($"Current hirable leaders count: {currentCount}");
 
-            // Get all UnitLeaderTemplates via SDK Templates.FindAll
-            var leaderTemplates = Templates.FindAll("UnitLeaderTemplate");
-            _log.Msg($"Templates.FindAll returned {leaderTemplates.Length} UnitLeaderTemplates");
+            // Get all UnitLeaderTemplates via SDK Templates.FindAllManaged
+            // Use full namespace for reliable type resolution
+            var allLeaders = Templates.FindAllManaged("Menace.Strategy.UnitLeaderTemplate");
+            _log.Msg($"Found {allLeaders.Length} UnitLeaderTemplates");
 
-            // If SDK didn't find any, try full namespace
-            if (leaderTemplates.Length == 0)
-            {
-                leaderTemplates = Templates.FindAll("Menace.Strategy.UnitLeaderTemplate");
-                _log.Msg($"Full namespace search returned {leaderTemplates.Length} templates");
-            }
-
-            // Convert to list for iteration
-            var allLeaders = leaderTemplates.Cast<object>().ToList();
-            _log.Msg($"Found {allLeaders.Count} UnitLeaderTemplates total");
-
-            // Get the Add method on the hirable list
+            // Get the Add and Contains methods on the hirable list
             var addMethod = listType.GetMethod("Add");
+            var containsMethod = listType.GetMethod("Contains");
             if (addMethod == null)
             {
                 _log.Warning("List.Add method not found");
                 return;
             }
 
-            // Get Roster.GetLeaderByTemplate to check status
-            var getLeaderMethod = rosterType.GetMethod("GetLeaderByTemplate",
-                BindingFlags.Public | BindingFlags.Instance);
+            // Also get hired leaders to skip those
+            var hiredLeadersProp = rosterType.GetProperty("m_HiredLeaders",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            object hiredList = hiredLeadersProp?.GetValue(roster);
+            MethodInfo hiredContains = null;
+            if (hiredList != null)
+            {
+                // Get the LeaderTemplate property accessor to compare
+                hiredContains = hiredList.GetType().GetMethod("Contains");
+            }
 
             int added = 0;
-            int alreadyHirable = 0;
-            int alreadyHired = 0;
-            int otherStatus = 0;
+            int skipped = 0;
 
             foreach (var leader in allLeaders)
             {
                 try
                 {
-                    // Check leader status using GetLeaderByTemplate
-                    // Returns: 0=not found, 1=hired, 2=hirable, 3=unavailable, 4/5=dead
-                    int status = 0;
-                    if (getLeaderMethod != null)
+                    // Check if already in hirable list
+                    if (containsMethod != null)
                     {
-                        // GetLeaderByTemplate(template, out status) returns BaseUnitLeader
-                        var parameters = getLeaderMethod.GetParameters();
-                        if (parameters.Length == 2 && parameters[1].IsOut)
+                        bool alreadyHirable = (bool)containsMethod.Invoke(hirableList, new[] { leader });
+                        if (alreadyHirable)
                         {
-                            var args = new object[] { leader, 0 };
-                            getLeaderMethod.Invoke(roster, args);
-                            status = (int)args[1];
+                            skipped++;
+                            continue;
                         }
                     }
 
-                    switch (status)
+                    addMethod.Invoke(hirableList, new[] { leader });
+                    added++;
+                    if (added <= 3)
                     {
-                        case 0: // Not found - can add
-                            addMethod.Invoke(hirableList, new[] { leader });
-                            added++;
-                            if (added <= 3)
-                            {
-                                var name = GetTemplateName(leader);
-                                _log.Msg($"  Added: {name}");
-                            }
-                            break;
-                        case 1:
-                            alreadyHired++;
-                            break;
-                        case 2:
-                            alreadyHirable++;
-                            break;
-                        default:
-                            otherStatus++;
-                            break;
+                        var name = GetTemplateName(leader);
+                        _log.Msg($"  Added: {name}");
                     }
                 }
                 catch (Exception ex)
@@ -294,7 +272,7 @@ public class DevModePlugin : IModpackPlugin
             if (added > 3)
                 _log.Msg($"  ... and {added - 3} more");
 
-            _log.Msg($"Results: {added} added, {alreadyHirable} already hirable, {alreadyHired} already hired, {otherStatus} other status");
+            _log.Msg($"Added {added} leaders, skipped {skipped} already hirable");
 
             // Verify new count
             int newCount = (int)countProp.GetValue(hirableList);

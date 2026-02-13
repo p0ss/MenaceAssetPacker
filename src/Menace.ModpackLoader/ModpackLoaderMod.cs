@@ -220,6 +220,29 @@ public partial class ModpackLoaderMod : MelonMod
                 {
                     modpack.DirectoryPath = modpackDir;
                     modpack.ManifestVersion = manifestVersion;
+
+                    // Load clones from clones/*.json files if not in manifest
+                    if ((modpack.Clones == null || modpack.Clones.Count == 0) && !string.IsNullOrEmpty(modpackDir))
+                    {
+                        var clonesDir = Path.Combine(modpackDir, "clones");
+                        if (Directory.Exists(clonesDir))
+                        {
+                            modpack.Clones = new Dictionary<string, Dictionary<string, string>>();
+                            foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
+                            {
+                                try
+                                {
+                                    var templateType = Path.GetFileNameWithoutExtension(file);
+                                    var cloneJson = File.ReadAllText(file);
+                                    var cloneMap = JsonConvert.DeserializeObject<Dictionary<string, string>>(cloneJson);
+                                    if (cloneMap != null && cloneMap.Count > 0)
+                                        modpack.Clones[templateType] = cloneMap;
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+
                     _loadedModpacks[modpack.Name] = modpack;
 
                     // Register with ModRegistry for save system tracking

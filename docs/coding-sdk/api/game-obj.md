@@ -108,6 +108,34 @@ public string GetName()
 
 Read the Unity object name by resolving the `m_Name` field on `UnityEngine.Object`. Returns `null` if the object does not have a name field or the read fails.
 
+## Type Conversion
+
+### ToManaged
+
+```csharp
+public object ToManaged()
+```
+
+Convert this `GameObj` to its managed IL2CPP proxy type. The method:
+
+1. Gets the `GameType` of this object
+2. Resolves the `ManagedType` (the IL2CppInterop proxy class)
+3. Constructs a new instance via the `IntPtr` constructor
+
+Returns `null` if the conversion fails (null pointer, no managed type, or constructor not found).
+
+Use this when you need to pass the object to game APIs that expect typed instances, or when working with objects via reflection.
+
+### As&lt;T&gt;
+
+```csharp
+public T As<T>() where T : class
+```
+
+Convert this `GameObj` to a specific managed type. This is the preferred method when you know the expected type at compile time.
+
+The method constructs a new `T` instance using the `IntPtr` constructor pattern. Returns `null` if the pointer is null or the conversion fails.
+
 ## Equality
 
 `GameObj` implements `IEquatable<GameObj>`. Two handles are equal if and only if their `Pointer` values are equal.
@@ -179,4 +207,53 @@ var unitDefType = GameType.Find("UnitDef");
 var obj = GameQuery.FindByName("AgentDef", "Scout");
 if (obj.Is(unitDefType))
     DevConsole.Log("Scout is a UnitDef");
+```
+
+### Converting to typed object (compile-time type known)
+
+```csharp
+// When you know the type at compile time, use As<T>()
+var leaderObj = Templates.Find("Menace.Strategy.UnitLeaderTemplate", "pilot.bog");
+var leader = leaderObj.As<Il2CppMenace.Strategy.UnitLeaderTemplate>();
+if (leader != null)
+{
+    // Now you have a fully-typed proxy object
+    DevConsole.Log($"Leader title: {leader.UnitTitle}");
+    DevConsole.Log($"Hiring cost: {leader.HiringCosts}");
+}
+```
+
+### Converting to managed object (runtime type)
+
+```csharp
+// When working with reflection or unknown types, use ToManaged()
+var templateObj = Templates.Find("WeaponTemplate", "assault_rifle");
+var managed = templateObj.ToManaged();
+if (managed != null)
+{
+    // Use reflection to access properties
+    var damageProperty = managed.GetType().GetProperty("Damage");
+    var damage = damageProperty?.GetValue(managed);
+    DevConsole.Log($"Weapon damage: {damage}");
+
+    // Pass to game APIs that expect typed objects
+    SomeGameApi.RegisterWeapon(managed);
+}
+```
+
+### Bulk conversion pattern
+
+```csharp
+// Convert all templates to typed objects
+var allWeapons = Templates.FindAll("WeaponTemplate");
+var typedWeapons = new List<Il2CppMenace.Strategy.WeaponTemplate>();
+foreach (var weapon in allWeapons)
+{
+    var typed = weapon.As<Il2CppMenace.Strategy.WeaponTemplate>();
+    if (typed != null)
+        typedWeapons.Add(typed);
+}
+
+// Or use the Templates helper method directly:
+var typedWeapons2 = Templates.GetAll<Il2CppMenace.Strategy.WeaponTemplate>("WeaponTemplate");
 ```

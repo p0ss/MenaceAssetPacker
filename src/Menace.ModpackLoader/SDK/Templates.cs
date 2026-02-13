@@ -29,6 +29,16 @@ public static class Templates
     }
 
     /// <summary>
+    /// Find a specific template instance and return it as the managed IL2CPP type.
+    /// Returns null if not found or conversion fails.
+    /// </summary>
+    public static T Get<T>(string templateTypeName, string instanceName) where T : class
+    {
+        var obj = Find(templateTypeName, instanceName);
+        return obj.IsNull ? null : obj.As<T>();
+    }
+
+    /// <summary>
     /// Find all template instances of a given type.
     /// </summary>
     public static GameObj[] FindAll(string templateTypeName)
@@ -37,6 +47,47 @@ public static class Templates
             return Array.Empty<GameObj>();
 
         return GameQuery.FindAll(templateTypeName);
+    }
+
+    /// <summary>
+    /// Find all template instances of a given type and return them as managed IL2CPP types.
+    /// Items that fail conversion are skipped.
+    /// </summary>
+    public static List<T> GetAll<T>(string templateTypeName) where T : class
+    {
+        var objects = FindAll(templateTypeName);
+        var result = new List<T>(objects.Length);
+        foreach (var obj in objects)
+        {
+            var managed = obj.As<T>();
+            if (managed != null)
+                result.Add(managed);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Find all template instances and return them as managed IL2CPP proxy objects.
+    /// Use this when you need to pass objects to reflection or IL2CPP APIs but don't have
+    /// compile-time access to the specific type.
+    /// </summary>
+    public static object[] FindAllManaged(string templateTypeName)
+    {
+        if (string.IsNullOrEmpty(templateTypeName))
+            return Array.Empty<object>();
+
+        return GameQuery.FindAllManaged(templateTypeName);
+    }
+
+    /// <summary>
+    /// Find a specific template and return it as a managed IL2CPP proxy object.
+    /// Use this when you need to pass the object to reflection but don't have
+    /// compile-time access to the specific type.
+    /// </summary>
+    public static object GetManaged(string templateTypeName, string instanceName)
+    {
+        var obj = Find(templateTypeName, instanceName);
+        return obj.IsNull ? null : obj.ToManaged();
     }
 
     /// <summary>

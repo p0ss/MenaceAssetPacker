@@ -18,6 +18,7 @@ public class AppSettings
     private string _extractedAssetsPath = string.Empty;
     private bool _enableDeveloperTools = false;
     private bool? _enableMcpServer = null; // null = auto-detect, true/false = explicit
+    private bool _hasUsedModdingTools = false;
     private ExtractionSettings _extractionSettings = new();
 
     private class PersistedSettings
@@ -33,6 +34,9 @@ public class AppSettings
 
         [JsonPropertyName("enableMcpServer")]
         public bool? EnableMcpServer { get; set; }
+
+        [JsonPropertyName("hasUsedModdingTools")]
+        public bool HasUsedModdingTools { get; set; }
     }
 
     private static string GetSettingsFilePath()
@@ -80,6 +84,8 @@ public class AppSettings
             _enableMcpServer = data.EnableMcpServer;
             if (_enableMcpServer.HasValue)
                 ModkitLog.Info($"MCP server: {(_enableMcpServer.Value ? "enabled" : "disabled")}");
+
+            _hasUsedModdingTools = data.HasUsedModdingTools;
         }
         catch (Exception ex)
         {
@@ -101,7 +107,8 @@ public class AppSettings
                 GameInstallPath = string.IsNullOrEmpty(_gameInstallPath) ? null : _gameInstallPath,
                 ExtractedAssetsPath = string.IsNullOrEmpty(_extractedAssetsPath) ? null : _extractedAssetsPath,
                 EnableDeveloperTools = _enableDeveloperTools,
-                EnableMcpServer = _enableMcpServer
+                EnableMcpServer = _enableMcpServer,
+                HasUsedModdingTools = _hasUsedModdingTools
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
@@ -117,6 +124,7 @@ public class AppSettings
     {
         var gameNames = new[] { "Menace", "Menace Demo" };
 
+        // Check Steam first
         foreach (var steamCommon in GetSteamCommonPaths())
         {
             foreach (var gameName in gameNames)
@@ -124,7 +132,21 @@ public class AppSettings
                 var gamePath = Path.Combine(steamCommon, gameName);
                 if (Directory.Exists(gamePath))
                 {
-                    ModkitLog.Info($"Detected game install: {gamePath}");
+                    ModkitLog.Info($"Detected game install (Steam): {gamePath}");
+                    return gamePath;
+                }
+            }
+        }
+
+        // Check GOG
+        foreach (var gogGames in GetGogGamePaths())
+        {
+            foreach (var gameName in gameNames)
+            {
+                var gamePath = Path.Combine(gogGames, gameName);
+                if (Directory.Exists(gamePath))
+                {
+                    ModkitLog.Info($"Detected game install (GOG): {gamePath}");
                     return gamePath;
                 }
             }
@@ -132,6 +154,47 @@ public class AppSettings
 
         ModkitLog.Warn("Game install path not auto-detected. Set it manually in Settings.");
         return string.Empty;
+    }
+
+    /// <summary>
+    /// Discovers GOG Galaxy game installation folders.
+    /// </summary>
+    private static List<string> GetGogGamePaths()
+    {
+        var paths = new List<string>();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (OperatingSystem.IsWindows())
+        {
+            // Standard GOG Galaxy installation paths
+            paths.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "GOG Galaxy", "Games"));
+            paths.Add(@"C:\Program Files (x86)\GOG Galaxy\Games");
+            paths.Add(@"C:\GOG Games");
+            paths.Add(Path.Combine(home, "GOG Games"));
+
+            // Check common alternate drive locations
+            foreach (var drive in new[] { "D:", "E:", "F:", "G:" })
+            {
+                paths.Add(Path.Combine(drive, "GOG Games"));
+                paths.Add(Path.Combine(drive, "GOG Galaxy", "Games"));
+            }
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            paths.Add(Path.Combine(home, "Library", "Application Support", "GOG.com", "Games"));
+            paths.Add(Path.Combine(home, "GOG Games"));
+        }
+        else // Linux (GOG games via Wine/Heroic/Lutris)
+        {
+            paths.Add(Path.Combine(home, "GOG Games"));
+            paths.Add(Path.Combine(home, "Games", "GOG"));
+            // Heroic Games Launcher
+            paths.Add(Path.Combine(home, ".config", "heroic", "GOG"));
+        }
+
+        // Filter to existing directories
+        return paths.Where(Directory.Exists).Distinct().ToList();
     }
 
     /// <summary>
@@ -299,6 +362,17 @@ public class AppSettings
     /// </summary>
     public bool IsMcpEnabled => _enableMcpServer ?? false;
 
+    /// <summary>
+    /// True if the user has used Modding Tools features (implying they want data extraction).
+    /// Set automatically when user navigates to Modding Tools from the home screen.
+    /// Used to skip automatic data extraction for users who only use the Mod Loader.
+    /// </summary>
+    public bool HasUsedModdingTools
+    {
+        get => _hasUsedModdingTools;
+        set => _hasUsedModdingTools = value;
+    }
+
     public event EventHandler? GameInstallPathChanged;
     public event EventHandler? ExtractedAssetsPathChanged;
     public event EventHandler? ExtractionSettingsChanged;
@@ -337,6 +411,21 @@ public class AppSettings
         _enableMcpServer = enabled;
         SaveToDisk();
         EnableMcpServerChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Mark that the user has used modding tools features.
+    /// This enables automatic data extraction on game launch.
+    /// </summary>
+    public void SetHasUsedModdingTools(bool value = true)
+    {
+        if (_hasUsedModdingTools != value)
+        {
+            _hasUsedModdingTools = value;
+            SaveToDisk();
+            if (value)
+                ModkitLog.Info("User has used Modding Tools - data extraction enabled");
+        }
     }
 
     /// <summary>

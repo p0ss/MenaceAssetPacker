@@ -153,25 +153,44 @@ public class GameType
 
             try
             {
-                // Try finding the proxy type in loaded assemblies
-                // IL2CppInterop proxies are prefixed with "Il2Cpp" for some types
+                var lastDot = FullName.LastIndexOf('.');
+                var ns = lastDot > 0 ? FullName[..lastDot] : "";
+                var typeName = lastDot > 0 ? FullName[(lastDot + 1)..] : FullName;
+
+                // IL2CppInterop prefixes namespaces with "Il2Cpp"
+                var il2cppFullName = string.IsNullOrEmpty(ns)
+                    ? typeName
+                    : $"Il2Cpp{ns}.{typeName}";
+
+                // Search all loaded assemblies for the type
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        // First try exact full name match with Il2Cpp prefix
+                        _managedType = asm.GetType(il2cppFullName);
+                        if (_managedType != null && !_managedType.IsAbstract)
+                            return _managedType;
+
+                        // Try original full name (some types aren't prefixed)
+                        _managedType = asm.GetType(FullName);
+                        if (_managedType != null && !_managedType.IsAbstract)
+                            return _managedType;
+                    }
+                    catch
+                    {
+                        // Skip assemblies that throw on GetType
+                    }
+                }
+
+                // Fallback: search by type name only in Assembly-CSharp
                 var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
                 if (gameAssembly != null)
                 {
-                    var lastDot = FullName.LastIndexOf('.');
-                    var typeName = lastDot > 0 ? FullName[(lastDot + 1)..] : FullName;
-
                     _managedType = gameAssembly.GetTypes()
                         .FirstOrDefault(t => t.Name == typeName && !t.IsAbstract);
-
-                    if (_managedType == null)
-                    {
-                        // Try Il2Cpp-prefixed name
-                        _managedType = gameAssembly.GetTypes()
-                            .FirstOrDefault(t => t.Name == "Il2Cpp" + typeName && !t.IsAbstract);
-                    }
                 }
             }
             catch (Exception ex)

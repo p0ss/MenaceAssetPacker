@@ -647,6 +647,26 @@ public class DeployManager
         runtimeObj["patches"] = patches;
         runtimeObj["templates"] = legacyTemplates; // v1 backward compat
 
+        // Clones from clones/*.json files
+        var clones = new JsonObject();
+        var clonesDir = Path.Combine(deployPath, "clones");
+        if (Directory.Exists(clonesDir))
+        {
+            foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
+            {
+                var templateType = Path.GetFileNameWithoutExtension(file);
+                try
+                {
+                    var node = JsonNode.Parse(File.ReadAllText(file));
+                    if (node != null)
+                        clones[templateType] = node;
+                }
+                catch { }
+            }
+        }
+        if (clones.Count > 0)
+            runtimeObj["clones"] = clones;
+
         // Assets: start from manifest entries, then scan for unregistered files
         var assetsObj = new JsonObject();
         if (modpack.Assets.Count > 0)

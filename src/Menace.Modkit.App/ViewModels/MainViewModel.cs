@@ -127,9 +127,13 @@ public sealed class MainViewModel : ViewModelBase
 
     /// <summary>
     /// Navigate to the Modding Tools section (defaults to Data).
+    /// Also marks the user as a modding tools user, enabling data extraction.
     /// </summary>
     public void NavigateToModdingTools()
     {
+        // Mark user as interested in modding tools - this enables data extraction
+        Services.AppSettings.Instance.SetHasUsedModdingTools(true);
+
         CurrentSection = NavigationSection.ModdingTools;
         NavigateTo(StatsEditor, "Data");
     }

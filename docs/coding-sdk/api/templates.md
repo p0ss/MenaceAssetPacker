@@ -22,6 +22,46 @@ public static GameObj[] FindAll(string templateTypeName)
 
 Find all template instances of a given type. Delegates to `GameQuery.FindAll`. Returns an empty array on failure.
 
+### FindAllManaged
+
+```csharp
+public static object[] FindAllManaged(string templateTypeName)
+```
+
+Find all template instances of a given type and return them as properly-typed IL2CPP proxy objects. Unlike `FindAll` which returns `GameObj[]`, this method returns actual managed proxy instances (e.g., `Il2CppMenace.Strategy.UnitLeaderTemplate`).
+
+Use this when you need to work with the templates via reflection or pass them to game APIs that expect typed objects. Returns an empty array on failure.
+
+### Get&lt;T&gt;
+
+```csharp
+public static T Get<T>(string templateTypeName, string instanceName) where T : class
+```
+
+Find a specific template instance and return it as a typed IL2CPP proxy object. This is the preferred method when you know the type at compile time.
+
+Returns `null` if not found or if type conversion fails.
+
+### GetAll&lt;T&gt;
+
+```csharp
+public static List<T> GetAll<T>(string templateTypeName) where T : class
+```
+
+Find all template instances of a given type and return them as typed IL2CPP proxy objects. This is the preferred method when you know the type at compile time and need a strongly-typed collection.
+
+Returns an empty list on failure.
+
+### GetManaged
+
+```csharp
+public static object GetManaged(string templateTypeName, string instanceName)
+```
+
+Find a specific template instance and return it as a managed proxy object. Use this when you need to work with the template via reflection but don't know the exact type at compile time.
+
+Returns `null` if not found.
+
 ### Exists
 
 ```csharp
@@ -138,5 +178,54 @@ if (!Templates.Exists("WeaponDef", "LaserRifle"))
 {
     DevConsole.Log("LaserRifle does not exist yet, creating...");
     Templates.Clone("WeaponDef", "AssaultRifle", "LaserRifle");
+}
+```
+
+### Getting typed templates (compile-time type known)
+
+```csharp
+// When you have the IL2CppInterop proxy type available
+var rifle = Templates.Get<Il2CppMenace.Strategy.WeaponTemplate>("WeaponTemplate", "mod_weapon.assault_rifle");
+if (rifle != null)
+{
+    DevConsole.Log($"Rifle damage: {rifle.Damage}");
+}
+```
+
+### Getting all templates as typed objects
+
+```csharp
+// Get all unit leaders as typed objects
+var allLeaders = Templates.GetAll<Il2CppMenace.Strategy.UnitLeaderTemplate>("Menace.Strategy.UnitLeaderTemplate");
+foreach (var leader in allLeaders)
+{
+    DevConsole.Log($"Leader: {leader.UnitTitle}");
+}
+```
+
+### Working with templates via reflection
+
+```csharp
+// When you need to use reflection (e.g., passing to game APIs)
+var allLeaders = Templates.FindAllManaged("Menace.Strategy.UnitLeaderTemplate");
+foreach (var leader in allLeaders)
+{
+    // leader is an actual Il2CppMenace.Strategy.UnitLeaderTemplate instance
+    var titleProp = leader.GetType().GetProperty("UnitTitle");
+    var title = titleProp?.GetValue(leader);
+    DevConsole.Log($"Leader: {title}");
+}
+```
+
+### Getting a single template for reflection
+
+```csharp
+// Get a specific template as a managed object
+var leader = Templates.GetManaged("Menace.Strategy.UnitLeaderTemplate", "pilot.bog");
+if (leader != null)
+{
+    // Use reflection to access properties
+    var hirableList = GetHirableLeadersList(); // hypothetical game API
+    hirableList.Add(leader); // Pass typed object to game API
 }
 ```

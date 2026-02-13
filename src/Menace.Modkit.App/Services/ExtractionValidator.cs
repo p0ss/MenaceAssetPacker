@@ -208,12 +208,19 @@ public class ExtractionValidator
             presentFields.Add(prop.Name);
 
         // Check for expected fields that are missing
+        // Note: Reference types (reference, unity_asset, collection) are often null/optional,
+        // so we only report missing primitive/enum fields as actual issues.
         foreach (var field in expectedFields)
         {
             result.ValidatedFieldCount++;
 
             if (!presentFields.Contains(field.Name))
             {
+                // Skip reporting missing reference/collection fields - these are commonly null
+                var category = field.Category?.ToLowerInvariant() ?? "";
+                if (category == "reference" || category == "unity_asset" || category == "collection")
+                    continue;
+
                 result.MissingFields.Add(new FieldIssue
                 {
                     TemplateType = isTemplate ? schemaTypeName : "",

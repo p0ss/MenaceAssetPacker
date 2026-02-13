@@ -125,6 +125,7 @@ namespace Menace.DataExtractor
         // Schema-driven extraction: loaded from embedded schema.json
         private Dictionary<string, SchemaType> _schemaTypes = new();
         private Dictionary<string, SchemaType> _embeddedClasses = new();
+        private Dictionary<string, SchemaType> _structTypes = new();  // Value type structs
         private bool _schemaLoaded = false;
 
         private class SchemaType
@@ -357,8 +358,23 @@ namespace Menace.DataExtractor
                     }
                 }
 
+                // Parse value type structs (like OperationTrustChange, OperationResources)
+                if (root["structs"] is JObject structs)
+                {
+                    foreach (var kvp in structs)
+                    {
+                        var structName = kvp.Key;
+                        var structData = kvp.Value as JObject;
+                        if (structData == null) continue;
+
+                        var schemaType = ParseSchemaType(structName, structData);
+                        if (schemaType != null)
+                            _structTypes[structName] = schemaType;
+                    }
+                }
+
                 _schemaLoaded = true;
-                LoggerInstance.Msg($"Schema loaded: {_schemaTypes.Count} template types, {_embeddedClasses.Count} embedded classes");
+                LoggerInstance.Msg($"Schema loaded: {_schemaTypes.Count} template types, {_embeddedClasses.Count} embedded classes, {_structTypes.Count} struct types");
             }
             catch (Exception ex)
             {
@@ -2350,11 +2366,22 @@ namespace Menace.DataExtractor
                 try
                 {
                     object value = ReadSchemaField(inst.Pointer, field, klass, 0);
+
+                    // For reference/localization/unity_asset fields, record null values explicitly
+                    // (these are legitimately nullable). For other categories, null means "failed to read".
+                    bool isNullableCategory = field.Category is "reference" or "localization" or "unity_asset";
+
                     if (value != null)
                     {
                         inst.Data[field.Name] = value;
                         addedAny = true;
                         DebugLog($"    [schema] -> extracted {field.Name}");
+                    }
+                    else if (isNullableCategory)
+                    {
+                        inst.Data[field.Name] = null;
+                        addedAny = true;
+                        DebugLog($"    [schema] -> recorded null {field.Name}");
                     }
                     else
                     {
@@ -2440,6 +2467,11 @@ namespace Menace.DataExtractor
                         float z = ReadFloat(addr + 8);
                         return new Dictionary<string, object> { { "x", x }, { "y", y }, { "z", z } };
                     }
+                    // Check for schema-defined struct types (like OperationTrustChange)
+                    if (_structTypes.TryGetValue(field.Type, out var structSchema))
+                    {
+                        return ReadStructFromSchema(addr, structSchema, depth + 1);
+                    }
                     // Unknown struct - skip
                     return null;
 
@@ -2483,7 +2515,8 @@ namespace Menace.DataExtractor
                     try
                     {
                         object value = ReadSchemaField(refPtr, field, IntPtr.Zero, depth + 1);
-                        if (value != null)
+                        bool isNullableCategory = field.Category is "reference" or "localization" or "unity_asset";
+                        if (value != null || isNullableCategory)
                             result[field.Name] = value;
                     }
                     catch { }
@@ -2696,7 +2729,8 @@ namespace Menace.DataExtractor
                 try
                 {
                     object value = ReadSchemaField(objPtr, field, IntPtr.Zero, depth);
-                    if (value != null)
+                    bool isNullableCategory = field.Category is "reference" or "localization" or "unity_asset";
+                    if (value != null || isNullableCategory)
                         result[field.Name] = value;
                 }
                 catch (Exception ex)
@@ -2706,6 +2740,79 @@ namespace Menace.DataExtractor
             }
 
             return result.Count > 0 ? result : $"({schema.Name})";
+        }
+
+        /// <summary>
+        /// Read a value type struct from schema. Unlike embedded objects,
+        /// structs are stored inline at the address (no IL2CPP object header).
+        /// </summary>
+        private object ReadStructFromSchema(IntPtr addr, SchemaType schema, int depth)
+        {
+            if (depth > 8) return $"({schema.Name})";
+
+            var result = new Dictionary<string, object>();
+
+            foreach (var field in schema.Fields)
+            {
+                if (field.Offset == 0 && field.Name != schema.Fields[0]?.Name)
+                    continue; // Skip invalid offsets (except first field which can be at 0)
+
+                try
+                {
+                    IntPtr fieldAddr = addr + (int)field.Offset;
+                    object value = ReadStructFieldValue(fieldAddr, field, depth);
+                    bool isNullableCategory = field.Category is "reference" or "localization" or "unity_asset";
+                    if (value != null || isNullableCategory)
+                        result[field.Name] = value;
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"        {schema.Name}.{field.Name}: error: {ex.Message}");
+                }
+            }
+
+            return result.Count > 0 ? result : $"({schema.Name})";
+        }
+
+        /// <summary>
+        /// Read a single field value from a struct (stored inline, no object header).
+        /// </summary>
+        private object ReadStructFieldValue(IntPtr addr, SchemaField field, int depth)
+        {
+            string category = field.Category ?? "primitive";
+
+            switch (category)
+            {
+                case "primitive":
+                    return ReadSchemaPrimitive(addr, field.Type);
+
+                case "enum":
+                    return Marshal.ReadInt32(addr);
+
+                case "struct":
+                    // Nested struct - check for schema
+                    if (_structTypes.TryGetValue(field.Type, out var nestedSchema))
+                    {
+                        return ReadStructFromSchema(addr, nestedSchema, depth + 1);
+                    }
+                    // Handle common Unity types
+                    if (field.Type == "Vector2Int")
+                    {
+                        int x = Marshal.ReadInt32(addr);
+                        int y = Marshal.ReadInt32(addr + 4);
+                        return new Dictionary<string, object> { { "x", x }, { "y", y } };
+                    }
+                    if (field.Type == "Vector2")
+                    {
+                        float x = ReadFloat(addr);
+                        float y = ReadFloat(addr + 4);
+                        return new Dictionary<string, object> { { "x", x }, { "y", y } };
+                    }
+                    return null;
+
+                default:
+                    return null;
+            }
         }
 
         private bool IsPrimitiveTypeName(string typeName)
@@ -3570,7 +3677,9 @@ namespace Menace.DataExtractor
                             _ => null
                         };
 
-                        if (value != null)
+                        // Type enums 18 (CLASS) and 21 (GENERICINST) are reference types that can be null
+                        bool isReferenceType = typeEnum == 18 || typeEnum == 21;
+                        if (value != null || isReferenceType)
                             result[fieldName] = value;
                     }
 
@@ -3708,7 +3817,9 @@ namespace Menace.DataExtractor
 
                         DebugLog($"        [nested] read complete: {fieldName} = {(value == null ? "null" : value.GetType().Name)}");
 
-                        if (value != null)
+                        // Type enums 18 (CLASS) and 21 (GENERICINST) are reference types that can legitimately be null
+                        bool isReferenceType = typeEnum == 18 || typeEnum == 21;
+                        if (value != null || isReferenceType)
                             result[fieldName] = value;
                     }
 
@@ -3750,6 +3861,13 @@ namespace Menace.DataExtractor
                 // Get struct class name for debugging
                 IntPtr namePtr = IL2CPP.il2cpp_class_get_name(klass);
                 string structName = namePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(namePtr) : "?";
+
+                // Check if we have a schema definition for this struct type
+                if (_structTypes.TryGetValue(structName, out var structSchema))
+                {
+                    DebugLog($"        [struct] Using schema for {structName} ({structSchema.Fields.Count} fields)");
+                    return ReadStructFromSchema(addr, structSchema, depth);
+                }
 
                 // Pass 1: Collect all field offsets (for R8→R4 detection)
                 var offsetSet = new HashSet<uint>();
@@ -3841,7 +3959,9 @@ namespace Menace.DataExtractor
                             _ => null
                         };
 
-                        if (value != null)
+                        // Type enums 18 (CLASS) and 21 (GENERICINST) are reference types that can be null
+                        bool isReferenceType = typeEnum == 18 || typeEnum == 21;
+                        if (value != null || isReferenceType)
                             result[fieldName] = value;
                     }
 

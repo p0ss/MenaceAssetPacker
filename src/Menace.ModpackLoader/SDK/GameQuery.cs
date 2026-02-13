@@ -26,6 +26,79 @@ public static class GameQuery
     }
 
     /// <summary>
+    /// Find all objects of a given type name and return them as managed IL2CPP proxy objects.
+    /// This is the preferred method when you need to pass objects to reflection or IL2CPP APIs.
+    /// </summary>
+    public static object[] FindAllManaged(string typeName, string assembly = "Assembly-CSharp")
+    {
+        var type = GameType.Find(typeName, assembly);
+        return FindAllManaged(type);
+    }
+
+    /// <summary>
+    /// Find all objects of a given GameType and return as managed IL2CPP proxy objects.
+    /// </summary>
+    public static object[] FindAllManaged(GameType type)
+    {
+        if (type == null || !type.IsValid)
+            return Array.Empty<object>();
+
+        try
+        {
+            var managedType = type.ManagedType;
+            if (managedType == null)
+            {
+                ModError.WarnInternal("GameQuery.FindAllManaged", $"No managed proxy for {type.FullName}");
+                return Array.Empty<object>();
+            }
+
+            var il2cppType = Il2CppType.From(managedType);
+            var objects = Resources.FindObjectsOfTypeAll(il2cppType);
+
+            if (objects == null || objects.Length == 0)
+                return Array.Empty<object>();
+
+            // Get the IntPtr constructor for the target type to create properly-typed instances
+            var ptrCtor = managedType.GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null)
+            {
+                ModError.WarnInternal("GameQuery.FindAllManaged", $"No IntPtr constructor on {managedType.Name}");
+                return Array.Empty<object>();
+            }
+
+            // Create properly-typed managed proxy instances
+            var results = new List<object>(objects.Length);
+            for (int i = 0; i < objects.Length; i++)
+            {
+                var obj = objects[i];
+                if (obj == null) continue;
+
+                try
+                {
+                    // Get the pointer and construct the correct type
+                    var ptr = obj.Pointer;
+                    if (ptr != IntPtr.Zero)
+                    {
+                        var typedObj = ptrCtor.Invoke(new object[] { ptr });
+                        results.Add(typedObj);
+                    }
+                }
+                catch
+                {
+                    // Skip objects that fail to convert
+                }
+            }
+
+            return results.ToArray();
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("GameQuery.FindAllManaged", $"Failed for {type.FullName}", ex);
+            return Array.Empty<object>();
+        }
+    }
+
+    /// <summary>
     /// Find all objects of a given GameType.
     /// </summary>
     public static GameObj[] FindAll(GameType type)

@@ -13,7 +13,7 @@
       }
     },
     "DataExtractor": {
-      "version": "6.0.0",
+      "version": "7.0.0",
       "required": true,
       "category": "core",
       "description": "Extracts game template data for editing",
@@ -23,7 +23,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "20.0.2",
+      "version": "21.0.0",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",
@@ -65,7 +65,7 @@
       }
     },
     "DevMode": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "required": false,
       "category": "addon",
       "description": "Developer tools: cheats, god mode, entity spawning, in-game tweaks",

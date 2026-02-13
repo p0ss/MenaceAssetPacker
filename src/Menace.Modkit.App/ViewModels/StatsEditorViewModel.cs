@@ -278,10 +278,13 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         _userEditedFields.Clear();
 
         // Reset modified properties to vanilla
+        // Suppress TextChanged events during UI re-render (same pattern as OnNodeSelected)
+        _suppressPropertyUpdates = true;
         if (_vanillaProperties != null)
         {
             ModifiedProperties = new System.Collections.Generic.Dictionary<string, object?>(_vanillaProperties);
         }
+        _suppressPropertyUpdates = false;
 
         // Delete the staging file if it exists
         var stagingDir = System.IO.Path.Combine(

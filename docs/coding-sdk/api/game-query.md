@@ -30,6 +30,31 @@ public static GameObj[] FindAll<T>() where T : Il2CppObjectBase
 
 Find all objects of a given IL2CppInterop proxy type. This is the most direct overload -- it bypasses `GameType` entirely and goes straight through the IL2CPP type system.
 
+### FindAllManaged (by type name)
+
+```csharp
+public static object[] FindAllManaged(string typeName, string assembly = "Assembly-CSharp")
+```
+
+Find all objects of the given type and return them as properly-typed IL2CPP proxy objects. Unlike `FindAll` which returns `GameObj[]`, this method constructs actual managed proxy instances using the IntPtr constructor pattern.
+
+Use this when you need to pass objects to game APIs that expect typed instances, or when working with templates via reflection.
+
+### FindAllManaged (by GameType)
+
+```csharp
+public static object[] FindAllManaged(GameType type)
+```
+
+Find all objects of the given `GameType` and return them as properly-typed managed proxy objects. The method:
+
+1. Resolves the `ManagedType` from the `GameType`
+2. Gets the IL2CPP type for the query
+3. Calls `Resources.FindObjectsOfTypeAll`
+4. Constructs properly-typed instances via the `IntPtr` constructor
+
+Returns an empty array if the type has no managed proxy or the query fails.
+
 ### FindByName (by type name)
 
 ```csharp
@@ -111,4 +136,31 @@ GameState.TacticalReady += () =>
         // ... modify unit stats
     }
 };
+```
+
+### Getting typed objects for game API interaction
+
+```csharp
+// FindAllManaged returns actual IL2CPP proxy instances
+var allLeaders = GameQuery.FindAllManaged("Menace.Strategy.UnitLeaderTemplate");
+foreach (var leader in allLeaders)
+{
+    // leader is a real Il2CppMenace.Strategy.UnitLeaderTemplate instance
+    // Can pass directly to game APIs that expect this type
+    var titleProp = leader.GetType().GetProperty("UnitTitle");
+    DevConsole.Log($"Found leader: {titleProp?.GetValue(leader)}");
+}
+```
+
+### Using FindAllManaged with GameType
+
+```csharp
+var leaderType = GameType.Find("Menace.Strategy.UnitLeaderTemplate");
+var leaders = GameQuery.FindAllManaged(leaderType);
+
+// All objects in the array are properly typed
+foreach (var leader in leaders)
+{
+    DevConsole.Log($"Type: {leader.GetType().Name}");
+}
 ```

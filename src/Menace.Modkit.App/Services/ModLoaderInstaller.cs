@@ -123,7 +123,7 @@ public class ModLoaderInstaller
         }
     }
 
-    public Task<bool> InstallDataExtractorAsync(Action<string>? progressCallback = null)
+    public Task<bool> InstallDataExtractorAsync(Action<string>? progressCallback = null, bool forceExtraction = false)
     {
         try
         {
@@ -147,11 +147,22 @@ public class ModLoaderInstaller
             var targetPath = Path.Combine(modsFolder, "Menace.DataExtractor.dll");
             File.Copy(dataExtractorDll, targetPath, overwrite: true);
 
-            // Write force extraction flag so extraction runs on next game launch
-            WriteForceExtractionFlag();
+            // Only trigger extraction for users who have used Modding Tools features,
+            // or if explicitly requested (e.g., Force Extract button).
+            // This prevents freeze for users who just want to play mods via Mod Loader.
+            bool shouldExtract = forceExtraction || AppSettings.Instance.HasUsedModdingTools;
 
-            progressCallback?.Invoke("✓ DataExtractor mod installed successfully");
-            progressCallback?.Invoke("  Extraction will run automatically on next game launch");
+            if (shouldExtract)
+            {
+                WriteForceExtractionFlag();
+                progressCallback?.Invoke("✓ DataExtractor mod installed successfully");
+                progressCallback?.Invoke("  Extraction will run automatically on next game launch");
+            }
+            else
+            {
+                progressCallback?.Invoke("✓ DataExtractor mod installed (extraction skipped for Mod Loader users)");
+            }
+
             return Task.FromResult(true);
         }
         catch (Exception ex)

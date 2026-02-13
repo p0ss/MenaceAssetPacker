@@ -529,10 +529,11 @@ public class StatsEditorView : UserControl
       Padding = new Thickness(24)
     };
 
-    // Outer grid: toolbar row + content row + backlinks row
+    // Outer grid: toolbar row + content row + splitter + backlinks row
+    // Initial size: 3/4 for content, 1/4 for backlinks
     var outerGrid = new Grid
     {
-      RowDefinitions = new RowDefinitions("Auto,*,Auto")
+      RowDefinitions = new RowDefinitions("Auto,3*,4,*")
     };
 
     // Toolbar row
@@ -754,10 +755,19 @@ public class StatsEditorView : UserControl
     outerGrid.Children.Add(mainGrid);
     Grid.SetRow(mainGrid, 1);
 
-    // Row 2: What Links Here panel
+    // Horizontal splitter between content and backlinks
+    var backlinksSplitter = new GridSplitter
+    {
+      Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      ResizeDirection = GridResizeDirection.Rows
+    };
+    outerGrid.Children.Add(backlinksSplitter);
+    Grid.SetRow(backlinksSplitter, 2);
+
+    // What Links Here panel at the bottom
     var backlinksPanel = BuildBacklinksPanel();
     outerGrid.Children.Add(backlinksPanel);
-    Grid.SetRow(backlinksPanel, 2);
+    Grid.SetRow(backlinksPanel, 3);
 
     border.Child = outerGrid;
     return border;
@@ -770,11 +780,14 @@ public class StatsEditorView : UserControl
       Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
       BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
       BorderThickness = new Thickness(0, 1, 0, 0),
-      Padding = new Thickness(12, 8),
-      Margin = new Thickness(0, 12, 0, 0)
+      Padding = new Thickness(12, 8)
     };
 
-    var stack = new StackPanel { Spacing = 6 };
+    // Use a Grid with ScrollViewer for the content
+    var panelGrid = new Grid
+    {
+      RowDefinitions = new RowDefinitions("Auto,*")
+    };
 
     var header = new TextBlock
     {
@@ -782,9 +795,13 @@ public class StatsEditorView : UserControl
       FontSize = 13,
       FontWeight = FontWeight.SemiBold,
       Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
-      Margin = new Thickness(0, 0, 0, 4)
+      Margin = new Thickness(0, 0, 0, 8)
     };
-    stack.Children.Add(header);
+    panelGrid.Children.Add(header);
+    Grid.SetRow(header, 0);
+
+    var scrollViewer = new ScrollViewer();
+    var stack = new StackPanel { Spacing = 6 };
 
     var itemsControl = new ItemsControl();
     itemsControl.Bind(ItemsControl.ItemsSourceProperty,
@@ -857,7 +874,12 @@ public class StatsEditorView : UserControl
       });
     stack.Children.Add(emptyText);
 
-    panel.Child = stack;
+    // Wrap stack in scroll viewer and add to grid
+    scrollViewer.Content = stack;
+    panelGrid.Children.Add(scrollViewer);
+    Grid.SetRow(scrollViewer, 1);
+
+    panel.Child = panelGrid;
 
     // Hide the entire panel when no template is selected
     panel.Bind(Border.IsVisibleProperty,

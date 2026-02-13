@@ -270,6 +270,26 @@ public class ToolSettingsView : UserControl
             FontSize = 13
         });
 
+        var autoExtractCheck = new CheckBox
+        {
+            Content = "Enable automatic data extraction on game launch",
+            Foreground = Brushes.White
+        };
+        autoExtractCheck.Bind(CheckBox.IsCheckedProperty,
+            new Avalonia.Data.Binding("EnableAutoExtraction") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        perfStack.Children.Add(autoExtractCheck);
+
+        // Add tooltip explaining the setting
+        var autoExtractHint = new TextBlock
+        {
+            Text = "When disabled, the game won't freeze to extract data. Enable if you create mods.",
+            FontSize = 11,
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            Margin = new Thickness(20, 0, 0, 4)
+        };
+        perfStack.Children.Add(autoExtractHint);
+
         var autoUpdateCheck = new CheckBox
         {
             Content = "Auto-update on game version change",
