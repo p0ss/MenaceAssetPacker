@@ -1,7 +1,6 @@
 using System.ComponentModel;
-using System.Net.Http;
 using System.Text.Json;
-using System.Threading.Tasks;
+
 using ModelContextProtocol.Server;
 
 namespace Menace.Modkit.Mcp.Tools;
@@ -13,12 +12,11 @@ namespace Menace.Modkit.Mcp.Tools;
 [McpServerToolType]
 public static class UITools
 {
-    private static readonly HttpClient _httpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(2)
-    };
-
-    private const string UIStateUrl = "http://localhost:19847/state";
+    private static readonly string StateFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".menace-modkit",
+        "ui-state.json"
+    );
 
     /// <summary>
     /// Get the current UI state of the Modkit application.
@@ -26,12 +24,33 @@ public static class UITools
     /// Use this to understand what the user is looking at.
     /// </summary>
     [McpServerTool(Name = "modkit_ui", ReadOnly = true), Description("Get the current UI state of the Modkit application. Shows what section the user is in and what text/headings are visible on screen.")]
-    public static async Task<object> GetUIState()
+    public static object GetUIState()
     {
         try
         {
-            var response = await _httpClient.GetStringAsync(UIStateUrl);
-            var state = JsonSerializer.Deserialize<UIStateResponse>(response, new JsonSerializerOptions
+            if (!File.Exists(StateFilePath))
+            {
+                return new
+                {
+                    modkitRunning = false,
+                    error = "Modkit app is not running. Please start the Menace Modkit application."
+                };
+            }
+
+            // Check if file is stale (more than 5 seconds old)
+            var fileInfo = new FileInfo(StateFilePath);
+            var age = DateTime.UtcNow - fileInfo.LastWriteTimeUtc;
+            if (age > TimeSpan.FromSeconds(5))
+            {
+                return new
+                {
+                    modkitRunning = false,
+                    error = $"Modkit app state is stale ({age.TotalSeconds:F0}s old). The app may have closed or frozen."
+                };
+            }
+
+            var json = File.ReadAllText(StateFilePath);
+            var state = JsonSerializer.Deserialize<UIStateResponse>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
@@ -42,7 +61,7 @@ public static class UITools
             }
 
             // Format the output for easy reading
-            var result = new
+            return new
             {
                 modkitRunning = true,
                 currentSection = state.CurrentSection,
@@ -50,23 +69,13 @@ public static class UITools
                 windowTitle = state.WindowTitle,
                 visibleContent = FormatElements(state.Elements)
             };
-
-            return result;
         }
-        catch (HttpRequestException)
+        catch (IOException ex)
         {
             return new
             {
                 modkitRunning = false,
-                error = "Modkit app is not running. Please start the Menace Modkit application."
-            };
-        }
-        catch (TaskCanceledException)
-        {
-            return new
-            {
-                modkitRunning = false,
-                error = "Modkit app did not respond. It may not be running or may be busy."
+                error = $"Failed to read UI state: {ex.Message}"
             };
         }
         catch (Exception ex)
@@ -74,7 +83,7 @@ public static class UITools
             return new
             {
                 modkitRunning = false,
-                error = $"Failed to connect to Modkit: {ex.Message}"
+                error = $"Error reading UI state: {ex.Message}"
             };
         }
     }

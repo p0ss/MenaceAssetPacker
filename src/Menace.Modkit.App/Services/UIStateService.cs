@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,25 +12,31 @@ using Avalonia.Threading;
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
-/// Exposes UI state to external tools (like MCP server) via a local HTTP endpoint.
+/// Exposes UI state to external tools (like MCP server) via a shared file.
 /// This allows AI assistants to "see" what the user sees in the modkit.
+/// State is written to ~/.menace-modkit/ui-state.json
 /// </summary>
 public sealed class UIStateService : IDisposable
 {
     private static readonly Lazy<UIStateService> _instance = new(() => new UIStateService());
     public static UIStateService Instance => _instance.Value;
 
-    private const int Port = 19847;
-    private HttpListener? _listener;
+    private static readonly string StateFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".menace-modkit",
+        "ui-state.json"
+    );
+
     private CancellationTokenSource? _cts;
     private Window? _mainWindow;
     private Func<string>? _currentSectionGetter;
     private Func<string>? _currentViewGetter;
+    private Timer? _updateTimer;
 
     private UIStateService() { }
 
     /// <summary>
-    /// Start the HTTP server that exposes UI state.
+    /// Start writing UI state to the shared file.
     /// Call this from App.OnFrameworkInitializationCompleted after the main window is created.
     /// </summary>
     public void Start(Window mainWindow, Func<string> currentSectionGetter, Func<string>? currentViewGetter = null)
@@ -39,106 +44,74 @@ public sealed class UIStateService : IDisposable
         _mainWindow = mainWindow;
         _currentSectionGetter = currentSectionGetter;
         _currentViewGetter = currentViewGetter;
-
         _cts = new CancellationTokenSource();
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://localhost:{Port}/");
+
+        // Ensure directory exists
+        var dir = Path.GetDirectoryName(StateFilePath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+
+        // Write state immediately and then periodically
+        WriteStateToFile();
+        _updateTimer = new Timer(_ => WriteStateToFile(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        ModkitLog.Info($"[UIStateService] Writing UI state to {StateFilePath}");
+    }
+
+    private void WriteStateToFile()
+    {
+        if (_cts?.IsCancellationRequested == true) return;
 
         try
         {
-            _listener.Start();
-            Task.Run(() => ListenLoop(_cts.Token));
-            ModkitLog.Info($"[UIStateService] Started on port {Port}");
-        }
-        catch (Exception ex)
-        {
-            ModkitLog.Warn($"[UIStateService] Failed to start HTTP listener: {ex.Message}");
-        }
-    }
+            var state = GetUIState();
+            if (state == null) return;
 
-    private async Task ListenLoop(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested && _listener?.IsListening == true)
-        {
-            try
-            {
-                var context = await _listener.GetContextAsync();
-                _ = Task.Run(() => HandleRequest(context), ct);
-            }
-            catch (HttpListenerException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Warn($"[UIStateService] Error handling request: {ex.Message}");
-            }
-        }
-    }
-
-    private void HandleRequest(HttpListenerContext context)
-    {
-        try
-        {
-            var path = context.Request.Url?.AbsolutePath ?? "/";
-
-            object? responseData = path switch
-            {
-                "/" or "/state" => GetUIState(),
-                "/health" => new { status = "ok" },
-                _ => null
-            };
-
-            if (responseData == null)
-            {
-                context.Response.StatusCode = 404;
-                context.Response.Close();
-                return;
-            }
-
-            var json = JsonSerializer.Serialize(responseData, new JsonSerializerOptions
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions
             {
                 WriteIndented = true,
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase
             });
 
-            var buffer = Encoding.UTF8.GetBytes(json);
-            context.Response.ContentType = "application/json";
-            context.Response.ContentLength64 = buffer.Length;
-            context.Response.OutputStream.Write(buffer, 0, buffer.Length);
-            context.Response.Close();
+            // Write atomically via temp file
+            var tempPath = StateFilePath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, StateFilePath, overwrite: true);
         }
         catch (Exception ex)
         {
-            ModkitLog.Warn($"[UIStateService] Error sending response: {ex.Message}");
-            try { context.Response.Close(); } catch { }
+            // Don't spam logs - this runs every second
+            System.Diagnostics.Debug.WriteLine($"[UIStateService] Write failed: {ex.Message}");
         }
     }
 
-    private object GetUIState()
+    private object? GetUIState()
     {
         // Must run on UI thread to access visual tree
-        return Dispatcher.UIThread.Invoke(() =>
+        try
         {
-            var state = new UIState
+            return Dispatcher.UIThread.Invoke(() =>
             {
-                CurrentSection = _currentSectionGetter?.Invoke() ?? "Unknown",
-                CurrentView = _currentViewGetter?.Invoke(),
-                Timestamp = DateTime.UtcNow.ToString("o")
-            };
+                var state = new UIState
+                {
+                    CurrentSection = _currentSectionGetter?.Invoke() ?? "Unknown",
+                    CurrentView = _currentViewGetter?.Invoke(),
+                    Timestamp = DateTime.UtcNow.ToString("o")
+                };
 
-            if (_mainWindow != null)
-            {
-                state.WindowTitle = _mainWindow.Title ?? "Menace Modkit";
-                state.Elements = ExtractUIElements(_mainWindow);
-            }
+                if (_mainWindow != null)
+                {
+                    state.WindowTitle = _mainWindow.Title ?? "Menace Modkit";
+                    state.Elements = ExtractUIElements(_mainWindow);
+                }
 
-            return state;
-        });
+                return state;
+            });
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private List<UIElement> ExtractUIElements(Control root, int maxDepth = 15)
@@ -262,9 +235,21 @@ public sealed class UIStateService : IDisposable
     public void Dispose()
     {
         _cts?.Cancel();
-        _listener?.Stop();
-        _listener?.Close();
+        _updateTimer?.Dispose();
+
+        // Clean up state file on exit
+        try
+        {
+            if (File.Exists(StateFilePath))
+                File.Delete(StateFilePath);
+        }
+        catch { }
     }
+
+    /// <summary>
+    /// Path to the shared UI state file. Used by MCP server to read state.
+    /// </summary>
+    public static string GetStateFilePath() => StateFilePath;
 
     private class UIState
     {
