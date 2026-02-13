@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A modloader and modding toolkit for <a href="https://store.steampowered.com/app/2432860/MENACE/">MENACE</a></strong>
+  <strong>A modloader and modding toolkit for <a href="https://store.steampowered.com/app/2432860/MENACE/">MENACE</a>.  Grab the latest version from the <a href="https://github.com/p0ss/MenaceAssetPacker/releases">downloads page</a>
 </p>
 
 <p align="center">
