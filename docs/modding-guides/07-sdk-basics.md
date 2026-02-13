@@ -105,25 +105,25 @@ The SDK provides several key classes:
 ```csharp
 using Menace.SDK;
 
-// Find all Marines on the battlefield
-var marines = GameQuery.FindAll("UnitTemplate", "Marine");
+// Find all weapons
+var weapons = GameQuery.FindAll("WeaponTemplate");
 
 // Find a specific weapon
-var rifle = GameQuery.FindByName("WeaponTemplate", "AssaultRifle");
+var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 ```
 
 ### GameObj - Working with Objects
 
 ```csharp
 // GameObj wraps Unity objects with a convenient API
-var marine = GameQuery.FindByName("UnitTemplate", "Marine");
+var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
 // Read fields
-int health = marine.Get<int>("maxHealth");
-string name = marine.Get<string>("displayName");
+float damage = rifle.ReadFloat("Damage");
+int maxRange = rifle.ReadInt("MaxRange");
 
 // Write fields
-marine.Set("maxHealth", 150);
+rifle.WriteFloat("Damage", 15.0f);
 ```
 
 ### GameState - Game Events
@@ -159,14 +159,14 @@ public class MyPlugin : IModpackPlugin
 using Menace.SDK;
 
 // Read template data
-var damage = Templates.ReadField(rifle, "damage");
+var damage = Templates.ReadField(rifle, "Damage");
 
 // Write template data
-Templates.WriteField(rifle, "damage", 25);
+Templates.WriteField(rifle, "Damage", 25.0f);
 
 // Clone a template
-var eliteMarine = Templates.Clone("UnitTemplate", "Marine", "EliteMarine");
-Templates.WriteField(eliteMarine, "maxHealth", 200);
+var heavyRifle = Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_heavy_rifle");
+Templates.WriteField(heavyRifle, "Damage", 20.0f);
 ```
 
 ### DevConsole - Debug Output

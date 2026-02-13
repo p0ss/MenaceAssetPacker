@@ -60,7 +60,7 @@ ModpackLoader is a MelonLoader mod (`Menace.ModpackLoader.dll`) that discovers m
     }
   },
   "assets": {
-    "Assets/Textures/icon.png": "Assets/Textures/icon.png"
+    "Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png": "assets/custom_rifle.png"
   },
   "bundles": ["bundles/custom.bundle"],
   "code": {

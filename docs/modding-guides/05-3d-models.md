@@ -22,8 +22,9 @@ GLB is preferred because it's a single file containing mesh, textures, and anima
 Use the Modkit to export the model you want to replace:
 
 1. Go to **Modding Tools > Assets**
-2. Find the mesh (e.g., `Marine_Mesh`)
-3. Click **Export** - saves as GLB
+2. Browse or search for the mesh you want to replace (e.g., `Assets/Mesh/arc_assault_rifle_t1_LOD0.glb`)
+3. Note the asset path shown in the browser
+4. Click **Export** - saves as GLB
 
 This gives you a reference for:
 - Scale and proportions
@@ -65,16 +66,16 @@ MyMod-modpack/
   modpack.json
   assets/
     models/
-      custom_marine.glb
+      custom_rifle.glb
 ```
 
 ```json
 {
   "manifestVersion": 2,
-  "name": "CustomMarineModel",
+  "name": "CustomRifleModel",
   "version": "1.0.0",
   "assets": {
-    "Assets/Models/Units/Marine.fbx": "assets/models/custom_marine.glb"
+    "Assets/Mesh/arc_assault_rifle_t1_LOD0.glb": "assets/models/custom_rifle.glb"
   }
 }
 ```
@@ -112,7 +113,9 @@ Weapons are simpler - usually no skeleton, just a static mesh:
 
 ```json
 "assets": {
-  "Assets/Models/Weapons/AssaultRifle.fbx": "assets/weapons/my_rifle.glb"
+  "Assets/Mesh/arc_assault_rifle_t1_LOD0.glb": "assets/weapons/custom_rifle.glb",
+  "Assets/Mesh/arc_assault_rifle_t1_LOD1.glb": "assets/weapons/custom_rifle_lod1.glb",
+  "Assets/Mesh/arc_assault_rifle_t1_LOD2.glb": "assets/weapons/custom_rifle_lod2.glb"
 }
 ```
 
@@ -127,18 +130,19 @@ GLB can embed textures, but you can also reference external files:
 
 ```json
 "assets": {
-  "Assets/Models/Units/Marine.fbx": "assets/models/marine.glb",
-  "Assets/Textures/Units/Marine_Diffuse.png": "assets/textures/marine_color.png",
-  "Assets/Textures/Units/Marine_Normal.png": "assets/textures/marine_normal.png"
+  "Assets/Mesh/arc_assault_rifle_t1_LOD0.glb": "assets/models/custom_rifle.glb",
+  "Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png": "assets/textures/rifle_color.png",
+  "Assets/Texture2D/arc_assault_rifle_t1_Normal.png": "assets/textures/rifle_normal.png",
+  "Assets/Texture2D/arc_assault_rifle_t1_MaskMap.png": "assets/textures/rifle_mask.png"
 }
 ```
 
 ## LOD (Level of Detail)
 
 Some models have multiple LOD versions:
-- `Marine_LOD0.fbx` - High detail (close up)
-- `Marine_LOD1.fbx` - Medium detail
-- `Marine_LOD2.fbx` - Low detail (distant)
+- `model_LOD0.fbx` - High detail (close up)
+- `model_LOD1.fbx` - Medium detail
+- `model_LOD2.fbx` - Low detail (distant)
 
 For best results, replace all LOD levels.
 

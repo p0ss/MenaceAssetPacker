@@ -33,7 +33,7 @@ Use the Modkit to locate the sounds you want to replace:
    - `MUS_` - Music tracks
    - `VO_` - Voice lines (if applicable)
 
-4. Note the full asset path (e.g., `Assets/Audio/SFX/Weapons/Rifle_Fire.ogg`)
+4. Note the full asset path (e.g., `Assets/AudioClip/assault_rifle_tier_1_762_single_01.wav`)
 
 You can also browse the extracted assets folder to preview sounds with your system audio player.
 
@@ -72,8 +72,8 @@ Reference them in your `modpack.json`:
   "name": "CustomAudio",
   "version": "1.0.0",
   "assets": {
-    "Assets/Audio/SFX/Weapons/Rifle_Fire.ogg": "assets/audio/rifle_shot.ogg",
-    "Assets/Audio/SFX/Explosions/Grenade.ogg": "assets/audio/explosion.ogg"
+    "Assets/AudioClip/assault_rifle_tier_1_762_single_01.wav": "assets/audio/rifle_shot.ogg",
+    "Assets/AudioClip/frag_grenade_explosion_01.wav": "assets/audio/explosion.ogg"
   }
 }
 ```
@@ -84,12 +84,12 @@ Let's replace the assault rifle's firing sound with a custom one.
 
 ### 1. Find the original
 
-In the Asset Browser, search for "rifle" or browse to `Assets/Audio/SFX/Weapons/`. You'll find files like:
+In the Asset Browser, search for "rifle" or browse `Assets/AudioClip/`. You'll find files like:
 
-- `AssaultRifle_Fire.ogg` - Single shot
-- `AssaultRifle_FireLoop.ogg` - Sustained fire
-- `AssaultRifle_Reload.ogg` - Magazine reload
-- `AssaultRifle_Empty.ogg` - Dry fire click
+- `assault_rifle_tier_1_762_single_01.wav` - Single shot
+- `assault_rifle_tier_1_762_burst_01.wav` - Burst fire
+- `assault_rifle_tier_1_762_single_01_suppressed.wav` - Suppressed shot
+- Distant variants like `assault_rifle_tier_1_762_single_distant_01.wav`
 
 ### 2. Prepare your replacement
 
@@ -117,8 +117,9 @@ CustomRifle-modpack/
   "version": "1.0.0",
   "description": "Replaces assault rifle sounds",
   "assets": {
-    "Assets/Audio/SFX/Weapons/AssaultRifle_Fire.ogg": "assets/audio/my_rifle_fire.ogg",
-    "Assets/Audio/SFX/Weapons/AssaultRifle_Reload.ogg": "assets/audio/my_rifle_reload.ogg"
+    "Assets/AudioClip/assault_rifle_tier_1_762_single_01.wav": "assets/audio/my_rifle_fire.ogg",
+    "Assets/AudioClip/assault_rifle_tier_1_762_single_02.wav": "assets/audio/my_rifle_fire.ogg",
+    "Assets/AudioClip/assault_rifle_tier_1_762_single_03.wav": "assets/audio/my_rifle_fire.ogg"
   }
 }
 ```
@@ -131,12 +132,14 @@ Enable the mod, start the game, and fire the assault rifle. You should hear your
 
 Ambient sounds create atmosphere - wind, rain, distant machinery, wildlife. These typically loop seamlessly.
 
-Common ambient audio paths:
+Common ambient audio paths in `Assets/AudioClip/`:
 ```
-Assets/Audio/AMB/Forest_Day.ogg
-Assets/Audio/AMB/Industrial_Hum.ogg
-Assets/Audio/AMB/Rain_Light.ogg
-Assets/Audio/AMB/Wind_Strong.ogg
+desert_wind_ambience_01.ogg
+temperate_rain_heavy_ambience_01.ogg
+temperate_rain_moderate_ambience_01.ogg
+bridge_starship_ambience_01.ogg
+general_starship_ambience_01.ogg
+hangar_starship_ambience_01.ogg
 ```
 
 **Tips for ambient replacements:**
@@ -153,8 +156,8 @@ Example ambient replacement:
   "name": "CustomAmbience",
   "version": "1.0.0",
   "assets": {
-    "Assets/Audio/AMB/Forest_Day.ogg": "assets/audio/custom_forest.ogg",
-    "Assets/Audio/AMB/Rain_Light.ogg": "assets/audio/custom_rain.ogg"
+    "Assets/AudioClip/desert_wind_ambience_01.ogg": "assets/audio/custom_wind.ogg",
+    "Assets/AudioClip/temperate_rain_heavy_ambience_01.ogg": "assets/audio/custom_rain.ogg"
   }
 }
 ```
@@ -163,14 +166,14 @@ Example ambient replacement:
 
 Interface sounds provide feedback for button clicks, menu navigation, and notifications.
 
-Common UI audio paths:
+Common UI audio paths in `Assets/AudioClip/`:
 ```
-Assets/Audio/UI/Button_Click.ogg
-Assets/Audio/UI/Button_Hover.ogg
-Assets/Audio/UI/Menu_Open.ogg
-Assets/Audio/UI/Menu_Close.ogg
-Assets/Audio/UI/Notification.ogg
-Assets/Audio/UI/Error.ogg
+ui_hover.wav
+UI_note_negative.wav
+UI_bleed_out_permadeath_01.wav
+UI_bleed_out_round_start_01.wav
+UI_bleed_out_stabilized_01.wav
+squad_weapon_select_UI_01.wav
 ```
 
 **Tips for UI sound replacements:**
@@ -187,9 +190,9 @@ Example UI sound pack:
   "name": "CustomUISounds",
   "version": "1.0.0",
   "assets": {
-    "Assets/Audio/UI/Button_Click.ogg": "assets/ui/click.ogg",
-    "Assets/Audio/UI/Button_Hover.ogg": "assets/ui/hover.ogg",
-    "Assets/Audio/UI/Notification.ogg": "assets/ui/notify.ogg"
+    "Assets/AudioClip/ui_hover.wav": "assets/ui/hover.ogg",
+    "Assets/AudioClip/UI_note_negative.wav": "assets/ui/error.ogg",
+    "Assets/AudioClip/squad_weapon_select_UI_01.wav": "assets/ui/select.ogg"
   }
 }
 ```
@@ -198,13 +201,17 @@ Example UI sound pack:
 
 Music tracks are typically longer files that loop during gameplay or play in menus.
 
-Common music paths:
+Common music paths in `Assets/AudioClip/`:
 ```
-Assets/Audio/MUS/Menu_Theme.ogg
-Assets/Audio/MUS/Combat_Intense.ogg
-Assets/Audio/MUS/Combat_Ambient.ogg
-Assets/Audio/MUS/Victory.ogg
-Assets/Audio/MUS/Defeat.ogg
+01_MainTheme_Looped.ogg
+02_MissionPlanning_Threat_Looped.ogg
+03_Starmap1.ogg
+06_Combat_Pirates1.ogg
+10_Combat_Constructs1.ogg
+13_Combat_RogueArmy1.ogg
+16_Combat_Generic1.ogg
+28_MissionSuccess.ogg
+29_MissionFailure.ogg
 ```
 
 **Tips for music replacements:**
@@ -222,8 +229,8 @@ Example music replacement:
   "version": "1.0.0",
   "description": "Custom music replacements",
   "assets": {
-    "Assets/Audio/MUS/Menu_Theme.ogg": "assets/music/my_menu_theme.ogg",
-    "Assets/Audio/MUS/Combat_Intense.ogg": "assets/music/my_battle_music.ogg"
+    "Assets/AudioClip/01_MainTheme_Looped.ogg": "assets/music/my_menu_theme.ogg",
+    "Assets/AudioClip/06_Combat_Pirates1.ogg": "assets/music/my_battle_music.ogg"
   }
 }
 ```
@@ -353,14 +360,14 @@ CustomAudioPack-modpack/
   "author": "YourName",
   "description": "Complete audio overhaul - weapons, ambience, UI, and music",
   "assets": {
-    "Assets/Audio/SFX/Weapons/AssaultRifle_Fire.ogg": "assets/weapons/rifle_fire.ogg",
-    "Assets/Audio/SFX/Weapons/Shotgun_Fire.ogg": "assets/weapons/shotgun_fire.ogg",
-    "Assets/Audio/SFX/Weapons/Pistol_Fire.ogg": "assets/weapons/pistol_fire.ogg",
-    "Assets/Audio/AMB/Forest_Day.ogg": "assets/ambient/forest_ambience.ogg",
-    "Assets/Audio/AMB/Rain_Light.ogg": "assets/ambient/rain_loop.ogg",
-    "Assets/Audio/UI/Button_Click.ogg": "assets/ui/button_click.ogg",
-    "Assets/Audio/UI/Menu_Open.ogg": "assets/ui/menu_open.ogg",
-    "Assets/Audio/MUS/Menu_Theme.ogg": "assets/music/menu_theme.ogg"
+    "Assets/AudioClip/assault_rifle_tier_1_762_single_01.wav": "assets/weapons/rifle_fire.ogg",
+    "Assets/AudioClip/combat_shotgun_tier_1_01.wav": "assets/weapons/shotgun_fire.ogg",
+    "Assets/AudioClip/pistol_tier_1_01.wav": "assets/weapons/pistol_fire.ogg",
+    "Assets/AudioClip/desert_wind_ambience_01.ogg": "assets/ambient/wind_ambience.ogg",
+    "Assets/AudioClip/temperate_rain_heavy_ambience_01.ogg": "assets/ambient/rain_loop.ogg",
+    "Assets/AudioClip/ui_hover.wav": "assets/ui/button_click.ogg",
+    "Assets/AudioClip/UI_note_negative.wav": "assets/ui/menu_open.ogg",
+    "Assets/AudioClip/01_MainTheme_Looped.ogg": "assets/music/menu_theme.ogg"
   }
 }
 ```

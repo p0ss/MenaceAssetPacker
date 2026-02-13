@@ -240,16 +240,16 @@ Create your own helper that uses SDK primitives:
 ```csharp
 public static class MyHelpers
 {
-    public static void HealAllUnits(int amount)
+    public static void BuffAllWeaponTemplates(float damageMultiplier)
     {
-        var units = GameQuery.FindAll("UnitTemplate");
-        foreach (var unit in units)
+        // Modify all weapon templates - affects future weapon instances
+        var weapons = Templates.FindAll("WeaponTemplate");
+        foreach (var weapon in weapons)
         {
-            if (unit.Get<bool>("isPlayerControlled"))
+            var damage = Templates.ReadField(weapon, "Damage");
+            if (damage != null)
             {
-                int current = unit.Get<int>("currentHealth");
-                int max = unit.Get<int>("maxHealth");
-                unit.Set("currentHealth", Math.Min(current + amount, max));
+                Templates.WriteField(weapon, "Damage", (float)damage * damageMultiplier);
             }
         }
     }

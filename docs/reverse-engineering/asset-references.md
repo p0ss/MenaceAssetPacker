@@ -203,7 +203,7 @@ public class DataTemplateLoader {
 var entities = DataTemplateLoader.GetAll<EntityTemplate>();
 
 // Get specific template by ID
-var marine = DataTemplateLoader.Get<EntityTemplate>("Marine");
+var pirate = DataTemplateLoader.Get<EntityTemplate>("enemy.pirate_boarding_commandos");
 
 // Get template from runtime object
 Entity entity = ...;
@@ -366,8 +366,8 @@ foreach (var entity in DataTemplateLoader.GetAll<EntityTemplate>()) {
 ### Replacing Sprites
 
 ```csharp
-var entity = DataTemplateLoader.Get<EntityTemplate>("Marine");
-// Load replacement sprite
+var entity = DataTemplateLoader.Get<EntityTemplate>("enemy.pirate_boarding_commandos");
+// Load replacement sprite from your modpack assets
 var newBadge = LoadSprite("custom_badge.png");
 // Replace via reflection
 typeof(EntityTemplate).GetField("Badge").SetValue(entity, newBadge);
@@ -376,20 +376,23 @@ typeof(EntityTemplate).GetField("Badge").SetValue(entity, newBadge);
 ### Adding Skills
 
 ```csharp
-var entity = DataTemplateLoader.Get<EntityTemplate>("Marine");
-var newSkill = DataTemplateLoader.Get<SkillTemplate>("CustomAbility");
+var entity = DataTemplateLoader.Get<EntityTemplate>("enemy.pirate_boarding_commandos");
+// Find a real skill name using template_list SkillTemplate
+var newSkill = DataTemplateLoader.Get<SkillTemplate>("skill.overwatch");
 entity.Skills.Add(newSkill);
 ```
 
 ### Replacing Prefabs
 
-Best done via asset bundles:
-1. Create replacement prefab in Unity
-2. Build into asset bundle
-3. Load and replace at runtime
+Best done via the Modkit's asset replacement system:
+1. Export the original model from the asset browser
+2. Create your replacement in Blender
+3. Add to modpack assets with the original's path
+
+For advanced cases using asset bundles directly:
 
 ```csharp
 var bundle = AssetBundle.LoadFromFile("custom_models.bundle");
-var newPrefab = bundle.LoadAsset<GameObject>("CustomMarine");
+var newPrefab = bundle.LoadAsset<GameObject>("CustomModel");
 entity.Prefabs[0] = newPrefab;
 ```

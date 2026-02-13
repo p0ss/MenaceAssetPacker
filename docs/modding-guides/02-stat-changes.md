@@ -4,16 +4,16 @@ Now that you've made your first mod, let's explore the full range of data-driven
 
 ## Template Types
 
-Menace stores game data in **templates** - ScriptableObjects that define units, weapons, abilities, and more. The main template types are:
+Menace stores game data in **templates** - ScriptableObjects that define weapons, entities, abilities, and more. The main template types are:
 
 | Template Type | What It Controls |
 |--------------|------------------|
-| `UnitTemplate` | Soldiers, enemies, civilians |
 | `WeaponTemplate` | Guns, melee weapons, grenades |
-| `AbilityTemplate` | Special abilities, skills |
-| `ItemTemplate` | Equipment, consumables |
-| `FactionTemplate` | Faction relationships, colors |
-| `MissionTemplate` | Mission parameters, objectives |
+| `EntityTemplate` | Units, enemies, buildings, objects |
+| `SkillTemplate` | Special abilities, skills |
+| `BaseItemTemplate` | Equipment, accessories, consumables |
+| `ArmorTemplate` | Armor pieces and protection |
+| `UnitLeaderTemplate` | Squad leaders and pilots |
 
 ## Browsing Templates
 
@@ -26,49 +26,51 @@ Use the Modkit's **Data** tab to explore templates:
 
 ## Common Stat Changes
 
-### Unit Stats
-
-```json
-"patches": {
-  "UnitTemplate": {
-    "Marine": {
-      "maxHealth": 120,
-      "armor": 2,
-      "movementSpeed": 4.0,
-      "actionPoints": 3,
-      "sightRange": 15,
-      "recruitCost": 150
-    }
-  }
-}
-```
-
 ### Weapon Stats
 
 ```json
 "patches": {
   "WeaponTemplate": {
-    "AssaultRifle": {
-      "damage": 18,
-      "accuracy": 75,
-      "range": 20,
-      "clipSize": 30,
-      "fireRate": 0.15,
-      "armorPiercing": 2
+    "weapon.generic_assault_rifle_tier1_ARC_762": {
+      "Damage": 15.0,
+      "MaxRange": 9,
+      "IdealRange": 6,
+      "AccuracyBonus": 5.0,
+      "ArmorPenetration": 10.0
     }
   }
 }
 ```
 
-### Ability Modifications
+### Multiple Weapons
 
 ```json
 "patches": {
-  "AbilityTemplate": {
-    "Overwatch": {
-      "cooldown": 1,
-      "actionPointCost": 1,
-      "range": 25
+  "WeaponTemplate": {
+    "weapon.generic_assault_rifle_tier1_ARC_762": {
+      "Damage": 15.0,
+      "MaxRange": 9
+    },
+    "weapon.generic_combat_shotgun_tier_1_cs185": {
+      "Damage": 25.0,
+      "MaxRange": 5
+    },
+    "weapon.generic_dmr_tier_1_longshot": {
+      "Damage": 20.0,
+      "MaxRange": 12
+    }
+  }
+}
+```
+
+### Skill Modifications
+
+```json
+"patches": {
+  "SkillTemplate": {
+    "skill.overwatch": {
+      "APCost": 1,
+      "Cooldown": 0
     }
   }
 }
@@ -86,14 +88,20 @@ Your modpack can modify many templates in a single file:
   "author": "YourName",
   "description": "Comprehensive balance changes",
   "patches": {
-    "UnitTemplate": {
-      "Marine": { "maxHealth": 100 },
-      "Medic": { "maxHealth": 80, "healAmount": 40 },
-      "Sniper": { "accuracy": 95, "damage": 50 }
-    },
     "WeaponTemplate": {
-      "Shotgun": { "damage": 35, "range": 8 },
-      "SMG": { "fireRate": 0.08, "accuracy": 60 }
+      "weapon.generic_assault_rifle_tier1_ARC_762": {
+        "Damage": 12.0,
+        "AccuracyBonus": 8.0
+      },
+      "weapon.generic_combat_shotgun_tier_1_cs185": {
+        "Damage": 30.0,
+        "MaxRange": 4
+      }
+    },
+    "ArmorTemplate": {
+      "armor.light_ballistic_vest": {
+        "ArmorValue": 3
+      }
     }
   }
 }
@@ -101,31 +109,30 @@ Your modpack can modify many templates in a single file:
 
 ## Template Cloning
 
-Want to create a new unit variant without replacing the original? Use **clones**:
+Want to create a new weapon variant without replacing the original? Use **clones**:
 
 ```json
 {
   "manifestVersion": 2,
-  "name": "EliteSquad",
+  "name": "HeavyWeapons",
   "version": "1.0.0",
   "clones": {
-    "UnitTemplate": {
-      "EliteMarine": "Marine"
+    "WeaponTemplate": {
+      "weapon.custom_heavy_rifle": "weapon.generic_assault_rifle_tier1_ARC_762"
     }
   },
   "patches": {
-    "UnitTemplate": {
-      "EliteMarine": {
-        "maxHealth": 150,
-        "armor": 3,
-        "displayName": "Elite Marine"
+    "WeaponTemplate": {
+      "weapon.custom_heavy_rifle": {
+        "Damage": 20.0,
+        "ArmorPenetration": 25.0
       }
     }
   }
 }
 ```
 
-This creates a copy of `Marine` called `EliteMarine`, then patches the copy. The original Marine is unchanged.
+This creates a copy of the ARC-762 called `weapon.custom_heavy_rifle`, then patches the copy. The original weapon is unchanged.
 
 ## Arrays and Lists
 
@@ -133,9 +140,9 @@ Some fields are arrays. You can replace them entirely:
 
 ```json
 "patches": {
-  "UnitTemplate": {
-    "Marine": {
-      "abilities": ["Overwatch", "Reload", "Sprint", "Grenade"]
+  "WeaponTemplate": {
+    "weapon.generic_assault_rifle_tier1_ARC_762": {
+      "Tags": ["Rifle", "Automatic", "Military"]
     }
   }
 }
@@ -147,11 +154,10 @@ Not everything is a number:
 
 ```json
 "patches": {
-  "UnitTemplate": {
-    "Marine": {
-      "canSwim": true,
-      "displayName": "Space Marine",
-      "description": "An elite soldier from the future"
+  "WeaponTemplate": {
+    "weapon.generic_assault_rifle_tier1_ARC_762": {
+      "IsAutomatic": true,
+      "DisplayName": "Enhanced ARC-762"
     }
   }
 }
@@ -161,9 +167,9 @@ Not everything is a number:
 
 The Modkit's Data tab shows all available fields. Some tips:
 
-- Field names are **camelCase** (e.g., `maxHealth`, not `MaxHealth`)
-- Nested objects use dot notation: `weaponStats.damage`
-- Arrays are shown with indices: `abilities[0]`
+- Field names typically use **PascalCase** (e.g., `MaxRange`, `ArmorPenetration`)
+- Nested objects use dot notation: `Properties.Armor`
+- Arrays are shown with indices: `Tags[0]`
 - Hover over fields in the Modkit for type information
 
 ## Load Order

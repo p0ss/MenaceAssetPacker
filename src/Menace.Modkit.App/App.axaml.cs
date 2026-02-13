@@ -146,6 +146,16 @@ public class App : Application
         {
             _desktop.MainWindow = mainWindow;
             mainWindow.Show();
+
+            // Start UI state service for MCP server integration
+            if (mainWindow.DataContext is ViewModels.MainViewModel viewModel)
+            {
+                UIStateService.Instance.Start(
+                    mainWindow,
+                    () => $"{viewModel.CurrentSection}/{viewModel.CurrentSubSection}",
+                    () => viewModel.SelectedViewModel?.GetType().Name ?? "Unknown"
+                );
+            }
         }
     }
 

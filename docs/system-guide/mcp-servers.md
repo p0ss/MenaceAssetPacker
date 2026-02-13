@@ -152,11 +152,11 @@ The following tactical analysis endpoints have been implemented:
 ```
 /ai_intent              - What the AI is planning
   Returns: {
-    actor: "Grunt",
+    actor: "pirate_commando_01",
     state: "ReadyToExecute",
     behavior: "InflictDamage",
     targetTile: { x: 8, y: 5 },
-    targetActor: "Player1",
+    targetActor: "Pike_01",
     score: 150
   }
 ```

@@ -28,11 +28,11 @@ Once complete, browse the extracted folder to find textures.
 
 ## Step 2: Find the Asset Path
 
-Every asset has a **path** that identifies it. In the Modkit:
+Every asset has a **path** that identifies it. Use the Modkit's asset browser or browse the extracted assets folder:
 
 1. Go to **Modding Tools > Assets**
 2. Browse or search for the texture you want to replace
-3. Note the full asset path (e.g., `Assets/Textures/Units/Marine_Portrait.png`)
+3. Note the full asset path (e.g., `Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png`)
 
 ## Step 3: Create Your Replacement
 
@@ -51,10 +51,10 @@ Place your replacement in the modpack's `assets/` folder, then reference it in `
 ```json
 {
   "manifestVersion": 2,
-  "name": "CustomPortraits",
+  "name": "CustomTextures",
   "version": "1.0.0",
   "assets": {
-    "Assets/Textures/Units/Marine_Portrait.png": "assets/my_marine.png"
+    "Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png": "assets/my_rifle_texture.png"
   }
 }
 ```
@@ -64,24 +64,24 @@ The format is:
 "original/asset/path": "path/in/modpack"
 ```
 
-## Example: Custom Unit Icons
+## Example: Custom Weapon Texture
 
-Let's replace the Marine's unit icon:
+Let's replace the ARC assault rifle's texture:
 
 ```
 MyMod-modpack/
   modpack.json
   assets/
-    marine_icon.png
+    custom_rifle.png
 ```
 
 ```json
 {
   "manifestVersion": 2,
-  "name": "NewMarineIcon",
+  "name": "CustomRifleTexture",
   "version": "1.0.0",
   "assets": {
-    "Assets/Textures/UI/Icons/Unit_Marine.png": "assets/marine_icon.png"
+    "Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png": "assets/custom_rifle.png"
   }
 }
 ```
@@ -92,10 +92,10 @@ Replace as many assets as you want:
 
 ```json
 "assets": {
-  "Assets/Textures/UI/Icons/Unit_Marine.png": "assets/icons/marine.png",
-  "Assets/Textures/UI/Icons/Unit_Medic.png": "assets/icons/medic.png",
-  "Assets/Textures/UI/Icons/Unit_Sniper.png": "assets/icons/sniper.png",
-  "Assets/Textures/Weapons/Rifle_Diffuse.png": "assets/weapons/rifle.png"
+  "Assets/Texture2D/arc_assault_rifle_t1_BaseMap.png": "assets/weapons/rifle.png",
+  "Assets/Texture2D/arc_assault_rifle_t1_Normal.png": "assets/weapons/rifle_normal.png",
+  "Assets/Texture2D/arc_assault_rifle_t1_MaskMap.png": "assets/weapons/rifle_mask.png",
+  "Assets/Texture2D/combat_shotgun_t1_BaseMap.png": "assets/weapons/shotgun.png"
 }
 ```
 
@@ -105,13 +105,13 @@ Different textures serve different purposes:
 
 | Suffix | Purpose |
 |--------|---------|
-| `_Diffuse` | Base color/albedo |
-| `_Normal` | Surface detail (bumps) |
-| `_Specular` | Shininess/reflection |
-| `_Emission` | Glow effects |
-| `_Mask` | Transparency/cutout |
+| `_diffuse` / `_albedo` | Base color |
+| `_normal` | Surface detail (bumps) |
+| `_specular` | Shininess/reflection |
+| `_emission` | Glow effects |
+| `_mask` | Transparency/cutout |
 
-When replacing a texture, usually you only need to change `_Diffuse`. But for complete visual changes, replace all related textures.
+When replacing a texture, usually you only need to change the diffuse/albedo. But for complete visual changes, replace all related textures.
 
 ## Tips for Good Results
 

@@ -34,11 +34,12 @@ The `Templates` class provides these core operations:
 
 Templates are ScriptableObjects - Unity's data containers. Common template types include:
 
-- `UnitTemplate` - Soldiers, aliens, vehicles
 - `WeaponTemplate` - Guns, grenades, melee weapons
-- `ArmorTemplate` - Body armor, helmets
-- `ItemTemplate` - Consumables, equipment
-- `AbilityTemplate` - Unit abilities and skills
+- `EntityTemplate` - Units, enemies, buildings
+- `ArmorTemplate` - Body armor, equipment slots
+- `SkillTemplate` - Unit abilities and skills
+- `BaseItemTemplate` - Accessories, consumables
+- `UnitLeaderTemplate` - Squad leaders and pilots
 
 ## Reading Template Data
 
@@ -47,17 +48,17 @@ Use `Templates.Find()` to get a template, then `ReadField()` to read values:
 ```csharp
 using Menace.SDK;
 
-// Find a specific template
-var marine = Templates.Find("UnitTemplate", "Marine");
+// Find a specific weapon template
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
-if (!marine.IsNull)
+if (!rifle.IsNull)
 {
     // Read individual fields
-    int health = (int)Templates.ReadField(marine, "maxHealth");
-    int armor = (int)Templates.ReadField(marine, "baseArmor");
-    float accuracy = (float)Templates.ReadField(marine, "aimModifier");
+    float damage = (float)Templates.ReadField(rifle, "Damage");
+    int maxRange = (int)Templates.ReadField(rifle, "MaxRange");
+    float accuracy = (float)Templates.ReadField(rifle, "AccuracyBonus");
 
-    DevConsole.Log($"Marine: {health} HP, {armor} armor, {accuracy} aim");
+    DevConsole.Log($"ARC-762: {damage} dmg, {maxRange} range, {accuracy} accuracy");
 }
 ```
 
@@ -67,9 +68,8 @@ Use dot notation for nested properties:
 
 ```csharp
 // Read nested fields
-var weapon = Templates.Find("WeaponTemplate", "AssaultRifle");
-var damageType = Templates.ReadField(weapon, "damageInfo.type");
-var critMultiplier = Templates.ReadField(weapon, "damageInfo.criticalMultiplier");
+var weapon = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+var armorPen = Templates.ReadField(weapon, "ArmorPenetration");
 ```
 
 ## Writing Template Fields
@@ -79,12 +79,12 @@ Use `WriteField()` to modify template values:
 ```csharp
 using Menace.SDK;
 
-var rifleTemplate = Templates.Find("WeaponTemplate", "AssaultRifle");
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
 // Single field write
-Templates.WriteField(rifleTemplate, "damage", 15);
-Templates.WriteField(rifleTemplate, "accuracy", 85);
-Templates.WriteField(rifleTemplate, "clipSize", 30);
+Templates.WriteField(rifle, "Damage", 15.0f);
+Templates.WriteField(rifle, "MaxRange", 9);
+Templates.WriteField(rifle, "AccuracyBonus", 5.0f);
 ```
 
 ### Batch Writing
@@ -95,18 +95,18 @@ For multiple changes, use `WriteFields()` with a dictionary:
 using Menace.SDK;
 using System.Collections.Generic;
 
-var marine = Templates.Find("UnitTemplate", "Marine");
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
 // Write multiple fields at once
-int fieldsWritten = Templates.WriteFields(marine, new Dictionary<string, object>
+int fieldsWritten = Templates.WriteFields(rifle, new Dictionary<string, object>
 {
-    { "maxHealth", 120 },
-    { "baseArmor", 2 },
-    { "moveSpeed", 14 },
-    { "aimModifier", 0.1f }
+    { "Damage", 15.0f },
+    { "MaxRange", 9 },
+    { "AccuracyBonus", 5.0f },
+    { "ArmorPenetration", 10.0f }
 });
 
-DevConsole.Log($"Modified {fieldsWritten} fields on Marine");
+DevConsole.Log($"Modified {fieldsWritten} fields on ARC-762");
 ```
 
 ## Cloning Templates
@@ -117,16 +117,16 @@ Create new template variants with `Templates.Clone()`:
 using Menace.SDK;
 
 // Clone an existing template
-var eliteMarine = Templates.Clone("UnitTemplate", "Marine", "EliteMarine");
+var heavyRifle = Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_heavy_rifle");
 
-if (!eliteMarine.IsNull)
+if (!heavyRifle.IsNull)
 {
     // Customize the clone
-    Templates.WriteField(eliteMarine, "maxHealth", 200);
-    Templates.WriteField(eliteMarine, "baseArmor", 4);
-    Templates.WriteField(eliteMarine, "displayName", "Elite Marine");
+    Templates.WriteField(heavyRifle, "Damage", 20.0f);
+    Templates.WriteField(heavyRifle, "ArmorPenetration", 25.0f);
+    Templates.WriteField(heavyRifle, "AccuracyBonus", -5.0f);
 
-    DevConsole.Log("Created EliteMarine template");
+    DevConsole.Log("Created weapon.custom_heavy_rifle template");
 }
 ```
 
@@ -143,11 +143,11 @@ if (!eliteMarine.IsNull)
 
 ```csharp
 // Find by exact name
-var template = Templates.Find("WeaponTemplate", "PlasmaRifle");
+var template = Templates.Find("WeaponTemplate", "weapon.generic_dmr_tier_1_longshot");
 
 if (template.IsNull)
 {
-    DevConsole.LogWarning("PlasmaRifle not found!");
+    DevConsole.LogWarning("DMR template not found!");
     return;
 }
 ```
@@ -156,9 +156,9 @@ if (template.IsNull)
 
 ```csharp
 // Check existence before operations
-if (Templates.Exists("UnitTemplate", "Sectoid"))
+if (Templates.Exists("WeaponTemplate", "weapon.generic_combat_shotgun_tier_1_cs185"))
 {
-    var sectoid = Templates.Find("UnitTemplate", "Sectoid");
+    var shotgun = Templates.Find("WeaponTemplate", "weapon.generic_combat_shotgun_tier_1_cs185");
     // ... modify it
 }
 ```
@@ -178,7 +178,7 @@ DevConsole.Log($"Found {allWeapons.Length} weapon templates");
 foreach (var weapon in allWeapons)
 {
     string name = weapon.GetName();
-    int damage = (int)Templates.ReadField(weapon, "damage");
+    float damage = (float)Templates.ReadField(weapon, "Damage");
     DevConsole.Log($"  {name}: {damage} damage");
 }
 ```
@@ -195,8 +195,8 @@ using System.Linq;
 var allWeapons = Templates.FindAll("WeaponTemplate");
 var heavyWeapons = allWeapons.Where(w =>
 {
-    var damage = Templates.ReadField(w, "damage");
-    return damage != null && (int)damage >= 50;
+    var damage = Templates.ReadField(w, "Damage");
+    return damage != null && (float)damage >= 15.0f;
 }).ToArray();
 
 DevConsole.Log($"Found {heavyWeapons.Length} heavy weapons");
@@ -204,7 +204,7 @@ DevConsole.Log($"Found {heavyWeapons.Length} heavy weapons");
 
 ## Example: Dynamic Difficulty Scaling
 
-This example scales enemy stats based on mission count, creating progressively harder enemies:
+This example scales weapon damage based on mission progress:
 
 ```csharp
 using MelonLoader;
@@ -216,172 +216,40 @@ public class DifficultyScaler : IModpackPlugin
 {
     private int _missionsCompleted = 0;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
     {
-        GameState.OnMissionStart += OnMissionStart;
-        GameState.OnMissionComplete += OnMissionComplete;
-
-        DevConsole.Log($"[{modpackName}] Dynamic difficulty active");
+        GameState.SceneLoaded += OnSceneLoaded;
+        DevConsole.Log("Dynamic difficulty active");
     }
 
-    private void OnMissionStart()
+    private void OnSceneLoaded(string sceneName)
     {
-        // Scale enemy templates based on missions completed
-        float scaleFactor = 1.0f + (_missionsCompleted * 0.05f); // +5% per mission
-
-        ScaleEnemyTemplates(scaleFactor);
-
-        DevConsole.Log($"Difficulty scale: {scaleFactor:F2}x (Mission #{_missionsCompleted + 1})");
-    }
-
-    private void OnMissionComplete()
-    {
-        _missionsCompleted++;
-    }
-
-    private void ScaleEnemyTemplates(float scale)
-    {
-        // Find all enemy unit templates
-        var enemyTypes = new[] { "Sectoid", "Muton", "Chryssalid", "Ethereal" };
-
-        foreach (var enemyName in enemyTypes)
+        if (sceneName == "Tactical")
         {
-            var enemy = Templates.Find("UnitTemplate", enemyName);
-            if (enemy.IsNull) continue;
-
-            // Read base values
-            var baseHealth = Templates.ReadField(enemy, "maxHealth");
-            var baseAim = Templates.ReadField(enemy, "aimModifier");
-
-            if (baseHealth != null)
-            {
-                int scaledHealth = (int)((int)baseHealth * scale);
-                Templates.WriteField(enemy, "maxHealth", scaledHealth);
-            }
-
-            if (baseAim != null)
-            {
-                // Improve aim slightly with scale
-                float scaledAim = (float)baseAim + ((scale - 1.0f) * 0.1f);
-                Templates.WriteField(enemy, "aimModifier", scaledAim);
-            }
+            // Scale weapons based on missions completed
+            float scaleFactor = 1.0f + (_missionsCompleted * 0.05f); // +5% per mission
+            ScaleWeaponTemplates(scaleFactor);
+            DevConsole.Log($"Difficulty scale: {scaleFactor:F2}x (Mission #{_missionsCompleted + 1})");
         }
     }
 
-    public void OnSceneLoaded(int buildIndex, string sceneName) { }
-    public void OnUpdate() { }
-    public void OnGUI() { }
-}
-```
-
-## Example: Conditional Weapon Modifications
-
-This example modifies weapons based on mod settings chosen by the player:
-
-```csharp
-using MelonLoader;
-using Menace.SDK;
-
-namespace WeaponTweaks;
-
-public class WeaponModifier : IModpackPlugin
-{
-    public void OnLoad(string modpackName)
+    private void ScaleWeaponTemplates(float scale)
     {
-        // Register mod settings
-        ModSettings.Register(modpackName, settings =>
-        {
-            settings.AddHeader("Weapon Balance");
-            settings.AddSlider("DamageMultiplier", "Damage Multiplier", 0.5f, 2.0f, 1.0f);
-            settings.AddToggle("LargerClips", "Larger Magazines", false);
-            settings.AddDropdown("WeaponStyle", "Weapon Style",
-                new[] { "Vanilla", "Realistic", "Arcade" }, "Vanilla");
-        });
-
-        // Apply initial modifications
-        ApplyWeaponMods(modpackName);
-
-        // Re-apply when settings change
-        ModSettings.OnSettingChanged += (mod, key, value) =>
-        {
-            if (mod == modpackName)
-                ApplyWeaponMods(modpackName);
-        };
-    }
-
-    private void ApplyWeaponMods(string modpackName)
-    {
-        float damageMultiplier = ModSettings.Get<float>(modpackName, "DamageMultiplier");
-        bool largerClips = ModSettings.Get<bool>(modpackName, "LargerClips");
-        string style = ModSettings.Get<string>(modpackName, "WeaponStyle");
-
         var allWeapons = Templates.FindAll("WeaponTemplate");
 
         foreach (var weapon in allWeapons)
         {
-            // Apply damage multiplier
-            var baseDamage = Templates.ReadField(weapon, "damage");
+            var baseDamage = Templates.ReadField(weapon, "Damage");
             if (baseDamage != null)
             {
-                int scaledDamage = (int)((int)baseDamage * damageMultiplier);
-                Templates.WriteField(weapon, "damage", scaledDamage);
+                float scaledDamage = (float)baseDamage * scale;
+                Templates.WriteField(weapon, "Damage", scaledDamage);
             }
-
-            // Apply larger clips if enabled
-            if (largerClips)
-            {
-                var baseClip = Templates.ReadField(weapon, "clipSize");
-                if (baseClip != null)
-                {
-                    int largerClip = (int)((int)baseClip * 1.5f);
-                    Templates.WriteField(weapon, "clipSize", largerClip);
-                }
-            }
-
-            // Apply weapon style presets
-            ApplyWeaponStyle(weapon, style);
-        }
-
-        DevConsole.Log($"Applied weapon mods: {damageMultiplier}x damage, " +
-            $"clips={largerClips}, style={style}");
-    }
-
-    private void ApplyWeaponStyle(GameObj weapon, string style)
-    {
-        switch (style)
-        {
-            case "Realistic":
-                // Lower damage, higher accuracy, smaller clips
-                var damage = Templates.ReadField(weapon, "damage");
-                if (damage != null)
-                    Templates.WriteField(weapon, "damage", (int)((int)damage * 0.8f));
-
-                var accuracy = Templates.ReadField(weapon, "accuracy");
-                if (accuracy != null)
-                    Templates.WriteField(weapon, "accuracy", (int)accuracy + 10);
-                break;
-
-            case "Arcade":
-                // Higher damage, faster fire rate, larger splash
-                var arcadeDamage = Templates.ReadField(weapon, "damage");
-                if (arcadeDamage != null)
-                    Templates.WriteField(weapon, "damage", (int)((int)arcadeDamage * 1.3f));
-
-                var fireRate = Templates.ReadField(weapon, "fireRate");
-                if (fireRate != null)
-                    Templates.WriteField(weapon, "fireRate", (float)fireRate * 1.2f);
-                break;
-
-            case "Vanilla":
-            default:
-                // No additional changes
-                break;
         }
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
-    public void OnGUI() { }
 }
 ```
 
@@ -391,9 +259,9 @@ public class WeaponModifier : IModpackPlugin
 
 | Timing | Use Case | Method |
 |--------|----------|--------|
-| **OnLoad** | One-time setup, applying mod settings | `IModpackPlugin.OnLoad()` |
-| **OnMissionStart** | Per-mission scaling, difficulty adjustments | `GameState.OnMissionStart` |
-| **OnSettingChanged** | React to user changing mod settings | `ModSettings.OnSettingChanged` |
+| **OnInitialize** | One-time setup, applying mod settings | `IModpackPlugin.OnInitialize()` |
+| **TacticalReady** | Per-mission scaling, difficulty adjustments | `GameState.TacticalReady` |
+| **SceneLoaded** | React to scene transitions | `GameState.SceneLoaded` |
 
 Avoid modifying templates in `OnUpdate()` - it runs every frame and will tank performance.
 
@@ -405,22 +273,22 @@ For frequently accessed templates, cache the `GameObj` reference:
 public class CachingExample : IModpackPlugin
 {
     // Cache template references
-    private GameObj _marineTemplate;
     private GameObj _rifleTemplate;
+    private GameObj _shotgunTemplate;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
     {
         // Look up once, use many times
-        _marineTemplate = Templates.Find("UnitTemplate", "Marine");
-        _rifleTemplate = Templates.Find("WeaponTemplate", "AssaultRifle");
+        _rifleTemplate = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+        _shotgunTemplate = Templates.Find("WeaponTemplate", "weapon.generic_combat_shotgun_tier_1_cs185");
     }
 
-    private void ModifyMarine()
+    private void ModifyRifle()
     {
         // Use cached reference - no lookup cost
-        if (!_marineTemplate.IsNull)
+        if (!_rifleTemplate.IsNull)
         {
-            Templates.WriteField(_marineTemplate, "maxHealth", 150);
+            Templates.WriteField(_rifleTemplate, "Damage", 15.0f);
         }
     }
 
@@ -442,7 +310,7 @@ Template operations return useful values for error handling:
 
 ```csharp
 // Find returns GameObj.Null if not found
-var template = Templates.Find("UnitTemplate", "NonExistent");
+var template = Templates.Find("WeaponTemplate", "weapon.nonexistent");
 if (template.IsNull)
 {
     DevConsole.LogWarning("Template not found");
@@ -450,7 +318,7 @@ if (template.IsNull)
 }
 
 // WriteField returns false on failure
-bool success = Templates.WriteField(template, "invalidField", 100);
+bool success = Templates.WriteField(template, "InvalidField", 100);
 if (!success)
 {
     DevConsole.LogWarning("Failed to write field");
@@ -473,14 +341,14 @@ Understanding the difference is crucial:
 
 ```csharp
 // This modifies the TEMPLATE - affects future spawns
-var marineTemplate = Templates.Find("UnitTemplate", "Marine");
-Templates.WriteField(marineTemplate, "maxHealth", 200);
+var rifleTemplate = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+Templates.WriteField(rifleTemplate, "Damage", 20.0f);
 
-// This modifies an INSTANCE - affects only this specific marine
-var liveMarines = GameQuery.FindAll("Marine");
-foreach (var marine in liveMarines)
+// This modifies an INSTANCE - affects only this specific weapon
+var liveWeapons = GameQuery.FindAll("WeaponTemplate");
+foreach (var weapon in liveWeapons)
 {
-    marine.Set("currentHealth", 200); // Uses GameObj.Set, not Templates
+    weapon.WriteFloat("Damage", 20.0f); // Uses GameObj.WriteFloat, not Templates
 }
 ```
 
