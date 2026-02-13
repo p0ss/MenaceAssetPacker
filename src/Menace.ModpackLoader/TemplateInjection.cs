@@ -22,11 +22,18 @@ public partial class ModpackLoaderMod
 {
     private static readonly MethodInfo TryCastMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
 
-    // Properties that should not be modified
+    // Properties that should not be modified (internal Unity/IL2CPP fields)
     private static readonly HashSet<string> ReadOnlyProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "Pointer", "ObjectClass", "WasCollected", "m_CachedPtr",
         "name", "hideFlags", "serializationData"
+    };
+
+    // Computed/translated fields that derive from other editable fields
+    // These are skipped with an informative message rather than a warning
+    private static readonly HashSet<string> TranslatedFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DisplayTitle", "DisplayShortName", "DisplayDescription"
     };
 
     // Cache for name -> Object lookups, keyed by element type
@@ -264,6 +271,13 @@ public partial class ModpackLoaderMod
         {
             if (ReadOnlyProperties.Contains(fieldName))
                 continue;
+
+            // Skip translated/computed fields with informative message
+            if (TranslatedFields.Contains(fieldName))
+            {
+                SdkLogger.Msg($"    {obj.name}: skipping {fieldName} (translated field - edit Title/ShortName/Description instead)");
+                continue;
+            }
 
             // Handle dotted paths (e.g., "Properties.HitpointsPerElement")
             // by navigating to the nested object and setting the sub-field.
