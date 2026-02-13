@@ -152,61 +152,61 @@ public static bool operator !=(GameObj left, GameObj right)
 ### Safe field access pattern
 
 ```csharp
-var agent = GameQuery.FindByName("Agent", "Player");
-if (agent.IsNull || !agent.IsAlive)
+var weapon = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (weapon.IsNull || !weapon.IsAlive)
     return;
 
-int hp = agent.ReadInt("health");
-float speed = agent.ReadFloat("moveSpeed");
-string name = agent.ReadString("m_Name");
+float damage = weapon.ReadFloat("Damage");
+int maxRange = weapon.ReadInt("MaxRange");
+string name = weapon.ReadString("m_Name");
 ```
 
 ### Pre-cached offset for hot paths
 
 ```csharp
 // Resolve once
-var agentType = GameType.Find("Agent");
-uint hpOffset = agentType.GetFieldOffset("health");
+var weaponType = GameType.Find("WeaponTemplate");
+uint damageOffset = weaponType.GetFieldOffset("Damage");
 
 // Use in a loop
-foreach (var agent in GameQuery.FindAll(agentType))
+foreach (var weapon in GameQuery.FindAll(weaponType))
 {
-    int hp = agent.ReadInt(hpOffset);
-    DevConsole.Log($"{agent.GetName()}: {hp} HP");
+    float damage = weapon.ReadFloat(damageOffset);
+    DevConsole.Log($"{weapon.GetName()}: {damage} damage");
 }
 ```
 
 ### Walking object references
 
 ```csharp
-var unit = GameQuery.FindByName("UnitDef", "Assault");
-GameObj weapon = unit.ReadObj("primaryWeapon");
-if (!weapon.IsNull)
+var leader = GameQuery.FindByName("UnitLeaderTemplate", "squad_leader.pike");
+GameObj entityTemplate = leader.ReadObj("InfantryUnitTemplate");
+if (!entityTemplate.IsNull)
 {
-    int damage = weapon.ReadInt("damage");
-    DevConsole.Log($"Weapon damage: {damage}");
+    string templateName = entityTemplate.GetName();
+    DevConsole.Log($"Entity template: {templateName}");
 }
 ```
 
 ### Writing fields
 
 ```csharp
-var unit = GameQuery.FindByName("Agent", "Player");
-if (!unit.IsNull)
+var weapon = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (!weapon.IsNull)
 {
-    bool ok = unit.WriteInt("health", 999);
+    bool ok = weapon.WriteFloat("Damage", 20.0f);
     if (!ok)
-        ModError.Warn("MyMod", "Failed to write health");
+        ModError.Warn("MyMod", "Failed to write Damage");
 }
 ```
 
 ### Type checking
 
 ```csharp
-var unitDefType = GameType.Find("UnitDef");
-var obj = GameQuery.FindByName("AgentDef", "Scout");
-if (obj.Is(unitDefType))
-    DevConsole.Log("Scout is a UnitDef");
+var dataTemplateType = GameType.Find("DataTemplate");
+var obj = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (obj.Is(dataTemplateType))
+    DevConsole.Log("WeaponTemplate is a DataTemplate");
 ```
 
 ### Converting to typed object (compile-time type known)
@@ -227,7 +227,7 @@ if (leader != null)
 
 ```csharp
 // When working with reflection or unknown types, use ToManaged()
-var templateObj = Templates.Find("WeaponTemplate", "assault_rifle");
+var templateObj = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 var managed = templateObj.ToManaged();
 if (managed != null)
 {

@@ -90,16 +90,16 @@ Mods currently have no way to communicate with each other. An event bus would al
 
 ```csharp
 // Publisher (e.g., a damage mod)
-EventBus.Publish("agent.damaged", new {
-    AgentName = "Soldier_01",
+EventBus.Publish("actor.damaged", new {
+    ActorName = "Pike_01",
     Damage = 15,
     Source = "Explosion"
 });
 
 // Subscriber (e.g., a UI mod)
-EventBus.Subscribe("agent.damaged", (string topic, object data) =>
+EventBus.Subscribe("actor.damaged", (string topic, object data) =>
 {
-    DevConsole.Log($"Agent damaged: {data}");
+    DevConsole.Log($"Actor damaged: {data}");
 });
 ```
 
@@ -160,7 +160,7 @@ Some mods need to track state that survives game restarts -- custom progression,
 // Save state
 var state = ModState.Get("MyMod");
 state.Set("KillCount", 42);
-state.Set("UnlockedWeapons", new[] { "Plasma_Mk3", "RailGun" });
+state.Set("UnlockedWeapons", new[] { "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.generic_combat_shotgun_tier_1_cs185" });
 state.Save();  // writes to Mods/<modpack>/state.json
 
 // Load state (called automatically on mod init)

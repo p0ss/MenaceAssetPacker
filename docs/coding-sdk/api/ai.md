@@ -146,7 +146,7 @@ Get the RoleData (AI configuration) for an actor. RoleData is defined on the Ent
 
 **Example:**
 ```csharp
-var actor = GameQuery.FindByName("Actor", "Grunt");
+var actor = TacticalController.GetActiveActor();
 var role = AI.GetRoleData(actor);
 
 DevConsole.Log($"Utility: {role.UtilityScale}, Safety: {role.SafetyScale}");

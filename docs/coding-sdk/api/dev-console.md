@@ -192,28 +192,28 @@ Displays all watch expressions added via `DevConsole.Watch()`. Each watch shows 
 
 ```csharp
 DevConsole.Log("My mod initialized successfully");
-DevConsole.Log($"Found {agents.Length} agents");
+DevConsole.Log($"Found {weapons.Length} weapons");
 ```
 
 ### Inspecting a game object
 
 ```csharp
-var player = GameQuery.FindByName("Agent", "Player");
-DevConsole.Inspect(player);
+var weapon = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+DevConsole.Inspect(weapon);
 // Console switches to Inspector tab and displays all properties
 ```
 
 ### Adding watch expressions
 
 ```csharp
-DevConsole.Watch("Player HP", () =>
+DevConsole.Watch("ARC-762 Damage", () =>
 {
-    var p = GameQuery.FindByName("Agent", "Player");
-    return p.IsNull ? "N/A" : p.ReadInt("health").ToString();
+    var w = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+    return w.IsNull ? "N/A" : w.ReadFloat("Damage").ToString();
 });
 
 DevConsole.Watch("Scene", () => GameState.CurrentScene);
-DevConsole.Watch("Agent Count", () => GameQuery.FindAll("Agent").Length.ToString());
+DevConsole.Watch("Weapon Count", () => GameQuery.FindAll("WeaponTemplate").Length.ToString());
 ```
 
 ### Registering a custom panel
@@ -224,10 +224,10 @@ DevConsole.RegisterPanel("My Mod", (Rect area) =>
     float y = area.y;
     GUI.Label(new Rect(area.x, y, area.width, 18), "Custom mod panel");
     y += 20;
-    if (GUI.Button(new Rect(area.x, y, 100, 22), "Heal All"))
+    if (GUI.Button(new Rect(area.x, y, 100, 22), "Buff Weapons"))
     {
-        foreach (var agent in GameQuery.FindAll("Agent"))
-            agent.WriteInt("health", 100);
+        foreach (var weapon in GameQuery.FindAll("WeaponTemplate"))
+            weapon.WriteFloat("Damage", weapon.ReadFloat("Damage") * 1.5f);
     }
 });
 ```

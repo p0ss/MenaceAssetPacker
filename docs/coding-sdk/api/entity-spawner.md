@@ -13,7 +13,7 @@ public static SpawnResult SpawnUnit(string templateName, int tileX, int tileY, i
 Spawn a transient actor (AI enemy or temporary unit) at the specified tile.
 
 **Parameters:**
-- `templateName` - EntityTemplate name (e.g., "Grunt", "HeavyTrooper")
+- `templateName` - EntityTemplate name (e.g., `enemy.pirate_boarding_commandos`, `enemy.construct_soldier_tier1`)
 - `tileX` - Tile X coordinate
 - `tileY` - Tile Y coordinate
 - `factionIndex` - Faction index (0=Player, 1=Enemy, 2+=Others). Defaults to 1 (Enemy).
@@ -117,7 +117,7 @@ public class EntityInfo
 ### Spawning a single enemy
 
 ```csharp
-var result = EntitySpawner.SpawnUnit("Grunt", 10, 15, factionIndex: 1);
+var result = EntitySpawner.SpawnUnit("enemy.pirate_boarding_commandos", 10, 15, factionIndex: 1);
 if (result.Success)
 {
     DevConsole.Log($"Spawned enemy at entity ID {result.Entity.ReadInt(0x10)}");
@@ -138,7 +138,7 @@ var positions = new List<(int, int)>
     (12, 15)
 };
 
-var results = EntitySpawner.SpawnGroup("HeavyTrooper", positions, factionIndex: 1);
+var results = EntitySpawner.SpawnGroup("enemy.construct_soldier_tier1", positions, factionIndex: 1);
 var spawned = results.Count(r => r.Success);
 DevConsole.Log($"Spawned {spawned}/{results.Count} enemies");
 ```

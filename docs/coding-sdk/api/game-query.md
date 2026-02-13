@@ -94,24 +94,24 @@ Clear the per-scene query cache. This is called automatically on scene transitio
 ### Finding all instances of a type
 
 ```csharp
-var agents = GameQuery.FindAll("Agent");
-DevConsole.Log($"Found {agents.Length} agents");
+var weapons = GameQuery.FindAll("WeaponTemplate");
+DevConsole.Log($"Found {weapons.Length} weapon templates");
 
-foreach (var agent in agents)
+foreach (var weapon in weapons)
 {
-    string name = agent.GetName();
-    int hp = agent.ReadInt("health");
-    DevConsole.Log($"  {name}: {hp} HP");
+    string name = weapon.GetName();
+    float damage = weapon.ReadFloat("Damage");
+    DevConsole.Log($"  {name}: {damage} damage");
 }
 ```
 
 ### Finding a specific named object
 
 ```csharp
-var player = GameQuery.FindByName("Agent", "Player");
-if (!player.IsNull)
+var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (!rifle.IsNull)
 {
-    DevConsole.Log($"Player HP: {player.ReadInt("health")}");
+    DevConsole.Log($"ARC-762 damage: {rifle.ReadFloat("Damage")}");
 }
 ```
 
@@ -119,7 +119,7 @@ if (!player.IsNull)
 
 ```csharp
 // When you have the IL2CppInterop proxy type available
-var all = GameQuery.FindAll<Il2Cpp.WeaponDef>();
+var all = GameQuery.FindAll<Il2CppMenace.Strategy.WeaponTemplate>();
 ```
 
 ### Cached queries in per-frame code
@@ -127,13 +127,13 @@ var all = GameQuery.FindAll<Il2Cpp.WeaponDef>();
 ```csharp
 GameState.TacticalReady += () =>
 {
-    var unitType = GameType.Find("UnitDef");
+    var entityType = GameType.Find("EntityTemplate");
 
     // This will only perform the query once per scene
-    var units = GameQuery.FindAllCached(unitType);
-    foreach (var unit in units)
+    var entities = GameQuery.FindAllCached(entityType);
+    foreach (var entity in entities)
     {
-        // ... modify unit stats
+        // ... process entities
     }
 };
 ```

@@ -120,64 +120,64 @@ Returns `GameObj.Null` on failure.
 ### Reading template fields
 
 ```csharp
-var rifle = Templates.Find("WeaponDef", "AssaultRifle");
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 if (!rifle.IsNull)
 {
-    var damage = Templates.ReadField(rifle, "damage");
-    var range = Templates.ReadField(rifle, "effectiveRange");
-    DevConsole.Log($"Rifle: {damage} dmg, {range} range");
+    var damage = Templates.ReadField(rifle, "Damage");
+    var maxRange = Templates.ReadField(rifle, "MaxRange");
+    DevConsole.Log($"ARC-762: {damage} dmg, {maxRange} range");
 }
 ```
 
 ### Reading nested fields with dotted paths
 
 ```csharp
-var agent = Templates.Find("AgentDef", "Rookie");
-var accuracy = Templates.ReadField(agent, "combatStats.accuracy");
-DevConsole.Log($"Rookie accuracy: {accuracy}");
+var leader = Templates.Find("UnitLeaderTemplate", "squad_leader.pike");
+var hiringCost = Templates.ReadField(leader, "HiringCosts");
+DevConsole.Log($"Pike hiring cost: {hiringCost}");
 ```
 
 ### Modifying a template
 
 ```csharp
-var rifle = Templates.Find("WeaponDef", "AssaultRifle");
-Templates.WriteField(rifle, "damage", 50);
-Templates.WriteField(rifle, "effectiveRange", 25.0f);
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+Templates.WriteField(rifle, "Damage", 15.0f);
+Templates.WriteField(rifle, "MaxRange", 9);
 ```
 
 ### Batch modification
 
 ```csharp
-var rifle = Templates.Find("WeaponDef", "AssaultRifle");
+var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 int written = Templates.WriteFields(rifle, new Dictionary<string, object>
 {
-    { "damage", 50 },
-    { "effectiveRange", 25.0f },
-    { "clipSize", 30 },
-    { "reloadTime", 2.5f }
+    { "Damage", 15.0f },
+    { "MaxRange", 9 },
+    { "AccuracyBonus", 5.0f },
+    { "ArmorPenetration", 25.0f }
 });
-DevConsole.Log($"Modified {written} fields on AssaultRifle");
+DevConsole.Log($"Modified {written} fields on ARC-762");
 ```
 
 ### Cloning a template
 
 ```csharp
-var clone = Templates.Clone("WeaponDef", "AssaultRifle", "HeavyRifle");
+var clone = Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_heavy_rifle");
 if (!clone.IsNull)
 {
-    Templates.WriteField(clone, "damage", 80);
-    Templates.WriteField(clone, "clipSize", 20);
-    DevConsole.Log("Created HeavyRifle from AssaultRifle");
+    Templates.WriteField(clone, "Damage", 20.0f);
+    Templates.WriteField(clone, "ArmorPenetration", 40.0f);
+    DevConsole.Log("Created weapon.custom_heavy_rifle from ARC-762");
 }
 ```
 
 ### Checking existence
 
 ```csharp
-if (!Templates.Exists("WeaponDef", "LaserRifle"))
+if (!Templates.Exists("WeaponTemplate", "weapon.custom_laser_rifle"))
 {
-    DevConsole.Log("LaserRifle does not exist yet, creating...");
-    Templates.Clone("WeaponDef", "AssaultRifle", "LaserRifle");
+    DevConsole.Log("Custom laser rifle does not exist yet, creating...");
+    Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_laser_rifle");
 }
 ```
 
@@ -185,7 +185,7 @@ if (!Templates.Exists("WeaponDef", "LaserRifle"))
 
 ```csharp
 // When you have the IL2CppInterop proxy type available
-var rifle = Templates.Get<Il2CppMenace.Strategy.WeaponTemplate>("WeaponTemplate", "mod_weapon.assault_rifle");
+var rifle = Templates.Get<Il2CppMenace.Strategy.WeaponTemplate>("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 if (rifle != null)
 {
     DevConsole.Log($"Rifle damage: {rifle.Damage}");

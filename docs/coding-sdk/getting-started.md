@@ -214,19 +214,19 @@ public class MyModPlugin : IModpackPlugin
             if (weapon.IsNull) continue;
 
             // Read fields from IL2CPP memory by name
-            string name   = weapon.GetName();
-            int damage     = weapon.ReadInt("Damage");
-            float range    = weapon.ReadFloat("Range");
-            bool automatic = weapon.ReadBool("IsAutomatic");
+            string name     = weapon.GetName();
+            float damage    = weapon.ReadFloat("Damage");
+            int idealRange  = weapon.ReadInt("IdealRange");
+            int maxRange    = weapon.ReadInt("MaxRange");
 
-            _log.Msg($"  {name}: damage={damage} range={range} auto={automatic}");
+            _log.Msg($"  {name}: damage={damage} ideal={idealRange} max={maxRange}");
         }
 
         // Find a specific template by type and Unity object name
-        var shotgun = GameQuery.FindByName("WeaponTemplate", "Shotgun");
-        if (!shotgun.IsNull)
+        var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+        if (!rifle.IsNull)
         {
-            _log.Msg($"Shotgun damage: {shotgun.ReadInt("Damage")}");
+            _log.Msg($"ARC-762 damage: {rifle.ReadFloat("Damage")}");
         }
     }
 
@@ -310,15 +310,15 @@ public class MyModPlugin : IModpackPlugin
             _log.Warning("Failed to patch WeaponTemplate.GetDamage");
 
         // Prefix patch -- can use GameType instead of a string
-        var agentType = GameType.Find("Agent");
-        if (agentType.IsValid)
+        var actorType = GameType.Find("ActorComponent");
+        if (actorType.IsValid)
         {
             GamePatch.Prefix(
                 _harmony,
-                agentType,
-                "TakeDamage",
+                actorType,
+                "ApplyDamage",
                 typeof(MyModPlugin).GetMethod(
-                    nameof(Patch_TakeDamage_Prefix),
+                    nameof(Patch_ApplyDamage_Prefix),
                     BindingFlags.Static | BindingFlags.NonPublic)
             );
         }
@@ -344,41 +344,40 @@ public class MyModPlugin : IModpackPlugin
     private void ModifyTemplates()
     {
         // Find a specific template instance
-        var shotgun = Templates.Find("WeaponTemplate", "Shotgun");
-        if (shotgun.IsNull)
+        var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+        if (rifle.IsNull)
         {
-            _log.Warning("Shotgun template not found");
+            _log.Warning("ARC-762 template not found");
             return;
         }
 
         // Write a single field via managed reflection.
-        // Supports dotted paths for nested properties.
-        Templates.WriteField(shotgun, "Damage", 50);
-        Templates.WriteField(shotgun, "Range", 8.5f);
-        Templates.WriteField(shotgun, "Stats.CritChance", 0.25f);
+        Templates.WriteField(rifle, "Damage", 15.0f);
+        Templates.WriteField(rifle, "MaxRange", 9);
+        Templates.WriteField(rifle, "AccuracyBonus", 5.0f);
 
         // Read back to verify
-        var damage = Templates.ReadField(shotgun, "Damage");
-        _log.Msg($"Shotgun Damage after patch: {damage}");
+        var damage = Templates.ReadField(rifle, "Damage");
+        _log.Msg($"ARC-762 Damage after patch: {damage}");
 
         // Batch-write multiple fields at once
-        Templates.WriteFields(shotgun, new()
+        Templates.WriteFields(rifle, new()
         {
-            ["Damage"]   = 50,
-            ["Range"]    = 8.5f,
-            ["Accuracy"] = 0.7f
+            ["Damage"]        = 15.0f,
+            ["MaxRange"]      = 9,
+            ["AccuracyBonus"] = 5.0f
         });
 
         // Clone a template to create a new variant
-        var customShotgun = Templates.Clone(
+        var customRifle = Templates.Clone(
             "WeaponTemplate",
-            "Shotgun",          // source instance name
-            "Shotgun_Heavy"     // new instance name
+            "weapon.generic_assault_rifle_tier1_ARC_762",  // source instance name
+            "weapon.custom_heavy_rifle"                    // new instance name
         );
-        if (!customShotgun.IsNull)
+        if (!customRifle.IsNull)
         {
-            Templates.WriteField(customShotgun, "Damage", 80);
-            _log.Msg("Created Shotgun_Heavy template");
+            Templates.WriteField(customRifle, "Damage", 20.0f);
+            _log.Msg("Created weapon.custom_heavy_rifle template");
         }
     }
 
@@ -399,11 +398,11 @@ public class MyModPlugin : IModpackPlugin
             return weapons.Length.ToString();
         });
 
-        DevConsole.Watch("Shotgun Damage", () =>
+        DevConsole.Watch("ARC-762 Damage", () =>
         {
-            var shotgun = Templates.Find("WeaponTemplate", "Shotgun");
-            if (shotgun.IsNull) return "N/A";
-            var dmg = Templates.ReadField(shotgun, "Damage");
+            var rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+            if (rifle.IsNull) return "N/A";
+            var dmg = Templates.ReadField(rifle, "Damage");
             return dmg?.ToString() ?? "null";
         });
 
@@ -478,19 +477,19 @@ For simple field overrides, you do not need a plugin DLL at all. The
 ```json
 {
   "manifestVersion": 2,
-  "name": "ShotgunBuff",
+  "name": "WeaponBuff",
   "version": "1.0.0",
   "author": "YourName",
   "loadOrder": 100,
   "patches": {
     "WeaponTemplate": {
-      "Shotgun": {
-        "Damage": 50,
-        "Range": 8.5,
-        "Accuracy": 0.7
+      "weapon.generic_combat_shotgun_tier_1_cs185": {
+        "Damage": 50.0,
+        "MaxRange": 6,
+        "AccuracyBonus": 5.0
       },
-      "AssaultRifle": {
-        "Damage": 30
+      "weapon.generic_assault_rifle_tier1_ARC_762": {
+        "Damage": 15.0
       }
     }
   },
@@ -558,7 +557,7 @@ For quick status messages visible in the log panel:
 
 ```csharp
 ModError.Info("MyMod", "Loaded 42 weapon templates");
-ModError.Warn("MyMod", "Shotgun template not found, skipping buff");
+ModError.Warn("MyMod", "weapon.generic_combat_shotgun_tier_1_cs185 not found, skipping buff");
 ```
 
 ---

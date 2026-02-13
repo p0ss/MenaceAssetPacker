@@ -7,6 +7,8 @@
       "category": "core",
       "description": "Mod loading framework for Unity games",
       "installPath": "MelonLoader",
+      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/20586441562",
+      "sourceNote": "Official LavaGang CI build",
       "downloads": {
         "win-x64": { "size": 49000000 },
         "linux-x64": { "size": 47000000 }
@@ -49,6 +51,8 @@
       "requiredFor": "asset-extraction",
       "description": "Extracts textures, models, and audio from game assets",
       "installPath": "AssetRipper",
+      "sourceUrl": "https://github.com/AssetRipper/AssetRipper/releases/tag/1.3.4",
+      "sourceNote": "Patched build - fixes texture extraction for IL2CPP games",
       "downloads": {
         "win-x64": { "size": 136000000 },
         "linux-x64": { "size": 142000000 }

@@ -19,18 +19,18 @@ public void OnSceneLoaded(int buildIndex, string sceneName)
 
     bool ok = GamePatch.Postfix(
         _harmony,
-        "AgentController",       // target type name in Assembly-CSharp
-        "TakeDamage",            // target method name
-        typeof(MyPlugin).GetMethod(nameof(TakeDamage_Postfix))
+        "ActorComponent",       // target type name in Assembly-CSharp
+        "ApplyDamage",            // target method name
+        typeof(MyPlugin).GetMethod(nameof(ApplyDamage_Postfix))
     );
 
     if (!ok)
-        _log.Warning("Failed to patch AgentController.TakeDamage");
+        _log.Warning("Failed to patch ActorComponent.ApplyDamage");
 }
 
-public static void TakeDamage_Postfix(object __instance)
+public static void ApplyDamage_Postfix(object __instance)
 {
-    // runs after every TakeDamage call
+    // runs after every ApplyDamage call
 }
 ```
 
@@ -103,8 +103,8 @@ _harmony.Patch(method, transpiler: transpiler);
 When multiple overloads exist and you need a specific signature:
 
 ```csharp
-Type targetType = GameState.FindManagedType("AgentController");
-var method = targetType.GetMethod("TakeDamage", new[] { typeof(int), typeof(bool) });
+Type targetType = GameState.FindManagedType("ActorComponent");
+var method = targetType.GetMethod("ApplyDamage", new[] { typeof(int), typeof(bool) });
 _harmony.Patch(method, postfix: new HarmonyMethod(typeof(MyPlugin), nameof(MyPostfix)));
 ```
 
@@ -114,12 +114,12 @@ When your patch method uses `__instance`, `__result`, `__state`, or parameter in
 
 ```csharp
 // Verify method exists and check its parameter types
-var type = GameType.Find("AgentController");
-var method = type.FindMethod("TakeDamage");
+var type = GameType.Find("ActorComponent");
+var method = type.FindMethod("ApplyDamage");
 if (method != null)
 {
     var parameters = method.GetParameters();
-    _log.Msg($"TakeDamage params: {string.Join(", ",
+    _log.Msg($"ApplyDamage params: {string.Join(", ",
         parameters.Select(p => $"{p.ParameterType.Name} {p.Name}"))}");
 }
 ```
@@ -130,11 +130,11 @@ When applying both prefix and postfix to the same method, either make two `GameP
 
 ```csharp
 // Two separate calls
-GamePatch.Prefix(_harmony, "AgentController", "TakeDamage", myPrefix);
-GamePatch.Postfix(_harmony, "AgentController", "TakeDamage", myPostfix);
+GamePatch.Prefix(_harmony, "ActorComponent", "ApplyDamage", myPrefix);
+GamePatch.Postfix(_harmony, "ActorComponent", "ApplyDamage", myPostfix);
 
 // Or one Harmony call
-var method = AccessTools.Method(targetType, "TakeDamage");
+var method = AccessTools.Method(targetType, "ApplyDamage");
 _harmony.Patch(method,
     prefix: new HarmonyMethod(myPrefix),
     postfix: new HarmonyMethod(myPostfix));
@@ -170,8 +170,8 @@ public class MyPlugin : IModpackPlugin
 
     private void ApplyPatches()
     {
-        bool ok = GamePatch.Postfix(_harmony, "AgentController", "TakeDamage",
-            typeof(MyPlugin).GetMethod(nameof(TakeDamage_Postfix)));
+        bool ok = GamePatch.Postfix(_harmony, "ActorComponent", "ApplyDamage",
+            typeof(MyPlugin).GetMethod(nameof(ApplyDamage_Postfix)));
 
         if (ok)
             _patchesApplied = true;
@@ -200,7 +200,7 @@ Use `GameState.RunWhen` to wait for a precondition:
 
 ```csharp
 GameState.RunWhen(
-    () => GameState.FindManagedType("AgentController") != null,
+    () => GameState.FindManagedType("ActorComponent") != null,
     () => ApplyPatches(),
     maxAttempts: 60  // give up after 60 frames
 );
@@ -215,9 +215,9 @@ GameState.RunWhen(
 `GamePatch.Prefix` and `GamePatch.Postfix` return `false` on failure. Always check:
 
 ```csharp
-if (!GamePatch.Postfix(_harmony, "AgentController", "TakeDamage", myMethod))
+if (!GamePatch.Postfix(_harmony, "ActorComponent", "ApplyDamage", myMethod))
 {
-    ModError.Report("MyMod", "Failed to patch AgentController.TakeDamage");
+    ModError.Report("MyMod", "Failed to patch ActorComponent.ApplyDamage");
     return;
 }
 ```

@@ -161,6 +161,18 @@ def load_templates_from_schema(schema_path):
         'double': 'double', 'Double': 'double',
     }
 
+    # Get struct info for detecting simple value-type structs
+    structs = schema.get('structs', {})
+
+    # Structs that are simple enough to treat as a single value
+    # (4-byte structs with a single int field can be written as int)
+    simple_struct_types = {}
+    for struct_name, struct_info in structs.items():
+        size = struct_info.get('size_bytes', 0)
+        fields_list = struct_info.get('fields', [])
+        if size == 4 and len(fields_list) == 1 and fields_list[0].get('type') in ('int', 'Int32'):
+            simple_struct_types[struct_name] = 'int'
+
     templates = {}
     for tname, tinfo in schema.get('templates', {}).items():
         if tinfo.get('is_abstract', False):
@@ -175,6 +187,9 @@ def load_templates_from_schema(schema_path):
             marshal_type = schema_type_map.get(f['type'])
             if not marshal_type and f.get('category') in ('enum', 'reference'):
                 marshal_type = 'int'
+            # Handle simple struct types (like OperationResources which is just an int)
+            if not marshal_type and f['type'] in simple_struct_types:
+                marshal_type = simple_struct_types[f['type']]
             if not marshal_type:
                 continue
 

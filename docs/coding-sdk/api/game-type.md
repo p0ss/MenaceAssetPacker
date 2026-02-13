@@ -111,13 +111,13 @@ Find a method on this type's managed proxy via .NET reflection. Returns `null` i
 ### Finding a type and checking validity
 
 ```csharp
-var agentType = GameType.Find("Agent");
-if (!agentType.IsValid)
+var weaponType = GameType.Find("WeaponTemplate");
+if (!weaponType.IsValid)
 {
-    ModError.Warn("MyMod", "Agent type not found");
+    ModError.Warn("MyMod", "WeaponTemplate type not found");
     return;
 }
-DevConsole.Log($"Found: {agentType.FullName}");
+DevConsole.Log($"Found: {weaponType.FullName}");
 ```
 
 ### Specifying a non-default assembly
@@ -129,32 +129,37 @@ var transformType = GameType.Find("UnityEngine.Transform", "UnityEngine.CoreModu
 ### Checking if a type has a field
 
 ```csharp
-var type = GameType.Find("WeaponDef");
-if (type.HasField("damage"))
+var type = GameType.Find("WeaponTemplate");
+if (type.HasField("Damage"))
 {
-    uint offset = type.GetFieldOffset("damage");
-    DevConsole.Log($"damage offset: {offset}");
+    uint offset = type.GetFieldOffset("Damage");
+    DevConsole.Log($"Damage offset: {offset}");
 }
 ```
 
 ### Walking the type hierarchy
 
 ```csharp
-var type = GameType.Find("SpecialAgent");
+var type = GameType.Find("WeaponTemplate");
 var current = type;
 while (current != null)
 {
     DevConsole.Log($"  {current.FullName}");
     current = current.Parent;
 }
+// Output:
+//   Menace.Strategy.WeaponTemplate
+//   Menace.Data.DataTemplate
+//   UnityEngine.ScriptableObject
+//   UnityEngine.Object
 ```
 
 ### Type compatibility checks
 
 ```csharp
-var baseType = GameType.Find("UnitDef");
-var derivedType = GameType.Find("AgentDef");
+var baseType = GameType.Find("DataTemplate");
+var derivedType = GameType.Find("WeaponTemplate");
 
 if (baseType.IsAssignableFrom(derivedType))
-    DevConsole.Log("AgentDef derives from UnitDef");
+    DevConsole.Log("WeaponTemplate derives from DataTemplate");
 ```

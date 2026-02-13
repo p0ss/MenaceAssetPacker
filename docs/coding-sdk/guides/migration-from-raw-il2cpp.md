@@ -11,9 +11,9 @@ All SDK types live in the `Menace.SDK` namespace.
 ### Before: Manual IL2CPP class lookup
 
 ```csharp
-var klass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "", "AgentTemplate");
+var klass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "Menace.Strategy", "WeaponTemplate");
 if (klass == IntPtr.Zero)
-    throw new Exception("AgentTemplate not found");
+    throw new Exception("WeaponTemplate not found");
 
 var nsPtr = IL2CPP.il2cpp_class_get_namespace(klass);
 var namePtr = IL2CPP.il2cpp_class_get_name(klass);
@@ -23,9 +23,9 @@ var name = Marshal.PtrToStringAnsi(namePtr);
 ### After: GameType.Find
 
 ```csharp
-var type = GameType.Find("AgentTemplate");
+var type = GameType.Find("WeaponTemplate");
 if (!type.IsValid)
-    MelonLogger.Warning("AgentTemplate not found");
+    MelonLogger.Warning("WeaponTemplate not found");
 
 string name = type.FullName;
 ```
@@ -144,14 +144,14 @@ int value = obj.ReadInt(offset);
 var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
     .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 var templateType = gameAssembly.GetTypes()
-    .FirstOrDefault(t => t.Name == "AgentTemplate" && !t.IsAbstract);
+    .FirstOrDefault(t => t.Name == "WeaponTemplate" && !t.IsAbstract);
 var il2cppType = Il2CppType.From(templateType);
 var objects = Resources.FindObjectsOfTypeAll(il2cppType);
 
 foreach (var obj in objects)
 {
     if (obj == null) continue;
-    if (obj.name == "Soldier")
+    if (obj.name == "weapon.generic_assault_rifle_tier1_ARC_762")
     {
         // found it
     }
@@ -162,13 +162,13 @@ foreach (var obj in objects)
 
 ```csharp
 // Find all instances
-GameObj[] all = GameQuery.FindAll("AgentTemplate");
+GameObj[] all = GameQuery.FindAll("WeaponTemplate");
 
 // Find by name
-GameObj soldier = GameQuery.FindByName("AgentTemplate", "Soldier");
-if (!soldier.IsNull)
+GameObj rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (!rifle.IsNull)
 {
-    int hp = soldier.ReadInt("HitPoints");
+    float damage = rifle.ReadFloat("Damage");
 }
 ```
 
@@ -190,28 +190,28 @@ var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
     .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
 var controllerType = gameAssembly.GetTypes()
-    .FirstOrDefault(t => t.Name == "AgentController");
+    .FirstOrDefault(t => t.Name == "ActorComponent");
 
 if (controllerType == null)
 {
-    Log.Error("AgentController not found");
+    Log.Error("ActorComponent not found");
     return;
 }
 
-var method = controllerType.GetMethod("TakeDamage",
+var method = controllerType.GetMethod("ApplyDamage",
     BindingFlags.Public | BindingFlags.NonPublic |
     BindingFlags.Instance | BindingFlags.Static);
 
 if (method == null)
 {
-    Log.Error("TakeDamage not found");
+    Log.Error("ApplyDamage not found");
     return;
 }
 
 try
 {
     harmony.Patch(method,
-        postfix: new HarmonyMethod(typeof(MyMod), nameof(TakeDamage_Postfix)));
+        postfix: new HarmonyMethod(typeof(MyMod), nameof(ApplyDamage_Postfix)));
 }
 catch (Exception ex)
 {
@@ -222,11 +222,11 @@ catch (Exception ex)
 ### After: GamePatch.Postfix
 
 ```csharp
-bool ok = GamePatch.Postfix(harmony, "AgentController", "TakeDamage",
-    typeof(MyMod).GetMethod(nameof(TakeDamage_Postfix)));
+bool ok = GamePatch.Postfix(harmony, "ActorComponent", "ApplyDamage",
+    typeof(MyMod).GetMethod(nameof(ApplyDamage_Postfix)));
 
 if (!ok)
-    Log.Warning("Failed to patch AgentController.TakeDamage");
+    Log.Warning("Failed to patch ActorComponent.ApplyDamage");
 ```
 
 `GamePatch` handles type resolution, method lookup (including hierarchy walk), and error reporting. It returns `false` on failure instead of throwing.

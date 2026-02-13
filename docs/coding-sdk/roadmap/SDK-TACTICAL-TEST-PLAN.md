@@ -205,14 +205,14 @@ ap 100
 1. Find empty tile coordinates visually
 2. Run:
 ```
-spawn Grunt <x> <y> 1
+spawn enemy.pirate_boarding_commandos <x> <y> 1
 ```
-Expected: Enemy "Grunt" appears at tile
+Expected: Enemy appears at tile
 
 **Test: Spawn player unit**
 
 ```
-spawn Grunt <x> <y> 0
+spawn enemy.pirate_boarding_commandos <x> <y> 0
 ```
 Expected: Player-faction unit appears at tile
 
@@ -539,7 +539,7 @@ public class TestTacticalSDK : IModpackPlugin
 
         // Try to spawn at a likely-empty tile
         // Note: This may fail if tile is occupied or invalid template name
-        var result = EntitySpawner.SpawnUnit("Grunt", 5, 5, factionIndex: 1);
+        var result = EntitySpawner.SpawnUnit("enemy.pirate_boarding_commandos", 5, 5, factionIndex: 1);
         _log.Msg($"  Spawn result: Success={result.Success}, Error={result.Error}");
 
         if (result.Success)
@@ -620,9 +620,9 @@ Test a realistic mod scenario:
 1. **Setup**: Start mission normally
 2. **Spawn reinforcements**:
    ```
-   spawn HeavyTrooper 10 10 1
-   spawn HeavyTrooper 11 10 1
-   spawn HeavyTrooper 12 10 1
+   spawn enemy.construct_soldier_tier1 10 10 1
+   spawn enemy.construct_soldier_tier1 11 10 1
+   spawn enemy.construct_soldier_tier1 12 10 1
    ```
 3. **Verify they appear**: `enemies`
 4. **Apply suppression to player**:
@@ -640,16 +640,16 @@ Test a realistic mod scenario:
 Spawn many units rapidly:
 
 ```
-spawn Grunt 5 5 1
-spawn Grunt 6 5 1
-spawn Grunt 7 5 1
-spawn Grunt 8 5 1
-spawn Grunt 9 5 1
-spawn Grunt 10 5 1
-spawn Grunt 5 6 1
-spawn Grunt 6 6 1
-spawn Grunt 7 6 1
-spawn Grunt 8 6 1
+spawn enemy.pirate_boarding_commandos 5 5 1
+spawn enemy.pirate_boarding_commandos 6 5 1
+spawn enemy.pirate_boarding_commandos 7 5 1
+spawn enemy.pirate_boarding_commandos 8 5 1
+spawn enemy.pirate_boarding_commandos 9 5 1
+spawn enemy.pirate_boarding_commandos 10 5 1
+spawn enemy.pirate_boarding_commandos 5 6 1
+spawn enemy.pirate_boarding_commandos 6 6 1
+spawn enemy.pirate_boarding_commandos 7 6 1
+spawn enemy.pirate_boarding_commandos 8 6 1
 ```
 
 Then: `clearwave`

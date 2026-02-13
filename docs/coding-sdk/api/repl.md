@@ -153,60 +153,60 @@ The following are expressions and statements you can type into the DevConsole Co
 > 2 + 2
   4
 
-> GameType.Find("Agent").IsValid
+> GameType.Find("WeaponTemplate").IsValid
   true
 
-> GameType.Find("Agent").FullName
-  "Agent"
+> GameType.Find("WeaponTemplate").FullName
+  "Menace.Strategy.WeaponTemplate"
 ```
 
 ### Querying game objects
 
 ```
-> GameQuery.FindAll("Agent").Length
-  8
+> GameQuery.FindAll("WeaponTemplate").Length
+  142
 
-> GameQuery.FindByName("Agent", "Player")
-  {Agent 'Player' @ 0x7F1234ABCD00}
+> GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762")
+  {WeaponTemplate 'weapon.generic_assault_rifle_tier1_ARC_762' @ 0x7F1234ABCD00}
 ```
 
 ### Reading fields
 
 ```
-> GameQuery.FindByName("Agent", "Player").ReadInt("health")
-  100
+> GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762").ReadFloat("Damage")
+  10.0
 
-> Templates.ReadField(Templates.Find("WeaponDef", "AssaultRifle"), "damage")
-  35
+> Templates.ReadField(Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762"), "MaxRange")
+  7
 ```
 
 ### Multi-statement blocks
 
 ```
-> var agents = GameQuery.FindAll("Agent"); return agents.Length;
-  8
+> var weapons = GameQuery.FindAll("WeaponTemplate"); return weapons.Length;
+  142
 
-> var t = GameType.Find("WeaponDef"); return t.HasField("damage");
+> var t = GameType.Find("WeaponTemplate"); return t.HasField("Damage");
   true
 ```
 
 ### Modifying game state
 
 ```
-> var p = GameQuery.FindByName("Agent", "Player"); p.WriteInt("health", 999); return p.ReadInt("health");
-  999
+> var w = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762"); w.WriteFloat("Damage", 25.0f); return w.ReadFloat("Damage");
+  25.0
 ```
 
 ### Using LINQ (auto-imported)
 
 ```
-> GameQuery.FindAll("Agent").Where(a => a.IsAlive).Count()
-  6
+> GameQuery.FindAll("WeaponTemplate").Where(w => !w.IsNull).Count()
+  142
 ```
 
 ### Walking a type hierarchy
 
 ```
-> var parts = new List<string>(); var t = GameType.Find("SpecialAgent"); while (t != null) { parts.Add(t.FullName); t = t.Parent; } return string.Join(" -> ", parts);
-  "SpecialAgent -> Agent -> UnitDef -> ScriptableObject -> Object"
+> var parts = new List<string>(); var t = GameType.Find("WeaponTemplate"); while (t != null) { parts.Add(t.FullName); t = t.Parent; } return string.Join(" -> ", parts);
+  "Menace.Strategy.WeaponTemplate -> Menace.Data.DataTemplate -> UnityEngine.ScriptableObject -> UnityEngine.Object"
 ```

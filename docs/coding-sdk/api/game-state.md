@@ -103,12 +103,12 @@ GameState.SceneLoaded += sceneName =>
 ```csharp
 GameState.TacticalReady += () =>
 {
-    var agents = GameQuery.FindAll("Agent");
-    foreach (var agent in agents)
+    var weapons = GameQuery.FindAll("WeaponTemplate");
+    foreach (var weapon in weapons)
     {
-        agent.WriteInt("health", 200);
+        weapon.WriteFloat("Damage", weapon.ReadFloat("Damage") * 1.2f);
     }
-    DevConsole.Log($"Buffed {agents.Length} agents");
+    DevConsole.Log($"Buffed {weapons.Length} weapons");
 };
 ```
 
@@ -125,12 +125,15 @@ if (GameState.IsScene("Tactical"))
 
 ```csharp
 GameState.RunWhen(
-    () => GameQuery.FindByName("Agent", "Player").IsAlive,
+    () => GameQuery.FindAll("WeaponTemplate").Length > 0,
     () =>
     {
-        var player = GameQuery.FindByName("Agent", "Player");
-        player.WriteInt("health", 999);
-        DevConsole.Log("Player buffed");
+        var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+        if (!rifle.IsNull)
+        {
+            rifle.WriteFloat("Damage", 20.0f);
+            DevConsole.Log("Rifle buffed");
+        }
     },
     maxAttempts: 60  // give up after 60 frames
 );
@@ -155,7 +158,7 @@ if (!GameState.IsGameAssemblyLoaded)
     return;
 }
 
-var type = GameState.FindManagedType("AgentDef");
+var type = GameState.FindManagedType("WeaponTemplate");
 if (type != null)
     DevConsole.Log($"Found managed type: {type.FullName}");
 ```

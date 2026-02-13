@@ -278,9 +278,9 @@ foreach (var stack in stacks)
 
 ```csharp
 // Check if a specific item is available
-if (BlackMarket.HasTemplate("AssaultRifle_T2"))
+if (BlackMarket.HasTemplate("accessory.ammo_armor_piercing"))
 {
-    var stack = BlackMarket.FindStackByTemplate("AssaultRifle_T2");
+    var stack = BlackMarket.FindStackByTemplate("accessory.ammo_armor_piercing");
     DevConsole.Log($"Found {stack.TemplateName} for ${stack.TradeValue}!");
 }
 ```
@@ -371,23 +371,24 @@ BlackMarket Status:
 
 > bmitems
 BlackMarket Items (5 stacks):
-  0. AssaultRifle_T1 x2 - $150 (2 ops)
-  1. Medkit x3 - $50 (3 ops)
-  2. BodyArmor_T2 x1 - $300 (1 ops)
-  3. SpecialWeapon x1 - $500 [PERM] [Unique]
-  4. Grenade x5 - $25 (2 ops)
+  0. accessory.ammo_armor_piercing x2 - $35 (2 ops)
+  1. accessory.ammo_bag x3 - $30 (3 ops)
+  2. accessory.armor_plates x1 - $50 (1 ops)
+  3. accessory.disposable_rocket_launcher x1 - $75 [PERM] [Unique]
+  4. accessory.frag_grenade x5 - $15 (2 ops)
 
 > bmstack 2
-Stack 2: BodyArmor_T2
+Stack 2: accessory.armor_plates
   Type: Generated
   Items: 1
-  Trade Value: $300 each
+  Trade Value: $50 each
   Rarity: Rare
   Expiry: 1 operations remaining
 
-> bmfind rifle
-Found 1 matching items:
-  AssaultRifle_T1 x2 - $150 (2 ops)
+> bmfind ammo
+Found 2 matching items:
+  accessory.ammo_armor_piercing x2 - $35 (2 ops)
+  accessory.ammo_bag x3 - $30 (3 ops)
 
 > bmbytype Reward
 No Reward items in BlackMarket

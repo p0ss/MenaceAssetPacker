@@ -642,6 +642,15 @@ public partial class ModpackLoaderMod
             return ResolveIl2CppReference(strValue, targetType);
         }
 
+        // Simple value-type structs (e.g., OperationResources with a single int field)
+        // These are blittable structs that can be set from a primitive value
+        if (targetType.IsValueType && !targetType.IsPrimitive && !targetType.IsEnum)
+        {
+            var structResult = TryCreateSimpleStruct(targetType, value);
+            if (structResult != null)
+                return structResult;
+        }
+
         return Convert.ChangeType(value, targetType);
     }
 
@@ -676,8 +685,128 @@ public partial class ModpackLoaderMod
         if (token is JObject jObj && IsIl2CppType(targetType))
             return CreateIl2CppObject(targetType, jObj);
 
+        // Simple value-type structs (e.g., OperationResources with a single int field)
+        // When a primitive value (int, float) is provided for a struct type,
+        // try to construct the struct and set its primary field
+        if (targetType.IsValueType && !targetType.IsPrimitive && !targetType.IsEnum)
+        {
+            // Get the primitive value from the token
+            object primitiveValue = token.Type switch
+            {
+                JTokenType.Integer => token.Value<long>(),
+                JTokenType.Float => token.Value<double>(),
+                JTokenType.Boolean => token.Value<bool>(),
+                _ => null
+            };
+
+            if (primitiveValue != null)
+            {
+                var structResult = TryCreateSimpleStruct(targetType, primitiveValue);
+                if (structResult != null)
+                    return structResult;
+            }
+        }
+
         // For complex types, fall back to conversion
         return token.ToObject(targetType);
+    }
+
+    /// <summary>
+    /// Tries to create a simple value-type struct from a primitive value.
+    /// Handles structs like OperationResources that wrap a single int/float field.
+    /// Returns null if the struct cannot be created from the primitive.
+    /// </summary>
+    private object TryCreateSimpleStruct(Type structType, object primitiveValue)
+    {
+        try
+        {
+            // Create default instance of the struct
+            var structInstance = Activator.CreateInstance(structType);
+            if (structInstance == null)
+                return null;
+
+            // Find writable fields on the struct
+            var fields = structType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            // Common field name patterns for wrapper structs
+            string[] preferredNames = { "m_Supplies", "m_Value", "Value", "value", "_value", "m_Amount", "Amount" };
+
+            FieldInfo targetField = null;
+
+            // First, try to find a field by preferred name
+            foreach (var name in preferredNames)
+            {
+                targetField = fields.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (targetField != null)
+                    break;
+            }
+
+            // If no preferred name found, use the single field if there's only one
+            if (targetField == null && fields.Length == 1)
+            {
+                targetField = fields[0];
+            }
+
+            if (targetField == null)
+            {
+                // Try properties as fallback
+                var props = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanWrite && p.CanRead)
+                    .ToArray();
+
+                if (props.Length == 1)
+                {
+                    var prop = props[0];
+                    var convertedValue = ConvertPrimitiveToType(primitiveValue, prop.PropertyType);
+                    if (convertedValue != null)
+                    {
+                        prop.SetValue(structInstance, convertedValue);
+                        return structInstance;
+                    }
+                }
+                return null;
+            }
+
+            // Convert the primitive value to match the field type
+            var fieldValue = ConvertPrimitiveToType(primitiveValue, targetField.FieldType);
+            if (fieldValue == null)
+                return null;
+
+            targetField.SetValue(structInstance, fieldValue);
+            return structInstance;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"    TryCreateSimpleStruct({structType.Name}): {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Converts a primitive value (int, long, float, double, bool) to the target type.
+    /// </summary>
+    private static object ConvertPrimitiveToType(object value, Type targetType)
+    {
+        try
+        {
+            if (targetType == typeof(int)) return Convert.ToInt32(value);
+            if (targetType == typeof(float)) return Convert.ToSingle(value);
+            if (targetType == typeof(double)) return Convert.ToDouble(value);
+            if (targetType == typeof(long)) return Convert.ToInt64(value);
+            if (targetType == typeof(short)) return Convert.ToInt16(value);
+            if (targetType == typeof(byte)) return Convert.ToByte(value);
+            if (targetType == typeof(bool)) return Convert.ToBoolean(value);
+            if (targetType == typeof(uint)) return Convert.ToUInt32(value);
+            if (targetType == typeof(ulong)) return Convert.ToUInt64(value);
+            if (targetType == typeof(ushort)) return Convert.ToUInt16(value);
+            if (targetType == typeof(sbyte)) return Convert.ToSByte(value);
+
+            return Convert.ChangeType(value, targetType);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

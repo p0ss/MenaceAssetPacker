@@ -94,17 +94,17 @@ public class MyMod : MelonMod
         _harmony = new HarmonyLib.Harmony("com.mymod");
 
         var patchMethod = typeof(MyMod).GetMethod(
-            nameof(AfterTakeDamage),
+            nameof(AfterApplyDamage),
             BindingFlags.Static | BindingFlags.NonPublic);
 
-        bool ok = GamePatch.Postfix(_harmony, "Agent", "TakeDamage", patchMethod);
+        bool ok = GamePatch.Postfix(_harmony, "ActorComponent", "ApplyDamage", patchMethod);
         if (!ok)
-            ModError.Warn("MyMod", "Failed to patch Agent.TakeDamage");
+            ModError.Warn("MyMod", "Failed to patch ActorComponent.ApplyDamage");
     }
 
-    private static void AfterTakeDamage()
+    private static void AfterApplyDamage()
     {
-        DevConsole.Log("Someone took damage!");
+        DevConsole.Log("Damage was applied!");
     }
 }
 ```
@@ -112,13 +112,13 @@ public class MyMod : MelonMod
 ### Prefix patch with GameType
 
 ```csharp
-var agentType = GameType.Find("Agent");
+var actorType = GameType.Find("TacticalActor");
 
 var prefixMethod = typeof(MyMod).GetMethod(
-    nameof(BeforeMove),
+    nameof(BeforeExecuteSkill),
     BindingFlags.Static | BindingFlags.NonPublic);
 
-GamePatch.Prefix(_harmony, agentType, "StartMove", prefixMethod);
+GamePatch.Prefix(_harmony, actorType, "ExecuteSkill", prefixMethod);
 ```
 
 ### Checking return values for batch patching
@@ -127,14 +127,14 @@ GamePatch.Prefix(_harmony, agentType, "StartMove", prefixMethod);
 int applied = 0;
 int failed = 0;
 
-string[] methods = { "TakeDamage", "Heal", "Die", "Revive" };
+string[] methods = { "ApplyDamage", "ApplyHealing", "OnDeath", "OnRevive" };
 foreach (var method in methods)
 {
     var patch = typeof(MyMod).GetMethod(
         $"After{method}",
         BindingFlags.Static | BindingFlags.NonPublic);
 
-    if (GamePatch.Postfix(_harmony, "Agent", method, patch))
+    if (GamePatch.Postfix(_harmony, "ActorComponent", method, patch))
         applied++;
     else
         failed++;

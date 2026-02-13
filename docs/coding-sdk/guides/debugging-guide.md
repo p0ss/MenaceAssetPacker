@@ -112,15 +112,15 @@ Add live watches to track values that change every frame. Watches are evaluated 
 DevConsole.Watch("Scene", () => GameState.CurrentScene);
 
 // Watch a game object's field
-DevConsole.Watch("Player HP", () =>
+DevConsole.Watch("Pike Squad", () =>
 {
-    var player = GameQuery.FindByName("AgentTemplate", "Player");
-    return player.IsNull ? "N/A" : player.ReadInt("HitPoints").ToString();
+    var pike = GameQuery.FindByName("EntityTemplate", "player_squad.pike");
+    return pike.IsNull ? "N/A" : pike.GetName();
 });
 
 // Watch an expression
-DevConsole.Watch("Enemy Count", () =>
-    GameQuery.FindAll("AgentTemplate").Length.ToString());
+DevConsole.Watch("Weapon Count", () =>
+    GameQuery.FindAll("WeaponTemplate").Length.ToString());
 ```
 
 ### Removing Watches
@@ -144,7 +144,7 @@ Inspect a `GameObj` to view all its public properties via managed reflection.
 ### Inspecting an Object
 
 ```csharp
-var weapon = GameQuery.FindByName("WeaponTemplate", "AssaultRifle_Mk2");
+var weapon = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 DevConsole.Inspect(weapon);
 ```
 
@@ -184,11 +184,11 @@ The REPL compiles and evaluates C# expressions at runtime using Roslyn from the 
 > GameQuery.FindAll("WeaponTemplate").Length
   42
 
-> var w = GameQuery.FindByName("WeaponTemplate", "AssaultRifle_Mk2")
-  {WeaponTemplate 'AssaultRifle_Mk2' @ 0x1A3F0020}
+> var w = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762")
+  {WeaponTemplate 'weapon.generic_assault_rifle_tier1_ARC_762' @ 0x1A3F0020}
 
 > Templates.ReadField(w, "Damage")
-  30
+  12.0
 
 > GameState.CurrentScene
   "Tactical"

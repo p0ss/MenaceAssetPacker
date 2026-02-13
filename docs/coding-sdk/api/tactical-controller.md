@@ -251,7 +251,7 @@ var positions = new List<(int, int)>
     (5, 11), (6, 11), (7, 11)
 };
 
-var spawned = TacticalController.SpawnWave("Grunt", positions);
+var spawned = TacticalController.SpawnWave("enemy.pirate_boarding_commandos", positions);
 DevConsole.Log($"Spawned wave of {spawned} enemies");
 ```
 

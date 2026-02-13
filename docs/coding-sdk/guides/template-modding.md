@@ -8,13 +8,13 @@ Templates are the game's core data objects -- ScriptableObjects loaded by `DataT
 
 Templates are Unity `ScriptableObject` instances that define game data. The game's `DataTemplateLoader` singleton loads them at startup and stores them in typed dictionaries keyed by their `m_ID` field. Examples:
 
-- `WeaponTemplate` -- damage, range, accuracy, fire rate
-- `EntityTemplate` -- unit type, actor type, faction, stats
+- `WeaponTemplate` -- damage, range, accuracy, armor penetration
+- `EntityTemplate` -- unit type, actor type, faction, visual properties
 - `ArmorTemplate` -- protection values, weight, coverage
-- `SkillTemplate` -- skill effects, cooldowns, prerequisites
-- `AgentTemplate` -- agent stats, AI behavior, hit points
+- `SkillTemplate` -- skill effects, cooldowns, AP costs
+- `UnitLeaderTemplate` -- leader stats, hiring costs, perk trees
 
-Each template instance has a unique name (its `m_ID`). For example, the weapon "AssaultRifle_Mk2" is a `WeaponTemplate` instance with `m_ID = "AssaultRifle_Mk2"`.
+Each template instance has a unique name (its `m_ID`). For example, the weapon `weapon.generic_assault_rifle_tier1_ARC_762` is a `WeaponTemplate` instance.
 
 ---
 
@@ -31,20 +31,20 @@ The simplest way to modify templates. Define patches in your `modpack.json` unde
   "loadOrder": 100,
   "patches": {
     "WeaponTemplate": {
-      "AssaultRifle_Mk2": {
-        "Damage": 35,
-        "Range": 18,
-        "Accuracy": 0.85
+      "weapon.generic_assault_rifle_tier1_ARC_762": {
+        "Damage": 15.0,
+        "MaxRange": 9,
+        "AccuracyBonus": 5.0
       },
-      "SMG_Breacher": {
-        "Damage": 22,
-        "FireRate": 8
+      "weapon.generic_combat_shotgun_tier_1_cs185": {
+        "Damage": 45.0,
+        "ArmorPenetration": 30.0
       }
     },
-    "EntityTemplate": {
-      "Soldier_Pirate": {
-        "SquadSize": 6,
-        "Morale": 40
+    "UnitLeaderTemplate": {
+      "squad_leader.pike": {
+        "HiringCosts": 20,
+        "GrowthPotential": 5
       }
     }
   }
@@ -79,8 +79,8 @@ Collections (arrays and lists) can be patched by providing a JSON array. This pe
 {
   "patches": {
     "WeaponTemplate": {
-      "Shotgun_Mk1": {
-        "DamageMultipliers": [1.0, 0.8, 0.5, 0.3]
+      "weapon.generic_combat_shotgun_tier_1_cs185": {
+        "DamageDropoff": -2.0
       }
     }
   }
@@ -183,10 +183,10 @@ The `Templates` class provides runtime access to template fields through managed
 
 ```csharp
 // Find a specific template by type and name
-GameObj rifle = Templates.Find("WeaponTemplate", "AssaultRifle_Mk2");
+GameObj rifle = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 if (rifle.IsNull)
 {
-    ModError.Report("MyMod", "AssaultRifle_Mk2 not found");
+    ModError.Report("MyMod", "ARC-762 not found");
     return;
 }
 
@@ -194,7 +194,7 @@ if (rifle.IsNull)
 GameObj[] allWeapons = Templates.FindAll("WeaponTemplate");
 
 // Check existence
-bool exists = Templates.Exists("WeaponTemplate", "AssaultRifle_Mk2");
+bool exists = Templates.Exists("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 ```
 
 ### Reading Fields
@@ -202,14 +202,15 @@ bool exists = Templates.Exists("WeaponTemplate", "AssaultRifle_Mk2");
 `Templates.ReadField` reads a property value via managed reflection on the IL2CppInterop proxy type. It supports dotted paths for nested properties.
 
 ```csharp
-GameObj weapon = Templates.Find("WeaponTemplate", "AssaultRifle_Mk2");
+GameObj weapon = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
-object damage = Templates.ReadField(weapon, "Damage");    // returns boxed int
-object range = Templates.ReadField(weapon, "Range");       // returns boxed float
-object name = Templates.ReadField(weapon, "name");         // Unity object name
+object damage = Templates.ReadField(weapon, "Damage");         // returns boxed float
+object maxRange = Templates.ReadField(weapon, "MaxRange");     // returns boxed int
+object accuracy = Templates.ReadField(weapon, "AccuracyBonus"); // returns boxed float
+object name = Templates.ReadField(weapon, "name");              // Unity object name
 
-// Dotted paths for nested objects
-object subValue = Templates.ReadField(weapon, "Stats.CritChance");
+// Dotted paths for nested objects (if applicable)
+object deployCost = Templates.ReadField(weapon, "DeployCosts.m_Supplies");
 ```
 
 Returns `null` on failure (field not found, no managed proxy, reflection error).
@@ -219,11 +220,11 @@ Returns `null` on failure (field not found, no managed proxy, reflection error).
 `Templates.WriteField` sets a property value. Handles type conversion automatically (int/float/double/bool/string/enum).
 
 ```csharp
-GameObj weapon = Templates.Find("WeaponTemplate", "AssaultRifle_Mk2");
+GameObj weapon = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 
-Templates.WriteField(weapon, "Damage", 35);
-Templates.WriteField(weapon, "Range", 18.0f);
-Templates.WriteField(weapon, "IsAutomatic", true);
+Templates.WriteField(weapon, "Damage", 15.0f);
+Templates.WriteField(weapon, "MaxRange", 9);
+Templates.WriteField(weapon, "AccuracyBonus", 5.0f);
 ```
 
 Returns `false` on failure.
@@ -231,13 +232,13 @@ Returns `false` on failure.
 ### Batch Writes
 
 ```csharp
-GameObj weapon = Templates.Find("WeaponTemplate", "AssaultRifle_Mk2");
+GameObj weapon = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
 int written = Templates.WriteFields(weapon, new Dictionary<string, object>
 {
-    { "Damage", 35 },
-    { "Range", 18.0f },
-    { "Accuracy", 0.85f },
-    { "FireRate", 5 }
+    { "Damage", 15.0f },
+    { "MaxRange", 9 },
+    { "AccuracyBonus", 5.0f },
+    { "ArmorPenetration", 25.0f }
 });
 // written == number of fields successfully set
 ```
@@ -258,16 +259,16 @@ Define clones in `modpack.json` under the `"clones"` key:
   "name": "New Weapons Mod",
   "patches": {
     "WeaponTemplate": {
-      "HeavyRifle_Custom": {
-        "Damage": 50,
-        "Range": 22,
-        "FireRate": 2
+      "weapon.custom_heavy_rifle": {
+        "Damage": 20.0,
+        "MaxRange": 10,
+        "ArmorPenetration": 40.0
       }
     }
   },
   "clones": {
     "WeaponTemplate": {
-      "HeavyRifle_Custom": "AssaultRifle_Mk2"
+      "weapon.custom_heavy_rifle": "weapon.generic_assault_rifle_tier1_ARC_762"
     }
   }
 }
@@ -285,11 +286,11 @@ Clones are applied before patches, so you can clone a template and then patch th
 ### Code-Based Cloning
 
 ```csharp
-GameObj clone = Templates.Clone("WeaponTemplate", "AssaultRifle_Mk2", "HeavyRifle_Custom");
+GameObj clone = Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_heavy_rifle");
 if (!clone.IsNull)
 {
-    Templates.WriteField(clone, "Damage", 50);
-    Templates.WriteField(clone, "Range", 22.0f);
+    Templates.WriteField(clone, "Damage", 20.0f);
+    Templates.WriteField(clone, "MaxRange", 10);
 }
 ```
 
@@ -315,24 +316,30 @@ JSON patches are simpler, require no compilation, and are easier for end users t
 
 ---
 
-## Example: Pirate Overhaul (JSON)
+## Example: Weapon Balance (JSON)
 
-A balance mod that increases pirate squad sizes and buffs breaching weapons:
+A balance mod that buffs assault rifles and shotguns:
 
 ```json
 {
   "manifestVersion": 2,
-  "name": "Pirate Overhaul",
+  "name": "Weapon Balance",
   "version": "1.0.0",
   "loadOrder": 100,
   "patches": {
-    "EntityTemplate": {
-      "Soldier_Pirate": { "SquadSize": 6, "Discipline": 30 },
-      "Soldier_PirateCaptain": { "SquadSize": 4, "Morale": 60 }
-    },
     "WeaponTemplate": {
-      "SMG_Breacher": { "Damage": 24, "Accuracy": 0.7 },
-      "Chaingun_Heavy": { "Damage": 18, "FireRate": 12 }
+      "weapon.generic_assault_rifle_tier1_ARC_762": {
+        "Damage": 14.0,
+        "AccuracyBonus": 5.0
+      },
+      "weapon.generic_assault_rifle_tier1_kpac": {
+        "Damage": 11.0,
+        "MaxRange": 9
+      },
+      "weapon.generic_combat_shotgun_tier_1_cs185": {
+        "Damage": 50.0,
+        "ArmorPenetration": 35.0
+      }
     }
   }
 }
@@ -358,24 +365,24 @@ public class WeaponModPlugin : IModpackPlugin
 
         GameState.RunDelayed(30, () =>
         {
-            var source = Templates.Find("WeaponTemplate", "AssaultRifle_Mk2");
+            var source = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
             if (source.IsNull)
             {
                 ModError.Report("WeaponMod", "Source weapon not found");
                 return;
             }
 
-            var clone = Templates.Clone("WeaponTemplate", "AssaultRifle_Mk2", "SilencedRifle");
+            var clone = Templates.Clone("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762", "weapon.custom_stealth_rifle");
             if (clone.IsNull)
             {
                 ModError.Report("WeaponMod", "Clone failed");
                 return;
             }
 
-            Templates.WriteField(clone, "Damage", 28);
-            Templates.WriteField(clone, "Accuracy", 0.9f);
-            Templates.WriteField(clone, "NoiseRadius", 2.0f);
-            _log.Msg("Created SilencedRifle from AssaultRifle_Mk2");
+            Templates.WriteField(clone, "Damage", 10.0f);
+            Templates.WriteField(clone, "AccuracyBonus", 15.0f);
+            Templates.WriteField(clone, "Suppression", 5.0f);
+            _log.Msg("Created weapon.custom_stealth_rifle from ARC-762");
         });
     }
 }
