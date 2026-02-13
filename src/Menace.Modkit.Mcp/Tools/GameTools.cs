@@ -251,6 +251,41 @@ public static class GameTools
         return await FetchFromGame($"/ai{queryString}");
     }
 
+    [McpServerTool(Name = "game_ui", ReadOnly = true)]
+    [Description("Get the current game UI state. Lists visible buttons, text, toggles, dropdowns, etc. Use this to see what menus/screens are showing and what can be clicked.")]
+    public static async Task<string> GameUI()
+    {
+        return await FetchFromGame("/ui");
+    }
+
+    [McpServerTool(Name = "game_logs", ReadOnly = true)]
+    [Description("Read recent game logs (MelonLoader/Latest.log). Useful for checking errors, mod loading, and debugging.")]
+    public static async Task<string> GameLogs(
+        [Description("Number of lines to return (default 100, max 1000)")] int? lines = null,
+        [Description("Filter logs to lines containing this text")] string? filter = null)
+    {
+        var query = new List<string>();
+        if (lines.HasValue) query.Add($"lines={lines.Value}");
+        if (!string.IsNullOrEmpty(filter)) query.Add($"filter={Uri.EscapeDataString(filter)}");
+
+        var queryString = query.Count > 0 ? "?" + string.Join("&", query) : "";
+        return await FetchFromGame($"/logs{queryString}");
+    }
+
+    [McpServerTool(Name = "game_click", Destructive = false)]
+    [Description("Click a button in the game UI. Can find buttons by path or name/text.")]
+    public static async Task<string> GameClick(
+        [Description("Full path to the button (from game_ui output)")] string? path = null,
+        [Description("Button name or text label to find and click")] string? name = null)
+    {
+        var query = new List<string>();
+        if (!string.IsNullOrEmpty(path)) query.Add($"path={Uri.EscapeDataString(path)}");
+        if (!string.IsNullOrEmpty(name)) query.Add($"name={Uri.EscapeDataString(name)}");
+
+        var queryString = query.Count > 0 ? "?" + string.Join("&", query) : "";
+        return await FetchFromGame($"/click{queryString}");
+    }
+
     /// <summary>
     /// Fetch data from the game's MCP HTTP server.
     /// Returns the JSON response or an error object if the game is not running.

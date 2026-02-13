@@ -257,6 +257,10 @@ public static class GameMcpServer
                 "/threats" => HandleThreats(request),
                 "/hitchance" => HandleHitChance(request),
                 "/ai" => HandleAI(request),
+                // UI and log inspection
+                "/ui" => HandleUI(request),
+                "/logs" => HandleLogs(request),
+                "/click" => HandleClick(request),
                 _ => new { error = "Unknown endpoint", path }
             };
 
@@ -1179,6 +1183,115 @@ public static class GameMcpServer
             distancePenalty = result.DistancePenalty,
             includesDistance = result.IncludesDistance
         };
+    }
+
+    // ==================== UI Inspection ====================
+
+    private static object HandleUI(HttpListenerRequest request)
+    {
+        try
+        {
+            var elements = UIInspector.GetAllElements();
+
+            return new
+            {
+                scene = GameState.CurrentScene,
+                elementCount = elements.Count,
+                elements = elements.Select(e => new
+                {
+                    type = e.Type,
+                    name = e.Name,
+                    text = e.Text,
+                    canvas = e.Canvas,
+                    path = e.Path,
+                    interactable = e.Interactable,
+                    fontSize = e.FontSize > 0 ? (int?)e.FontSize : null,
+                    isOn = e.IsOn,
+                    selectedIndex = e.SelectedIndex,
+                    selectedText = e.SelectedText,
+                    options = e.Options,
+                    placeholder = e.Placeholder
+                }).ToList()
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Failed to inspect UI: {ex.Message}" };
+        }
+    }
+
+    private static object HandleLogs(HttpListenerRequest request)
+    {
+        int.TryParse(request.QueryString["lines"], out int lineCount);
+        if (lineCount <= 0) lineCount = 100;
+        if (lineCount > 1000) lineCount = 1000;
+
+        var filter = request.QueryString["filter"];
+
+        try
+        {
+            // MelonLoader logs to MelonLoader/Latest.log
+            var gameDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            var logPath = System.IO.Path.Combine(gameDir, "..", "..", "MelonLoader", "Latest.log");
+            logPath = System.IO.Path.GetFullPath(logPath);
+
+            if (!System.IO.File.Exists(logPath))
+            {
+                return new { error = $"Log file not found: {logPath}" };
+            }
+
+            // Read last N lines (read all then take last N to handle file locking)
+            string[] allLines;
+            using (var fs = new System.IO.FileStream(logPath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+            using (var sr = new System.IO.StreamReader(fs))
+            {
+                allLines = sr.ReadToEnd().Split('\n');
+            }
+
+            var lines = allLines.AsEnumerable();
+
+            // Apply filter if specified
+            if (!string.IsNullOrWhiteSpace(filter))
+            {
+                lines = lines.Where(l => l.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+
+            var result = lines.TakeLast(lineCount).ToList();
+
+            return new
+            {
+                logPath,
+                lineCount = result.Count,
+                filter,
+                lines = result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Failed to read logs: {ex.Message}" };
+        }
+    }
+
+    private static object HandleClick(HttpListenerRequest request)
+    {
+        var path = request.QueryString["path"];
+        var buttonName = request.QueryString["name"];
+
+        var result = UIInspector.ClickButton(path, buttonName);
+
+        if (result.Success)
+        {
+            return new
+            {
+                success = true,
+                clicked = result.ClickedName,
+                path = result.ClickedPath
+            };
+        }
+        else
+        {
+            return new { error = result.Error };
+        }
     }
 
     // ==================== Helpers ====================

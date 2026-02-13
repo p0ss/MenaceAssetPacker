@@ -288,20 +288,33 @@ public partial class ModpackLoaderMod
                         continue;
                     }
 
+                    // Try to find a property first
                     var childProp = parentObj.GetType().GetProperty(childFieldName,
                         BindingFlags.Public | BindingFlags.Instance);
+
+                    // If no property found, try to find a field (common for value-type structs like OperationResources)
+                    FieldInfo childField = null;
                     if (childProp == null || !childProp.CanWrite)
                     {
-                        SdkLogger.Warning($"    {obj.name}: property '{childFieldName}' not found on {parentObj.GetType().Name}");
-                        continue;
+                        childField = parentObj.GetType().GetField(childFieldName,
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                        if (childField == null)
+                        {
+                            SdkLogger.Warning($"    {obj.name}: property/field '{childFieldName}' not found on {parentObj.GetType().Name}");
+                            continue;
+                        }
                     }
+
+                    // Get the target type from either property or field
+                    var childType = childProp?.PropertyType ?? childField.FieldType;
 
                     if (rawValue is JArray nestedJArray)
                     {
-                        var kind = ClassifyCollectionType(childProp.PropertyType, out _);
+                        var kind = ClassifyCollectionType(childType, out _);
                         if (kind != CollectionKind.None)
                         {
-                            if (TryApplyCollectionValue(parentObj, childProp, nestedJArray))
+                            if (childProp != null && TryApplyCollectionValue(parentObj, childProp, nestedJArray))
                                 appliedCount++;
                             continue;
                         }
@@ -310,20 +323,20 @@ public partial class ModpackLoaderMod
                     // Incremental list operations via JObject with $op
                     if (rawValue is JObject nestedJObj)
                     {
-                        var nestedKind = ClassifyCollectionType(childProp.PropertyType, out var nestedElType);
+                        var nestedKind = ClassifyCollectionType(childType, out var nestedElType);
                         if (nestedKind == CollectionKind.Il2CppList && nestedElType != null)
                         {
-                            if (TryApplyIncrementalList(parentObj, childProp, nestedJObj, nestedElType))
+                            if (childProp != null && TryApplyIncrementalList(parentObj, childProp, nestedJObj, nestedElType))
                                 appliedCount++;
                             continue;
                         }
                     }
 
                     // Localization types: write directly to m_DefaultTranslation
-                    if (IsLocalizationType(childProp.PropertyType))
+                    if (IsLocalizationType(childType))
                     {
                         var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
-                        var existingLoc = childProp.GetValue(parentObj);
+                        var existingLoc = childProp != null ? childProp.GetValue(parentObj) : childField.GetValue(parentObj);
                         if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
                         {
                             SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
@@ -336,8 +349,27 @@ public partial class ModpackLoaderMod
                         continue;
                     }
 
-                    var nestedConverted = ConvertToPropertyType(rawValue, childProp.PropertyType);
-                    childProp.SetValue(parentObj, nestedConverted);
+                    var nestedConverted = ConvertToPropertyType(rawValue, childType);
+
+                    // For value-type structs (like OperationResources), we need to:
+                    // 1. Get a boxed copy of the struct
+                    // 2. Modify the field on the boxed copy
+                    // 3. Set the modified struct back to the parent property
+                    if (childField != null && parentProp.PropertyType.IsValueType)
+                    {
+                        // parentObj is already a boxed copy of the struct
+                        childField.SetValue(parentObj, nestedConverted);
+                        // Write the modified struct back to the parent property
+                        parentProp.SetValue(castObj, parentObj);
+                    }
+                    else if (childField != null)
+                    {
+                        childField.SetValue(parentObj, nestedConverted);
+                    }
+                    else
+                    {
+                        childProp.SetValue(parentObj, nestedConverted);
+                    }
                     appliedCount++;
                 }
                 catch (Exception ex)

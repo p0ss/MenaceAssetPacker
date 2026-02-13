@@ -139,10 +139,10 @@ GLB can embed textures, but you can also reference external files:
 
 ## LOD (Level of Detail)
 
-Some models have multiple LOD versions:
-- `model_LOD0.fbx` - High detail (close up)
-- `model_LOD1.fbx` - Medium detail
-- `model_LOD2.fbx` - Low detail (distant)
+Most models have multiple LOD versions:
+- `arc_assault_rifle_t1_LOD0.glb` - High detail (close up)
+- `arc_assault_rifle_t1_LOD1.glb` - Medium detail
+- `arc_assault_rifle_t1_LOD2.glb` - Low detail (distant)
 
 For best results, replace all LOD levels.
 

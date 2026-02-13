@@ -20,6 +20,13 @@ public class StatsEditorView : UserControl
   private static readonly Avalonia.Data.Converters.FuncValueConverter<object?, bool> ObjectToBoolConverter =
     new(obj => obj != null);
 
+  // Read-only fields that are computed from other properties and cannot be edited
+  // These are displayed but editing is disabled with a tooltip explanation
+  private static readonly System.Collections.Generic.HashSet<string> ReadOnlyFields = new(StringComparer.OrdinalIgnoreCase)
+  {
+    "DisplayTitle", "DisplayShortName", "DisplayDescription"
+  };
+
   public StatsEditorView()
   {
     Content = BuildUI();
@@ -1134,16 +1141,24 @@ public class StatsEditorView : UserControl
   {
     var fieldStack = new StackPanel { Spacing = 4, Margin = new Thickness(indent * 16, 0, 0, 0) };
 
+    // Check if this is a read-only computed field (e.g., DisplayTitle derives from Title)
+    var fieldNamePart = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+    var isReadOnlyField = ReadOnlyFields.Contains(fieldNamePart);
+    if (isReadOnlyField)
+      isEditable = false;
+
     // Property label (show just sub-field name for dotted keys)
-    var displayName = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+    var displayName = fieldNamePart;
     var label = new TextBlock
     {
-      Text = displayName,
-      Foreground = Brushes.White,
-      Opacity = 0.8,
+      Text = isReadOnlyField ? $"{displayName} (read-only)" : displayName,
+      Foreground = isReadOnlyField ? new SolidColorBrush(Color.Parse("#888888")) : Brushes.White,
+      Opacity = isReadOnlyField ? 0.6 : 0.8,
       FontSize = 11,
       FontWeight = FontWeight.SemiBold
     };
+    if (isReadOnlyField)
+      ToolTip.SetTip(label, "This field is computed from other properties and cannot be edited directly. Edit 'Title', 'ShortName', or 'Description' instead.");
     fieldStack.Children.Add(label);
 
     // Handle AssetPropertyValue (unity_asset fields)

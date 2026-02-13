@@ -101,17 +101,17 @@ Replace as many assets as you want:
 
 ## Texture Types
 
-Different textures serve different purposes:
+Menace uses standard PBR texture naming:
 
 | Suffix | Purpose |
 |--------|---------|
-| `_diffuse` / `_albedo` | Base color |
-| `_normal` | Surface detail (bumps) |
-| `_specular` | Shininess/reflection |
-| `_emission` | Glow effects |
-| `_mask` | Transparency/cutout |
+| `_BaseMap` | Base color (albedo) |
+| `_Normal` | Surface detail (bumps) |
+| `_MaskMap` | PBR masks (metallic, smoothness, etc.) |
+| `_EffectMap` | Special effects data |
+| `_Emissive` | Glow effects |
 
-When replacing a texture, usually you only need to change the diffuse/albedo. But for complete visual changes, replace all related textures.
+When replacing a texture, usually you only need to change the BaseMap. But for complete visual changes, replace all related textures.
 
 ## Tips for Good Results
 

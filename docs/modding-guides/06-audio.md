@@ -26,12 +26,12 @@ Use the Modkit to locate the sounds you want to replace:
 
 1. Go to **Modding Tools > Assets**
 2. Filter by type or search for audio files
-3. Look for common prefixes:
-   - `SFX_` - Sound effects
-   - `AMB_` - Ambient/environment sounds
-   - `UI_` - Interface sounds
-   - `MUS_` - Music tracks
-   - `VO_` - Voice lines (if applicable)
+3. Common naming patterns:
+   - Weapons: `assault_rifle_tier_1_762_single_01.wav`, `combat_shotgun_tier_1_01.wav`
+   - Ambient: `desert_wind_ambience_01.ogg`, `temperate_rain_heavy_ambience_01.ogg`
+   - UI: `ui_hover.wav`, `UI_note_negative.wav`
+   - Music: `01_MainTheme_Looped.ogg`, `06_Combat_Pirates1.ogg`
+   - Voice lines: Character name prefixes like `Pike_`, `Bog_`, `Carda_`
 
 4. Note the full asset path (e.g., `Assets/AudioClip/assault_rifle_tier_1_762_single_01.wav`)
 

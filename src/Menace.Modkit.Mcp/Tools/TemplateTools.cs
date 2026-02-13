@@ -54,8 +54,7 @@ public static class TemplateTools
 
         try
         {
-            var json = File.ReadAllText(vanillaPath);
-            var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+            var data = LoadVanillaTemplates(vanillaPath);
             if (data == null)
             {
                 return JsonSerializer.Serialize(new { error = "Failed to parse template data" }, JsonOptions);
@@ -101,8 +100,7 @@ public static class TemplateTools
 
         try
         {
-            var vanillaJson = File.ReadAllText(vanillaPath);
-            var vanillaData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(vanillaJson);
+            var vanillaData = LoadVanillaTemplates(vanillaPath);
             if (vanillaData == null || !vanillaData.TryGetValue(instance, out var vanillaInstance))
             {
                 return JsonSerializer.Serialize(new { error = $"Instance '{instance}' not found in '{type}'" }, JsonOptions);
@@ -199,8 +197,7 @@ public static class TemplateTools
         }
 
         // Verify instance exists
-        var vanillaJson = File.ReadAllText(vanillaPath);
-        var vanillaData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(vanillaJson);
+        var vanillaData = LoadVanillaTemplates(vanillaPath);
         if (vanillaData == null || !vanillaData.ContainsKey(instance))
         {
             return JsonSerializer.Serialize(new { error = $"Instance '{instance}' not found in '{type}'" }, JsonOptions);
@@ -244,21 +241,14 @@ public static class TemplateTools
             var outputJson = JsonSerializer.Serialize(existingData, JsonOptions);
             modpackManager.SaveStagingTemplate(modpack, type, outputJson);
 
-            // Get the vanilla value for comparison
+            // Get the vanilla value for comparison (supports dotted paths)
             object? vanillaValue = null;
             if (vanillaData.TryGetValue(instance, out var vanillaInstance))
             {
-                var vanillaObj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(vanillaInstance.GetRawText());
-                if (vanillaObj != null && vanillaObj.TryGetValue(field, out var vv))
+                var nestedValue = GetNestedValue(vanillaInstance, field);
+                if (nestedValue.HasValue)
                 {
-                    vanillaValue = vv.ValueKind switch
-                    {
-                        JsonValueKind.Number => vv.TryGetInt32(out var i) ? i : vv.GetDouble(),
-                        JsonValueKind.String => vv.GetString(),
-                        JsonValueKind.True => true,
-                        JsonValueKind.False => false,
-                        _ => vv.ToString()
-                    };
+                    vanillaValue = JsonElementToValue(nestedValue.Value);
                 }
             }
 
@@ -344,8 +334,7 @@ public static class TemplateTools
         }
 
         // Verify instance exists in vanilla
-        var vanillaJson = File.ReadAllText(vanillaPath);
-        var vanillaData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(vanillaJson);
+        var vanillaData = LoadVanillaTemplates(vanillaPath);
         if (vanillaData == null || !vanillaData.ContainsKey(instance))
         {
             return JsonSerializer.Serialize(new { error = $"Instance '{instance}' not found in '{type}'" }, JsonOptions);
@@ -490,8 +479,7 @@ public static class TemplateTools
             return JsonSerializer.Serialize(new { error = $"Template type '{type}' not found" }, JsonOptions);
         }
 
-        var vanillaJson = File.ReadAllText(vanillaPath);
-        var vanillaData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(vanillaJson);
+        var vanillaData = LoadVanillaTemplates(vanillaPath);
         if (vanillaData == null || !vanillaData.ContainsKey(source))
         {
             return JsonSerializer.Serialize(new { error = $"Source instance '{source}' not found" }, JsonOptions);
@@ -535,11 +523,133 @@ public static class TemplateTools
 
         foreach (var (key, value) in overrides)
         {
-            vanillaObj[key] = value;
+            // Handle dotted paths by setting nested values
+            SetNestedValue(vanillaObj, key, value);
         }
 
         var merged = JsonSerializer.SerializeToElement(vanillaObj);
         return merged;
+    }
+
+    /// <summary>
+    /// Set a value at a dotted path in a nested dictionary structure.
+    /// E.g., "Properties.Armor" sets vanillaObj["Properties"]["Armor"] = value
+    /// </summary>
+    private static void SetNestedValue(Dictionary<string, JsonElement> obj, string path, JsonElement value)
+    {
+        var dotIdx = path.IndexOf('.');
+        if (dotIdx < 0)
+        {
+            // Simple case: direct key
+            obj[path] = value;
+            return;
+        }
+
+        // Split into first part and remainder
+        var firstPart = path[..dotIdx];
+        var remainder = path[(dotIdx + 1)..];
+
+        // Get or create the nested object
+        Dictionary<string, JsonElement> nested;
+        if (obj.TryGetValue(firstPart, out var existing) && existing.ValueKind == JsonValueKind.Object)
+        {
+            nested = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(existing.GetRawText())
+                ?? new Dictionary<string, JsonElement>();
+        }
+        else
+        {
+            nested = new Dictionary<string, JsonElement>();
+        }
+
+        // Recursively set the value in the nested object
+        SetNestedValue(nested, remainder, value);
+
+        // Write back the modified nested object
+        obj[firstPart] = JsonSerializer.SerializeToElement(nested);
+    }
+
+    /// <summary>
+    /// Get a value at a dotted path from a JsonElement.
+    /// E.g., "Properties.Armor" gets element["Properties"]["Armor"]
+    /// Returns null if path doesn't exist.
+    /// </summary>
+    private static JsonElement? GetNestedValue(JsonElement element, string path)
+    {
+        var parts = path.Split('.');
+        var current = element;
+
+        foreach (var part in parts)
+        {
+            if (current.ValueKind != JsonValueKind.Object)
+                return null;
+
+            if (!current.TryGetProperty(part, out var next))
+                return null;
+
+            current = next;
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// Convert a JsonElement to a display-friendly object value.
+    /// </summary>
+    private static object? JsonElementToValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number => element.TryGetInt32(out var i) ? i : element.GetDouble(),
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => element.ToString()
+        };
+    }
+
+    /// <summary>
+    /// Load vanilla template data from a JSON file.
+    /// Handles both array format [{name: "...", ...}] and dictionary format {"name": {...}}.
+    /// Returns a dictionary keyed by template name.
+    /// </summary>
+    private static Dictionary<string, JsonElement>? LoadVanillaTemplates(string path)
+    {
+        var json = File.ReadAllText(path);
+        var doc = JsonDocument.Parse(json);
+
+        // Check if it's an array or object
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            // Array format: [{name: "...", ...}, ...]
+            var result = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                // Try "name" first, then "m_ID" as fallback
+                string? name = null;
+                if (element.TryGetProperty("name", out var nameProp))
+                {
+                    name = nameProp.GetString();
+                }
+                else if (element.TryGetProperty("m_ID", out var idProp))
+                {
+                    name = idProp.GetString();
+                }
+
+                if (!string.IsNullOrEmpty(name))
+                {
+                    result[name] = element;
+                }
+            }
+            return result;
+        }
+        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+        {
+            // Dictionary format: {"name": {...}, ...}
+            return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+        }
+
+        return null;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
