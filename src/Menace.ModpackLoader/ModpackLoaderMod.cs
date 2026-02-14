@@ -62,6 +62,10 @@ public partial class ModpackLoaderMod : MelonMod
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
 
+        // Initialize early template injection (experimental - opt-in via settings)
+        // This hooks game initialization to inject templates before pools are built
+        EarlyTemplateInjection.Initialize(this, HarmonyInstance);
+
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
 
@@ -160,6 +164,14 @@ public partial class ModpackLoaderMod : MelonMod
         for (int i = 0; i < 30; i++)
         {
             yield return null;
+        }
+
+        // If early injection is enabled and has already run, skip legacy injection
+        if (EarlyTemplateInjection.IsEnabled && EarlyTemplateInjection.HasInjectedThisSession)
+        {
+            SdkLogger.Msg($"Early injection already applied, skipping legacy scene-load injection");
+            _templatesLoaded = true;
+            yield break;
         }
 
         SdkLogger.Msg($"Applying modpack modifications (scene: {sceneName})...");
@@ -440,7 +452,7 @@ public partial class ModpackLoaderMod : MelonMod
     /// Apply all modpack template patches. Returns true if all template types were found
     /// and patched, false if some types had no instances (need to retry on later scene).
     /// </summary>
-    private bool ApplyAllModpacks()
+    internal bool ApplyAllModpacks()
     {
         if (_loadedModpacks.Count == 0)
         {

@@ -25,7 +25,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "22.0.0",
+      "version": "22.0.2",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",

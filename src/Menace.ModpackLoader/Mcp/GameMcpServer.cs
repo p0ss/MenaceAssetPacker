@@ -78,6 +78,10 @@ public static class GameMcpServer
             settings.AddHeader("Server Info");
             settings.AddInfo("Status", "Status", () => _running ? "Running" : "Stopped");
             settings.AddInfo("URL", "URL", BASE_URL);
+
+            // Early template injection setting (experimental)
+            settings.AddHeader("Template Injection");
+            settings.AddToggle("EarlyInjection", "Early Injection (Experimental)", false);
         });
 
         // Listen for setting changes

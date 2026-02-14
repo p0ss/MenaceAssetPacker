@@ -142,15 +142,21 @@ public static class GlbLoader
             result.Materials.Add(defaultMat);
         }
 
-        // Create root prefab GameObject
-        // Note: The prefab stays active. When instantiated as an attachment,
-        // the game's AttachmentPoint system will parent it correctly.
-        var rootGO = new GameObject(modelName);
-        UnityEngine.Object.DontDestroyOnLoad(rootGO);
+        // Create a holder object that's hidden far away.
+        // The actual prefab is a child at local (0,0,0) so instantiated copies
+        // won't inherit the hidden position.
+        var holder = new GameObject($"{modelName}_Holder");
+        UnityEngine.Object.DontDestroyOnLoad(holder);
+        holder.transform.position = new Vector3(0, -10000, 0);
 
-        // Create an intermediate transform child to hold rotation and position offset.
+        // Create root prefab GameObject as child of holder
+        var rootGO = new GameObject(modelName);
+        rootGO.transform.SetParent(holder.transform, false);
+        // Local position is (0,0,0) - instantiated copies will use this
+
+        // Create an intermediate transform child to hold rotation correction.
         // This allows the root to be positioned by the attachment system while
-        // the model itself is correctly oriented and offset.
+        // the model itself is correctly oriented.
         var modelContainer = new GameObject("ModelContainer");
         modelContainer.transform.SetParent(rootGO.transform, false);
 
@@ -158,11 +164,8 @@ public static class GlbLoader
         // align with Unity's coordinate expectations for weapon attachments.
         // -90° X: corrects Y-up to Z-forward
         // -90° Z: corrects the "roll" so gun top points up instead of sideways
+        // Note: Model origin should be at the grip point in Blender for correct attachment.
         modelContainer.transform.localRotation = Quaternion.Euler(-90f, 0f, -90f);
-
-        // Position offset to move the model forward (model origin is often not at grip)
-        // Positive Z moves forward in Unity's coordinate system
-        modelContainer.transform.localPosition = new Vector3(0f, 0f, 0.3f);
 
         _log.Msg($"Created prefab GameObject: {modelName}");
 
