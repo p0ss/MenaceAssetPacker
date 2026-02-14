@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 
@@ -74,6 +75,7 @@ public static class Mission
 
     /// <summary>
     /// Get the current active mission.
+    /// Mission is accessed via StrategyState -> Operation chain, not TacticalManager.
     /// </summary>
     public static GameObj GetCurrentMission()
     {
@@ -81,15 +83,31 @@ public static class Mission
         {
             EnsureTypesLoaded();
 
+            // Get TacticalManager via Get() static method
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return GameObj.Null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var tm = instanceProp?.GetValue(null);
+            var getMethod = tmType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var tm = getMethod?.Invoke(null, null);
             if (tm == null) return GameObj.Null;
 
-            var missionProp = tmType.GetProperty("Mission", BindingFlags.Public | BindingFlags.Instance);
-            var mission = missionProp?.GetValue(tm);
+            // Get StrategyState from TacticalManager
+            var strategyStateType = GameType.Find("Menace.Strategy.StrategyState")?.ManagedType;
+            if (strategyStateType == null) return GameObj.Null;
+
+            var getStateMethod = strategyStateType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var state = getStateMethod?.Invoke(null, null);
+            if (state == null) return GameObj.Null;
+
+            // Get current Operation from StrategyState
+            var operationProp = strategyStateType.GetProperty("CurrentOperation", BindingFlags.Public | BindingFlags.Instance);
+            var operation = operationProp?.GetValue(state);
+            if (operation == null) return GameObj.Null;
+
+            // Get Mission from Operation
+            var operationType = operation.GetType();
+            var missionProp = operationType.GetProperty("Mission", BindingFlags.Public | BindingFlags.Instance);
+            var mission = missionProp?.GetValue(operation);
             if (mission == null) return GameObj.Null;
 
             return new GameObj(((Il2CppObjectBase)mission).Pointer);
@@ -129,68 +147,59 @@ public static class Mission
 
             var info = new MissionInfo { Pointer = mission.Pointer };
 
-            // Get template
-            var templateProp = missionType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
-            var template = templateProp?.GetValue(proxy);
-            if (template != null)
+            // Get template via direct field at +0x10
+            var templatePtr = Marshal.ReadIntPtr(mission.Pointer + 0x10);
+            if (templatePtr != IntPtr.Zero)
             {
-                var templateObj = new GameObj(((Il2CppObjectBase)template).Pointer);
+                var templateObj = new GameObj(templatePtr);
                 info.TemplateName = templateObj.GetName();
             }
 
-            // Get status
-            var statusProp = missionType.GetProperty("Status", BindingFlags.Public | BindingFlags.Instance);
-            if (statusProp != null)
-            {
-                info.Status = Convert.ToInt32(statusProp.GetValue(proxy));
-                info.StatusName = GetStatusName(info.Status);
-            }
+            // Get status via direct field at +0xB8
+            info.Status = Marshal.ReadInt32(mission.Pointer + 0xB8);
+            info.StatusName = GetStatusName(info.Status);
 
-            // Get layer
-            var layerProp = missionType.GetProperty("Layer", BindingFlags.Public | BindingFlags.Instance);
-            if (layerProp != null)
-            {
-                info.Layer = Convert.ToInt32(layerProp.GetValue(proxy));
-                info.LayerName = GetLayerName(info.Layer);
-            }
+            // Get layer via direct field at +0x20
+            info.Layer = Marshal.ReadInt32(mission.Pointer + 0x20);
+            info.LayerName = GetLayerName(info.Layer);
 
-            // Get map width and seed
-            var widthProp = missionType.GetProperty("MapWidth", BindingFlags.Public | BindingFlags.Instance);
-            var seedProp = missionType.GetProperty("Seed", BindingFlags.Public | BindingFlags.Instance);
-            if (widthProp != null) info.MapWidth = (int)widthProp.GetValue(proxy);
-            if (seedProp != null) info.Seed = (int)seedProp.GetValue(proxy);
+            // Get seed via direct field at +0x24
+            info.Seed = Marshal.ReadInt32(mission.Pointer + 0x24);
+            // MapWidth doesn't exist - leave as default 0
 
-            // Get biome
-            var biomeProp = missionType.GetProperty("Biome", BindingFlags.Public | BindingFlags.Instance);
-            var biome = biomeProp?.GetValue(proxy);
-            if (biome != null)
+            // Get biome via direct field at +0x70
+            var biomePtr = Marshal.ReadIntPtr(mission.Pointer + 0x70);
+            if (biomePtr != IntPtr.Zero)
             {
-                var biomeObj = new GameObj(((Il2CppObjectBase)biome).Pointer);
+                var biomeObj = new GameObj(biomePtr);
                 info.BiomeName = biomeObj.GetName();
             }
 
-            // Get weather
-            var weatherProp = missionType.GetProperty("Weather", BindingFlags.Public | BindingFlags.Instance);
-            var weather = weatherProp?.GetValue(proxy);
-            if (weather != null)
+            // Get weather template via direct field at +0x60
+            var weatherPtr = Marshal.ReadIntPtr(mission.Pointer + 0x60);
+            if (weatherPtr != IntPtr.Zero)
             {
-                var weatherObj = new GameObj(((Il2CppObjectBase)weather).Pointer);
+                var weatherObj = new GameObj(weatherPtr);
                 info.WeatherName = weatherObj.GetName();
             }
 
-            // Get light condition
-            var lightProp = missionType.GetProperty("LightCondition", BindingFlags.Public | BindingFlags.Instance);
-            if (lightProp != null)
+            // Get light condition via GetLightConditionTemplate() method
+            var getLightMethod = missionType.GetMethod("GetLightConditionTemplate", BindingFlags.Public | BindingFlags.Instance);
+            if (getLightMethod != null)
             {
-                info.LightCondition = lightProp.GetValue(proxy)?.ToString();
+                var lightCondition = getLightMethod.Invoke(proxy, null);
+                if (lightCondition != null)
+                {
+                    var lightObj = new GameObj(((Il2CppObjectBase)lightCondition).Pointer);
+                    info.LightCondition = lightObj.GetName();
+                }
             }
 
-            // Get difficulty
-            var diffProp = missionType.GetProperty("Difficulty", BindingFlags.Public | BindingFlags.Instance);
-            var diff = diffProp?.GetValue(proxy);
-            if (diff != null)
+            // Get difficulty via direct field at +0x38
+            var diffPtr = Marshal.ReadIntPtr(mission.Pointer + 0x38);
+            if (diffPtr != IntPtr.Zero)
             {
-                var diffObj = new GameObj(((Il2CppObjectBase)diff).Pointer);
+                var diffObj = new GameObj(diffPtr);
                 info.DifficultyName = diffObj.GetName();
             }
 
@@ -238,55 +247,76 @@ public static class Mission
             var proxy = GetManagedProxy(mission, missionType);
             if (proxy == null) return result;
 
-            // Get ObjectiveManager
-            var objMgrProp = missionType.GetProperty("Objectives", BindingFlags.Public | BindingFlags.Instance);
-            var objMgr = objMgrProp?.GetValue(proxy);
-            if (objMgr == null) return result;
+            // Get ObjectiveManager via direct field at +0x40
+            var objMgrPtr = Marshal.ReadIntPtr(mission.Pointer + 0x40);
+            if (objMgrPtr == IntPtr.Zero) return result;
 
-            // Get objectives list
-            var objectivesProp = objMgr.GetType().GetProperty("Objectives", BindingFlags.Public | BindingFlags.Instance);
-            var objectives = objectivesProp?.GetValue(objMgr);
-            if (objectives == null) return result;
+            // Get objectives array via direct field at +0x18 in ObjectiveManager
+            var objectivesArrayPtr = Marshal.ReadIntPtr(objMgrPtr + 0x18);
+            if (objectivesArrayPtr == IntPtr.Zero) return result;
 
-            // Iterate list
-            var listType = objectives.GetType();
-            var countProp = listType.GetProperty("Count");
-            var indexer = listType.GetMethod("get_Item");
+            // Create managed proxy for the objectives array
+            var objMgrType = _objectiveManagerType?.ManagedType;
+            if (objMgrType == null) return result;
 
-            int count = (int)countProp.GetValue(objectives);
-            for (int i = 0; i < count; i++)
+            var objMgrProxy = GetManagedProxy(new GameObj(objMgrPtr), objMgrType);
+            if (objMgrProxy == null) return result;
+
+            // Read the array - Il2Cpp arrays have length at +0x18 and elements starting at +0x20
+            var arrayLength = Marshal.ReadInt32(objectivesArrayPtr + 0x18);
+            if (arrayLength <= 0 || arrayLength > 1000) return result; // Sanity check
+
+            var objectives = new List<IntPtr>();
+            for (int i = 0; i < arrayLength; i++)
             {
-                var objective = indexer.Invoke(objectives, new object[] { i });
-                if (objective == null) continue;
+                var elementPtr = Marshal.ReadIntPtr(objectivesArrayPtr + 0x20 + (i * IntPtr.Size));
+                if (elementPtr != IntPtr.Zero)
+                    objectives.Add(elementPtr);
+            }
 
+            if (objectives.Count == 0) return result;
+
+            // Iterate objectives array
+            var objectiveType = GameType.Find("Menace.Tactical.Objectives.Objective")?.ManagedType;
+
+            foreach (var objPtr in objectives)
+            {
                 var info = new ObjectiveInfo
                 {
-                    Pointer = ((Il2CppObjectBase)objective).Pointer
+                    Pointer = objPtr
                 };
 
-                var objType = objective.GetType();
+                // Create managed proxy for this objective
+                if (objectiveType != null)
+                {
+                    var objProxy = GetManagedProxy(new GameObj(objPtr), objectiveType);
+                    if (objProxy != null)
+                    {
+                        var objType = objProxy.GetType();
 
-                // Get name/description
-                var titleProp = objType.GetProperty("Title", BindingFlags.Public | BindingFlags.Instance);
-                var descProp = objType.GetProperty("Description", BindingFlags.Public | BindingFlags.Instance);
-                if (titleProp != null) info.Name = titleProp.GetValue(objective)?.ToString();
-                if (descProp != null) info.Description = descProp.GetValue(objective)?.ToString();
+                        // Get name/description via GetTitle() method (no Description method exists)
+                        var getTitleMethod = objType.GetMethod("GetTitle", BindingFlags.Public | BindingFlags.Instance);
+                        var getDescMethod = objType.GetMethod("GetTranslatedObjectiveText", BindingFlags.Public | BindingFlags.Instance);
+                        if (getTitleMethod != null) info.Name = getTitleMethod.Invoke(objProxy, null)?.ToString();
+                        if (getDescMethod != null) info.Description = getDescMethod.Invoke(objProxy, null)?.ToString();
 
-                // Get status
-                var isCompleteProp = objType.GetProperty("IsComplete", BindingFlags.Public | BindingFlags.Instance);
-                var isFailedProp = objType.GetProperty("IsFailed", BindingFlags.Public | BindingFlags.Instance);
-                var isOptionalProp = objType.GetProperty("IsOptional", BindingFlags.Public | BindingFlags.Instance);
+                        // Get completed status via IsCompleted() method
+                        var isCompletedMethod = objType.GetMethod("IsCompleted", BindingFlags.Public | BindingFlags.Instance);
+                        if (isCompletedMethod != null) info.IsComplete = (bool)isCompletedMethod.Invoke(objProxy, null);
 
-                if (isCompleteProp != null) info.IsComplete = (bool)isCompleteProp.GetValue(objective);
-                if (isFailedProp != null) info.IsFailed = (bool)isFailedProp.GetValue(objective);
-                if (isOptionalProp != null) info.IsOptional = (bool)isOptionalProp.GetValue(objective);
+                        // Check failed status via direct field - state == 3 at offset +0x1C
+                        var stateValue = Marshal.ReadInt32(objPtr + 0x1C);
+                        info.IsFailed = (stateValue == 3);
+                        // IsOptional doesn't exist - leave as default (false)
 
-                // Get progress
-                var progressProp = objType.GetProperty("Progress", BindingFlags.Public | BindingFlags.Instance);
-                var targetProp = objType.GetProperty("TargetProgress", BindingFlags.Public | BindingFlags.Instance);
+                        // Get progress via GetProgress() and GetRequiredProgress() methods
+                        var getProgressMethod = objType.GetMethod("GetProgress", BindingFlags.Public | BindingFlags.Instance);
+                        var getRequiredMethod = objType.GetMethod("GetRequiredProgress", BindingFlags.Public | BindingFlags.Instance);
 
-                if (progressProp != null) info.Progress = Convert.ToInt32(progressProp.GetValue(objective));
-                if (targetProp != null) info.TargetProgress = Convert.ToInt32(targetProp.GetValue(objective));
+                        if (getProgressMethod != null) info.Progress = Convert.ToInt32(getProgressMethod.Invoke(objProxy, null) ?? 0);
+                        if (getRequiredMethod != null) info.TargetProgress = Convert.ToInt32(getRequiredMethod.Invoke(objProxy, null) ?? 0);
+                    }
+                }
 
                 result.Add(info);
             }
@@ -352,7 +382,7 @@ public static class Mission
             var proxy = GetManagedProxy(new GameObj(objPtr), objType);
             if (proxy == null) return false;
 
-            var completeMethod = objType.GetMethod("Complete", BindingFlags.Public | BindingFlags.Instance);
+            var completeMethod = objType.GetMethod("ForceComplete", BindingFlags.Public | BindingFlags.Instance);
             completeMethod?.Invoke(proxy, null);
 
             return true;

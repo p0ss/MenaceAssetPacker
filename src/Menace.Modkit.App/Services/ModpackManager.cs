@@ -269,6 +269,19 @@ public class ModpackManager
     }
 
     /// <summary>
+    /// Delete clone definitions for a specific template type.
+    /// </summary>
+    public void DeleteStagingClones(string modpackName, string templateType)
+    {
+        var path = Path.Combine(ResolveStagingDir(modpackName), "clones", $"{templateType}.json");
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+            TouchModified(ResolveStagingDir(modpackName));
+        }
+    }
+
+    /// <summary>
     /// Load all clone definitions from a staging modpack.
     /// Returns templateType → { newName → sourceName }
     /// </summary>

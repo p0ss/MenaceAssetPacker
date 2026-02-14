@@ -49,11 +49,11 @@ public static class Emotions
     // EmotionalStateTemplate field offsets
     private const uint OFFSET_TEMPLATE_TYPE = 0x78;
     private const uint OFFSET_TEMPLATE_ICON = 0x80;
-    private const uint OFFSET_TEMPLATE_SKILL = 0x98;
+    private const uint OFFSET_TEMPLATE_EFFECT = 0x98;
     private const uint OFFSET_TEMPLATE_DURATION = 0xC0;
-    private const uint OFFSET_TEMPLATE_IS_NEGATIVE = 0xCC;
-    private const uint OFFSET_TEMPLATE_IS_STACKABLE = 0xCD;
-    private const uint OFFSET_TEMPLATE_REPLACEMENT = 0xD0;
+    private const uint OFFSET_TEMPLATE_IS_POSITIVE = 0xCC;
+    private const uint OFFSET_TEMPLATE_IS_SUPER_STATE = 0xCD;
+    private const uint OFFSET_TEMPLATE_SUPER_STATE = 0xD0;
 
     // BaseUnitLeader offset for Emotions
     private const uint OFFSET_LEADER_EMOTIONS = 0x58;
@@ -73,29 +73,47 @@ public static class Emotions
         /// <summary>No emotional state.</summary>
         None = 0,
 
-        /// <summary>Angry - typically provides combat bonuses but may reduce accuracy.</summary>
-        Angry = 1,
+        /// <summary>Animosity towards a specific target.</summary>
+        AnimosityTowards = 1,
 
-        /// <summary>Confident - general combat performance boost.</summary>
-        Confident = 2,
+        /// <summary>Determined - focused and resolute.</summary>
+        Determined = 2,
 
-        /// <summary>Targeted - directed at a specific enemy leader (requires target).</summary>
-        Targeted = 3,
+        /// <summary>Weary - tired from extended duty.</summary>
+        Weary = 3,
 
-        /// <summary>Grief - negative emotion from ally death, reduces performance.</summary>
-        Grief = 4,
+        /// <summary>Disheartened - morale reduced.</summary>
+        Disheartened = 4,
 
-        /// <summary>Fear - negative emotion reducing combat effectiveness.</summary>
-        Fear = 5,
+        /// <summary>Eager - enthusiastic and ready for action.</summary>
+        Eager = 5,
 
-        /// <summary>Inspired - positive boost from leadership or heroic actions.</summary>
-        Inspired = 6,
+        /// <summary>Frustrated - annoyed and less effective.</summary>
+        Frustrated = 6,
 
-        /// <summary>Vengeful - focused hatred toward specific target.</summary>
-        Vengeful = 7,
+        /// <summary>Exhausted - severely fatigued.</summary>
+        Exhausted = 7,
 
-        /// <summary>Traumatized - severe negative effect from extreme combat stress.</summary>
-        Traumatized = 8
+        /// <summary>Goodwill towards a specific target.</summary>
+        GoodwillTowards = 8,
+
+        /// <summary>Hesitant - uncertain and cautious.</summary>
+        Hesitant = 9,
+
+        /// <summary>Overconfident - too bold, may make mistakes.</summary>
+        Overconfident = 10,
+
+        /// <summary>Injured - physically wounded.</summary>
+        Injured = 11,
+
+        /// <summary>Bruised - minor physical damage.</summary>
+        Bruised = 12,
+
+        /// <summary>Euphoric - extremely positive mood.</summary>
+        Euphoric = 13,
+
+        /// <summary>Miserable - extremely negative mood.</summary>
+        Miserable = 14
     }
 
     /// <summary>
@@ -103,32 +121,65 @@ public static class Emotions
     /// </summary>
     public enum EmotionalTrigger
     {
-        /// <summary>No trigger.</summary>
-        None = 0,
+        /// <summary>Stabilized by another unit.</summary>
+        StabilizedBy = 0,
 
-        /// <summary>Unit killed an enemy.</summary>
-        KilledEnemy = 1,
+        /// <summary>Stabilized other units.</summary>
+        StabilizedOthers = 1,
 
-        /// <summary>Unit was wounded in combat.</summary>
-        WasWounded = 2,
+        /// <summary>Received friendly fire from another unit.</summary>
+        ReceivedFriendlyFireFrom = 2,
 
-        /// <summary>An ally was killed.</summary>
-        AllyKilled = 3,
+        /// <summary>Deployed X times with another unit.</summary>
+        DeployedXTimesWithOther = 3,
 
-        /// <summary>An ally was wounded.</summary>
-        AllyWounded = 4,
+        /// <summary>Killed X enemy entities.</summary>
+        KilledXEnemyEntities = 4,
 
-        /// <summary>Mission completed successfully.</summary>
-        MissionSuccess = 5,
+        /// <summary>Killed X enemy mini-bosses.</summary>
+        KilledXEnemyMiniBosses = 5,
 
-        /// <summary>Mission failed.</summary>
-        MissionFailure = 6,
+        /// <summary>Deployed in the X missions before current.</summary>
+        DeployedInTheXMissionsBeforeCurrent = 6,
 
-        /// <summary>Operation started.</summary>
-        OperationStart = 7,
+        /// <summary>Not deployed in the X missions before current.</summary>
+        NotDeployedInTheXMissionsBeforeCurrent = 7,
 
-        /// <summary>Operation ended.</summary>
-        OperationEnd = 8
+        /// <summary>Killed X civilian elements.</summary>
+        KilledXCivElements = 8,
+
+        /// <summary>Success on favorite planet.</summary>
+        SuccessOnFavPlanet = 9,
+
+        /// <summary>Failed on favorite planet.</summary>
+        FailedOnFavPlanet = 10,
+
+        /// <summary>Lost over X percent hitpoints.</summary>
+        LostOverXPercentHitpoints = 11,
+
+        /// <summary>Game effect trigger.</summary>
+        GameEffect = 12,
+
+        /// <summary>Event trigger.</summary>
+        Event = 13,
+
+        /// <summary>Cheat trigger.</summary>
+        Cheat = 14,
+
+        /// <summary>Other leader killed civilian element on favorite planet.</summary>
+        OtherLeaderKilledCivElementOnFavPlanet = 15,
+
+        /// <summary>Unit fled from combat.</summary>
+        Fled = 16,
+
+        /// <summary>Near death experience.</summary>
+        NearDeathExperience = 17,
+
+        /// <summary>Lost all squaddies.</summary>
+        LostAllSquaddies = 18,
+
+        /// <summary>Last trigger type marker.</summary>
+        Last = 19
     }
 
     /// <summary>
@@ -160,11 +211,11 @@ public static class Emotions
         /// <summary>True if this emotion was just applied this mission.</summary>
         public bool IsFirstMission { get; set; }
 
-        /// <summary>True if this is a negative emotion.</summary>
-        public bool IsNegative { get; set; }
+        /// <summary>True if this is a positive emotion.</summary>
+        public bool IsPositive { get; set; }
 
-        /// <summary>True if this emotion can stack with itself.</summary>
-        public bool IsStackable { get; set; }
+        /// <summary>True if this emotion is a super state.</summary>
+        public bool IsSuperState { get; set; }
 
         /// <summary>Name of the skill modifier applied by this emotion.</summary>
         public string SkillName { get; set; }
@@ -196,11 +247,11 @@ public static class Emotions
         /// <summary>Total count of active emotions.</summary>
         public int StateCount => ActiveStates.Count;
 
-        /// <summary>Count of positive (non-negative) emotions.</summary>
-        public int PositiveCount => ActiveStates.FindAll(s => !s.IsNegative).Count;
+        /// <summary>Count of positive emotions.</summary>
+        public int PositiveCount => ActiveStates.FindAll(s => s.IsPositive).Count;
 
-        /// <summary>Count of negative emotions.</summary>
-        public int NegativeCount => ActiveStates.FindAll(s => s.IsNegative).Count;
+        /// <summary>Count of negative (non-positive) emotions.</summary>
+        public int NegativeCount => ActiveStates.FindAll(s => !s.IsPositive).Count;
 
         /// <summary>Pointer to the EmotionalStates collection.</summary>
         public IntPtr Pointer { get; set; }
@@ -331,7 +382,7 @@ public static class Emotions
             if (hasStateMethod == null)
                 return false;
 
-            return (bool)hasStateMethod.Invoke(proxy, new object[] { (int)type });
+            return (bool)hasStateMethod.Invoke(proxy, new object[] { type });
         }
         catch (Exception ex)
         {
@@ -453,19 +504,23 @@ public static class Emotions
                     var targetProxy = GetManagedProxy(target, leaderType);
                     if (targetProxy != null)
                     {
-                        var templateProp = leaderType.GetProperty("Template",
+                        var getTemplateMethod = leaderType.GetMethod("GetTemplate",
                             BindingFlags.Public | BindingFlags.Instance);
-                        targetTemplate = templateProp?.GetValue(targetProxy);
+                        targetTemplate = getTemplateMethod?.Invoke(targetProxy, null);
                     }
                 }
             }
+
+            // Get random and mission for TriggerEmotion
+            var random = GetPseudoRandom();
+            var mission = GetCurrentMission();
 
             var triggerMethod = emotionsType.GetMethod("TriggerEmotion",
                 BindingFlags.Public | BindingFlags.Instance);
             if (triggerMethod == null)
                 return EmotionResult.Failed("TriggerEmotion method not found");
 
-            triggerMethod.Invoke(proxy, new object[] { (int)trigger, targetTemplate });
+            triggerMethod.Invoke(proxy, new object[] { trigger, targetTemplate, random, mission });
 
             ModError.Info("Menace.SDK", $"Triggered emotion: {trigger} on {leader.GetName()}");
             return EmotionResult.Ok(EmotionalStateType.None, "Triggered");
@@ -486,7 +541,7 @@ public static class Emotions
     /// <param name="target">Optional target leader for targeted emotions.</param>
     /// <returns>EmotionResult indicating success/failure.</returns>
     public static EmotionResult ApplyEmotion(GameObj leader, string templateName,
-        EmotionalTrigger trigger = EmotionalTrigger.None, GameObj target = default)
+        EmotionalTrigger trigger = EmotionalTrigger.Cheat, GameObj target = default)
     {
         if (leader.IsNull)
             return EmotionResult.Failed("Invalid leader");
@@ -527,9 +582,9 @@ public static class Emotions
                     var targetProxy = GetManagedProxy(target, leaderType);
                     if (targetProxy != null)
                     {
-                        var templateProp = leaderType.GetProperty("Template",
+                        var getTemplateMethod = leaderType.GetMethod("GetTemplate",
                             BindingFlags.Public | BindingFlags.Instance);
-                        targetTemplate = templateProp?.GetValue(targetProxy);
+                        targetTemplate = getTemplateMethod?.Invoke(targetProxy, null);
                     }
                 }
             }
@@ -542,8 +597,9 @@ public static class Emotions
             if (applyMethod == null)
                 return EmotionResult.Failed("TryApplyEmotionalState method not found");
 
+            // TryApplyEmotionalState takes 5 params: template, trigger, targetTemplate, random, showAsReward
             var result = (bool)applyMethod.Invoke(proxy,
-                new object[] { templateProxy, (int)trigger, targetTemplate, random });
+                new object[] { templateProxy, trigger, targetTemplate, random, false });
 
             if (result)
             {
@@ -597,7 +653,7 @@ public static class Emotions
             if (getIdxMethod == null)
                 return EmotionResult.Failed("GetStateIdx method not found");
 
-            var idx = (int)getIdxMethod.Invoke(proxy, new object[] { (int)type });
+            var idx = (int)getIdxMethod.Invoke(proxy, new object[] { type });
             if (idx < 0)
                 return EmotionResult.Failed($"No active emotion of type {type}");
 
@@ -672,7 +728,7 @@ public static class Emotions
             int removed = 0;
             foreach (var state in info.ActiveStates)
             {
-                if (state.IsNegative)
+                if (!state.IsPositive)
                 {
                     var result = RemoveEmotion(leader, state.Type);
                     if (result.Success)
@@ -708,7 +764,7 @@ public static class Emotions
             int removed = 0;
             foreach (var state in info.ActiveStates)
             {
-                if (!state.IsNegative)
+                if (state.IsPositive)
                 {
                     var result = RemoveEmotion(leader, state.Type);
                     if (result.Success)
@@ -754,13 +810,13 @@ public static class Emotions
             if (proxy == null)
                 return EmotionResult.Failed("Failed to create proxy");
 
-            // Get the States list
-            var statesProp = emotionsType.GetProperty("States",
-                BindingFlags.Public | BindingFlags.Instance);
-            if (statesProp == null)
-                return EmotionResult.Failed("States property not found");
+            // Get the States list (field: m_States)
+            var statesField = emotionsType.GetField("m_States",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (statesField == null)
+                return EmotionResult.Failed("m_States field not found");
 
-            var statesList = statesProp.GetValue(proxy);
+            var statesList = statesField.GetValue(proxy);
             if (statesList == null)
                 return EmotionResult.Failed("States list is null");
 
@@ -774,17 +830,17 @@ public static class Emotions
                 var state = indexer.Invoke(statesList, new object[] { i });
                 if (state == null) continue;
 
-                var templateProp = stateType.GetProperty("Template",
+                var getTemplateMethod = stateType.GetMethod("GetTemplate",
                     BindingFlags.Public | BindingFlags.Instance);
-                var template = templateProp?.GetValue(state);
+                var template = getTemplateMethod?.Invoke(state, null);
                 if (template == null) continue;
 
-                var typeProp = template.GetType().GetProperty("Type",
+                var stateTypeProp = template.GetType().GetProperty("StateType",
                     BindingFlags.Public | BindingFlags.Instance);
-                var stateTypeValue = typeProp?.GetValue(template);
+                var stateTypeValue = stateTypeProp?.GetValue(template);
                 if (stateTypeValue == null) continue;
 
-                if ((int)stateTypeValue == (int)type)
+                if ((EmotionalStateType)stateTypeValue == type)
                 {
                     var extendMethod = stateType.GetMethod("ExtendDuration",
                         BindingFlags.Public | BindingFlags.Instance);
@@ -820,7 +876,7 @@ public static class Emotions
     }
 
     /// <summary>
-    /// Check if an emotion type is negative.
+    /// Check if an emotion type is negative (not positive).
     /// </summary>
     /// <param name="type">The emotional state type to check.</param>
     /// <returns>True if the emotion type is typically negative.</returns>
@@ -828,9 +884,14 @@ public static class Emotions
     {
         return type switch
         {
-            EmotionalStateType.Grief => true,
-            EmotionalStateType.Fear => true,
-            EmotionalStateType.Traumatized => true,
+            EmotionalStateType.Weary => true,
+            EmotionalStateType.Disheartened => true,
+            EmotionalStateType.Frustrated => true,
+            EmotionalStateType.Exhausted => true,
+            EmotionalStateType.Hesitant => true,
+            EmotionalStateType.Injured => true,
+            EmotionalStateType.Bruised => true,
+            EmotionalStateType.Miserable => true,
             _ => false
         };
     }
@@ -842,7 +903,7 @@ public static class Emotions
     /// <returns>True if the emotion type requires a target.</returns>
     public static bool RequiresTarget(EmotionalStateType type)
     {
-        return type == EmotionalStateType.Targeted || type == EmotionalStateType.Vengeful;
+        return type == EmotionalStateType.AnimosityTowards || type == EmotionalStateType.GoodwillTowards;
     }
 
     /// <summary>
@@ -855,14 +916,20 @@ public static class Emotions
         return type switch
         {
             EmotionalStateType.None => "None",
-            EmotionalStateType.Angry => "Angry",
-            EmotionalStateType.Confident => "Confident",
-            EmotionalStateType.Targeted => "Targeted",
-            EmotionalStateType.Grief => "Grief",
-            EmotionalStateType.Fear => "Fear",
-            EmotionalStateType.Inspired => "Inspired",
-            EmotionalStateType.Vengeful => "Vengeful",
-            EmotionalStateType.Traumatized => "Traumatized",
+            EmotionalStateType.AnimosityTowards => "Animosity Towards",
+            EmotionalStateType.Determined => "Determined",
+            EmotionalStateType.Weary => "Weary",
+            EmotionalStateType.Disheartened => "Disheartened",
+            EmotionalStateType.Eager => "Eager",
+            EmotionalStateType.Frustrated => "Frustrated",
+            EmotionalStateType.Exhausted => "Exhausted",
+            EmotionalStateType.GoodwillTowards => "Goodwill Towards",
+            EmotionalStateType.Hesitant => "Hesitant",
+            EmotionalStateType.Overconfident => "Overconfident",
+            EmotionalStateType.Injured => "Injured",
+            EmotionalStateType.Bruised => "Bruised",
+            EmotionalStateType.Euphoric => "Euphoric",
+            EmotionalStateType.Miserable => "Miserable",
             _ => $"Unknown ({(int)type})"
         };
     }
@@ -876,15 +943,26 @@ public static class Emotions
     {
         return trigger switch
         {
-            EmotionalTrigger.None => "None",
-            EmotionalTrigger.KilledEnemy => "Killed Enemy",
-            EmotionalTrigger.WasWounded => "Was Wounded",
-            EmotionalTrigger.AllyKilled => "Ally Killed",
-            EmotionalTrigger.AllyWounded => "Ally Wounded",
-            EmotionalTrigger.MissionSuccess => "Mission Success",
-            EmotionalTrigger.MissionFailure => "Mission Failure",
-            EmotionalTrigger.OperationStart => "Operation Start",
-            EmotionalTrigger.OperationEnd => "Operation End",
+            EmotionalTrigger.StabilizedBy => "Stabilized By",
+            EmotionalTrigger.StabilizedOthers => "Stabilized Others",
+            EmotionalTrigger.ReceivedFriendlyFireFrom => "Received Friendly Fire",
+            EmotionalTrigger.DeployedXTimesWithOther => "Deployed With Other",
+            EmotionalTrigger.KilledXEnemyEntities => "Killed Enemies",
+            EmotionalTrigger.KilledXEnemyMiniBosses => "Killed Mini-Bosses",
+            EmotionalTrigger.DeployedInTheXMissionsBeforeCurrent => "Recently Deployed",
+            EmotionalTrigger.NotDeployedInTheXMissionsBeforeCurrent => "Not Recently Deployed",
+            EmotionalTrigger.KilledXCivElements => "Killed Civilians",
+            EmotionalTrigger.SuccessOnFavPlanet => "Success on Favorite Planet",
+            EmotionalTrigger.FailedOnFavPlanet => "Failed on Favorite Planet",
+            EmotionalTrigger.LostOverXPercentHitpoints => "Lost Significant HP",
+            EmotionalTrigger.GameEffect => "Game Effect",
+            EmotionalTrigger.Event => "Event",
+            EmotionalTrigger.Cheat => "Cheat",
+            EmotionalTrigger.OtherLeaderKilledCivElementOnFavPlanet => "Other Killed Civilian on Fav Planet",
+            EmotionalTrigger.Fled => "Fled",
+            EmotionalTrigger.NearDeathExperience => "Near Death Experience",
+            EmotionalTrigger.LostAllSquaddies => "Lost All Squaddies",
+            EmotionalTrigger.Last => "Last",
             _ => $"Unknown ({(int)trigger})"
         };
     }
@@ -946,7 +1024,7 @@ public static class Emotions
 
             foreach (var state in info.ActiveStates)
             {
-                var polarity = state.IsNegative ? "-" : "+";
+                var polarity = state.IsPositive ? "+" : "-";
                 var target = !string.IsNullOrEmpty(state.TargetLeaderName)
                     ? $" -> {state.TargetLeaderName}"
                     : "";
@@ -972,7 +1050,7 @@ public static class Emotions
                 return $"Unit '{nickname}' not found";
 
             if (!Enum.TryParse<EmotionalTrigger>(triggerName, true, out var trigger))
-                return $"Unknown trigger '{triggerName}'. Valid: KilledEnemy, WasWounded, AllyKilled, AllyWounded, MissionSuccess, MissionFailure";
+                return $"Unknown trigger '{triggerName}'. Valid: StabilizedBy, StabilizedOthers, KilledXEnemyEntities, GameEffect, Event, Cheat, etc.";
 
             var result = TriggerEmotion(leader, trigger);
             return result.Success
@@ -1015,7 +1093,7 @@ public static class Emotions
                 return $"Unit '{nickname}' not found";
 
             if (!Enum.TryParse<EmotionalStateType>(typeName, true, out var type))
-                return $"Unknown emotion type '{typeName}'. Valid: Angry, Confident, Targeted, Grief, Fear, Inspired, Vengeful, Traumatized";
+                return $"Unknown emotion type '{typeName}'. Valid: Determined, Weary, Eager, Frustrated, Euphoric, Miserable, etc.";
 
             var result = RemoveEmotion(leader, type);
             return result.Success
@@ -1150,21 +1228,47 @@ public static class Emotions
             var randomType = _pseudoRandomType?.ManagedType;
             if (randomType == null) return null;
 
-            // Try to get Instance property
-            var instanceProp = randomType.GetProperty("Instance",
-                BindingFlags.Public | BindingFlags.Static);
-            if (instanceProp != null)
-                return instanceProp.GetValue(null);
+            // PseudoRandom has no singleton - must create instance with constructor
+            // Try constructor with seed parameter first
+            var seedCtor = randomType.GetConstructor(new[] { typeof(int) });
+            if (seedCtor != null)
+                return seedCtor.Invoke(new object[] { Environment.TickCount });
 
-            // Try static Get method
-            var getMethod = randomType.GetMethod("Get",
-                BindingFlags.Public | BindingFlags.Static);
-            if (getMethod != null)
-                return getMethod.Invoke(null, null);
+            // Try constructor with uint seed
+            var uintCtor = randomType.GetConstructor(new[] { typeof(uint) });
+            if (uintCtor != null)
+                return uintCtor.Invoke(new object[] { (uint)Environment.TickCount });
 
-            // Create a new instance
+            // Try parameterless constructor
             var ctor = randomType.GetConstructor(Type.EmptyTypes);
             return ctor?.Invoke(null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static object GetCurrentMission()
+    {
+        try
+        {
+            // Try to get the current mission from StrategyState
+            EnsureTypesLoaded();
+
+            var strategyType = _strategyStateType?.ManagedType;
+            if (strategyType == null) return null;
+
+            var instanceProp = strategyType.GetProperty("Instance",
+                BindingFlags.Public | BindingFlags.Static);
+            if (instanceProp == null) return null;
+
+            var instance = instanceProp.GetValue(null);
+            if (instance == null) return null;
+
+            var missionProp = strategyType.GetProperty("CurrentMission",
+                BindingFlags.Public | BindingFlags.Instance);
+            return missionProp?.GetValue(instance);
         }
         catch
         {
@@ -1254,15 +1358,15 @@ public static class Emotions
                 info.TemplateName = template.GetName();
                 info.Type = (EmotionalStateType)template.ReadInt(OFFSET_TEMPLATE_TYPE);
                 info.TypeName = GetTypeName(info.Type);
-                info.IsNegative = ReadBoolAtOffset(template, OFFSET_TEMPLATE_IS_NEGATIVE);
-                info.IsStackable = ReadBoolAtOffset(template, OFFSET_TEMPLATE_IS_STACKABLE);
+                info.IsPositive = ReadBoolAtOffset(template, OFFSET_TEMPLATE_IS_POSITIVE);
+                info.IsSuperState = ReadBoolAtOffset(template, OFFSET_TEMPLATE_IS_SUPER_STATE);
 
-                // Get skill name
-                var skillPtr = template.ReadPtr(OFFSET_TEMPLATE_SKILL);
-                if (skillPtr != IntPtr.Zero)
+                // Get effect name
+                var effectPtr = template.ReadPtr(OFFSET_TEMPLATE_EFFECT);
+                if (effectPtr != IntPtr.Zero)
                 {
-                    var skill = new GameObj(skillPtr);
-                    info.SkillName = skill.GetName();
+                    var effect = new GameObj(effectPtr);
+                    info.SkillName = effect.GetName();
                 }
             }
 

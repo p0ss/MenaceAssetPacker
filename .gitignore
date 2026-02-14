@@ -38,3 +38,6 @@ third_party/GameAssemblies
 packages.lock.json
 
 PLAN.md
+
+# Developer notes (internal debugging/exploration docs)
+docs/dev-notes/

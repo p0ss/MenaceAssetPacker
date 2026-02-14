@@ -7,11 +7,11 @@
 The Vehicle SDK provides safe access to vehicle-specific data and mechanics. It wraps the underlying game types for Vehicle, ItemsModularVehicle, and Slot to expose vehicle health, armor durability, modular equipment slots, and twin-fire capability detection.
 
 Based on reverse engineering findings:
-- `Vehicle.HitpointsPct` @ +0x20
-- `Vehicle.ArmorDurabilityPct` @ +0x24
+- `Vehicle.m_HitpointsPct` @ +0x20
+- `Vehicle.m_ArmorDurabilityPct` @ +0x24
 - `Vehicle.EquipmentSkills` @ +0x28
 - `ItemsModularVehicle.Slots` @ +0x18
-- `ItemsModularVehicle.HasTwinFire` @ +0x20
+- `ItemsModularVehicle.IsTwinFire` @ +0x20
 
 ## Constants
 
@@ -158,9 +158,9 @@ public class SlotInfo
 |----------|------|-------------|
 | SlotType | int | Slot type ID (0=Weapon, 1=Armor, 2=Accessory) |
 | SlotTypeName | string | Human-readable slot type name |
-| IsEnabled | bool | Whether the slot is enabled |
-| EquippedItem | string | Name of the equipped item template |
-| HasItem | bool | Whether an item is equipped in this slot |
+| IsEnabled | bool | Always true (slots are always enabled) |
+| EquippedItem | string | Name of the mounted weapon template |
+| HasItem | bool | Whether a weapon is mounted in this slot |
 | Pointer | IntPtr | Native pointer to the slot object |
 
 ## Examples

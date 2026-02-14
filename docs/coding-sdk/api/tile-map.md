@@ -2,6 +2,16 @@
 
 `Menace.SDK.TileMap` -- Static class for tile and map operations in tactical combat. Provides safe access to tile queries, cover checks, visibility, and map traversal.
 
+## Coordinate System
+
+**Important:** The game uses X/Z coordinates for horizontal tile positions, with Y representing elevation/height.
+
+- `X` - Horizontal coordinate (left/right)
+- `Z` - Horizontal coordinate (forward/back, depth)
+- `Y` (Elevation) - Vertical height
+
+All method parameters use `x` and `z` for horizontal tile coordinates.
+
 ## Constants
 
 ### Directions
@@ -23,9 +33,9 @@ public const int DIR_NORTHWEST = 7;
 
 ```csharp
 public const int COVER_NONE = 0;
-public const int COVER_HALF = 1;
-public const int COVER_FULL = 2;
-public const int COVER_ELEVATED = 3;
+public const int COVER_LIGHT = 1;
+public const int COVER_MEDIUM = 2;
+public const int COVER_HEAVY = 3;
 ```
 
 ### Map Constants
@@ -60,14 +70,14 @@ Get map dimensions and configuration.
 ### GetTile
 
 ```csharp
-public static GameObj GetTile(int x, int y)
+public static GameObj GetTile(int x, int z)
 ```
 
 Get a tile at specific grid coordinates.
 
 **Parameters:**
 - `x` - X coordinate (0 to Width-1)
-- `y` - Y coordinate (0 to Height-1)
+- `z` - Z coordinate (0 to Height-1)
 
 **Returns:** `GameObj` representing the tile, or `GameObj.Null` if out of bounds.
 
@@ -77,7 +87,7 @@ Get a tile at specific grid coordinates.
 public static GameObj GetTileAtWorldPos(Vector3 worldPos)
 ```
 
-Get the tile at a world position.
+Get the tile at a world position. Uses native `Map.GetTileAtPos` when available for accurate results.
 
 **Parameters:**
 - `worldPos` - World position (uses X and Z components)
@@ -87,7 +97,7 @@ Get the tile at a world position.
 ### GetTileInfo
 
 ```csharp
-public static TileInfo GetTileInfo(int x, int y)
+public static TileInfo GetTileInfo(int x, int z)
 public static TileInfo GetTileInfo(GameObj tile)
 ```
 
@@ -98,37 +108,37 @@ Get detailed information about a tile including elevation, blocking status, occu
 ### GetCover
 
 ```csharp
-public static int GetCover(int x, int y, int direction)
+public static int GetCover(int x, int z, int direction)
 public static int GetCover(GameObj tile, int direction)
 ```
 
 Get the cover value in a specific direction (0-7).
 
 **Parameters:**
-- `x`, `y` - Tile coordinates, or `tile` - The tile GameObj
+- `x`, `z` - Tile coordinates, or `tile` - The tile GameObj
 - `direction` - Direction index (use DIR_* constants)
 
-**Returns:** Cover type (COVER_NONE, COVER_HALF, COVER_FULL, or COVER_ELEVATED).
+**Returns:** Cover type (COVER_NONE, COVER_LIGHT, COVER_MEDIUM, or COVER_HEAVY).
 
 ### GetAllCover
 
 ```csharp
-public static int[] GetAllCover(int x, int y)
+public static int[] GetAllCover(int x, int z)
 public static int[] GetAllCover(GameObj tile)
 ```
 
 Get cover values in all 8 directions.
 
-**Returns:** Array of 8 cover values indexed by direction.
+**Returns:** Array of 8 cover values indexed by direction (None=0, Light=1, Medium=2, Heavy=3).
 
 ### IsVisibleToFaction
 
 ```csharp
-public static bool IsVisibleToFaction(int x, int y, int factionId)
+public static bool IsVisibleToFaction(int x, int z, int factionId)
 public static bool IsVisibleToFaction(GameObj tile, int factionId)
 ```
 
-Check if a tile is visible to a specific faction.
+Check if a tile is visible to a specific faction. Uses native `Tile.IsVisibleToFaction` when available.
 
 **Parameters:**
 - `factionId` - Faction ID to check visibility for
@@ -138,17 +148,18 @@ Check if a tile is visible to a specific faction.
 ### IsVisibleToPlayer
 
 ```csharp
-public static bool IsVisibleToPlayer(int x, int y)
+public static bool IsVisibleToPlayer(int x, int z)
+public static bool IsVisibleToPlayer(GameObj tile)
 ```
 
-Check if a tile is visible to the player (faction 1 or 2).
+Check if a tile is visible to the player. Uses native `Tile.IsVisibleToPlayer` when available.
 
 **Returns:** `true` if the tile is visible to player factions.
 
 ### IsBlocked
 
 ```csharp
-public static bool IsBlocked(int x, int y)
+public static bool IsBlocked(int x, int z)
 public static bool IsBlocked(GameObj tile)
 ```
 
@@ -159,7 +170,7 @@ Check if a tile is blocked (impassable).
 ### HasActor
 
 ```csharp
-public static bool HasActor(int x, int y)
+public static bool HasActor(int x, int z)
 public static bool HasActor(GameObj tile)
 ```
 
@@ -170,7 +181,7 @@ Check if a tile has an actor on it.
 ### GetActorOnTile
 
 ```csharp
-public static GameObj GetActorOnTile(int x, int y)
+public static GameObj GetActorOnTile(int x, int z)
 public static GameObj GetActorOnTile(GameObj tile)
 ```
 
@@ -181,7 +192,7 @@ Get the actor occupying a tile.
 ### GetNeighbor
 
 ```csharp
-public static GameObj GetNeighbor(int x, int y, int direction)
+public static GameObj GetNeighbor(int x, int z, int direction)
 public static GameObj GetNeighbor(GameObj tile, int direction)
 ```
 
@@ -195,7 +206,7 @@ Get the neighboring tile in a specific direction.
 ### GetAllNeighbors
 
 ```csharp
-public static GameObj[] GetAllNeighbors(int x, int y)
+public static GameObj[] GetAllNeighbors(int x, int z)
 public static GameObj[] GetAllNeighbors(GameObj tile)
 ```
 
@@ -206,7 +217,7 @@ Get all 8 neighboring tiles.
 ### GetDirectionTo
 
 ```csharp
-public static int GetDirectionTo(int fromX, int fromY, int toX, int toY)
+public static int GetDirectionTo(int fromX, int fromZ, int toX, int toZ)
 public static int GetDirectionTo(GameObj fromTile, GameObj toTile)
 ```
 
@@ -217,34 +228,36 @@ Get the direction from one tile to another.
 ### GetDistance
 
 ```csharp
-public static float GetDistance(int x1, int y1, int x2, int y2)
-public static float GetDistance(GameObj tile1, GameObj tile2)
+public static int GetDistance(int x1, int z1, int x2, int z2)
+public static int GetDistance(GameObj tile1, GameObj tile2)
 ```
 
-Get the Euclidean distance between two tiles.
+Get the distance between two tiles in tile units.
+
+**Note:** The game's `GetDistanceTo` method returns `Int32`, not float.
 
 **Returns:** Distance in tiles, or -1 if invalid.
 
 ### GetManhattanDistance
 
 ```csharp
-public static int GetManhattanDistance(int x1, int y1, int x2, int y2)
+public static int GetManhattanDistance(int x1, int z1, int x2, int z2)
 ```
 
 Get the Manhattan distance between two tiles.
 
-**Returns:** Sum of absolute differences in X and Y coordinates.
+**Returns:** Sum of absolute differences in X and Z coordinates.
 
 ### TileToWorld
 
 ```csharp
-public static Vector3 TileToWorld(int x, int y, float elevation = 0f)
+public static Vector3 TileToWorld(int x, int z, float elevation = 0f)
 ```
 
 Convert tile coordinates to world position (center of tile).
 
 **Parameters:**
-- `x`, `y` - Tile coordinates
+- `x`, `z` - Tile coordinates
 - `elevation` - Optional Y elevation (default 0)
 
 **Returns:** `Vector3` world position at the center of the tile.
@@ -252,12 +265,12 @@ Convert tile coordinates to world position (center of tile).
 ### WorldToTile
 
 ```csharp
-public static (int x, int y) WorldToTile(Vector3 worldPos)
+public static (int x, int z) WorldToTile(Vector3 worldPos)
 ```
 
 Convert world position to tile coordinates.
 
-**Returns:** Tuple of (x, y) tile coordinates.
+**Returns:** Tuple of (x, z) tile coordinates.
 
 ### GetDirectionName
 
@@ -277,7 +290,7 @@ public static string GetCoverName(int coverType)
 
 Get a human-readable name for a cover type.
 
-**Returns:** Cover name ("None", "Half", "Full", "Elevated") or "Unknown".
+**Returns:** Cover name ("None", "Light", "Medium", "Heavy") or "Unknown".
 
 ## Types
 
@@ -286,13 +299,13 @@ Get a human-readable name for a cover type.
 ```csharp
 public class TileInfo
 {
-    public int X { get; set; }
-    public int Y { get; set; }
-    public float Elevation { get; set; }
+    public int X { get; set; }           // Game's X coordinate (horizontal)
+    public int Z { get; set; }           // Game's Z coordinate (horizontal depth)
+    public float Elevation { get; set; } // Tile elevation (game's Y axis)
     public bool IsBlocked { get; set; }
     public bool HasActor { get; set; }
     public string ActorName { get; set; }
-    public int[] CoverValues { get; set; }       // Cover per direction (0-7)
+    public int[] CoverValues { get; set; }       // Cover per direction (0-7): None=0, Light=1, Medium=2, Heavy=3
     public bool[] HalfCoverFlags { get; set; }   // Half cover (4 cardinal)
     public bool IsVisibleToPlayer { get; set; }
     public bool BlocksLOS { get; set; }
@@ -322,7 +335,7 @@ public class MapInfo
 var info = TileMap.GetTileInfo(10, 15);
 if (info != null)
 {
-    DevConsole.Log($"Tile ({info.X}, {info.Y})");
+    DevConsole.Log($"Tile ({info.X}, {info.Z})");
     DevConsole.Log($"  Elevation: {info.Elevation}");
     DevConsole.Log($"  Blocked: {info.IsBlocked}");
     DevConsole.Log($"  Visible: {info.IsVisibleToPlayer}");
@@ -335,10 +348,10 @@ if (info != null)
 
 ```csharp
 var actor = TacticalController.GetActiveActor();
-var (x, y) = TileMap.WorldToTile(actor.GetPosition());
+var (x, z) = TileMap.WorldToTile(actor.GetPosition());
 
 // Get cover in all directions
-var cover = TileMap.GetAllCover(x, y);
+var cover = TileMap.GetAllCover(x, z);
 for (int dir = 0; dir < 8; dir++)
 {
     var name = TileMap.GetDirectionName(dir);
@@ -382,8 +395,8 @@ if (mapInfo != null)
 // Get tile from actor position
 var actor = TacticalController.GetActiveActor();
 var worldPos = actor.GetPosition();
-var (tileX, tileY) = TileMap.WorldToTile(worldPos);
-DevConsole.Log($"Actor is on tile ({tileX}, {tileY})");
+var (tileX, tileZ) = TileMap.WorldToTile(worldPos);
+DevConsole.Log($"Actor is on tile ({tileX}, {tileZ})");
 
 // Get world position from tile
 var targetTile = TileMap.GetTile(20, 20);
@@ -396,14 +409,14 @@ DevConsole.Log($"Tile center is at {targetWorld}");
 
 ```csharp
 // Get distance and direction between two tiles
-int fromX = 5, fromY = 5;
-int toX = 10, toY = 8;
+int fromX = 5, fromZ = 5;
+int toX = 10, toZ = 8;
 
-var distance = TileMap.GetDistance(fromX, fromY, toX, toY);
-var manhattan = TileMap.GetManhattanDistance(fromX, fromY, toX, toY);
-var direction = TileMap.GetDirectionTo(fromX, fromY, toX, toY);
+var distance = TileMap.GetDistance(fromX, fromZ, toX, toZ);
+var manhattan = TileMap.GetManhattanDistance(fromX, fromZ, toX, toZ);
+var direction = TileMap.GetDirectionTo(fromX, fromZ, toX, toZ);
 
-DevConsole.Log($"Distance: {distance:F1} tiles");
+DevConsole.Log($"Distance: {distance} tiles");
 DevConsole.Log($"Manhattan: {manhattan} tiles");
 DevConsole.Log($"Direction: {TileMap.GetDirectionName(direction)}");
 ```
@@ -429,10 +442,10 @@ if (TileMap.IsVisibleToFaction(15, 20, enemyFactionId))
 
 The following console commands are available:
 
-- `tile <x> <y>` - Get detailed tile information (coordinates, elevation, blocked status, visibility, occupant, effects)
-- `cover <x> <y>` - Get cover values for a tile in all 8 directions
+- `tile <x> <z>` - Get detailed tile information (coordinates, elevation, blocked status, visibility, occupant, effects)
+- `cover <x> <z>` - Get cover values for a tile in all 8 directions
 - `mapinfo` - Get current map dimensions and fog of war status
-- `blocked <x> <y>` - Check if a tile is blocked (impassable)
-- `visible <x> <y>` - Check if a tile is visible to the player
-- `dist <x1> <y1> <x2> <y2>` - Get distance, Manhattan distance, and direction between two tiles
-- `whostile <x> <y>` - Show who occupies a tile
+- `blocked <x> <z>` - Check if a tile is blocked (impassable)
+- `visible <x> <z>` - Check if a tile is visible to the player
+- `dist <x1> <z1> <x2> <z2>` - Get distance, Manhattan distance, and direction between two tiles
+- `whostile <x> <z>` - Show who occupies a tile

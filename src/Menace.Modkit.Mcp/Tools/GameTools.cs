@@ -258,6 +258,13 @@ public static class GameTools
         return await FetchFromGame("/ui");
     }
 
+    [McpServerTool(Name = "game_ui_diag", ReadOnly = true)]
+    [Description("Get UI inspector diagnostic information including resolved types, assemblies, and canvas detection status. Useful for debugging UI inspection issues.")]
+    public static async Task<string> GameUIDiag()
+    {
+        return await FetchFromGame("/ui-diag");
+    }
+
     [McpServerTool(Name = "game_logs", ReadOnly = true)]
     [Description("Read recent game logs (MelonLoader/Latest.log). Useful for checking errors, mod loading, and debugging.")]
     public static async Task<string> GameLogs(
@@ -286,6 +293,14 @@ public static class GameTools
         return await FetchFromGame($"/click{queryString}");
     }
 
+    [McpServerTool(Name = "game_repl", Destructive = false)]
+    [Description("Execute C# code in the running game using Roslyn. Returns the evaluation result. Useful for inspecting game state, testing SDK code, and debugging without game restarts.")]
+    public static async Task<string> GameRepl(
+        [Description("C# code to evaluate. Can be expressions (return value) or statements.")] string code)
+    {
+        return await PostToGame("/repl", new { code });
+    }
+
     /// <summary>
     /// Fetch data from the game's MCP HTTP server.
     /// Returns the JSON response or an error object if the game is not running.
@@ -295,6 +310,51 @@ public static class GameTools
         try
         {
             var response = await HttpClient.GetAsync($"{GameServerUrl}{endpoint}");
+            var json = await response.Content.ReadAsStringAsync();
+
+            // Parse and re-serialize to ensure consistent formatting
+            var doc = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(doc.RootElement, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "Game not running",
+                message = "The game is not running or ModpackLoader is not installed. Start the game with MelonLoader to use game_ tools."
+            }, JsonOptions);
+        }
+        catch (TaskCanceledException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "Request timeout",
+                message = "The game did not respond in time. It may be loading or frozen."
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = "Connection failed",
+                message = ex.Message
+            }, JsonOptions);
+        }
+    }
+
+    /// <summary>
+    /// POST data to the game's MCP HTTP server.
+    /// Returns the JSON response or an error object if the game is not running.
+    /// </summary>
+    private static async Task<string> PostToGame(string endpoint, object data)
+    {
+        try
+        {
+            var content = new StringContent(
+                JsonSerializer.Serialize(data, JsonOptions),
+                System.Text.Encoding.UTF8,
+                "application/json");
+            var response = await HttpClient.PostAsync($"{GameServerUrl}{endpoint}", content);
             var json = await response.Content.ReadAsStringAsync();
 
             // Parse and re-serialize to ensure consistent formatting

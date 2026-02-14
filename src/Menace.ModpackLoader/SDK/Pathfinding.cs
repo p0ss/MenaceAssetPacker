@@ -12,25 +12,52 @@ namespace Menace.SDK;
 ///
 /// Based on reverse engineering findings:
 /// - PathfindingManager (singleton pool) with PathfindingProcess objects
+/// - PathfindingManager.RequestProcess() to get a process (NOT Get())
 /// - A* algorithm with surface costs, structure penalties, direction change costs
 /// - PathfindingNode grid 64x64 max size
-/// - Movement costs from EntityTemplate.MovementCosts[]
+/// - Direction passed as enum type, not int
 /// </summary>
 public static class Pathfinding
 {
     // Cached types
     private static GameType _pathfindingManagerType;
     private static GameType _pathfindingProcessType;
-    private static GameType _entityTemplateType;
     private static GameType _actorType;
     private static GameType _tileType;
+    private static GameType _directionType;
 
-    // Surface types
-    public const int SURFACE_DEFAULT = 0;
-    public const int SURFACE_ROAD = 1;
-    public const int SURFACE_ROUGH = 2;
-    public const int SURFACE_WATER = 3;
-    public const int SURFACE_IMPASSABLE = 4;
+    /// <summary>
+    /// Surface types in the game (SurfaceType enum).
+    /// </summary>
+    public enum SurfaceType
+    {
+        Concrete = 0,
+        Metal = 1,
+        Sand = 2,
+        Earth = 3,
+        Snow = 4,
+        Water = 5,
+        Ruins = 6,
+        SandStone = 7,
+        Mud = 8,
+        Grass = 9,
+        Glass = 10,
+        Forest = 11,
+        Rock = 12,
+        DirtRoad = 13,
+        COUNT = 14
+    }
+
+    /// <summary>
+    /// Cover types in the game (CoverType enum).
+    /// </summary>
+    public enum CoverType
+    {
+        None = 0,
+        Light = 1,
+        Medium = 2,
+        Heavy = 3
+    }
 
     // Diagonal cost multiplier
     public const float DIAGONAL_COST_MULT = 1.41421356f;
@@ -55,7 +82,7 @@ public static class Pathfinding
         public int X { get; set; }
         public int Y { get; set; }
         public int BaseCost { get; set; }
-        public int SurfaceType { get; set; }
+        public SurfaceType Surface { get; set; }
         public string SurfaceTypeName { get; set; }
         public bool IsBlocked { get; set; }
         public bool HasActor { get; set; }
@@ -96,7 +123,7 @@ public static class Pathfinding
                 return result;
             }
 
-            var instanceProp = pmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = pmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             var pm = instanceProp?.GetValue(null);
             if (pm == null)
             {
@@ -104,9 +131,9 @@ public static class Pathfinding
                 return result;
             }
 
-            // Get a process from pool
-            var getMethod = pmType.GetMethod("Get", BindingFlags.Public | BindingFlags.Instance);
-            var process = getMethod?.Invoke(pm, null);
+            // Get a process from pool - use RequestProcess() not Get()
+            var requestProcessMethod = pmType.GetMethod("RequestProcess", BindingFlags.Public | BindingFlags.Instance);
+            var process = requestProcessMethod?.Invoke(pm, null);
             if (process == null)
             {
                 result.Error = "Could not get pathfinding process";
@@ -115,7 +142,7 @@ public static class Pathfinding
 
             try
             {
-                // Create output list (we need to pass an IL2CPP list)
+                // Create output list - must use Il2CppSystem.Collections.Generic.List<Vector3>
                 var moverType = _actorType?.ManagedType;
                 var moverProxy = moverType != null ? GetManagedProxy(mover, moverType) : null;
                 var startProxy = GetManagedProxy(startTile, _tileType?.ManagedType);
@@ -127,8 +154,14 @@ public static class Pathfinding
                     return result;
                 }
 
-                // Get current facing direction
-                int direction = EntityMovement.GetFacing(mover);
+                // Get current facing direction as int, then convert to Direction enum
+                int directionInt = EntityMovement.GetFacing(mover);
+                var directionEnum = ConvertToDirectionEnum(directionInt);
+                if (directionEnum == null)
+                {
+                    result.Error = "Could not convert direction to enum";
+                    return result;
+                }
 
                 // Call FindPath
                 var findPathMethod = process.GetType().GetMethod("FindPath", BindingFlags.Public | BindingFlags.Instance);
@@ -138,27 +171,27 @@ public static class Pathfinding
                     return result;
                 }
 
-                // Create empty list for output
-                var pathListType = typeof(System.Collections.Generic.List<Vector3>);
-                var pathList = Activator.CreateInstance(pathListType);
+                // Create Il2Cpp list for output - FindPath expects Il2CppSystem.Collections.Generic.List<Vector3>
+                var il2cppListType = typeof(Il2CppSystem.Collections.Generic.List<Vector3>);
+                var pathList = Activator.CreateInstance(il2cppListType);
 
                 var success = findPathMethod.Invoke(process, new object[]
                 {
-                    startProxy, goalProxy, moverProxy, pathList, direction, maxAP, false
+                    startProxy, goalProxy, moverProxy, pathList, directionEnum, maxAP, false
                 });
 
                 result.Success = (bool)success;
 
                 if (result.Success)
                 {
-                    // Extract waypoints from the list
-                    var countProp = pathListType.GetProperty("Count");
-                    var indexer = pathListType.GetMethod("get_Item");
+                    // Extract waypoints from the Il2Cpp list
+                    var countProp = il2cppListType.GetProperty("Count");
+                    var indexer = il2cppListType.GetProperty("Item");
                     int count = (int)countProp.GetValue(pathList);
 
                     for (int i = 0; i < count; i++)
                     {
-                        var wp = (Vector3)indexer.Invoke(pathList, new object[] { i });
+                        var wp = (Vector3)indexer.GetValue(pathList, new object[] { i });
                         result.Waypoints.Add(wp);
                     }
                     result.TileCount = count;
@@ -268,11 +301,11 @@ public static class Pathfinding
             }
 
             // Get surface type
-            result.SurfaceType = GetSurfaceType(x, y);
-            result.SurfaceTypeName = GetSurfaceTypeName(result.SurfaceType);
+            result.Surface = GetSurfaceType(x, y);
+            result.SurfaceTypeName = GetSurfaceTypeName(result.Surface);
 
-            // Get base movement cost from entity template
-            result.BaseCost = GetBaseCostForSurface(mover, result.SurfaceType);
+            // Get base movement cost - default costs per surface type
+            result.BaseCost = GetBaseCostForSurface(result.Surface);
             result.TotalCost = result.BaseCost;
 
             // Add penalty for occupied tile
@@ -292,91 +325,71 @@ public static class Pathfinding
     /// <summary>
     /// Get the surface type at a tile position.
     /// </summary>
-    public static int GetSurfaceType(int x, int y)
+    public static SurfaceType GetSurfaceType(int x, int y)
     {
         try
         {
             var mapObj = TileMap.GetMap();
-            if (mapObj.IsNull) return SURFACE_DEFAULT;
+            if (mapObj.IsNull) return SurfaceType.Concrete;
 
             var mapType = GameType.Find("Menace.Tactical.Map")?.ManagedType;
-            if (mapType == null) return SURFACE_DEFAULT;
+            if (mapType == null) return SurfaceType.Concrete;
 
             var proxy = GetManagedProxy(mapObj, mapType);
-            if (proxy == null) return SURFACE_DEFAULT;
+            if (proxy == null) return SurfaceType.Concrete;
 
             var getSurfaceMethod = mapType.GetMethod("GetSurfaceTypeAtPos", BindingFlags.Public | BindingFlags.Instance);
             if (getSurfaceMethod != null)
             {
                 var worldPos = TileMap.TileToWorld(x, y, 0);
                 var result = getSurfaceMethod.Invoke(proxy, new object[] { worldPos });
-                return Convert.ToInt32(result);
+                var intValue = Convert.ToInt32(result);
+                if (Enum.IsDefined(typeof(SurfaceType), intValue))
+                    return (SurfaceType)intValue;
             }
 
-            return SURFACE_DEFAULT;
+            return SurfaceType.Concrete;
         }
         catch
         {
-            return SURFACE_DEFAULT;
+            return SurfaceType.Concrete;
         }
     }
 
     /// <summary>
     /// Get surface type name.
     /// </summary>
-    public static string GetSurfaceTypeName(int surfaceType)
+    public static string GetSurfaceTypeName(SurfaceType surfaceType)
     {
-        return surfaceType switch
-        {
-            0 => "Default",
-            1 => "Road",
-            2 => "Rough",
-            3 => "Water",
-            4 => "Impassable",
-            _ => $"Surface {surfaceType}"
-        };
+        return surfaceType.ToString();
     }
 
     /// <summary>
-    /// Get base movement cost for a surface type from entity template.
+    /// Get base movement cost for a surface type.
+    /// Note: EntityTemplate.MovementCosts property does not exist in the game.
+    /// This uses reasonable default costs per surface type.
     /// </summary>
-    private static int GetBaseCostForSurface(GameObj mover, int surfaceType)
+    private static int GetBaseCostForSurface(SurfaceType surfaceType)
     {
-        // Default costs if we can't read from template
-        var defaultCosts = new[] { 10, 8, 15, 20, int.MaxValue };
-        if (surfaceType < 0 || surfaceType >= defaultCosts.Length)
-            return 10;
-
-        if (mover.IsNull)
-            return defaultCosts[surfaceType];
-
-        try
+        // Default movement costs per surface type
+        return surfaceType switch
         {
-            EnsureTypesLoaded();
-
-            var actorType = _actorType?.ManagedType;
-            if (actorType == null) return defaultCosts[surfaceType];
-
-            var proxy = GetManagedProxy(mover, actorType);
-            if (proxy == null) return defaultCosts[surfaceType];
-
-            // Get template
-            var getTemplateMethod = actorType.GetMethod("GetTemplate", BindingFlags.Public | BindingFlags.Instance);
-            var template = getTemplateMethod?.Invoke(proxy, null);
-            if (template == null) return defaultCosts[surfaceType];
-
-            // Get MovementCosts array
-            var movementCostsProp = template.GetType().GetProperty("MovementCosts", BindingFlags.Public | BindingFlags.Instance);
-            var costs = movementCostsProp?.GetValue(template) as int[];
-            if (costs == null || surfaceType >= costs.Length)
-                return defaultCosts[surfaceType];
-
-            return costs[surfaceType];
-        }
-        catch
-        {
-            return defaultCosts[surfaceType];
-        }
+            SurfaceType.Concrete => 10,
+            SurfaceType.Metal => 10,
+            SurfaceType.Sand => 15,
+            SurfaceType.Earth => 12,
+            SurfaceType.Snow => 15,
+            SurfaceType.Water => 25,
+            SurfaceType.Ruins => 18,
+            SurfaceType.SandStone => 12,
+            SurfaceType.Mud => 20,
+            SurfaceType.Grass => 10,
+            SurfaceType.Glass => 12,
+            SurfaceType.Forest => 15,
+            SurfaceType.Rock => 14,
+            SurfaceType.DirtRoad => 8,
+            _ => 10
+        };
     }
 
     /// <summary>
@@ -545,7 +558,7 @@ public static class Pathfinding
                 return "Invalid coordinates";
 
             var type = GetSurfaceType(x, y);
-            return $"Surface at ({x}, {y}): {GetSurfaceTypeName(type)} ({type})";
+            return $"Surface at ({x}, {y}): {type} ({(int)type})";
         });
 
         // reachable <ap> - Show reachable tiles count
@@ -585,9 +598,27 @@ public static class Pathfinding
     {
         _pathfindingManagerType ??= GameType.Find("Menace.Tactical.PathfindingManager");
         _pathfindingProcessType ??= GameType.Find("Menace.Tactical.PathfindingProcess");
-        _entityTemplateType ??= GameType.Find("Menace.Tactical.EntityTemplate");
         _actorType ??= GameType.Find("Menace.Tactical.Actor");
         _tileType ??= GameType.Find("Menace.Tactical.Tile");
+        _directionType ??= GameType.Find("Menace.Tactical.Direction");
+    }
+
+    /// <summary>
+    /// Convert an integer direction (0-7) to the game's Direction enum type.
+    /// </summary>
+    private static object ConvertToDirectionEnum(int directionInt)
+    {
+        try
+        {
+            EnsureTypesLoaded();
+            var dirType = _directionType?.ManagedType;
+            if (dirType == null || !dirType.IsEnum) return null;
+            return Enum.ToObject(dirType, directionInt);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static object GetManagedProxy(GameObj obj, Type managedType)

@@ -16,7 +16,7 @@ namespace Menace.Tactical.Skills
     public struct HitChanceResult
     {
         /// <summary>Final calculated hit chance (0-100)</summary>
-        public float FinalHitChance;        // offset 0x00
+        public float FinalValue;            // offset 0x00
 
         /// <summary>Base accuracy after multipliers</summary>
         public float Accuracy;              // offset 0x04
@@ -24,14 +24,17 @@ namespace Menace.Tactical.Skills
         /// <summary>Cover multiplier applied</summary>
         public float CoverMult;             // offset 0x08
 
-        /// <summary>Dodge multiplier (flipped for defender)</summary>
-        public float DodgeMult;             // offset 0x0C
+        /// <summary>Defense multiplier (flipped for defender)</summary>
+        public float DefenseMult;           // offset 0x0C
 
-        /// <summary>Whether distance calculation was applied</summary>
-        public bool IncludesDistance;       // offset 0x11
+        /// <summary>Whether distance dropoff was applied</summary>
+        public bool IncludeDropoff;         // offset 0x11
 
-        /// <summary>Distance penalty/bonus applied</summary>
-        public float DistancePenalty;       // offset 0x14
+        /// <summary>Distance accuracy dropoff applied</summary>
+        public float AccuracyDropoff;       // offset 0x14
+
+        /// <summary>Whether the skill always hits (100% hit chance)</summary>
+        public bool AlwaysHits;             // offset 0x15
     }
 
     public partial class Skill
@@ -47,95 +50,100 @@ namespace Menace.Tactical.Skills
         /// Address: 0x1806dba90
         ///
         /// Formula:
-        ///   HitChance = Accuracy * CoverMult * DodgeMult + DistancePenalty
+        ///   HitChance = Accuracy * CoverMult * DefenseMult + AccuracyDropoff
         ///   Final = clamp(HitChance, MinHitChance, 100)
         /// </summary>
-        /// <param name="sourceTile">Tile the attacker is on</param>
+        /// <param name="from">Tile the attacker is on</param>
         /// <param name="targetTile">Tile being targeted</param>
-        /// <param name="attackProps">Attacker's EntityProperties (or null to build)</param>
-        /// <param name="defenseProps">Defender's EntityProperties (or null to build)</param>
-        /// <param name="target">Target entity (can be null for empty tile)</param>
-        /// <param name="includeDistance">Whether to apply distance penalty</param>
+        /// <param name="properties">Attacker's EntityProperties (or null to build)</param>
+        /// <param name="defenderProperties">Defender's EntityProperties (or null to build)</param>
+        /// <param name="includeDropoff">Whether to apply distance dropoff</param>
+        /// <param name="overrideTargetEntity">Target entity override (can be null for empty tile)</param>
+        /// <param name="forImmediateUse">Whether this is for immediate use</param>
         /// <returns>HitChanceResult with breakdown</returns>
         public HitChanceResult GetHitchance(
-            Tile sourceTile,
+            Tile from,
             Tile targetTile,
-            EntityProperties attackProps,
-            EntityProperties defenseProps,
-            Entity target,
-            bool includeDistance)
+            EntityProperties properties,
+            EntityProperties defenderProperties,
+            bool includeDropoff,
+            Entity overrideTargetEntity,
+            bool forImmediateUse)
         {
             var result = new HitChanceResult();
+
+            var target = overrideTargetEntity;
 
             // Check for "always hits" flag on skill template (offset +0xF3)
             if (this.SkillTemplate.AlwaysHits)
             {
-                result.FinalHitChance = 100f;
+                result.FinalValue = 100f;
+                result.AlwaysHits = true;
                 return result;
             }
 
             // Build attack properties if not provided
-            if (attackProps == null)
+            if (properties == null)
             {
-                attackProps = this.SkillContainer.BuildPropertiesForUse(
-                    this, sourceTile, targetTile, target);
+                properties = this.SkillContainer.BuildPropertiesForUse(
+                    this, from, targetTile, target);
             }
 
             // Build defense properties if target exists and props not provided
-            float dodgeMult = 1.0f;
+            float defenseMult = 1.0f;
             if (target != null)
             {
-                if (defenseProps == null)
+                if (defenderProperties == null)
                 {
                     var targetSkillContainer = target.GetSkillContainer();
                     var attacker = this.GetActor();
-                    defenseProps = targetSkillContainer.BuildPropertiesForDefense(
-                        attacker, sourceTile, targetTile, this);
+                    defenderProperties = targetSkillContainer.BuildPropertiesForDefense(
+                        attacker, from, targetTile, this);
                 }
 
-                // Flip dodge mult: high dodge on defender = lower hit chance
-                dodgeMult = FloatExtensions.Flipped(defenseProps.DodgeMult);
+                // Flip defense mult: high defense on defender = lower hit chance
+                defenseMult = FloatExtensions.Flipped(defenderProperties.DefenseMult);
             }
 
             // Get base accuracy
-            float accuracy = attackProps.GetAccuracy();
+            float accuracy = properties.GetAccuracy();
             result.Accuracy = accuracy;
-            result.DodgeMult = dodgeMult;
+            result.DefenseMult = defenseMult;
 
             // Calculate cover multiplier
             bool isContained = CheckIfContained(targetTile, target);
-            float coverMult = GetCoverMult(sourceTile, targetTile, target, defenseProps, isContained);
+            float coverMult = GetCoverMult(from, targetTile, target, defenderProperties, isContained);
             result.CoverMult = coverMult;
 
             // Calculate final hit chance
             float hitChance;
 
-            if (includeDistance && sourceTile != null)
+            if (includeDropoff && from != null)
             {
-                result.IncludesDistance = true;
+                result.IncludeDropoff = true;
 
-                // Calculate distance penalty
-                int distance = sourceTile.GetDistanceTo(targetTile);
+                // Calculate distance dropoff
+                int distance = from.GetDistanceTo(targetTile);
                 int idealRange = this.IdealRange;  // Skill+0xB8
                 int rangeDiff = Math.Abs(distance - idealRange);
 
-                float dropoff = attackProps.GetAccuracyDropoff();
-                float distancePenalty = rangeDiff * dropoff;
+                float dropoff = properties.GetAccuracyDropoff();
+                float accuracyDropoff = rangeDiff * dropoff;
 
-                result.DistancePenalty = distancePenalty;
+                result.AccuracyDropoff = accuracyDropoff;
 
-                // Accuracy * CoverMult * DodgeMult + DistancePenalty
+                // Accuracy * CoverMult * DefenseMult + AccuracyDropoff
                 hitChance = accuracy *
                             FloatExtensions.Clamped(coverMult) *
-                            FloatExtensions.Clamped(dodgeMult) +
-                            distancePenalty;
+                            FloatExtensions.Clamped(defenseMult) +
+                            accuracyDropoff;
             }
             else
             {
-                // No distance penalty
+                // No distance dropoff
                 hitChance = accuracy *
                             FloatExtensions.Clamped(coverMult) *
-                            FloatExtensions.Clamped(dodgeMult);
+                            FloatExtensions.Clamped(defenseMult);
             }
 
             // Clamp to 0-100 range
@@ -143,13 +151,13 @@ namespace Menace.Tactical.Skills
             hitChance = Math.Clamp(hitChance, 0f, MaxHitChance);
 
             // Apply minimum hit chance floor
-            int minHitChance = attackProps.MinHitChance;
+            int minHitChance = properties.MinHitChance;
             if (hitChance < minHitChance)
             {
                 hitChance = minHitChance;
             }
 
-            result.FinalHitChance = hitChance;
+            result.FinalValue = hitChance;
             return result;
         }
 

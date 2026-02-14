@@ -40,9 +40,9 @@ public static class TileEffects
     /// <summary>
     /// Get all effects on a tile.
     /// </summary>
-    public static List<EffectInfo> GetEffects(int x, int y)
+    public static List<EffectInfo> GetEffects(int x, int z)
     {
-        var tile = TileMap.GetTile(x, y);
+        var tile = TileMap.GetTile(x, z);
         return GetEffects(tile);
     }
 
@@ -64,12 +64,12 @@ public static class TileEffects
             var proxy = GetManagedProxy(tile, tileType);
             if (proxy == null) return result;
 
-            // Get Effects property/field
-            var effectsProp = tileType.GetProperty("Effects", BindingFlags.Public | BindingFlags.Instance);
-            if (effectsProp == null)
-                effectsProp = tileType.GetProperty("effects", BindingFlags.NonPublic | BindingFlags.Instance);
+            // Get effects via GetEffects method
+            var getEffectsMethod = tileType.GetMethod("GetEffects", BindingFlags.Public | BindingFlags.Instance);
+            if (getEffectsMethod == null)
+                return result;
 
-            var effects = effectsProp?.GetValue(proxy);
+            var effects = getEffectsMethod.Invoke(proxy, null);
             if (effects == null) return result;
 
             // Iterate list
@@ -100,9 +100,9 @@ public static class TileEffects
                         var templateObj = new GameObj(((Il2CppObjectBase)template).Pointer);
                         info.TemplateName = templateObj.GetName();
 
-                        var hasDurationProp = template.GetType().GetProperty("HasDuration");
-                        var durationProp = template.GetType().GetProperty("Duration");
-                        var blocksLosProp = template.GetType().GetProperty("BlocksLineOfSight");
+                        var hasDurationProp = template.GetType().GetProperty("HasTimeLimit");
+                        var durationProp = template.GetType().GetProperty("RemoveAfterRounds");
+                        var blocksLosProp = template.GetType().GetProperty("BlockLineOfSight");
 
                         if (hasDurationProp != null && (bool)hasDurationProp.GetValue(template))
                         {
@@ -116,15 +116,19 @@ public static class TileEffects
                 }
                 catch { }
 
-                // Get rounds elapsed
+                // Get lifetime info using GetLifetime() and GetLifetimeLeft() methods
                 try
                 {
-                    var roundsElapsedField = effect.GetType().GetField("RoundsElapsed",
+                    var getLifetimeMethod = effect.GetType().GetMethod("GetLifetime",
                         BindingFlags.Public | BindingFlags.Instance);
-                    if (roundsElapsedField != null)
+                    var getLifetimeLeftMethod = effect.GetType().GetMethod("GetLifetimeLeft",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (getLifetimeMethod != null && getLifetimeLeftMethod != null)
                     {
-                        info.RoundsElapsed = (int)roundsElapsedField.GetValue(effect);
-                        info.RoundsRemaining = Math.Max(0, info.Duration - info.RoundsElapsed);
+                        var lifetime = (int)getLifetimeMethod.Invoke(effect, null);
+                        var lifetimeLeft = (int)getLifetimeLeftMethod.Invoke(effect, null);
+                        info.RoundsElapsed = lifetime - lifetimeLeft;
+                        info.RoundsRemaining = Math.Max(0, lifetimeLeft);
                     }
                 }
                 catch { }
@@ -144,9 +148,9 @@ public static class TileEffects
     /// <summary>
     /// Check if a tile has any effects.
     /// </summary>
-    public static bool HasEffects(int x, int y)
+    public static bool HasEffects(int x, int z)
     {
-        var tile = TileMap.GetTile(x, y);
+        var tile = TileMap.GetTile(x, z);
         return HasEffects(tile);
     }
 
@@ -184,9 +188,9 @@ public static class TileEffects
     /// <summary>
     /// Check if a tile has a specific effect type (by name pattern).
     /// </summary>
-    public static bool HasEffectType(int x, int y, string typeNameContains)
+    public static bool HasEffectType(int x, int z, string typeNameContains)
     {
-        var effects = GetEffects(x, y);
+        var effects = GetEffects(x, z);
         foreach (var effect in effects)
         {
             if (effect.TypeName.Contains(typeNameContains, StringComparison.OrdinalIgnoreCase) ||
@@ -201,41 +205,41 @@ public static class TileEffects
     /// <summary>
     /// Check if tile is on fire.
     /// </summary>
-    public static bool IsOnFire(int x, int y)
+    public static bool IsOnFire(int x, int z)
     {
-        return HasEffectType(x, y, "Fire");
+        return HasEffectType(x, z, "Fire");
     }
 
     /// <summary>
     /// Check if tile has smoke.
     /// </summary>
-    public static bool HasSmoke(int x, int y)
+    public static bool HasSmoke(int x, int z)
     {
-        return HasEffectType(x, y, "Smoke");
+        return HasEffectType(x, z, "Smoke");
     }
 
     /// <summary>
     /// Check if tile has ammo crate.
     /// </summary>
-    public static bool HasAmmo(int x, int y)
+    public static bool HasAmmo(int x, int z)
     {
-        return HasEffectType(x, y, "Ammo") || HasEffectType(x, y, "Refill");
+        return HasEffectType(x, z, "Ammo") || HasEffectType(x, z, "Refill");
     }
 
     /// <summary>
     /// Check if tile has a bleeding out unit.
     /// </summary>
-    public static bool HasBleedingUnit(int x, int y)
+    public static bool HasBleedingUnit(int x, int z)
     {
-        return HasEffectType(x, y, "BleedOut");
+        return HasEffectType(x, z, "BleedOut");
     }
 
     /// <summary>
     /// Remove all effects from a tile.
     /// </summary>
-    public static int ClearEffects(int x, int y)
+    public static int ClearEffects(int x, int z)
     {
-        var tile = TileMap.GetTile(x, y);
+        var tile = TileMap.GetTile(x, z);
         return ClearEffects(tile);
     }
 
@@ -284,16 +288,16 @@ public static class TileEffects
     /// <summary>
     /// Spawn a tile effect by template name.
     /// </summary>
-    public static bool SpawnEffect(int x, int y, string templateName, int delay = 0)
+    public static bool SpawnEffect(int x, int z, string templateName, float delay = 0f)
     {
-        var tile = TileMap.GetTile(x, y);
+        var tile = TileMap.GetTile(x, z);
         return SpawnEffect(tile, templateName, delay);
     }
 
     /// <summary>
     /// Spawn a tile effect by template name.
     /// </summary>
-    public static bool SpawnEffect(GameObj tile, string templateName, int delay = 0)
+    public static bool SpawnEffect(GameObj tile, string templateName, float delay = 0f)
     {
         if (tile.IsNull) return false;
 
@@ -321,9 +325,9 @@ public static class TileEffects
             if (templateProxy == null) return false;
 
             // Create handler from template
-            var createHandlerMethod = templateType.GetMethod("CreateHandler",
+            var createMethod = templateType.GetMethod("Create",
                 BindingFlags.Public | BindingFlags.Instance);
-            var handler = createHandlerMethod?.Invoke(templateProxy, new object[] { delay });
+            var handler = createMethod?.Invoke(templateProxy, new object[] { delay });
             if (handler == null) return false;
 
             // Add to tile
@@ -367,19 +371,19 @@ public static class TileEffects
     /// </summary>
     public static void RegisterConsoleCommands()
     {
-        // effects <x> <y> - List effects on tile
-        DevConsole.RegisterCommand("effects", "<x> <y>", "List effects on tile", args =>
+        // effects <x> <z> - List effects on tile
+        DevConsole.RegisterCommand("effects", "<x> <z>", "List effects on tile", args =>
         {
             if (args.Length < 2)
-                return "Usage: effects <x> <y>";
-            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Usage: effects <x> <z>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int z))
                 return "Invalid coordinates";
 
-            var effects = GetEffects(x, y);
+            var effects = GetEffects(x, z);
             if (effects.Count == 0)
-                return $"No effects on tile ({x}, {y})";
+                return $"No effects on tile ({x}, {z})";
 
-            var lines = new List<string> { $"Effects on ({x}, {y}):" };
+            var lines = new List<string> { $"Effects on ({x}, {z}):" };
             foreach (var e in effects)
             {
                 var duration = e.Duration > 0 ? $" ({e.RoundsRemaining} rounds left)" : "";
@@ -388,51 +392,51 @@ public static class TileEffects
             return string.Join("\n", lines);
         });
 
-        // hasfire <x> <y> - Check if tile is on fire
-        DevConsole.RegisterCommand("hasfire", "<x> <y>", "Check if tile is on fire", args =>
+        // hasfire <x> <z> - Check if tile is on fire
+        DevConsole.RegisterCommand("hasfire", "<x> <z>", "Check if tile is on fire", args =>
         {
             if (args.Length < 2)
-                return "Usage: hasfire <x> <y>";
-            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Usage: hasfire <x> <z>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int z))
                 return "Invalid coordinates";
 
-            return $"Tile ({x}, {y}) on fire: {IsOnFire(x, y)}";
+            return $"Tile ({x}, {z}) on fire: {IsOnFire(x, z)}";
         });
 
-        // hassmoke <x> <y> - Check if tile has smoke
-        DevConsole.RegisterCommand("hassmoke", "<x> <y>", "Check if tile has smoke", args =>
+        // hassmoke <x> <z> - Check if tile has smoke
+        DevConsole.RegisterCommand("hassmoke", "<x> <z>", "Check if tile has smoke", args =>
         {
             if (args.Length < 2)
-                return "Usage: hassmoke <x> <y>";
-            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Usage: hassmoke <x> <z>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int z))
                 return "Invalid coordinates";
 
-            return $"Tile ({x}, {y}) has smoke: {HasSmoke(x, y)}";
+            return $"Tile ({x}, {z}) has smoke: {HasSmoke(x, z)}";
         });
 
-        // cleareffects <x> <y> - Remove all effects from tile
-        DevConsole.RegisterCommand("cleareffects", "<x> <y>", "Clear effects from tile", args =>
+        // cleareffects <x> <z> - Remove all effects from tile
+        DevConsole.RegisterCommand("cleareffects", "<x> <z>", "Clear effects from tile", args =>
         {
             if (args.Length < 2)
-                return "Usage: cleareffects <x> <y>";
-            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Usage: cleareffects <x> <z>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int z))
                 return "Invalid coordinates";
 
-            var count = ClearEffects(x, y);
-            return $"Cleared {count} effects from ({x}, {y})";
+            var count = ClearEffects(x, z);
+            return $"Cleared {count} effects from ({x}, {z})";
         });
 
-        // spawneffect <x> <y> <template> - Spawn effect on tile
-        DevConsole.RegisterCommand("spawneffect", "<x> <y> <template>", "Spawn effect on tile", args =>
+        // spawneffect <x> <z> <template> - Spawn effect on tile
+        DevConsole.RegisterCommand("spawneffect", "<x> <z> <template>", "Spawn effect on tile", args =>
         {
             if (args.Length < 3)
-                return "Usage: spawneffect <x> <y> <template>";
-            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Usage: spawneffect <x> <z> <template>";
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int z))
                 return "Invalid coordinates";
 
             var template = string.Join(" ", args, 2, args.Length - 2);
-            var success = SpawnEffect(x, y, template);
-            return success ? $"Spawned '{template}' at ({x}, {y})" : $"Failed to spawn '{template}'";
+            var success = SpawnEffect(x, z, template);
+            return success ? $"Spawned '{template}' at ({x}, {z})" : $"Failed to spawn '{template}'";
         });
 
         // effecttypes - List available effect templates
@@ -457,8 +461,8 @@ public static class TileEffects
 
     private static void EnsureTypesLoaded()
     {
-        _tileEffectHandlerType ??= GameType.Find("Menace.Tactical.TileEffectHandler");
-        _tileEffectTemplateType ??= GameType.Find("Menace.Tactical.TileEffectTemplate");
+        _tileEffectHandlerType ??= GameType.Find("Menace.Tactical.TileEffects.TileEffectHandler");
+        _tileEffectTemplateType ??= GameType.Find("Menace.Tactical.TileEffects.TileEffectTemplate");
         _tileType ??= GameType.Find("Menace.Tactical.Tile");
         _tacticalManagerType ??= GameType.Find("Menace.Tactical.TacticalManager");
     }

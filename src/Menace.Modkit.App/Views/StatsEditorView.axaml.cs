@@ -24,7 +24,12 @@ public class StatsEditorView : UserControl
   // These are displayed but editing is disabled with a tooltip explanation
   private static readonly System.Collections.Generic.HashSet<string> ReadOnlyFields = new(StringComparer.OrdinalIgnoreCase)
   {
-    "DisplayTitle", "DisplayShortName", "DisplayDescription"
+    // Localized/computed display fields
+    "DisplayTitle", "DisplayShortName", "DisplayDescription",
+    // Identity fields (set by clone system, not user-editable)
+    "name", "m_ID",
+    // Computed Icon properties (not directly settable at runtime)
+    "HasIcon", "IconAssetName"
   };
 
   public StatsEditorView()

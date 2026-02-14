@@ -25,7 +25,6 @@ public static class LineOfSight
     private static GameType _actorType;
     private static GameType _entityPropertiesType;
     private static GameType _tacticalManagerType;
-    private static GameType _lineOfSightType;
 
     // Visibility states
     public const int VISIBILITY_UNKNOWN = 0;
@@ -33,9 +32,10 @@ public static class LineOfSight
     public const int VISIBILITY_HIDDEN = 2;
     public const int VISIBILITY_DETECTED = 3;
 
-    // LOS flags
-    public const byte LOS_FLAG_IGNORE_TARGET_BLOCKER = 1;
-    public const byte LOS_FLAG_IGNORE_STRUCTURE_PARTS = 4;
+    // LOS flags - matches LineOfSightFlags enum: Default=0, IgnoreLastTile=1, IgnoreHalfCover=4
+    public const byte LOS_FLAG_DEFAULT = 0;
+    public const byte LOS_FLAG_IGNORE_LAST_TILE = 1;
+    public const byte LOS_FLAG_IGNORE_HALF_COVER = 4;
 
     // EntityProperties offsets
     private const uint OFFSET_BASE_VISION = 0xC4;
@@ -120,8 +120,7 @@ public static class LineOfSight
             if (targetProxy == null) return false;
 
             var hasLosMethod = actorType.GetMethod("HasLineOfSightTo",
-                BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { typeof(object), typeof(bool), typeof(object), typeof(object) }, null);
+                BindingFlags.Public | BindingFlags.Instance);
 
             if (hasLosMethod != null)
             {
@@ -214,7 +213,7 @@ public static class LineOfSight
             if (proxy == null) return 0;
 
             // Get EntityProperties
-            var getPropsMethod = actorType.GetMethod("GetProperties", BindingFlags.Public | BindingFlags.Instance);
+            var getPropsMethod = actorType.GetMethod("GetCurrentProperties", BindingFlags.Public | BindingFlags.Instance);
             var props = getPropsMethod?.Invoke(proxy, null);
             if (props == null) return 0;
 
@@ -251,7 +250,7 @@ public static class LineOfSight
             var proxy = GetManagedProxy(entity, actorType);
             if (proxy == null) return 0;
 
-            var getPropsMethod = actorType.GetMethod("GetProperties", BindingFlags.Public | BindingFlags.Instance);
+            var getPropsMethod = actorType.GetMethod("GetCurrentProperties", BindingFlags.Public | BindingFlags.Instance);
             var props = getPropsMethod?.Invoke(proxy, null);
             if (props == null) return 0;
 
@@ -287,7 +286,7 @@ public static class LineOfSight
             var proxy = GetManagedProxy(entity, actorType);
             if (proxy == null) return 0;
 
-            var getPropsMethod = actorType.GetMethod("GetProperties", BindingFlags.Public | BindingFlags.Instance);
+            var getPropsMethod = actorType.GetMethod("GetCurrentProperties", BindingFlags.Public | BindingFlags.Instance);
             var props = getPropsMethod?.Invoke(proxy, null);
             if (props == null) return 0;
 
@@ -462,7 +461,6 @@ public static class LineOfSight
         _actorType ??= GameType.Find("Menace.Tactical.Actor");
         _entityPropertiesType ??= GameType.Find("Menace.Tactical.EntityProperties");
         _tacticalManagerType ??= GameType.Find("Menace.Tactical.TacticalManager");
-        _lineOfSightType ??= GameType.Find("Tactical.LineOfSight");
     }
 
     private static object GetManagedProxy(GameObj obj, Type managedType)

@@ -353,12 +353,13 @@ namespace Menace.Tactical.AI
         protected float GetTargetValue(Entity target, Skill skill)
         {
             // Get expected damage
+            // Signature: (from, targetTile, properties, defenderProperties, includeDropoff, overrideTargetEntity, forImmediateUse)
             var hitResult = skill.GetHitchance(
                 skill.GetActor().CurrentTile,
                 target.CurrentTile,
-                null, null, target, true);
+                null, null, true, target, false);
 
-            float hitChance = hitResult.FinalHitChance / 100f;
+            float hitChance = hitResult.FinalValue / 100f;
             float damage = skill.GetExpectedDamage(target);
 
             // Base value = expected damage

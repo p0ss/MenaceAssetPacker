@@ -26,18 +26,33 @@ public partial class ModpackLoaderMod
     private static readonly HashSet<string> ReadOnlyProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "Pointer", "ObjectClass", "WasCollected", "m_CachedPtr",
-        "name", "hideFlags", "serializationData"
+        "name", "m_ID", "hideFlags", "serializationData"
     };
 
     // Computed/translated fields that derive from other editable fields
     // These are skipped with an informative message rather than a warning
     private static readonly HashSet<string> TranslatedFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "DisplayTitle", "DisplayShortName", "DisplayDescription"
+        "DisplayTitle", "DisplayShortName", "DisplayDescription",
+        // Icon properties computed from internal Sprite reference
+        "HasIcon", "IconAssetName"
     };
 
     // Cache for name -> Object lookups, keyed by element type
     private readonly Dictionary<Type, Dictionary<string, UnityEngine.Object>> _nameLookupCache = new();
+
+    /// <summary>
+    /// Clear the name lookup cache. Call this after creating clones so that
+    /// subsequent patch operations will rebuild the cache and find the new clones.
+    /// </summary>
+    public void InvalidateNameLookupCache()
+    {
+        if (_nameLookupCache.Count > 0)
+        {
+            SdkLogger.Msg($"  Invalidating name lookup cache ({_nameLookupCache.Count} type(s))");
+            _nameLookupCache.Clear();
+        }
+    }
 
     private enum CollectionKind { None, StructArray, ReferenceArray, Il2CppList, ManagedArray }
 
@@ -199,6 +214,22 @@ public partial class ModpackLoaderMod
 
         try
         {
+            // For Sprite type, first add any custom sprites from AssetReplacer
+            // These are runtime-created and won't be found by FindObjectsOfTypeAll
+            if (elementType == typeof(Sprite))
+            {
+                // Get all custom sprites and add them to the lookup
+                var customSpriteNames = AssetReplacer.GetCustomSpriteNames();
+                foreach (var name in customSpriteNames)
+                {
+                    var sprite = AssetReplacer.GetCustomSprite(name);
+                    if (sprite != null)
+                        lookup[name] = sprite;
+                }
+                if (customSpriteNames.Count > 0)
+                    SdkLogger.Msg($"    Added {customSpriteNames.Count} custom sprite(s) to lookup");
+            }
+
             // Force-load templates via DataTemplateLoader before FindObjectsOfTypeAll
             // This ensures referenced templates are in memory
             var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
@@ -214,7 +245,11 @@ public partial class ModpackLoaderMod
                 foreach (var obj in objects)
                 {
                     if (obj != null && !string.IsNullOrEmpty(obj.name))
-                        lookup[obj.name] = obj;
+                    {
+                        // Don't overwrite custom sprites with game sprites of same name
+                        if (!lookup.ContainsKey(obj.name))
+                            lookup[obj.name] = obj;
+                    }
                 }
             }
 

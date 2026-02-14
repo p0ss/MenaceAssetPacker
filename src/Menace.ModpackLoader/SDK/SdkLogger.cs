@@ -50,8 +50,52 @@ public static class SdkLogger
     /// </summary>
     public static void Msg(string format, params object[] args)
     {
-        var message = string.Format(format, args);
+        string message;
+        try
+        {
+            message = string.Format(format, args);
+        }
+        catch
+        {
+            message = format;
+        }
         _instance?.Msg(message);
         DevConsole.Log(message);
+    }
+
+    /// <summary>
+    /// Log a formatted warning to both MelonLoader and DevConsole.
+    /// </summary>
+    public static void Warning(string format, params object[] args)
+    {
+        string message;
+        try
+        {
+            message = string.Format(format, args);
+        }
+        catch
+        {
+            message = format;
+        }
+        _instance?.Warning(message);
+        DevConsole.LogWarning(message);
+    }
+
+    /// <summary>
+    /// Log a formatted error to both MelonLoader and DevConsole.
+    /// </summary>
+    public static void Error(string format, params object[] args)
+    {
+        string message;
+        try
+        {
+            message = string.Format(format, args);
+        }
+        catch
+        {
+            message = format;
+        }
+        _instance?.Error(message);
+        DevConsole.LogError(message);
     }
 }

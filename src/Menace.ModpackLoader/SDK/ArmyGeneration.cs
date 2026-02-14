@@ -11,10 +11,13 @@ namespace Menace.SDK;
 ///
 /// Based on reverse engineering findings:
 /// - Army.Template @ +0x10
-/// - Army.Entries @ +0x18
-/// - Army.TotalBudget @ +0x20
-/// - ArmyEntry.Template @ +0x10
-/// - ArmyEntry.Count @ +0x18
+/// - Army.m_Entries @ +0x18
+/// - Army.m_Budget @ +0x20
+/// - ArmyEntry.EntityTemplate @ +0x10
+/// - ArmyEntry.m_Amount @ +0x18
+/// - EntityTemplate.ArmyPointCost
+/// - ArmyTemplate.PossibleUnits
+/// - ArmyTemplateEntry.Weight (used for random selection)
 /// </summary>
 public static class ArmyGeneration
 {
@@ -22,6 +25,7 @@ public static class ArmyGeneration
     private static GameType _armyType;
     private static GameType _armyEntryType;
     private static GameType _armyTemplateType;
+    private static GameType _armyTemplateEntryType;
     private static GameType _entityTemplateType;
 
     // Default spawn area index
@@ -82,12 +86,12 @@ public static class ArmyGeneration
             }
 
             // Get budget
-            var budgetProp = armyType.GetProperty("TotalBudget", BindingFlags.Public | BindingFlags.Instance);
+            var budgetProp = armyType.GetProperty("m_Budget", BindingFlags.Public | BindingFlags.Instance);
             if (budgetProp != null)
                 info.TotalBudget = (int)budgetProp.GetValue(proxy);
 
             // Get entries
-            var entriesProp = armyType.GetProperty("Entries", BindingFlags.Public | BindingFlags.Instance);
+            var entriesProp = armyType.GetProperty("m_Entries", BindingFlags.Public | BindingFlags.Instance);
             var entries = entriesProp?.GetValue(proxy);
             if (entries != null)
             {
@@ -142,7 +146,7 @@ public static class ArmyGeneration
             var info = new ArmyEntryInfo { Pointer = entry.Pointer };
 
             // Get template
-            var templateProp = entryType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
+            var templateProp = entryType.GetProperty("EntityTemplate", BindingFlags.Public | BindingFlags.Instance);
             var template = templateProp?.GetValue(proxy);
             if (template != null)
             {
@@ -150,13 +154,13 @@ public static class ArmyGeneration
                 info.TemplateName = templateObj.GetName();
 
                 // Get cost from template
-                var costProp = template.GetType().GetProperty("Cost", BindingFlags.Public | BindingFlags.Instance);
+                var costProp = template.GetType().GetProperty("ArmyPointCost", BindingFlags.Public | BindingFlags.Instance);
                 if (costProp != null)
                     info.Cost = (int)costProp.GetValue(template);
             }
 
             // Get count
-            var countProp = entryType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+            var countProp = entryType.GetProperty("m_Amount", BindingFlags.Public | BindingFlags.Instance);
             if (countProp != null)
                 info.Count = (int)countProp.GetValue(proxy);
 
@@ -220,7 +224,7 @@ public static class ArmyGeneration
             var proxy = GetManagedProxy(entityTemplate, templateType);
             if (proxy == null) return 0;
 
-            var costProp = templateType.GetProperty("Cost", BindingFlags.Public | BindingFlags.Instance);
+            var costProp = templateType.GetProperty("ArmyPointCost", BindingFlags.Public | BindingFlags.Instance);
             if (costProp != null)
                 return (int)costProp.GetValue(proxy);
 
@@ -417,8 +421,8 @@ public static class ArmyGeneration
             var proxy = GetManagedProxy(armyTemplate, templateType);
             if (proxy == null) return result;
 
-            // Get Entries property
-            var entriesProp = templateType.GetProperty("Entries", BindingFlags.Public | BindingFlags.Instance);
+            // Get PossibleUnits property
+            var entriesProp = templateType.GetProperty("PossibleUnits", BindingFlags.Public | BindingFlags.Instance);
             var entries = entriesProp?.GetValue(proxy);
             if (entries == null) return result;
 
@@ -436,9 +440,9 @@ public static class ArmyGeneration
 
                 var entryInfo = new ArmyEntryInfo { Pointer = ((Il2CppObjectBase)entry).Pointer };
 
-                // Get Template field from entry
+                // Get EntityTemplate field from entry
                 var entryType = entry.GetType();
-                var templateProp = entryType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
+                var templateProp = entryType.GetProperty("EntityTemplate", BindingFlags.Public | BindingFlags.Instance);
                 var template = templateProp?.GetValue(entry);
                 if (template != null)
                 {
@@ -446,7 +450,7 @@ public static class ArmyGeneration
                     entryInfo.TemplateName = templateObj.GetName() ?? "(unknown)";
 
                     // Try to get cost from template
-                    var costProp = template.GetType().GetProperty("Cost", BindingFlags.Public | BindingFlags.Instance);
+                    var costProp = template.GetType().GetProperty("ArmyPointCost", BindingFlags.Public | BindingFlags.Instance);
                     if (costProp != null)
                         entryInfo.Cost = (int)costProp.GetValue(template);
                 }
@@ -455,11 +459,10 @@ public static class ArmyGeneration
                     entryInfo.TemplateName = "(null template)";
                 }
 
-                // Get Count/Amount field from entry
-                var countField = entryType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance)
-                    ?? entryType.GetProperty("Amount", BindingFlags.Public | BindingFlags.Instance);
-                if (countField != null)
-                    entryInfo.Count = (int)countField.GetValue(entry);
+                // Get Weight field from entry (ArmyTemplateEntry uses Weight for selection probability)
+                var weightField = entryType.GetProperty("Weight", BindingFlags.Public | BindingFlags.Instance);
+                if (weightField != null)
+                    entryInfo.Count = (int)weightField.GetValue(entry);
                 else
                     entryInfo.Count = 1;
 
@@ -515,6 +518,7 @@ public static class ArmyGeneration
         _armyType ??= GameType.Find("Army");
         _armyEntryType ??= GameType.Find("ArmyEntry");
         _armyTemplateType ??= GameType.Find("ArmyTemplate");
+        _armyTemplateEntryType ??= GameType.Find("ArmyTemplateEntry");
         _entityTemplateType ??= GameType.Find("EntityTemplate");
     }
 

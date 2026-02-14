@@ -69,7 +69,10 @@ public static class Conversation
     public const int TRIGGER_IDLE = 14;
     /// <summary>Custom trigger type for modding.</summary>
     public const int TRIGGER_CUSTOM = 15;
-    /// <summary>Total number of trigger types.</summary>
+    // NOTE: There are 52 trigger types total (0-51) in the game.
+    // Only the most common 16 (0-15) are defined as constants above.
+    // Use GetTriggerTypeName() for a human-readable name of any trigger type.
+    /// <summary>Total number of trigger types (0-51).</summary>
     public const int TRIGGER_TYPE_COUNT = 52;
 
     // RoleRequirementType enum values
@@ -177,7 +180,7 @@ public static class Conversation
     private const uint OFFSET_BCM_AVAILABLE_SPEAKERS = 0x48;
     private const uint OFFSET_BCM_ROLE_SPEAKERS = 0x50;
 
-    private const uint OFFSET_CT_TYPE = 0x18;
+    private const uint OFFSET_CT_TYPE = 0x28;
     private const uint OFFSET_CT_IS_ONLY_ONCE = 0x1C;
     private const uint OFFSET_CT_EVENT_DATA = 0x30;
     private const uint OFFSET_CT_CONDITION = 0x50;
@@ -295,18 +298,20 @@ public static class Conversation
         {
             EnsureTypesLoaded();
 
-            // Try TacticalManager.ConversationManager first (tactical mode)
-            var tmType = _tacticalManagerType?.ManagedType;
-            if (tmType != null)
+            // Try TacticalState.TacticalBarksManager first (tactical mode)
+            // TacticalBarksManager is stored in TacticalState at offset +0x88 (verified via REPL)
+            var tacticalStateType = GameType.Find("Menace.States.TacticalState")?.ManagedType;
+            if (tacticalStateType != null)
             {
-                var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-                var tm = instanceProp?.GetValue(null);
-                if (tm != null)
+                var getMethod = tacticalStateType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+                var ts = getMethod?.Invoke(null, null);
+                if (ts != null)
                 {
-                    var convMgrProp = tmType.GetProperty("ConversationManager", BindingFlags.Public | BindingFlags.Instance);
-                    var convMgr = convMgrProp?.GetValue(tm);
-                    if (convMgr != null)
-                        return new GameObj(((Il2CppObjectBase)convMgr).Pointer);
+                    // Read TacticalBarksManager at offset +0x88
+                    var tsObj = new GameObj(((Il2CppObjectBase)ts).Pointer);
+                    var barksMgrPtr = tsObj.ReadPtr(0x88);
+                    if (barksMgrPtr != IntPtr.Zero)
+                        return new GameObj(barksMgrPtr);
                 }
             }
 
@@ -314,8 +319,9 @@ public static class Conversation
             var ssType = _strategyStateType?.ManagedType;
             if (ssType != null)
             {
-                var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-                var ss = instanceProp?.GetValue(null);
+                // Use Get() static method instead of s_Singleton property
+                var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+                var ss = getMethod?.Invoke(null, null);
                 if (ss != null)
                 {
                     var convMgrProp = ssType.GetProperty("ConversationManager", BindingFlags.Public | BindingFlags.Instance);
@@ -906,10 +912,24 @@ public static class Conversation
             var presenter = GetPresenterProxy();
             if (presenter == null) return false;
 
+            // Get the current node to pass to ShowNextNode
+            var presenterObj = GetPresenter();
+            if (presenterObj.IsNull) return false;
+
+            var currentNodePtr = presenterObj.ReadPtr(OFFSET_CP_CURRENT_NODE);
+            if (currentNodePtr == IntPtr.Zero) return false;
+
+            var nodeType = _conversationNodeType?.ManagedType;
+            if (nodeType == null) return false;
+
+            var currentNode = GetManagedProxy(new GameObj(currentNodePtr), nodeType);
+            if (currentNode == null) return false;
+
+            // ShowNextNode requires the currentNode parameter
             var showNextMethod = presenterType.GetMethod("ShowNextNode", BindingFlags.Public | BindingFlags.Instance);
             if (showNextMethod == null) return false;
 
-            showNextMethod.Invoke(presenter, null);
+            showNextMethod.Invoke(presenter, new[] { currentNode });
             return true;
         }
         catch (Exception ex)

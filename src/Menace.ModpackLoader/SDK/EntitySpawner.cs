@@ -13,20 +13,17 @@ namespace Menace.SDK;
 /// Uses IL2CPP interop to call game spawning methods.
 ///
 /// Based on reverse engineering findings:
-/// - TransientActor.Create(EntityTemplate, Tile) @ 0x1806357d0
-/// - Actor.Create(EntityTemplate, Tile, ...) @ 0x1805de5a0
-/// - Structure.Create(EntityTemplate, Tile, rotation) @ 0x180633ef0
+/// - TacticalManager.TrySpawnUnit(FactionType, EntityTemplate, Tile, out Actor) @ TacticalManager.s_Singleton
 /// - Entity.Die(bool destroyImmediately) @ 0x180610aa0
 /// </summary>
 public static class EntitySpawner
 {
     // Cached types
     private static GameType _actorType;
-    private static GameType _transientActorType;
     private static GameType _entityTemplateType;
     private static GameType _tileType;
     private static GameType _tacticalManagerType;
-    private static GameType _mapType;
+    private static GameType _factionType;
 
     // Field offsets from actor-system.md
     private const uint OFFSET_ENTITY_ID = 0x10;
@@ -54,6 +51,7 @@ public static class EntitySpawner
 
     /// <summary>
     /// Spawn a transient actor (AI enemy or temporary unit) at the specified tile.
+    /// Uses TacticalManager.TrySpawnUnit() which handles actor registration internally.
     /// </summary>
     /// <param name="templateName">EntityTemplate name (e.g., "Grunt", "HeavyTrooper")</param>
     /// <param name="tileX">Tile X coordinate</param>
@@ -86,21 +84,39 @@ public static class EntitySpawner
                 return SpawnResult.Failed($"Tile at ({tileX}, {tileY}) is occupied");
             }
 
-            // Call TransientActor.Create via reflection
-            var transientActorManagedType = _transientActorType?.ManagedType;
-            if (transientActorManagedType == null)
+            // Get TacticalManager singleton
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null)
             {
-                return SpawnResult.Failed("TransientActor managed type not available");
+                return SpawnResult.Failed("TacticalManager managed type not available");
             }
 
-            var createMethod = transientActorManagedType.GetMethod("Create",
-                BindingFlags.Public | BindingFlags.Static);
-            if (createMethod == null)
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
+            if (instanceProp == null)
             {
-                return SpawnResult.Failed("TransientActor.Create method not found");
+                return SpawnResult.Failed("TacticalManager.s_Singleton property not found");
             }
 
-            // Get managed proxy for template and tile
+            var tm = instanceProp.GetValue(null);
+            if (tm == null)
+            {
+                return SpawnResult.Failed("TacticalManager.s_Singleton is null");
+            }
+
+            // Check FactionType enum
+            if (_factionType == null)
+            {
+                return SpawnResult.Failed("FactionType enum not found");
+            }
+
+            // Get TrySpawnUnit method: TrySpawnUnit(FactionType _faction, EntityTemplate _template, Tile _tile, out Actor _unit)
+            var trySpawnMethod = tmType.GetMethod("TrySpawnUnit", BindingFlags.Public | BindingFlags.Instance);
+            if (trySpawnMethod == null)
+            {
+                return SpawnResult.Failed("TacticalManager.TrySpawnUnit method not found");
+            }
+
+            // Get managed proxies for template and tile
             var templateProxy = GetManagedProxy(template, _entityTemplateType.ManagedType);
             var tileProxy = GetManagedProxy(tile, _tileType.ManagedType);
 
@@ -109,23 +125,19 @@ public static class EntitySpawner
                 return SpawnResult.Failed("Failed to create managed proxies");
             }
 
-            // Invoke Create
-            var actor = createMethod.Invoke(null, new[] { templateProxy, tileProxy });
-            if (actor == null)
+            // Convert factionIndex to FactionType enum value
+            var factionEnumValue = Enum.ToObject(_factionType.ManagedType, factionIndex);
+
+            // Invoke TrySpawnUnit with out parameter
+            var parameters = new object[] { factionEnumValue, templateProxy, tileProxy, null };
+            var success = (bool)trySpawnMethod.Invoke(tm, parameters);
+
+            if (!success || parameters[3] == null)
             {
-                return SpawnResult.Failed("TransientActor.Create returned null");
+                return SpawnResult.Failed("TacticalManager.TrySpawnUnit returned false");
             }
 
-            var actorObj = new GameObj(((Il2CppObjectBase)actor).Pointer);
-
-            // Set faction if different from default
-            if (factionIndex != 1)
-            {
-                SetFaction(actorObj, factionIndex);
-            }
-
-            // Add to TacticalManager's actor list
-            AddToActorList(actorObj);
+            var actorObj = new GameObj(((Il2CppObjectBase)parameters[3]).Pointer);
 
             ModError.Info("Menace.SDK", $"Spawned {templateName} at ({tileX}, {tileY}) faction {factionIndex}");
             return SpawnResult.Ok(actorObj);
@@ -295,11 +307,10 @@ public static class EntitySpawner
     private static void EnsureTypesLoaded()
     {
         _actorType ??= GameType.Find("Menace.Tactical.Actor");
-        _transientActorType ??= GameType.Find("Menace.Tactical.TransientActor");
         _entityTemplateType ??= GameType.Find("Menace.Tactical.EntityTemplate");
         _tileType ??= GameType.Find("Menace.Tactical.Tile");
         _tacticalManagerType ??= GameType.Find("Menace.Tactical.TacticalManager");
-        _mapType ??= GameType.Find("Menace.Tactical.Map");
+        _factionType ??= GameType.Find("Menace.Tactical.FactionType");
     }
 
     private static GameObj GetTileAt(int x, int y)
@@ -310,17 +321,17 @@ public static class EntitySpawner
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return GameObj.Null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             if (instanceProp == null) return GameObj.Null;
 
             var tm = instanceProp.GetValue(null);
             if (tm == null) return GameObj.Null;
 
-            // Get Map from TacticalManager
-            var mapProp = tmType.GetProperty("Map", BindingFlags.Public | BindingFlags.Instance);
-            if (mapProp == null) return GameObj.Null;
+            // Get Map from TacticalManager via GetMap() method
+            var getMapMethod = tmType.GetMethod("GetMap", BindingFlags.Public | BindingFlags.Instance);
+            if (getMapMethod == null) return GameObj.Null;
 
-            var map = mapProp.GetValue(tm);
+            var map = getMapMethod.Invoke(tm, null);
             if (map == null) return GameObj.Null;
 
             // Call Map.GetTile(x, y)
@@ -365,49 +376,6 @@ public static class EntitySpawner
         catch
         {
             return false;
-        }
-    }
-
-    private static void SetFaction(GameObj actor, int factionIndex)
-    {
-        // Write faction index directly
-        Marshal.WriteInt32(actor.Pointer + (int)OFFSET_ENTITY_FACTION_INDEX, factionIndex);
-    }
-
-    private static void AddToActorList(GameObj actor)
-    {
-        try
-        {
-            var tmType = _tacticalManagerType?.ManagedType;
-            if (tmType == null) return;
-
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            if (instanceProp == null) return;
-
-            var tm = instanceProp.GetValue(null);
-            if (tm == null) return;
-
-            // Find AllActors list and add
-            var allActorsProp = tmType.GetProperty("AllActors", BindingFlags.Public | BindingFlags.Instance)
-                ?? tmType.GetProperty("Actors", BindingFlags.Public | BindingFlags.Instance);
-
-            if (allActorsProp == null) return;
-
-            var actorsList = allActorsProp.GetValue(tm);
-            if (actorsList == null) return;
-
-            var addMethod = actorsList.GetType().GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
-            if (addMethod == null) return;
-
-            var actorProxy = GetManagedProxy(actor, _actorType.ManagedType);
-            if (actorProxy != null)
-            {
-                addMethod.Invoke(actorsList, new[] { actorProxy });
-            }
-        }
-        catch (Exception ex)
-        {
-            ModError.WarnInternal("EntitySpawner.AddToActorList", $"Failed: {ex.Message}");
         }
     }
 

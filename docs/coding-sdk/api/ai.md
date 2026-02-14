@@ -38,13 +38,15 @@ AI agent state for a unit.
 | `HasAgent` | bool | Whether the actor has an AI agent |
 | `State` | int | Current state (see constants) |
 | `StateName` | string | Human-readable state name |
-| `SelectedBehavior` | string | Name of selected behavior |
-| `BehaviorScore` | int | Score of selected behavior |
-| `TargetTileX` | int | Target tile X coordinate |
-| `TargetTileY` | int | Target tile Y coordinate |
-| `TargetActorName` | string | Target actor name (if any) |
+| `ActiveBehavior` | string | Name of active behavior |
+| `BehaviorScore` | int | Score of active behavior |
+| `TargetTileX` | int? | Target tile X coordinate (only on SkillBehavior) |
+| `TargetTileZ` | int? | Target tile Z coordinate (only on SkillBehavior) |
+| `TargetActorName` | string | Target actor name (only on SkillBehavior) |
 | `EvaluatedTileCount` | int | Number of tiles evaluated |
 | `AvailableBehaviorCount` | int | Number of available behaviors |
+
+**Note:** The game uses X/Z coordinates (horizontal plane), not X/Y. TargetTile properties are nullable because they only exist on SkillBehavior subclass, not the base Behavior class.
 
 ### RoleDataInfo
 
@@ -74,13 +76,13 @@ Tile score from AI evaluation.
 | Property | Type | Description |
 |----------|------|-------------|
 | `X` | int | Tile X coordinate |
-| `Y` | int | Tile Y coordinate |
+| `Z` | int | Tile Z coordinate |
 | `UtilityScore` | float | Aggregated utility (damage potential) |
 | `SafetyScore` | float | Aggregated safety (cover, threat avoidance) |
 | `DistanceScore` | float | Distance penalty |
-| `FinalScore` | float | Combined score after weighting |
-| `CoverLevel` | int | Cover level at this tile |
-| `VisibleToOpponents` | bool | Whether visible to enemies |
+| `CombinedScore` | float | Sum of component scores |
+
+**Note:** The game uses X/Z coordinates for the horizontal plane. The CombinedScore is an approximation; the actual game uses a GetScore() method that may apply additional weighting.
 
 ### BehaviorInfo
 
@@ -91,10 +93,12 @@ Behavior info from AI evaluation.
 | `Name` | string | Behavior name |
 | `TypeName` | string | Behavior class name |
 | `Score` | int | Behavior score |
-| `TargetTileX` | int | Target tile X |
-| `TargetTileY` | int | Target tile Y |
-| `TargetActorName` | string | Target actor name |
+| `TargetTileX` | int? | Target tile X (only on SkillBehavior) |
+| `TargetTileZ` | int? | Target tile Z (only on SkillBehavior) |
+| `TargetActorName` | string | Target actor name (only on SkillBehavior) |
 | `IsSelected` | bool | Whether this is the selected behavior |
+
+**Note:** TargetTile and TargetEntity properties only exist on SkillBehavior subclass. The nullable int values will be null for non-SkillBehavior types (e.g., Move, Reload).
 
 ### AIFactionInfo
 
@@ -103,9 +107,9 @@ AIFaction info for a faction.
 | Property | Type | Description |
 |----------|------|-------------|
 | `FactionIndex` | int | Faction index |
-| `AgentCount` | int | Number of AI agents |
+| `ActorCount` | int | Number of actors in the faction |
 | `OpponentCount` | int | Number of known opponents |
-| `IsEvaluating` | bool | Whether faction is evaluating |
+| `IsThinking` | bool | Whether faction is currently thinking |
 
 ## Methods
 
@@ -132,7 +136,7 @@ var info = AI.GetAgentInfo(actor);
 
 if (info.HasAgent && info.State == AI.STATE_READY_TO_EXECUTE)
 {
-    DevConsole.Log($"AI will use {info.SelectedBehavior} on {info.TargetActorName}");
+    DevConsole.Log($"AI will use {info.ActiveBehavior} on {info.TargetActorName}");
 }
 ```
 
@@ -184,7 +188,7 @@ Get tile scores from an actor's AI evaluation. Returns the top N tiles by score.
 var tiles = AI.GetTileScores(actor, 5);
 foreach (var t in tiles)
 {
-    DevConsole.Log($"({t.X}, {t.Y}): {t.FinalScore} (utility={t.UtilityScore}, safety={t.SafetyScore})");
+    DevConsole.Log($"({t.X}, {t.Z}): {t.CombinedScore} (utility={t.UtilityScore}, safety={t.SafetyScore})");
 }
 ```
 
@@ -199,7 +203,7 @@ Get AIFaction info for a faction index.
 **Example:**
 ```csharp
 var factionInfo = AI.GetAIFactionInfo(1); // Enemy faction
-DevConsole.Log($"Enemy AI has {factionInfo.AgentCount} agents tracking {factionInfo.OpponentCount} opponents");
+DevConsole.Log($"Enemy AI has {factionInfo.ActorCount} actors tracking {factionInfo.OpponentCount} opponents");
 ```
 
 ### GetAIIntent
@@ -232,24 +236,24 @@ The AI evaluates agents in **parallel** across multiple threads. Writing during 
 **Safe to call:**
 - Before faction turn begins (e.g., in `AIFaction.OnTurnStart` hook)
 - After faction turn ends
-- When `IsAnyFactionEvaluating()` returns false
+- When `IsAnyFactionThinking()` returns false
 
 **NOT safe to call:**
 - During `Agent.PostProcessTileScores` (parallel)
 - During `Criterion.Evaluate` (parallel)
 - Any time during AI evaluation phase
 
-### IsAnyFactionEvaluating
+### IsAnyFactionThinking
 
 ```csharp
-public static bool IsAnyFactionEvaluating()
+public static bool IsAnyFactionThinking()
 ```
 
 Check if any AI faction is currently in parallel evaluation. When true, writes are NOT safe.
 
 **Example:**
 ```csharp
-if (!AI.IsAnyFactionEvaluating())
+if (!AI.IsAnyFactionThinking())
 {
     // Safe to modify AI state
     AI.SetRoleDataFloat(actor, "UtilityScale", 50f);

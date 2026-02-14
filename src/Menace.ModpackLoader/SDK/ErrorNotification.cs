@@ -69,10 +69,19 @@ internal static class ErrorNotification
 
     private static void InitializeStyle()
     {
+        // Check if texture was destroyed (e.g., scene transition) and reinitialize
+        if (_notifStyle?.normal?.background == null || !_notifStyle.normal.background)
+        {
+            _styleInitialized = false;
+        }
+
         if (_styleInitialized) return;
         _styleInitialized = true;
 
-        var bgTex = new Texture2D(1, 1);
+        var bgTex = new Texture2D(1, 1)
+        {
+            hideFlags = HideFlags.HideAndDontSave
+        };
         bgTex.SetPixel(0, 0, new Color(0.15f, 0.05f, 0.05f, 0.85f));
         bgTex.Apply();
 

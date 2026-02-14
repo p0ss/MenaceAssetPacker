@@ -10,11 +10,11 @@ namespace Menace.SDK;
 /// Provides safe access to vehicle health, armor, modular equipment, and twin-fire detection.
 ///
 /// Based on reverse engineering findings:
-/// - Vehicle.HitpointsPct @ +0x20
-/// - Vehicle.ArmorDurabilityPct @ +0x24
+/// - Vehicle.m_HitpointsPct @ +0x20
+/// - Vehicle.m_ArmorDurabilityPct @ +0x24
 /// - Vehicle.EquipmentSkills @ +0x28
 /// - ItemsModularVehicle.Slots @ +0x18
-/// - ItemsModularVehicle.HasTwinFire @ +0x20
+/// - ItemsModularVehicle.IsTwinFire @ +0x20
 /// </summary>
 public static class Vehicle
 {
@@ -79,7 +79,7 @@ public static class Vehicle
             var info = new VehicleInfo { Pointer = entity.Pointer };
 
             // Get template
-            var templateProp = vehicleType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
+            var templateProp = vehicleType.GetProperty("EntityTemplate", BindingFlags.Public | BindingFlags.Instance);
             var template = templateProp?.GetValue(proxy);
             if (template != null)
             {
@@ -88,11 +88,11 @@ public static class Vehicle
             }
 
             // Get health
-            var hpPctProp = vehicleType.GetProperty("HitpointsPct", BindingFlags.Public | BindingFlags.Instance);
+            var hpPctProp = vehicleType.GetProperty("m_HitpointsPct", BindingFlags.Public | BindingFlags.Instance);
             if (hpPctProp != null)
                 info.HitpointsPct = (float)hpPctProp.GetValue(proxy);
 
-            var armorPctProp = vehicleType.GetProperty("ArmorDurabilityPct", BindingFlags.Public | BindingFlags.Instance);
+            var armorPctProp = vehicleType.GetProperty("m_ArmorDurabilityPct", BindingFlags.Public | BindingFlags.Instance);
             if (armorPctProp != null)
                 info.ArmorDurabilityPct = (float)armorPctProp.GetValue(proxy);
 
@@ -157,7 +157,7 @@ public static class Vehicle
             var containerProxy = GetManagedProxy(container, containerType);
             if (containerProxy == null) return null;
 
-            var modVehicleProp = containerType.GetProperty("ModularVehicle",
+            var modVehicleProp = containerType.GetProperty("m_ModularVehicle",
                 BindingFlags.Public | BindingFlags.Instance);
             var modVehicle = modVehicleProp?.GetValue(containerProxy);
             if (modVehicle == null) return null;
@@ -167,16 +167,10 @@ public static class Vehicle
 
             var info = new ModularVehicleInfo();
 
-            // Get HasTwinFire
-            var twinFireProp = modType.GetProperty("HasTwinFire", BindingFlags.Public | BindingFlags.Instance);
+            // Get IsTwinFire
+            var twinFireProp = modType.GetProperty("IsTwinFire", BindingFlags.Public | BindingFlags.Instance);
             if (twinFireProp != null)
                 info.HasTwinFire = (bool)twinFireProp.GetValue(modVehicle);
-
-            // Get equipped count
-            var getEquippedMethod = modType.GetMethod("GetEquippedCount",
-                BindingFlags.Public | BindingFlags.Instance);
-            if (getEquippedMethod != null)
-                info.EquippedCount = (int)getEquippedMethod.Invoke(modVehicle, null);
 
             // Get slots
             var slotsProp = modType.GetProperty("Slots", BindingFlags.Public | BindingFlags.Instance);
@@ -188,7 +182,11 @@ public static class Vehicle
                     if (slot == null) continue;
                     var slotInfo = GetSlotInfo(new GameObj(((Il2CppObjectBase)slot).Pointer));
                     if (slotInfo != null)
+                    {
                         info.Slots.Add(slotInfo);
+                        if (slotInfo.HasItem)
+                            info.EquippedCount++;
+                    }
                 }
             }
 
@@ -220,32 +218,30 @@ public static class Vehicle
 
             var info = new SlotInfo { Pointer = slot.Pointer };
 
-            // Get enabled
-            var enabledProp = slotType.GetProperty("IsEnabled", BindingFlags.Public | BindingFlags.Instance);
-            if (enabledProp != null)
-                info.IsEnabled = (bool)enabledProp.GetValue(proxy);
+            // Slot is always enabled (no IsEnabled property)
+            info.IsEnabled = true;
 
-            // Get template for slot type
-            var templateProp = slotType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
-            var template = templateProp?.GetValue(proxy);
-            if (template != null)
+            // Get Data for slot type (returns ModularVehicleSlot with SlotType)
+            var dataProp = slotType.GetProperty("Data", BindingFlags.Public | BindingFlags.Instance);
+            var data = dataProp?.GetValue(proxy);
+            if (data != null)
             {
-                var slotTypeProp = template.GetType().GetProperty("SlotType",
+                var slotTypeProp = data.GetType().GetProperty("SlotType",
                     BindingFlags.Public | BindingFlags.Instance);
                 if (slotTypeProp != null)
                 {
-                    info.SlotType = (int)slotTypeProp.GetValue(template);
+                    info.SlotType = (int)slotTypeProp.GetValue(data);
                     info.SlotTypeName = GetSlotTypeName(info.SlotType);
                 }
             }
 
-            // Get equipped item
-            var equippedProp = slotType.GetProperty("EquippedItem", BindingFlags.Public | BindingFlags.Instance);
-            var equipped = equippedProp?.GetValue(proxy);
-            if (equipped != null)
+            // Get mounted weapon
+            var mountedProp = slotType.GetProperty("MountedWeapon", BindingFlags.Public | BindingFlags.Instance);
+            var mounted = mountedProp?.GetValue(proxy);
+            if (mounted != null)
             {
                 info.HasItem = true;
-                var itemObj = new GameObj(((Il2CppObjectBase)equipped).Pointer);
+                var itemObj = new GameObj(((Il2CppObjectBase)mounted).Pointer);
                 var itemInfo = Inventory.GetItemInfo(itemObj);
                 info.EquippedItem = itemInfo?.TemplateName ?? "Unknown";
             }
@@ -361,7 +357,7 @@ public static class Vehicle
     {
         _vehicleType ??= GameType.Find("Menace.Strategy.Vehicle");
         _modularVehicleType ??= GameType.Find("Menace.Strategy.ItemsModularVehicle");
-        _slotType ??= GameType.Find("Menace.Strategy.ItemsModularVehicle.Slot");
+        _slotType ??= GameType.Find("Menace.Strategy.ModularVehicleSlot");
         _vehicleTemplateType ??= GameType.Find("Menace.Strategy.ModularVehicleTemplate");
     }
 

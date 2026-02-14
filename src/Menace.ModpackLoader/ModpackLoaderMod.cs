@@ -62,6 +62,9 @@ public partial class ModpackLoaderMod : MelonMod
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
 
+        // Initialize boot skip patches (splash/intro skipping in dev mode)
+        BootSkip.Initialize(HarmonyInstance);
+
         // Emit startup banner to Player.log for game dev triage
         PlayerLog("========================================");
         PlayerLog("THIS GAME SESSION IS RUNNING MODDED");
@@ -75,6 +78,7 @@ public partial class ModpackLoaderMod : MelonMod
         if (pluginSummary != null)
             PlayerLog($"Modpack plugins: {pluginSummary}");
         PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
+        PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
         PlayerLog("========================================");
     }
 
@@ -142,6 +146,9 @@ public partial class ModpackLoaderMod : MelonMod
         // Initialize save system watcher (tries to find saves folder)
         SaveSystemPatches.TryInitialize();
 
+        // Load any pending custom sprites now that Unity is initialized
+        AssetReplacer.LoadPendingSprites();
+
         var allApplied = ApplyAllModpacks();
 
         if (allApplied)
@@ -173,6 +180,7 @@ public partial class ModpackLoaderMod : MelonMod
         Pathfinding.RegisterConsoleCommands();
         LineOfSight.RegisterConsoleCommands();
         TileEffects.RegisterConsoleCommands();
+        BootSkip.RegisterConsoleCommands();
     }
 
     private void LoadModpacks()
@@ -297,6 +305,19 @@ public partial class ModpackLoaderMod : MelonMod
                     _registeredAssetPaths.Add(assetPath);
                     AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
                     SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
+
+                    // For texture files, also load as a custom Sprite so template patches
+                    // can reference them by name (e.g., Icon fields on WeaponTemplate)
+                    var ext = Path.GetExtension(assetPath).ToLowerInvariant();
+                    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp")
+                    {
+                        var spriteName = Path.GetFileNameWithoutExtension(assetPath);
+                        var sprite = AssetReplacer.LoadCustomSprite(fullPath, spriteName);
+                        if (sprite != null)
+                            SdkLogger.Msg($"  Custom sprite ready: '{spriteName}'");
+                        else
+                            SdkLogger.Warning($"  Failed to load custom sprite: '{spriteName}'");
+                    }
                 }
                 else
                 {
@@ -370,6 +391,9 @@ public partial class ModpackLoaderMod : MelonMod
             {
                 if (!ApplyClones(modpack))
                     allSucceeded = false;
+
+                // Clear name lookup cache so patches can find the new clones
+                InvalidateNameLookupCache();
             }
 
             bool success;

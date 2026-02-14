@@ -81,14 +81,19 @@ public static class ModError
         AddEntry(modId ?? "unknown", null, message, severity, ex);
     }
 
-    public static void Warn(string modId, string message)
+    public static void Warn(string modId, string message, Exception ex = null)
     {
-        AddEntry(modId ?? "unknown", null, message, ErrorSeverity.Warning, null);
+        AddEntry(modId ?? "unknown", null, message, ErrorSeverity.Warning, ex);
     }
 
-    public static void Info(string modId, string message)
+    public static void Info(string modId, string message, Exception ex = null)
     {
-        AddEntry(modId ?? "unknown", null, message, ErrorSeverity.Info, null);
+        AddEntry(modId ?? "unknown", null, message, ErrorSeverity.Info, ex);
+    }
+
+    public static void Fatal(string modId, string message, Exception ex = null)
+    {
+        AddEntry(modId ?? "unknown", null, message, ErrorSeverity.Fatal, ex);
     }
 
     internal static void ReportInternal(string context, string message, Exception ex = null)
@@ -99,6 +104,11 @@ public static class ModError
     internal static void WarnInternal(string context, string message)
     {
         AddEntry("Menace.SDK", context, message, ErrorSeverity.Warning, null);
+    }
+
+    internal static void InfoInternal(string source, string message)
+    {
+        AddEntry("Menace.SDK", source, message, ErrorSeverity.Info, null);
     }
 
     public static IReadOnlyList<ModErrorEntry> GetErrors(string modId = null)

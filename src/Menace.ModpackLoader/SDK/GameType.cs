@@ -21,6 +21,12 @@ public class GameType
         "Assembly-CSharp",
         "UnityEngine.CoreModule.dll",
         "UnityEngine.CoreModule",
+        "UnityEngine.UIModule.dll",
+        "UnityEngine.UIModule",
+        "UnityEngine.UI.dll",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro.dll",
+        "Unity.TextMeshPro",
         "mscorlib.dll",
         "Il2Cppmscorlib.dll"
     };
@@ -141,6 +147,7 @@ public class GameType
 
     /// <summary>
     /// Get the IL2CppInterop managed proxy Type, if available. May be null.
+    /// Only returns types that inherit from Il2CppObjectBase (actual IL2CPP proxies).
     /// </summary>
     public Type ManagedType
     {
@@ -168,14 +175,20 @@ public class GameType
                     try
                     {
                         // First try exact full name match with Il2Cpp prefix
-                        _managedType = asm.GetType(il2cppFullName);
-                        if (_managedType != null && !_managedType.IsAbstract)
+                        var candidate = asm.GetType(il2cppFullName);
+                        if (IsValidIl2CppProxy(candidate))
+                        {
+                            _managedType = candidate;
                             return _managedType;
+                        }
 
-                        // Try original full name (some types aren't prefixed)
-                        _managedType = asm.GetType(FullName);
-                        if (_managedType != null && !_managedType.IsAbstract)
+                        // Try original full name (some types aren't prefixed but are still proxies)
+                        candidate = asm.GetType(FullName);
+                        if (IsValidIl2CppProxy(candidate))
+                        {
+                            _managedType = candidate;
                             return _managedType;
+                        }
                     }
                     catch
                     {
@@ -190,7 +203,7 @@ public class GameType
                 if (gameAssembly != null)
                 {
                     _managedType = gameAssembly.GetTypes()
-                        .FirstOrDefault(t => t.Name == typeName && !t.IsAbstract);
+                        .FirstOrDefault(t => t.Name == typeName && IsValidIl2CppProxy(t));
                 }
             }
             catch (Exception ex)
@@ -199,6 +212,96 @@ public class GameType
             }
 
             return _managedType;
+        }
+    }
+
+    /// <summary>
+    /// Check if a type is a valid IL2CPP proxy type (inherits from Il2CppObjectBase).
+    /// </summary>
+    private static bool IsValidIl2CppProxy(Type type)
+    {
+        if (type == null || type.IsAbstract)
+            return false;
+
+        // Must inherit from Il2CppObjectBase to be an actual IL2CPP proxy
+        return typeof(Il2CppObjectBase).IsAssignableFrom(type);
+    }
+
+    /// <summary>
+    /// Get the Il2CppSystem.Type for use with Unity APIs like FindObjectsOfType.
+    /// Tries multiple strategies to get a working type reference.
+    /// </summary>
+    public Il2CppSystem.Type GetIl2CppType()
+    {
+        if (!IsValid) return null;
+
+        try
+        {
+            // Strategy 1: Try to get from managed proxy type (most reliable when available)
+            var managed = ManagedType;
+            if (managed != null)
+            {
+                try
+                {
+                    var il2cppType = Il2CppType.From(managed);
+                    // Convert Il2CppType to Il2CppSystem.Type
+                    return Il2CppSystem.Type.internal_from_handle(il2cppType.Pointer);
+                }
+                catch
+                {
+                    // Fall through to other strategies
+                }
+            }
+
+            // Strategy 2: Use Il2CppSystem.Type.GetType with assembly-qualified name
+            try
+            {
+                // Try with assembly qualifier
+                var assemblyQualifiedName = $"{FullName}, {GetAssemblyName()}";
+                var type = Il2CppSystem.Type.GetType(assemblyQualifiedName);
+                if (type != null) return type;
+            }
+            catch
+            {
+                // Fall through
+            }
+
+            // Strategy 3: Use the type pointer directly from class
+            var typePtr = IL2CPP.il2cpp_class_get_type(ClassPointer);
+            if (typePtr != IntPtr.Zero)
+            {
+                return Il2CppSystem.Type.internal_from_handle(typePtr);
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("GameType.GetIl2CppType", $"Failed for {FullName}", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Get the assembly name for this type by querying the IL2CPP class.
+    /// </summary>
+    private string GetAssemblyName()
+    {
+        if (!IsValid) return "";
+
+        try
+        {
+            var imagePtr = IL2CPP.il2cpp_class_get_image(ClassPointer);
+            if (imagePtr == IntPtr.Zero) return "";
+
+            var namePtr = IL2CPP.il2cpp_image_get_name(imagePtr);
+            if (namePtr == IntPtr.Zero) return "";
+
+            return Marshal.PtrToStringAnsi(namePtr) ?? "";
+        }
+        catch
+        {
+            return "";
         }
     }
 

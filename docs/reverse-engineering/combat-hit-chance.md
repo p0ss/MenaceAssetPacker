@@ -7,7 +7,7 @@ The hit chance calculation in Menace is handled primarily by `Skill$$GetHitchanc
 ## Core Formula
 
 ```
-FinalHitChance = clamp(BaseAccuracy * AccuracyMult * CoverMult * DodgeMult + DistancePenalty, MinHitChance, 100)
+FinalValue = clamp(BaseAccuracy * AccuracyMult * CoverMult * DefenseMult + AccuracyDropoff, MinHitChance, 100)
 ```
 
 Where:
@@ -23,42 +23,62 @@ Main entry point for hit chance calculation.
 
 ```c
 // Pseudocode reconstruction
-float GetHitchance(Skill skill, Tile sourceTile, Tile targetTile, Entity target,
-                   EntityProperties defenseProps, bool includeDistance) {
+// Signature: GetHitchance(from, targetTile, properties, defenderProperties, includeDropoff, overrideTargetEntity, forImmediateUse)
+HitChanceResult GetHitchance(Skill skill, Tile from, Tile targetTile,
+                              EntityProperties properties, EntityProperties defenderProperties,
+                              bool includeDropoff, Entity overrideTargetEntity, bool forImmediateUse) {
 
-    EntityProperties attackProps = BuildPropertiesForUse(skill);
-    float accuracy = attackProps.GetAccuracy();
+    HitChanceResult result = {};
+    Entity target = overrideTargetEntity;
 
-    // Get dodge modifier from defender (flipped so high dodge = low hit)
-    float dodgeMult = 1.0;
-    if (target != null) {
-        dodgeMult = FloatExtensions.Flipped(defenseProps.DodgeMult);  // offset +0x44
+    // Check AlwaysHits flag
+    if (skill.SkillTemplate.AlwaysHits) {
+        result.FinalValue = 100;
+        result.AlwaysHits = true;
+        return result;
     }
 
-    float coverMult = GetCoverMult(skill, sourceTile, targetTile, target, defenseProps);
+    if (properties == null) {
+        properties = BuildPropertiesForUse(skill);
+    }
+    float accuracy = properties.GetAccuracy();
+
+    // Get defense modifier from defender (flipped so high defense = low hit)
+    float defenseMult = 1.0;
+    if (target != null) {
+        defenseMult = FloatExtensions.Flipped(defenderProperties.DefenseMult);  // offset +0x44
+    }
+
+    float coverMult = GetCoverMult(skill, from, targetTile, target, defenderProperties);
 
     float hitChance;
-    if (includeDistance && sourceTile != null) {
-        int distance = sourceTile.GetDistanceTo(targetTile);
+    if (includeDropoff && from != null) {
+        result.IncludeDropoff = true;
+        int distance = from.GetDistanceTo(targetTile);
         int idealRange = skill.SkillTemplate.IdealRange;  // Skill+0xB8
         int rangeDiff = abs(distance - idealRange);
 
-        float dropoff = attackProps.GetAccuracyDropoff();
-        hitChance = accuracy * coverMult * dodgeMult + (rangeDiff * dropoff);
+        float dropoff = properties.GetAccuracyDropoff();
+        result.AccuracyDropoff = rangeDiff * dropoff;
+        hitChance = accuracy * coverMult * defenseMult + result.AccuracyDropoff;
     } else {
-        hitChance = accuracy * coverMult * dodgeMult;
+        hitChance = accuracy * coverMult * defenseMult;
     }
 
     // Clamp to valid range
     hitChance = clamp(hitChance, 0, 100);
 
     // Apply minimum hit chance floor
-    int minHitChance = attackProps.MinHitChance;  // EntityProperties+0x78
+    int minHitChance = properties.MinHitChance;  // EntityProperties+0x78
     if (hitChance < minHitChance) {
         hitChance = minHitChance;
     }
 
-    return hitChance;
+    result.FinalValue = hitChance;
+    result.Accuracy = accuracy;
+    result.CoverMult = coverMult;
+    result.DefenseMult = defenseMult;
+    return result;
 }
 ```
 

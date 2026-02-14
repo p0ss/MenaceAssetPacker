@@ -369,12 +369,38 @@ public static class BattleLog
         if (obj.IsNull) return "<null>";
 
         // Try DebugName first (common on Actor / Entity in Menace.Tactical)
-        var name = obj.ReadString("DebugName");
+        // DebugName is a PROPERTY, not a field - use reflection via the proxy object
+        var name = ReadPropertyString(obj.Pointer, "DebugName");
         if (!string.IsNullOrEmpty(name)) return name;
 
         // Fall back to Unity object name
         name = obj.GetName();
         return !string.IsNullOrEmpty(name) ? name : $"<0x{obj.Pointer:X8}>";
+    }
+
+    /// <summary>
+    /// Read a string property from an IL2CPP object via reflection on its proxy type.
+    /// </summary>
+    private static string ReadPropertyString(IntPtr ptr, string propertyName)
+    {
+        if (ptr == IntPtr.Zero) return null;
+
+        try
+        {
+            // Use GameObj.ToManaged() to get the proxy object, then invoke property getter
+            var obj = new GameObj(ptr);
+            var proxy = obj.ToManaged();
+            if (proxy == null) return null;
+
+            var prop = proxy.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+            if (prop == null) return null;
+
+            return prop.GetValue(proxy)?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -439,29 +465,64 @@ public static class BattleLog
     /// <summary>
     /// Try to extract FinalValue (float, 0-1) and Roll (int) from a HitResult.
     /// HitResult is a value struct — Harmony passes it as a boxed Il2CppInterop
-    /// proxy.  We try GameObj field reads first, then fall back to known offsets.
+    /// proxy.  We try reflection first, then fall back to dynamic field offset resolution.
     /// </summary>
     private static void ReadHitResult(object hitResultObj, out float finalValue, out int roll)
     {
         finalValue = 0f;
         roll = 0;
 
-        var ptr = Ptr(hitResultObj);
-        if (ptr == IntPtr.Zero) return;
+        if (hitResultObj == null) return;
 
         try
         {
-            // Approach 1: treat as boxed IL2CPP object and use GameObj field reads
-            var obj = new GameObj(ptr);
+            // Approach 1: Use reflection on the proxy object directly
+            // HitChance is an EMBEDDED struct in HitResult, not a pointer
+            var hitResultType = hitResultObj.GetType();
+            var flags = BindingFlags.Public | BindingFlags.Instance;
 
-            // HitResult may embed a HitChance sub-struct or expose FinalValue directly
-            var hitChance = obj.ReadObj("HitChance");
-            if (!hitChance.IsNull)
-                finalValue = hitChance.ReadFloat("FinalValue");
+            // Try to get HitChance field/property (embedded struct)
+            var hitChanceField = hitResultType.GetField("HitChance", flags);
+            var hitChanceProp = hitResultType.GetProperty("HitChance", flags);
+            object hitChanceValue = null;
+
+            if (hitChanceField != null)
+                hitChanceValue = hitChanceField.GetValue(hitResultObj);
+            else if (hitChanceProp != null)
+                hitChanceValue = hitChanceProp.GetValue(hitResultObj);
+
+            if (hitChanceValue != null)
+            {
+                // Read FinalValue from the embedded HitChance struct
+                var hitChanceType = hitChanceValue.GetType();
+                var finalValueProp = hitChanceType.GetProperty("FinalValue", flags);
+                var finalValueField = hitChanceType.GetField("FinalValue", flags);
+
+                if (finalValueProp != null)
+                    finalValue = Convert.ToSingle(finalValueProp.GetValue(hitChanceValue));
+                else if (finalValueField != null)
+                    finalValue = Convert.ToSingle(finalValueField.GetValue(hitChanceValue));
+            }
             else
-                finalValue = obj.ReadFloat("FinalValue");
+            {
+                // FinalValue might be directly on HitResult
+                var finalValueProp = hitResultType.GetProperty("FinalValue", flags);
+                var finalValueField = hitResultType.GetField("FinalValue", flags);
 
-            roll = obj.ReadInt("Roll");
+                if (finalValueProp != null)
+                    finalValue = Convert.ToSingle(finalValueProp.GetValue(hitResultObj));
+                else if (finalValueField != null)
+                    finalValue = Convert.ToSingle(finalValueField.GetValue(hitResultObj));
+            }
+
+            // Read Roll from HitResult
+            var rollProp = hitResultType.GetProperty("Roll", flags);
+            var rollField = hitResultType.GetField("Roll", flags);
+
+            if (rollProp != null)
+                roll = Convert.ToInt32(rollProp.GetValue(hitResultObj));
+            else if (rollField != null)
+                roll = Convert.ToInt32(rollField.GetValue(hitResultObj));
 
             // FinalValue is 0-1 in the game, display as percentage
             finalValue *= 100f;
@@ -471,50 +532,97 @@ public static class BattleLog
         }
         catch { /* fall through to raw reads */ }
 
-        // Approach 2: raw struct memory reads at known offsets.
-        // HitChance starts at offset 0x0 of HitResult data; FinalValue is
-        // the first float in HitChance.  For a boxed object the data starts
-        // at ptr + 0x10 (IL2CPP object header on 64-bit).
+        // Approach 2: raw struct memory reads using dynamic field offset resolution.
+        // HitChance is embedded at the start of HitResult. HitChance has 7 fields:
+        // 5 floats + 2 bools (not 5 floats as previously commented).
+        // For a boxed object the data starts at ptr + 0x10 (IL2CPP object header on 64-bit).
+        var ptr = Ptr(hitResultObj);
+        if (ptr == IntPtr.Zero) return;
+
         try
         {
+            // Try to resolve field offsets dynamically via IL2CPP reflection
+            var hitResultType = hitResultObj.GetType();
+            int hitChanceSize = ResolveEmbeddedStructSize(hitResultType, "HitChance");
+
             // Try with IL2CPP boxing header
             finalValue = BitConverter.Int32BitsToSingle(
                 Marshal.ReadInt32(ptr + 0x10)) * 100f;
-            // Roll follows HitChance (5 floats x 4 bytes = 0x14 from data start)
-            roll = Marshal.ReadInt32(ptr + 0x10 + 0x14);
+            // Roll follows HitChance - use dynamic size if resolved, else fallback
+            // HitChance: 5 floats (0x14) + 2 bools (with alignment, typically 0x4 each or padded)
+            // Total HitChance size is typically 0x18 (5 floats + 2 bools with 2-byte alignment)
+            int rollOffset = hitChanceSize > 0 ? hitChanceSize : 0x18;
+            roll = Marshal.ReadInt32(ptr + 0x10 + rollOffset);
 
             if (finalValue < 0 || finalValue > 100 || roll < 0 || roll > 100)
             {
                 // Values look implausible — try without header (raw struct pointer)
                 finalValue = BitConverter.Int32BitsToSingle(
                     Marshal.ReadInt32(ptr)) * 100f;
-                roll = Marshal.ReadInt32(ptr + 0x14);
+                roll = Marshal.ReadInt32(ptr + rollOffset);
             }
         }
         catch { /* give up, zeros are fine */ }
     }
 
     /// <summary>
-    /// Try to extract Damage and ArmorDamage from a DamageInfo struct/object.
+    /// Attempt to resolve the size of an embedded struct field via IL2CPP reflection.
+    /// Returns 0 if unable to determine.
+    /// </summary>
+    private static int ResolveEmbeddedStructSize(Type parentType, string fieldName)
+    {
+        try
+        {
+            var field = parentType.GetField(fieldName, BindingFlags.Public | BindingFlags.Instance);
+            if (field == null)
+            {
+                var prop = parentType.GetProperty(fieldName, BindingFlags.Public | BindingFlags.Instance);
+                if (prop == null) return 0;
+                return Marshal.SizeOf(prop.PropertyType);
+            }
+            return Marshal.SizeOf(field.FieldType);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Try to extract Damage and ArmorDamage from a DamageInfo class.
+    /// DamageInfo.Damage and DamageInfo.ArmorDamage are PROPERTIES, not fields.
+    /// Use reflection to invoke property getters.
     /// </summary>
     private static void ReadDamageInfo(object damageInfoObj, out int damage, out int armorDamage)
     {
         damage = 0;
         armorDamage = 0;
 
-        var ptr = Ptr(damageInfoObj);
-        if (ptr == IntPtr.Zero) return;
+        if (damageInfoObj == null) return;
 
         try
         {
-            var obj = new GameObj(ptr);
-            damage = obj.ReadInt("Damage");
-            armorDamage = obj.ReadInt("ArmorDamage");
+            // DamageInfo.Damage and DamageInfo.ArmorDamage are PROPERTIES, not fields
+            // Use reflection to invoke property getters on the proxy object
+            var damageInfoType = damageInfoObj.GetType();
+            var flags = BindingFlags.Public | BindingFlags.Instance;
+
+            var damageProp = damageInfoType.GetProperty("Damage", flags);
+            var armorDamageProp = damageInfoType.GetProperty("ArmorDamage", flags);
+
+            if (damageProp != null)
+                damage = Convert.ToInt32(damageProp.GetValue(damageInfoObj));
+            if (armorDamageProp != null)
+                armorDamage = Convert.ToInt32(armorDamageProp.GetValue(damageInfoObj));
+
             if (damage != 0 || armorDamage != 0) return;
         }
         catch { /* fall through */ }
 
-        // Raw reads at known offsets (with IL2CPP boxing header)
+        // Fallback: raw reads at known offsets (with IL2CPP object header)
+        var ptr = Ptr(damageInfoObj);
+        if (ptr == IntPtr.Zero) return;
+
         try
         {
             damage = Marshal.ReadInt32(ptr + 0x10 + 0x2C);

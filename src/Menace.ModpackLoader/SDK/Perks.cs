@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using Il2CppInterop.Runtime.InteropTypes;
@@ -71,8 +72,8 @@ public static class Perks
             var proxy = GetManagedProxy(leader, leaderType);
             if (proxy == null) return result;
 
-            var perksProp = leaderType.GetProperty("Perks", BindingFlags.Public | BindingFlags.Instance);
-            var perks = perksProp?.GetValue(proxy);
+            var perksField = leaderType.GetField("m_Perks", BindingFlags.Public | BindingFlags.Instance);
+            var perks = perksField?.GetValue(proxy);
             if (perks == null) return result;
 
             var listType = perks.GetType();
@@ -180,9 +181,9 @@ public static class Perks
             if (arrayType == null) return result;
 
             var proxy = GetManagedProxy(perkTrees, arrayType);
-            if (proxy is not Array array) return result;
+            if (proxy is not IEnumerable enumerable) return result;
 
-            foreach (var item in array)
+            foreach (var item in enumerable)
             {
                 if (item == null) continue;
                 var treeObj = new GameObj(((Il2CppObjectBase)item).Pointer);
@@ -223,11 +224,18 @@ public static class Perks
             if (arrayType == null) return info;
 
             var proxy = GetManagedProxy(perksArray, arrayType);
-            if (proxy is Array array)
+            if (proxy is IEnumerable enumerable)
             {
-                info.PerkCount = array.Length;
+                int perkCount = 0;
+                var items = new List<object>();
+                foreach (var item in enumerable)
+                {
+                    perkCount++;
+                    items.Add(item);
+                }
+                info.PerkCount = perkCount;
 
-                foreach (var item in array)
+                foreach (var item in items)
                 {
                     if (item == null) continue;
 

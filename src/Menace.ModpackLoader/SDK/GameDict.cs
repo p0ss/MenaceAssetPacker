@@ -22,6 +22,10 @@ public readonly struct GameDict
 
     public bool IsValid => _dictPointer != IntPtr.Zero;
 
+    /// <summary>
+    /// Returns the actual number of entries in the dictionary.
+    /// This is _count minus _freeCount (deleted entries awaiting reuse).
+    /// </summary>
     public int Count
     {
         get
@@ -31,12 +35,25 @@ public readonly struct GameDict
             try
             {
                 var klass = IL2CPP.il2cpp_object_get_class(_dictPointer);
-                var offset = OffsetCache.GetOrResolve(klass, "_count");
-                if (offset == 0)
-                    offset = OffsetCache.GetOrResolve(klass, "count");
-                if (offset == 0) return 0;
 
-                return Marshal.ReadInt32(_dictPointer + (int)offset);
+                // Read _count (total slots used including deleted)
+                var countOffset = OffsetCache.GetOrResolve(klass, "_count");
+                if (countOffset == 0)
+                    countOffset = OffsetCache.GetOrResolve(klass, "count");
+                if (countOffset == 0) return 0;
+
+                var count = Marshal.ReadInt32(_dictPointer + (int)countOffset);
+
+                // Read _freeCount (number of deleted entries)
+                var freeCountOffset = OffsetCache.GetOrResolve(klass, "_freeCount");
+                if (freeCountOffset == 0)
+                    freeCountOffset = OffsetCache.GetOrResolve(klass, "freeCount");
+
+                var freeCount = freeCountOffset != 0
+                    ? Marshal.ReadInt32(_dictPointer + (int)freeCountOffset)
+                    : 0;
+
+                return count - freeCount;
             }
             catch
             {

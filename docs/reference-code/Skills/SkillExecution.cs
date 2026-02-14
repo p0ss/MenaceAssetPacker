@@ -338,10 +338,12 @@ namespace Menace.Tactical.Skills
             else
             {
                 // Get hit chance
+                // Signature: (from, targetTile, properties, defenderProperties, includeDropoff, overrideTargetEntity, forImmediateUse)
                 var hitChanceResult = skill.GetHitchance(
                     m_Owner.CurrentTile,
                     targetTile,
                     null, null,
+                    false,
                     target,
                     false);
 
@@ -388,15 +390,15 @@ namespace Menace.Tactical.Skills
         private HitResult ResolveHitRoll(int roll, HitChanceResult hitChance)
         {
             // Check for miss
-            if (roll >= hitChance.FinalHitChance)
+            if (roll >= hitChance.FinalValue)
             {
                 return HitResult.Miss;
             }
 
             // Check for graze (partial hit)
             // Graze window is (hitChance * 0.15) at the top of the hit range
-            float grazeThreshold = hitChance.FinalHitChance * 0.85f;
-            if (roll >= grazeThreshold && roll < hitChance.FinalHitChance)
+            float grazeThreshold = hitChance.FinalValue * 0.85f;
+            if (roll >= grazeThreshold && roll < hitChance.FinalValue)
             {
                 return HitResult.Graze;
             }
@@ -535,18 +537,26 @@ namespace Menace.Tactical.Skills
         ///
         /// Address: 0x1806b3400 (delegates to HitChanceCalculation)
         /// </summary>
+        /// <param name="from">Source tile</param>
+        /// <param name="targetTile">Target tile</param>
+        /// <param name="properties">Attack properties (or null to build)</param>
+        /// <param name="defenderProperties">Defense properties (or null to build)</param>
+        /// <param name="includeDropoff">Whether to include distance dropoff</param>
+        /// <param name="overrideTargetEntity">Target entity override</param>
+        /// <param name="forImmediateUse">Whether for immediate use</param>
         public HitChanceResult GetHitchance(
-            Tile sourceTile,
+            Tile from,
             Tile targetTile,
-            object unused1,
-            object unused2,
-            Entity target,
-            bool isPreview)
+            object properties,
+            object defenderProperties,
+            bool includeDropoff,
+            Entity overrideTargetEntity,
+            bool forImmediateUse)
         {
             return HitChanceCalculation.Calculate(
-                this, m_Owner, target,
-                sourceTile, targetTile,
-                isPreview);
+                this, m_Owner, overrideTargetEntity,
+                from, targetTile,
+                !forImmediateUse);
         }
 
         /// <summary>
@@ -686,8 +696,14 @@ namespace Menace.Tactical.Skills
 
     public class HitChanceResult
     {
-        public float FinalHitChance;
+        public float FinalValue;
         public float CritChance;
+        public float Accuracy;
+        public float CoverMult;
+        public float DefenseMult;
+        public float AccuracyDropoff;
+        public bool IncludeDropoff;
+        public bool AlwaysHits;
     }
 
     public static class HitChanceCalculation
@@ -697,7 +713,7 @@ namespace Menace.Tactical.Skills
             Tile sourceTile, Tile targetTile, bool isPreview)
         {
             // Full implementation in Combat/HitChanceCalculation.cs
-            return new HitChanceResult { FinalHitChance = 75, CritChance = 5 };
+            return new HitChanceResult { FinalValue = 75, CritChance = 5 };
         }
     }
 

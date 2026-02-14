@@ -80,6 +80,69 @@ public static class GamePatch
         return PatchInternal(harmony, managed, methodName, patchMethod, null);
     }
 
+    // --- Overload-aware variants ---
+
+    /// <summary>
+    /// Apply a Harmony Postfix patch to a specific method overload.
+    /// Use this when the method has multiple overloads.
+    /// </summary>
+    public static bool Postfix(HarmonyLib.Harmony harmony, string typeName,
+        string methodName, Type[] parameterTypes, MethodInfo patchMethod)
+    {
+        var type = ResolveType(typeName);
+        if (type == null) return false;
+        return PatchInternalWithParams(harmony, type, methodName, parameterTypes, null, patchMethod);
+    }
+
+    /// <summary>
+    /// Apply a Harmony Prefix patch to a specific method overload.
+    /// Use this when the method has multiple overloads.
+    /// </summary>
+    public static bool Prefix(HarmonyLib.Harmony harmony, string typeName,
+        string methodName, Type[] parameterTypes, MethodInfo patchMethod)
+    {
+        var type = ResolveType(typeName);
+        if (type == null) return false;
+        return PatchInternalWithParams(harmony, type, methodName, parameterTypes, patchMethod, null);
+    }
+
+    private static bool PatchInternalWithParams(HarmonyLib.Harmony harmony, Type targetType,
+        string methodName, Type[] parameterTypes, MethodInfo prefix, MethodInfo postfix)
+    {
+        if (harmony == null)
+        {
+            ModError.ReportInternal("GamePatch", "Harmony instance is null");
+            return false;
+        }
+
+        try
+        {
+            var method = targetType.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Instance | BindingFlags.Static,
+                null, parameterTypes, null);
+
+            if (method == null)
+            {
+                ModError.ReportInternal("GamePatch",
+                    $"Method '{methodName}' with specified parameters not found on {targetType.Name}");
+                return false;
+            }
+
+            var prefixHm = prefix != null ? new HarmonyMethod(prefix) : null;
+            var postfixHm = postfix != null ? new HarmonyMethod(postfix) : null;
+
+            harmony.Patch(method, prefix: prefixHm, postfix: postfixHm);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("GamePatch",
+                $"Failed to patch {targetType.Name}.{methodName}", ex);
+            return false;
+        }
+    }
+
     private static bool PatchInternal(HarmonyLib.Harmony harmony, Type targetType,
         string methodName, MethodInfo prefix, MethodInfo postfix)
     {

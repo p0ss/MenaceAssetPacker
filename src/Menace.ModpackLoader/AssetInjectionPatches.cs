@@ -53,7 +53,131 @@ public static class AssetReplacer
     // Byte cache to avoid re-reading files from disk
     private static readonly Dictionary<string, byte[]> _bytesCache = new();
 
+    // Custom sprites loaded from PNG files, keyed by name
+    // These are kept alive so FindObjectsOfTypeAll(Sprite) can discover them
+    private static readonly Dictionary<string, Sprite> _customSprites
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    // Custom textures loaded from PNG files, keyed by name
+    // Kept alive to support the sprites
+    private static readonly Dictionary<string, Texture2D> _customTextures
+        = new(StringComparer.OrdinalIgnoreCase);
+
     public static int RegisteredCount => _replacements.Count;
+    public static int CustomSpriteCount => _customSprites.Count;
+
+    /// <summary>
+    /// Load a custom sprite from a PNG file and register it by name.
+    /// The sprite will be discoverable by Resources.FindObjectsOfTypeAll(Sprite)
+    /// and can be referenced by name in template patches (e.g., Icon field).
+    /// </summary>
+    /// <param name="diskFilePath">Full path to the PNG file</param>
+    /// <param name="spriteName">Name to register the sprite under (e.g., "weapon_laser_smg_144x144")</param>
+    /// <returns>The created Sprite, or null if loading failed</returns>
+    // Pending sprite loads - defer actual sprite creation until scene is ready
+    private static readonly Dictionary<string, string> _pendingSpriteLoads
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    public static Sprite LoadCustomSprite(string diskFilePath, string spriteName)
+    {
+        if (_customSprites.TryGetValue(spriteName, out var existing))
+        {
+            return existing;
+        }
+
+        if (!File.Exists(diskFilePath))
+        {
+            SdkLogger.Warning($"  Sprite file not found: {diskFilePath}");
+            return null;
+        }
+
+        // Defer loading - store the path for later
+        _pendingSpriteLoads[spriteName] = diskFilePath;
+        SdkLogger.Msg($"  Queued custom sprite: '{spriteName}'");
+        return null;
+    }
+
+    /// <summary>
+    /// Actually load all pending sprites. Call this after Unity is fully initialized.
+    /// </summary>
+    public static void LoadPendingSprites()
+    {
+        if (_pendingSpriteLoads.Count == 0) return;
+
+        SdkLogger.Msg($"Loading {_pendingSpriteLoads.Count} pending custom sprite(s)...");
+
+        foreach (var (spriteName, diskFilePath) in _pendingSpriteLoads)
+        {
+            if (_customSprites.ContainsKey(spriteName)) continue;
+
+            try
+            {
+                var bytes = File.ReadAllBytes(diskFilePath);
+                var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                texture.name = spriteName;
+                texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+                var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+                if (!ImageConversion.LoadImage(texture, il2cppBytes))
+                {
+                    SdkLogger.Warning($"  Failed to decode texture: {spriteName}");
+                    continue;
+                }
+
+                // Create a sprite from the full texture
+                var rect = new Rect(0, 0, texture.width, texture.height);
+                var pivot = new Vector2(0.5f, 0.5f);
+                var sprite = Sprite.Create(texture, rect, pivot, 100f);
+
+                if (sprite == null)
+                {
+                    SdkLogger.Warning($"  Sprite.Create returned null: {spriteName}");
+                    continue;
+                }
+
+                sprite.name = spriteName;
+                sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+                // Keep references so they don't get garbage collected
+                _customTextures[spriteName] = texture;
+                _customSprites[spriteName] = sprite;
+
+                SdkLogger.Msg($"  Loaded sprite: '{spriteName}' ({texture.width}x{texture.height})");
+            }
+            catch (Exception ex)
+            {
+                SdkLogger.Error($"  Failed to load sprite '{spriteName}': {ex.Message}");
+            }
+        }
+
+        _pendingSpriteLoads.Clear();
+        SdkLogger.Msg($"Custom sprites loaded: {_customSprites.Count}");
+    }
+
+    /// <summary>
+    /// Check if a custom sprite with the given name has been loaded.
+    /// </summary>
+    public static bool HasCustomSprite(string spriteName)
+    {
+        return _customSprites.ContainsKey(spriteName);
+    }
+
+    /// <summary>
+    /// Get a custom sprite by name.
+    /// </summary>
+    public static Sprite GetCustomSprite(string spriteName)
+    {
+        _customSprites.TryGetValue(spriteName, out var sprite);
+        return sprite;
+    }
+
+    /// <summary>
+    /// Get all custom sprite names.
+    /// </summary>
+    public static IReadOnlyCollection<string> GetCustomSpriteNames()
+    {
+        return _customSprites.Keys;
+    }
 
     /// <summary>
     /// Register a disk-file asset replacement. Called during modpack loading.
@@ -1131,6 +1255,7 @@ public static class AssetReplacer
 public static class AssetInjectionPatches
 {
     public static int RegisteredCount => AssetReplacer.RegisteredCount;
+    public static int CustomSpriteCount => AssetReplacer.CustomSpriteCount;
 
     public static void RegisterAssetReplacement(string assetPath, string diskFilePath)
         => AssetReplacer.RegisterAssetReplacement(assetPath, diskFilePath);
@@ -1143,4 +1268,19 @@ public static class AssetInjectionPatches
 
     public static Texture2D LoadTextureFromFile(string filePath)
         => AssetReplacer.LoadTextureFromFile(filePath);
+
+    public static Sprite LoadCustomSprite(string diskFilePath, string spriteName)
+        => AssetReplacer.LoadCustomSprite(diskFilePath, spriteName);
+
+    public static bool HasCustomSprite(string spriteName)
+        => AssetReplacer.HasCustomSprite(spriteName);
+
+    public static Sprite GetCustomSprite(string spriteName)
+        => AssetReplacer.GetCustomSprite(spriteName);
+
+    public static IReadOnlyCollection<string> GetCustomSpriteNames()
+        => AssetReplacer.GetCustomSpriteNames();
+
+    public static void LoadPendingSprites()
+        => AssetReplacer.LoadPendingSprites();
 }

@@ -52,12 +52,24 @@ public static class Operation
         {
             EnsureTypesLoaded();
 
+            // Access OperationsManager via StrategyState.Get().Operations (offset +0x58)
+            var strategyStateType = _strategyStateType?.ManagedType;
+            if (strategyStateType == null) return GameObj.Null;
+
+            // Use static Get() method instead of s_Singleton property
+            var getMethod = strategyStateType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var strategyState = getMethod?.Invoke(null, null);
+            if (strategyState == null) return GameObj.Null;
+
+            // Use direct field access at offset +0x58 for Operations
+            var strategyStateObj = new GameObj(((Il2CppObjectBase)strategyState).Pointer);
+            var omPtr = strategyStateObj.ReadPtr(0x58);
+            if (omPtr == IntPtr.Zero) return GameObj.Null;
+            var om = new GameObj(omPtr).ToManaged();
+            if (om == null) return GameObj.Null;
+
             var omType = _operationsManagerType?.ManagedType;
             if (omType == null) return GameObj.Null;
-
-            var instanceProp = omType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var om = instanceProp?.GetValue(null);
-            if (om == null) return GameObj.Null;
 
             var getCurrentMethod = omType.GetMethod("GetCurrentOperation",
                 BindingFlags.Public | BindingFlags.Instance);
@@ -101,27 +113,26 @@ public static class Operation
 
             var info = new OperationInfo { Pointer = operation.Pointer };
 
-            // Get template
-            var templateProp = opType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
-            var template = templateProp?.GetValue(proxy);
-            if (template != null)
+            // Get template via direct field access at offset +0x10
+            var templatePtr = operation.ReadPtr(0x10);
+            if (templatePtr != IntPtr.Zero)
             {
-                var templateObj = new GameObj(((Il2CppObjectBase)template).Pointer);
+                var templateObj = new GameObj(templatePtr);
                 info.TemplateName = templateObj.GetName();
             }
 
-            // Get enemy faction
-            var enemyProp = opType.GetProperty("EnemyFaction", BindingFlags.Public | BindingFlags.Instance);
-            var enemy = enemyProp?.GetValue(proxy);
+            // Get enemy faction via GetEnemyStoryFaction() method
+            var getEnemyMethod = opType.GetMethod("GetEnemyStoryFaction", BindingFlags.Public | BindingFlags.Instance);
+            var enemy = getEnemyMethod?.Invoke(proxy, null);
             if (enemy != null)
             {
                 var enemyObj = new GameObj(((Il2CppObjectBase)enemy).Pointer);
                 info.EnemyFaction = enemyObj.GetName();
             }
 
-            // Get friendly faction
-            var friendlyProp = opType.GetProperty("FriendlyFaction", BindingFlags.Public | BindingFlags.Instance);
-            var friendly = friendlyProp?.GetValue(proxy);
+            // Get friendly faction via GetFriendlyFaction() method
+            var getFriendlyMethod = opType.GetMethod("GetFriendlyFaction", BindingFlags.Public | BindingFlags.Instance);
+            var friendly = getFriendlyMethod?.Invoke(proxy, null);
             if (friendly != null)
             {
                 var friendlyObj = new GameObj(((Il2CppObjectBase)friendly).Pointer);
@@ -137,33 +148,27 @@ public static class Operation
                 info.Planet = planetObj.GetName();
             }
 
-            // Get mission info
-            var curMissionProp = opType.GetProperty("CurrentMissionIndex", BindingFlags.Public | BindingFlags.Instance);
-            if (curMissionProp != null)
-                info.CurrentMissionIndex = (int)curMissionProp.GetValue(proxy);
+            // Get mission info - use direct field read at offset +0x40
+            info.CurrentMissionIndex = operation.ReadInt(0x40);
 
-            var missionsProp = opType.GetProperty("Missions", BindingFlags.Public | BindingFlags.Instance);
-            var missions = missionsProp?.GetValue(proxy);
-            if (missions != null)
+            // Get missions via direct field access at offset +0x50
+            var missionsPtr = operation.ReadPtr(0x50);
+            if (missionsPtr != IntPtr.Zero)
             {
-                var countProp = missions.GetType().GetProperty("Count");
-                info.MissionCount = (int)(countProp?.GetValue(missions) ?? 0);
+                var missionsList = new GameList(missionsPtr);
+                info.MissionCount = missionsList.Count;
             }
 
-            // Get time info
-            var timeSpentProp = opType.GetProperty("TimeSpent", BindingFlags.Public | BindingFlags.Instance);
-            var timeLimitProp = opType.GetProperty("TimeLimit", BindingFlags.Public | BindingFlags.Instance);
-            if (timeSpentProp != null) info.TimeSpent = (int)timeSpentProp.GetValue(proxy);
-            if (timeLimitProp != null) info.TimeLimit = (int)timeLimitProp.GetValue(proxy);
+            // Get time info - use direct field reads at +0x5c (m_PassedTime) and +0x58 (m_MaxTimeUntilTimeout)
+            info.TimeSpent = operation.ReadInt(0x5c);
+            info.TimeLimit = operation.ReadInt(0x58);
 
             var getRemainingMethod = opType.GetMethod("GetRemainingTime", BindingFlags.Public | BindingFlags.Instance);
             if (getRemainingMethod != null)
-                info.TimeRemaining = (int)getRemainingMethod.Invoke(proxy, null);
+                info.TimeRemaining = Convert.ToInt32(getRemainingMethod.Invoke(proxy, null) ?? 0);
 
-            // Get completion flag
-            var completedProp = opType.GetProperty("HasCompletedOnce", BindingFlags.Public | BindingFlags.Instance);
-            if (completedProp != null)
-                info.HasCompletedOnce = (bool)completedProp.GetValue(proxy);
+            // HasCompletedOnce doesn't exist on Operation - would need OperationsManager.m_CompletedOperationTypes
+            // Leave as default (false) for now
 
             return info;
         }
@@ -217,28 +222,16 @@ public static class Operation
             var op = GetCurrentOperation();
             if (op.IsNull) return result;
 
-            EnsureTypesLoaded();
+            // Get missions via direct field access at offset +0x50
+            var missionsPtr = op.ReadPtr(0x50);
+            if (missionsPtr == IntPtr.Zero) return result;
 
-            var opType = _operationType?.ManagedType;
-            if (opType == null) return result;
-
-            var proxy = GetManagedProxy(op, opType);
-            if (proxy == null) return result;
-
-            var missionsProp = opType.GetProperty("Missions", BindingFlags.Public | BindingFlags.Instance);
-            var missions = missionsProp?.GetValue(proxy);
-            if (missions == null) return result;
-
-            var listType = missions.GetType();
-            var countProp = listType.GetProperty("Count");
-            var indexer = listType.GetMethod("get_Item");
-
-            int count = (int)countProp.GetValue(missions);
-            for (int i = 0; i < count; i++)
+            var missionsList = new GameList(missionsPtr);
+            for (int i = 0; i < missionsList.Count; i++)
             {
-                var mission = indexer.Invoke(missions, new object[] { i });
-                if (mission != null)
-                    result.Add(new GameObj(((Il2CppObjectBase)mission).Pointer));
+                var mission = missionsList[i];
+                if (!mission.IsNull)
+                    result.Add(mission);
             }
 
             return result;

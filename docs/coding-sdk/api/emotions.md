@@ -12,14 +12,20 @@ The Emotions SDK provides safe access to the game's Emotional State system. Emot
 public enum EmotionalStateType
 {
     None = 0,
-    Angry = 1,        // Combat bonuses, may reduce accuracy
-    Confident = 2,    // General performance boost
-    Targeted = 3,     // Directed at specific enemy (requires target)
-    Grief = 4,        // Negative, from ally death
-    Fear = 5,         // Negative, reduces effectiveness
-    Inspired = 6,     // Positive boost from leadership
-    Vengeful = 7,     // Focused hatred toward target
-    Traumatized = 8   // Severe negative from combat stress
+    AnimosityTowards = 1,  // Animosity towards a specific target
+    Determined = 2,        // Focused and resolute
+    Weary = 3,             // Tired from extended duty
+    Disheartened = 4,      // Morale reduced
+    Eager = 5,             // Enthusiastic and ready for action
+    Frustrated = 6,        // Annoyed and less effective
+    Exhausted = 7,         // Severely fatigued
+    GoodwillTowards = 8,   // Goodwill towards a specific target
+    Hesitant = 9,          // Uncertain and cautious
+    Overconfident = 10,    // Too bold, may make mistakes
+    Injured = 11,          // Physically wounded
+    Bruised = 12,          // Minor physical damage
+    Euphoric = 13,         // Extremely positive mood
+    Miserable = 14         // Extremely negative mood
 }
 ```
 
@@ -28,15 +34,26 @@ public enum EmotionalStateType
 ```csharp
 public enum EmotionalTrigger
 {
-    None = 0,
-    KilledEnemy = 1,
-    WasWounded = 2,
-    AllyKilled = 3,
-    AllyWounded = 4,
-    MissionSuccess = 5,
-    MissionFailure = 6,
-    OperationStart = 7,
-    OperationEnd = 8
+    StabilizedBy = 0,
+    StabilizedOthers = 1,
+    ReceivedFriendlyFireFrom = 2,
+    DeployedXTimesWithOther = 3,
+    KilledXEnemyEntities = 4,
+    KilledXEnemyMiniBosses = 5,
+    DeployedInTheXMissionsBeforeCurrent = 6,
+    NotDeployedInTheXMissionsBeforeCurrent = 7,
+    KilledXCivElements = 8,
+    SuccessOnFavPlanet = 9,
+    FailedOnFavPlanet = 10,
+    LostOverXPercentHitpoints = 11,
+    GameEffect = 12,
+    Event = 13,
+    Cheat = 14,
+    OtherLeaderKilledCivElementOnFavPlanet = 15,
+    Fled = 16,
+    NearDeathExperience = 17,
+    LostAllSquaddies = 18,
+    Last = 19
 }
 ```
 
@@ -128,7 +145,7 @@ Trigger an emotion on a unit leader based on a game event.
 ### ApplyEmotion
 
 ```csharp
-public static EmotionResult ApplyEmotion(GameObj leader, string templateName, EmotionalTrigger trigger = EmotionalTrigger.None, GameObj target = default)
+public static EmotionResult ApplyEmotion(GameObj leader, string templateName, EmotionalTrigger trigger = EmotionalTrigger.Cheat, GameObj target = default)
 ```
 
 Apply a specific emotional state template to a leader by name.
@@ -165,7 +182,7 @@ Remove all emotional states from a leader.
 public static int ClearNegativeEmotions(GameObj leader)
 ```
 
-Clear all negative emotions (Grief, Fear, Traumatized) from a leader.
+Clear all negative emotions (Weary, Disheartened, Frustrated, Exhausted, etc.) from a leader.
 
 **Returns:** Number of negative emotions removed.
 
@@ -208,7 +225,7 @@ Get the remaining duration of an active emotion.
 public static bool IsNegativeType(EmotionalStateType type)
 ```
 
-Check if an emotion type is negative. Returns `true` for Grief, Fear, and Traumatized.
+Check if an emotion type is negative (not positive). Returns `true` for Weary, Disheartened, Frustrated, Exhausted, Hesitant, Injured, Bruised, and Miserable.
 
 ### RequiresTarget
 
@@ -216,7 +233,7 @@ Check if an emotion type is negative. Returns `true` for Grief, Fear, and Trauma
 public static bool RequiresTarget(EmotionalStateType type)
 ```
 
-Check if an emotion type requires a target leader. Returns `true` for Targeted and Vengeful.
+Check if an emotion type requires a target leader. Returns `true` for AnimosityTowards and GoodwillTowards.
 
 ### GetTypeName
 
@@ -261,9 +278,9 @@ public class EmotionalStateInfo
     public string TargetLeaderName { get; set; }  // For targeted emotions
     public int RemainingDuration { get; set; }    // Missions remaining
     public bool IsFirstMission { get; set; }      // Just applied this mission
-    public bool IsNegative { get; set; }
-    public bool IsStackable { get; set; }
-    public string SkillName { get; set; }         // Skill modifier applied
+    public bool IsPositive { get; set; }
+    public bool IsSuperState { get; set; }
+    public string SkillName { get; set; }         // Effect modifier applied
     public IntPtr Pointer { get; set; }
 }
 ```
@@ -319,7 +336,7 @@ if (info != null && info.StateCount > 0)
 
     foreach (var state in info.ActiveStates)
     {
-        var polarity = state.IsNegative ? "[-]" : "[+]";
+        var polarity = state.IsPositive ? "[+]" : "[-]";
         DevConsole.Log($"  {polarity} {state.TypeName}: {state.RemainingDuration} missions");
     }
 }
@@ -330,8 +347,8 @@ if (info != null && info.StateCount > 0)
 ```csharp
 var killer = Roster.FindByNickname("Reaper");
 
-// Simulate killing an enemy - may trigger Confident, Angry, etc.
-var result = Emotions.TriggerEmotion(killer, EmotionalTrigger.KilledEnemy);
+// Simulate killing enemies - may trigger Determined, Eager, etc.
+var result = Emotions.TriggerEmotion(killer, EmotionalTrigger.KilledXEnemyEntities);
 if (result.Success)
     DevConsole.Log("Emotion triggered successfully");
 ```
@@ -359,7 +376,7 @@ int removed = Emotions.ClearNegativeEmotions(leader);
 DevConsole.Log($"Cleared {removed} negative emotion(s)");
 
 // Or remove a specific emotion type
-var result = Emotions.RemoveEmotion(leader, EmotionalStateType.Fear);
+var result = Emotions.RemoveEmotion(leader, EmotionalStateType.Hesitant);
 ```
 
 ### Checking for specific emotion types
@@ -368,16 +385,16 @@ var result = Emotions.RemoveEmotion(leader, EmotionalStateType.Fear);
 var leader = Roster.FindByNickname("Wolf");
 
 // Check for a single emotion
-if (Emotions.HasEmotion(leader, EmotionalStateType.Traumatized))
+if (Emotions.HasEmotion(leader, EmotionalStateType.Miserable))
 {
-    DevConsole.Log("Unit is traumatized - consider sending to therapy");
+    DevConsole.Log("Unit is miserable - consider sending to therapy");
 }
 
 // Check for any negative emotions
 if (Emotions.HasAnyEmotion(leader,
-    EmotionalStateType.Grief,
-    EmotionalStateType.Fear,
-    EmotionalStateType.Traumatized))
+    EmotionalStateType.Disheartened,
+    EmotionalStateType.Exhausted,
+    EmotionalStateType.Miserable))
 {
     DevConsole.Log("Unit has negative emotions affecting performance");
 }
@@ -395,16 +412,16 @@ foreach (var type in activeTypes)
 ```csharp
 var leader = Roster.FindByNickname("Ace");
 
-// Check if they have Confident and extend it
-if (Emotions.HasEmotion(leader, EmotionalStateType.Confident))
+// Check if they have Determined and extend it
+if (Emotions.HasEmotion(leader, EmotionalStateType.Determined))
 {
-    int remaining = Emotions.GetRemainingDuration(leader, EmotionalStateType.Confident);
-    DevConsole.Log($"Confident has {remaining} missions remaining");
+    int remaining = Emotions.GetRemainingDuration(leader, EmotionalStateType.Determined);
+    DevConsole.Log($"Determined has {remaining} missions remaining");
 
     // Extend by 2 more missions
-    var result = Emotions.ExtendDuration(leader, EmotionalStateType.Confident, 2);
+    var result = Emotions.ExtendDuration(leader, EmotionalStateType.Determined, 2);
     if (result.Success)
-        DevConsole.Log("Extended Confident duration");
+        DevConsole.Log("Extended Determined duration");
 }
 ```
 
@@ -426,9 +443,9 @@ The following console commands are registered by `RegisterConsoleCommands()`:
 | Command | Arguments | Description |
 |---------|-----------|-------------|
 | `emotions` | `<nickname>` | Show emotional states for a unit |
-| `triggeremotion` | `<nickname> <trigger>` | Trigger an emotion (KilledEnemy, WasWounded, AllyKilled, etc.) |
+| `triggeremotion` | `<nickname> <trigger>` | Trigger an emotion (KilledXEnemyEntities, GameEffect, Event, etc.) |
 | `applyemotion` | `<nickname> <template>` | Apply an emotion template to a unit |
-| `removeemotion` | `<nickname> <type>` | Remove an emotion type (Angry, Confident, Grief, etc.) |
+| `removeemotion` | `<nickname> <type>` | Remove an emotion type (Determined, Weary, Eager, etc.) |
 | `clearemotions` | `<nickname> [negative\|positive]` | Clear all, negative, or positive emotions from a unit |
 | `emotemplates` | | List available emotion templates |
 | `hasemotion` | `<nickname> <type>` | Check if a unit has a specific emotion type |
@@ -440,17 +457,17 @@ The following console commands are registered by `RegisterConsoleCommands()`:
 > emotions Phantom
 Emotional States for Phantom (2 active):
   Positive: 1, Negative: 1
-  [+] Confident: 3 missions
-  [-] Grief: 2 missions -> Fallen Ally [NEW]
+  [+] Determined: 3 missions
+  [-] Disheartened: 2 missions -> Fallen Ally [NEW]
 
-> triggeremotion Reaper KilledEnemy
-Triggered KilledEnemy on Reaper
+> triggeremotion Reaper KilledXEnemyEntities
+Triggered KilledXEnemyEntities on Reaper
 
 > applyemotion Ghost Inspired_Leadership
 Applied 'Inspired_Leadership' to Ghost: Applied
 
-> removeemotion Raven Fear
-Removed Fear from Raven
+> removeemotion Raven Hesitant
+Removed Hesitant from Raven
 
 > clearemotions Wolf negative
 Removed 2 negative emotion(s) from Wolf
@@ -462,9 +479,9 @@ Emotion Templates (12):
   Fear_Ambush
   ...
 
-> hasemotion Ace Confident
-Ace HAS Confident (3 missions remaining)
+> hasemotion Ace Determined
+Ace HAS Determined (3 missions remaining)
 
-> extendemotion Ace Confident 2
-Extended Confident by 2 mission(s)
+> extendemotion Ace Determined 2
+Extended Determined by 2 mission(s)
 ```

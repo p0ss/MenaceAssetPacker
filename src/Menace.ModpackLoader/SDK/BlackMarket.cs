@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Il2CppInterop.Runtime.InteropTypes;
 
@@ -15,10 +16,11 @@ namespace Menace.SDK;
 /// - BlackMarketItemStack.OperationsRemaining @ +0x18
 /// - BlackMarketItemStack.Items @ +0x20
 /// - BlackMarketItemStack.Type @ +0x28
-/// - StrategyConfig.BlackMarketItems @ +0x198
-/// - StrategyConfig.BlackMarketMinItems @ +0x1A0
-/// - StrategyConfig.BlackMarketMaxItems @ +0x1A4
-/// - StrategyConfig.BlackMarketItemTimeout @ +0x1A8
+/// - StrategyState.BlackMarket @ +0x88 (field, not property)
+/// - StrategyConfig.BlackMarket @ +0x198 (BlackMarketConfig sub-object)
+///   - BlackMarketConfig.Items @ +0x78 (BaseItemTemplate[] item pool)
+///   - BlackMarketConfig.MinItems/MaxItems @ +0x80
+///   - BlackMarketConfig.OperationsTimeout @ +0xac (range)
 /// </summary>
 public static class BlackMarket
 {
@@ -37,12 +39,14 @@ public static class BlackMarket
     {
         /// <summary>Normal shop item generated during FillUp.</summary>
         Generated = 0,
-        /// <summary>Item added as a mission or event reward.</summary>
-        Reward = 1,
+        /// <summary>Item that never expires (OperationsRemaining ignored).</summary>
+        Permanent = 1,
         /// <summary>Special one-time unique item.</summary>
         Unique = 2,
-        /// <summary>Item that never expires (OperationsRemaining ignored).</summary>
-        Permanent = 3
+        /// <summary>Item added as a mission or event reward.</summary>
+        Reward = 3,
+        /// <summary>Special offer item (IsSpecialOffer returns true when type == 4).</summary>
+        SpecialOffer = 4
     }
 
     // Default configuration values from StrategyConfig
@@ -59,10 +63,14 @@ public static class BlackMarket
     private const int OFFSET_OPERATIONS_REMAINING = 0x18;
     private const int OFFSET_ITEMS = 0x20;
     private const int OFFSET_TYPE = 0x28;
-    private const int OFFSET_BM_ITEMS = 0x198;
-    private const int OFFSET_BM_MIN = 0x1A0;
-    private const int OFFSET_BM_MAX = 0x1A4;
-    private const int OFFSET_BM_TIMEOUT = 0x1A8;
+    // StrategyState.BlackMarket field offset
+    private const int OFFSET_SS_BLACKMARKET = 0x88;
+    // StrategyConfig.BlackMarket (BlackMarketConfig sub-object)
+    private const int OFFSET_CONFIG_BM = 0x198;
+    // BlackMarketConfig field offsets (relative to BlackMarketConfig)
+    private const int OFFSET_BMC_ITEMS = 0x78;
+    private const int OFFSET_BMC_MIN_MAX = 0x80;
+    private const int OFFSET_BMC_TIMEOUT = 0xAC;
 
     /// <summary>
     /// BlackMarket information structure containing shop state and configuration.
@@ -144,15 +152,17 @@ public static class BlackMarket
             var ssType = _strategyStateType?.ManagedType;
             if (ssType == null) return GameObj.Null;
 
-            var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var ss = instanceProp?.GetValue(null);
+            // Use Get() static method instead of s_Singleton property
+            var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var ss = getMethod?.Invoke(null, null);
             if (ss == null) return GameObj.Null;
 
-            var blackMarketProp = ssType.GetProperty("BlackMarket", BindingFlags.Public | BindingFlags.Instance);
-            var blackMarket = blackMarketProp?.GetValue(ss);
-            if (blackMarket == null) return GameObj.Null;
+            // Access BlackMarket via field at offset 0x88, not property
+            var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
+            var blackMarketPtr = ssObj.ReadPtr((uint)OFFSET_SS_BLACKMARKET);
+            if (blackMarketPtr == IntPtr.Zero) return GameObj.Null;
 
-            return new GameObj(((Il2CppObjectBase)blackMarket).Pointer);
+            return new GameObj(blackMarketPtr);
         }
         catch (Exception ex)
         {
@@ -584,9 +594,10 @@ public static class BlackMarket
         return type switch
         {
             StackType.Generated => "Generated",
-            StackType.Reward => "Reward",
-            StackType.Unique => "Unique",
             StackType.Permanent => "Permanent",
+            StackType.Unique => "Unique",
+            StackType.Reward => "Reward",
+            StackType.SpecialOffer => "SpecialOffer",
             _ => $"Type{(int)type}"
         };
     }
@@ -618,6 +629,98 @@ public static class BlackMarket
                    $"  Config: {info.MinItems}-{info.MaxItems} items, {info.ItemTimeout} ops timeout\n" +
                    $"  Item Pool: {info.ItemPoolSize} templates\n" +
                    $"  Campaign Progress: {info.CampaignProgress}";
+        });
+
+        // bmdebug - Debug StrategyState access
+        DevConsole.RegisterCommand("bmdebug", "", "Debug StrategyState/BlackMarket access", args =>
+        {
+            var lines = new List<string> { "BlackMarket Debug:" };
+
+            try
+            {
+                // Step 1: Find StrategyState type via GameType
+                EnsureTypesLoaded();
+                var gtType = _strategyStateType;
+                lines.Add($"  GameType.Find(StrategyState): {(gtType != null ? "Found" : "NULL")}");
+
+                if (gtType != null)
+                {
+                    lines.Add($"    FullName: {gtType.FullName}");
+                    lines.Add($"    IsValid: {gtType.IsValid}");
+
+                    var managed = gtType.ManagedType;
+                    lines.Add($"    ManagedType: {(managed != null ? managed.FullName : "NULL")}");
+
+                    if (managed != null)
+                    {
+                        // Use Get() static method instead of s_Singleton property
+                        var getMethod = managed.GetMethod("Get",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        lines.Add($"    Get() method: {(getMethod != null ? "Found" : "NULL")}");
+
+                        if (getMethod != null)
+                        {
+                            try
+                            {
+                                var instance = getMethod.Invoke(null, null);
+                                lines.Add($"    Instance value: {(instance != null ? "EXISTS" : "NULL")}");
+
+                                if (instance != null)
+                                {
+                                    // Access BlackMarket via field offset 0x88
+                                    var ssObj = new GameObj(((Il2CppObjectBase)instance).Pointer);
+                                    var bmPtr = ssObj.ReadPtr((uint)OFFSET_SS_BLACKMARKET);
+                                    lines.Add($"    BlackMarket @ +0x88: {(bmPtr != IntPtr.Zero ? $"0x{bmPtr:X}" : "NULL")}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                lines.Add($"    Instance.GetValue error: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+
+                // Step 2: Try direct assembly search
+                lines.Add("");
+                lines.Add("  Direct assembly search:");
+                var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                lines.Add($"    Assembly-CSharp: {(gameAssembly != null ? "Found" : "NULL")}");
+
+                if (gameAssembly != null)
+                {
+                    var ssType = gameAssembly.GetTypes()
+                        .FirstOrDefault(t => t.Name == "StrategyState");
+                    lines.Add($"    StrategyState type: {(ssType != null ? ssType.FullName : "NULL")}");
+
+                    if (ssType != null)
+                    {
+                        var getMethod = ssType.GetMethod("Get",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        lines.Add($"    Get() method: {(getMethod != null ? "Found" : "NULL")}");
+
+                        if (getMethod != null)
+                        {
+                            try
+                            {
+                                var instance = getMethod.Invoke(null, null);
+                                lines.Add($"    Instance value: {(instance != null ? "EXISTS" : "NULL")}");
+                            }
+                            catch (Exception ex)
+                            {
+                                lines.Add($"    Instance error: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"  Error: {ex.Message}");
+            }
+
+            return string.Join("\n", lines);
         });
 
         // bmitems - List all BlackMarket items
@@ -725,6 +828,16 @@ public static class BlackMarket
             return string.Join("\n", lines);
         });
 
+        // bmstock <template> - Add item to BlackMarket for testing
+        DevConsole.RegisterCommand("bmstock", "<template>", "Stock an item in BlackMarket (for testing)", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: bmstock <template_name>\nExample: bmstock weapon.laser_smg";
+
+            var templateName = args[0];
+            return StockItemInBlackMarket(templateName);
+        });
+
         // bmvalue - Show total BlackMarket value
         DevConsole.RegisterCommand("bmvalue", "", "Show total BlackMarket trade value", args =>
         {
@@ -739,10 +852,10 @@ public static class BlackMarket
         });
 
         // bmbytype <type> - Filter by stack type
-        DevConsole.RegisterCommand("bmbytype", "<type>", "Filter BlackMarket by type (Generated/Reward/Unique/Permanent)", args =>
+        DevConsole.RegisterCommand("bmbytype", "<type>", "Filter BlackMarket by type (Generated/Permanent/Unique/Reward/SpecialOffer)", args =>
         {
             if (args.Length == 0)
-                return "Usage: bmbytype <type>\nTypes: Generated, Reward, Unique, Permanent (or 0-3)";
+                return "Usage: bmbytype <type>\nTypes: Generated, Permanent, Unique, Reward, SpecialOffer (or 0-4)";
 
             StackType type;
             if (int.TryParse(args[0], out int typeInt))
@@ -754,15 +867,16 @@ public static class BlackMarket
                 type = args[0].ToLowerInvariant() switch
                 {
                     "generated" => StackType.Generated,
-                    "reward" => StackType.Reward,
-                    "unique" => StackType.Unique,
                     "permanent" => StackType.Permanent,
+                    "unique" => StackType.Unique,
+                    "reward" => StackType.Reward,
+                    "specialoffer" => StackType.SpecialOffer,
                     _ => (StackType)(-1)
                 };
             }
 
-            if ((int)type < 0 || (int)type > 3)
-                return "Invalid type. Use: Generated, Reward, Unique, Permanent (or 0-3)";
+            if ((int)type < 0 || (int)type > 4)
+                return "Invalid type. Use: Generated, Permanent, Unique, Reward, SpecialOffer (or 0-4)";
 
             var stacks = GetStacksByType(type);
             if (stacks.Count == 0)
@@ -776,6 +890,71 @@ public static class BlackMarket
             }
             return string.Join("\n", lines);
         });
+    }
+
+    /// <summary>
+    /// Stock an item in the BlackMarket by template name.
+    /// </summary>
+    public static string StockItemInBlackMarket(string templateName)
+    {
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Get BlackMarket
+            var bm = GetBlackMarket();
+            if (bm.IsNull)
+                return "BlackMarket not available. Are you on the strategy map?";
+
+            // Find the template
+            var template = Inventory.FindItemTemplate(templateName);
+            if (template.IsNull)
+                return $"Template '{templateName}' not found";
+
+            // Get template proxy
+            var templateType = _baseItemTemplateType?.ManagedType;
+            if (templateType == null)
+                return "BaseItemTemplate type not found";
+
+            var templateProxy = GetManagedProxy(template, templateType);
+            if (templateProxy == null)
+                return "Failed to get template proxy";
+
+            // Create an item from the template
+            var createMethod = templateType.GetMethod("CreateItem",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (createMethod == null)
+                return "CreateItem method not found on template";
+
+            var guid = System.Guid.NewGuid().ToString();
+            var item = createMethod.Invoke(templateProxy, new object[] { guid });
+            if (item == null)
+                return "CreateItem returned null";
+
+            // Get BlackMarket proxy
+            var bmType = _blackMarketType?.ManagedType;
+            if (bmType == null)
+                return "BlackMarket type not found";
+
+            var bmProxy = GetManagedProxy(bm, bmType);
+            if (bmProxy == null)
+                return "Failed to get BlackMarket proxy";
+
+            // Call AddItem(BaseItem item, int operationsRemaining)
+            var addMethod = bmType.GetMethod("AddItem",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (addMethod == null)
+                return "AddItem method not found on BlackMarket";
+
+            // AddItem takes (BaseItem, int operationsRemaining)
+            addMethod.Invoke(bmProxy, new object[] { item, 99 });
+
+            return $"Stocked '{templateName}' in BlackMarket";
+        }
+        catch (Exception ex)
+        {
+            return $"Failed to stock item: {ex.Message}";
+        }
     }
 
     // --- Internal helpers ---
@@ -814,8 +993,9 @@ public static class BlackMarket
             var ssType = _strategyStateType?.ManagedType;
             if (ssType == null) return null;
 
-            var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var ss = instanceProp?.GetValue(null);
+            // Use Get() static method instead of s_Singleton property
+            var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var ss = getMethod?.Invoke(null, null);
             if (ss == null) return null;
 
             var configProp = ssType.GetProperty("Config", BindingFlags.Public | BindingFlags.Instance);
@@ -839,8 +1019,9 @@ public static class BlackMarket
             var ssType = _strategyStateType?.ManagedType;
             if (ssType == null) return 0;
 
-            var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var ss = instanceProp?.GetValue(null);
+            // Use Get() static method instead of s_Singleton property
+            var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var ss = getMethod?.Invoke(null, null);
             if (ss == null) return 0;
 
             var getProgressMethod = ssType.GetMethod("GetCampaignProgress",

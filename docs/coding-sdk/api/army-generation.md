@@ -6,6 +6,17 @@
 
 The ArmyGeneration SDK provides safe access to the game's army creation system. Use this to query army templates, inspect army compositions, check entity costs, and validate template availability based on game progress and budget.
 
+## Internal Field Mappings
+
+The SDK maps to these internal game fields:
+- `Army.m_Budget` - Total budget for the army
+- `Army.m_Entries` - List of army entries
+- `ArmyEntry.EntityTemplate` - The entity template for this entry
+- `ArmyEntry.m_Amount` - Count of units for this entry
+- `EntityTemplate.ArmyPointCost` - Point cost for the entity
+- `ArmyTemplate.PossibleUnits` - List of possible unit entries
+- `ArmyTemplateEntry.Weight` - Selection weight (used for random unit selection)
+
 ## Constants
 
 ### Default Spawn Area
@@ -109,12 +120,14 @@ Information structure for a single unit type entry within an army.
 public class ArmyEntryInfo
 {
     public string TemplateName { get; set; }    // Name of the entity template
-    public int Count { get; set; }              // Number of this unit type
-    public int Cost { get; set; }               // Cost per individual unit
+    public int Count { get; set; }              // Number of this unit type (or Weight for template entries)
+    public int Cost { get; set; }               // Cost per individual unit (ArmyPointCost)
     public int TotalCost { get; set; }          // Total cost (Cost * Count)
     public IntPtr Pointer { get; set; }         // Native pointer to the entry object
 }
 ```
+
+**Note:** When inspecting `ArmyTemplateEntry` objects (via `GetArmyTemplateEntries`), the `Count` field contains the selection `Weight` used for random unit selection, not the actual unit count.
 
 ## Examples
 

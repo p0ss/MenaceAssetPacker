@@ -24,11 +24,11 @@ public const int DIR_NORTHWEST = 7;
 public enum MovementFlags
 {
     None = 0,
-    EnterVehicle = 1,
-    ExitVehicle = 2,
-    Backward = 4,
-    Instant = 8,        // Teleport (no animation)
-    Sprint = 16
+    Force = 1,
+    ForceTeleport = 2,
+    AllowMoveThroughActors = 4,
+    KeepContainerRotationPermanently = 8,
+    Crawl = 16
 }
 ```
 
@@ -80,7 +80,15 @@ Check if an actor is currently moving.
 public static List<(int x, int y)> GetMovementRange(GameObj actor)
 ```
 
-Get the tiles within movement range for an actor.
+Get the tiles within movement range for an actor. This method blocks waiting for the async result.
+
+### GetMovementRangeAsync
+
+```csharp
+public static async Task<List<(int x, int y)>> GetMovementRangeAsync(GameObj actor)
+```
+
+Get the tiles within movement range for an actor asynchronously.
 
 ### GetPath
 

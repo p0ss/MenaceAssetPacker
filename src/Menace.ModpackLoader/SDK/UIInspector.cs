@@ -2,32 +2,17 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using Il2CppInterop.Runtime;
-using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Menace.SDK;
 
 /// <summary>
 /// Inspects the game's UI hierarchy and provides information about visible elements.
-/// Uses IL2CPP type lookup to work with Unity UI types.
+/// Supports UIToolkit (UIElements) which is the UI system used by Menace.
 /// </summary>
 public static class UIInspector
 {
-    // Cached GameType wrappers for Unity UI (resolved at runtime)
-    private static GameType _canvasType;
-    private static GameType _buttonType;
-    private static GameType _textType;
-    private static GameType _tmpTextType;
-    private static GameType _toggleType;
-    private static GameType _inputFieldType;
-    private static GameType _dropdownType;
-    private static GameType _imageType;
-    private static GameType _selectableType;
-    private static bool _typesResolved;
-
     /// <summary>
     /// Information about a UI element.
     /// </summary>
@@ -36,21 +21,19 @@ public static class UIInspector
         public string Type { get; set; }
         public string Name { get; set; }
         public string Text { get; set; }
-        public string Canvas { get; set; }
+        public string Document { get; set; }
         public string Path { get; set; }
         public bool Interactable { get; set; } = true;
+        public bool Visible { get; set; } = true;
         public int FontSize { get; set; }
-
-        // For toggles
         public bool? IsOn { get; set; }
-
-        // For dropdowns
+        public float? SliderValue { get; set; }
         public int? SelectedIndex { get; set; }
         public string SelectedText { get; set; }
         public List<string> Options { get; set; }
-
-        // For input fields
         public string Placeholder { get; set; }
+        // Legacy compatibility
+        public string Canvas => Document;
     }
 
     /// <summary>
@@ -65,85 +48,192 @@ public static class UIInspector
     }
 
     /// <summary>
-    /// Initialize the UI inspector by resolving Unity UI types via IL2CPP.
-    /// Called automatically on first use.
+    /// Get diagnostic info about UI inspection state.
     /// </summary>
-    public static void Initialize()
+    public static Dictionary<string, object> GetDiagnostics()
     {
-        if (_typesResolved) return;
-        _typesResolved = true;
+        var diag = new Dictionary<string, object>();
 
         try
         {
-            // Use GameType.Find for proper IL2CPP type resolution
-            // Canvas is in UnityEngine.UIModule
-            _canvasType = GameType.Find("UnityEngine.Canvas", "UnityEngine.UIModule");
+            var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
+            diag["uiSystem"] = "UIToolkit";
+            diag["documentCount"] = docs?.Length ?? 0;
 
-            // Standard Unity UI types are in UnityEngine.UI assembly
-            _buttonType = GameType.Find("UnityEngine.UI.Button", "UnityEngine.UI");
-            _textType = GameType.Find("UnityEngine.UI.Text", "UnityEngine.UI");
-            _toggleType = GameType.Find("UnityEngine.UI.Toggle", "UnityEngine.UI");
-            _inputFieldType = GameType.Find("UnityEngine.UI.InputField", "UnityEngine.UI");
-            _dropdownType = GameType.Find("UnityEngine.UI.Dropdown", "UnityEngine.UI");
-            _imageType = GameType.Find("UnityEngine.UI.Image", "UnityEngine.UI");
-            _selectableType = GameType.Find("UnityEngine.UI.Selectable", "UnityEngine.UI");
+            var docInfo = new List<string>();
+            foreach (var doc in docs ?? Array.Empty<UIDocument>())
+            {
+                if (doc == null) continue;
+                var root = doc.rootVisualElement;
+                var active = doc.gameObject.activeInHierarchy;
+                var childCount = root?.childCount ?? 0;
+                docInfo.Add($"{doc.gameObject.name} (active={active}, children={childCount})");
+            }
+            diag["documents"] = docInfo;
 
-            // TextMeshPro types
-            _tmpTextType = GameType.Find("TMPro.TMP_Text", "Unity.TextMeshPro");
-            if (!_tmpTextType.IsValid)
-                _tmpTextType = GameType.Find("TMPro.TextMeshProUGUI", "Unity.TextMeshPro");
+            // Count elements in active documents
+            int buttonCount = 0, labelCount = 0, toggleCount = 0, totalCount = 0;
+            foreach (var doc in docs ?? Array.Empty<UIDocument>())
+            {
+                if (doc == null || !doc.gameObject.activeInHierarchy) continue;
+                var root = doc.rootVisualElement;
+                if (root == null) continue;
 
-            SdkLogger.Msg($"[UIInspector] Types resolved - Canvas:{_canvasType?.IsValid}, Button:{_buttonType?.IsValid}, Text:{_textType?.IsValid}, TMP:{_tmpTextType?.IsValid}");
+                buttonCount += QueryAll<Button>(root).Count;
+                labelCount += QueryAll<Label>(root).Count;
+                toggleCount += QueryAll<Toggle>(root).Count;
+                totalCount += QueryAll<VisualElement>(root).Count;
+            }
+
+            diag["buttonCount"] = buttonCount;
+            diag["labelCount"] = labelCount;
+            diag["toggleCount"] = toggleCount;
+            diag["totalElementCount"] = totalCount;
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"[UIInspector] Failed to resolve UI types: {ex.Message}");
+            diag["error"] = $"{ex.GetType().Name}: {ex.Message}";
         }
+
+        return diag;
     }
 
     /// <summary>
-    /// Get all visible UI elements from all active canvases.
+    /// Get all visible UI elements from all active UIDocuments.
     /// </summary>
     public static List<UIElementInfo> GetAllElements()
     {
-        Initialize();
         var elements = new List<UIElementInfo>();
-
-        if (_canvasType == null || !_canvasType.IsValid)
-        {
-            SdkLogger.Warning("[UIInspector] Canvas type not resolved");
-            return elements;
-        }
 
         try
         {
-            // Use managed type for Il2CppType.From
-            var managedCanvasType = _canvasType.ManagedType;
-            if (managedCanvasType == null)
+            var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
+            if (docs == null || docs.Length == 0)
             {
-                SdkLogger.Warning("[UIInspector] No managed Canvas type available");
+                SdkLogger.Msg("[UIInspector] No UIDocument found");
                 return elements;
             }
 
-            var il2cppCanvasType = Il2CppType.From(managedCanvasType);
-            var canvases = UnityEngine.Object.FindObjectsOfType(il2cppCanvasType);
-
-            SdkLogger.Msg($"[UIInspector] Found {canvases?.Length ?? 0} canvases");
-
-            foreach (var canvas in canvases)
+            foreach (var doc in docs)
             {
-                if (canvas == null) continue;
+                if (doc == null || !doc.gameObject.activeInHierarchy) continue;
+                var root = doc.rootVisualElement;
+                if (root == null) continue;
 
-                var go = GetGameObject(canvas);
-                if (go == null || !go.activeInHierarchy) continue;
+                var docName = doc.gameObject.name;
+                SdkLogger.Msg($"[UIInspector] Scanning UIDocument: {docName}");
 
-                SdkLogger.Msg($"[UIInspector] Scanning canvas: {go.name}");
-                ExtractUIElements(go.transform, elements, 0, go.name);
+                // Extract buttons
+                foreach (var btn in QueryAll<Button>(root))
+                {
+                    if (!IsVisible(btn)) continue;
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = "Button",
+                        Name = btn.name,
+                        Text = GetButtonText(btn),
+                        Document = docName,
+                        Path = GetPath(btn),
+                        Interactable = btn.enabledSelf,
+                        Visible = true
+                    });
+                }
+
+                // Extract toggles
+                foreach (var toggle in QueryAll<Toggle>(root))
+                {
+                    if (!IsVisible(toggle)) continue;
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = "Toggle",
+                        Name = toggle.name,
+                        Text = toggle.label,
+                        Document = docName,
+                        Path = GetPath(toggle),
+                        Interactable = toggle.enabledSelf,
+                        IsOn = toggle.value,
+                        Visible = true
+                    });
+                }
+
+                // Extract text fields
+                foreach (var field in QueryAll<TextField>(root))
+                {
+                    if (!IsVisible(field)) continue;
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = "TextField",
+                        Name = field.name,
+                        Text = field.value,
+                        Document = docName,
+                        Path = GetPath(field),
+                        Interactable = field.enabledSelf,
+                        Placeholder = field.textEdition?.placeholder,
+                        Visible = true
+                    });
+                }
+
+                // Extract dropdowns
+                foreach (var dropdown in QueryAll<DropdownField>(root))
+                {
+                    if (!IsVisible(dropdown)) continue;
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = "Dropdown",
+                        Name = dropdown.name,
+                        Text = dropdown.value,
+                        Document = docName,
+                        Path = GetPath(dropdown),
+                        Interactable = dropdown.enabledSelf,
+                        SelectedIndex = dropdown.index,
+                        SelectedText = dropdown.value,
+                        Options = ConvertChoices(dropdown.choices),
+                        Visible = true
+                    });
+                }
+
+                // Extract sliders
+                foreach (var slider in QueryAll<Slider>(root))
+                {
+                    if (!IsVisible(slider)) continue;
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = "Slider",
+                        Name = slider.name,
+                        Text = slider.label,
+                        Document = docName,
+                        Path = GetPath(slider),
+                        Interactable = slider.enabledSelf,
+                        SliderValue = slider.value,
+                        Visible = true
+                    });
+                }
+
+                // Extract standalone labels (not part of other controls)
+                foreach (var label in QueryAll<Label>(root))
+                {
+                    if (!IsVisible(label)) continue;
+                    // Skip labels that are children of interactive elements
+                    if (IsChildOfInteractiveElement(label)) continue;
+                    // Skip empty labels
+                    if (string.IsNullOrWhiteSpace(label.text)) continue;
+
+                    elements.Add(new UIElementInfo
+                    {
+                        Type = IsHeaderLabel(label) ? "Header" : "Label",
+                        Name = label.name,
+                        Text = label.text,
+                        Document = docName,
+                        Path = GetPath(label),
+                        FontSize = GetFontSize(label),
+                        Visible = true
+                    });
+                }
             }
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"[UIInspector] Failed to inspect UI: {ex.Message}\n{ex.StackTrace}");
+            SdkLogger.Warning($"[UIInspector] Failed to inspect UI: {ex.Message}");
         }
 
         return elements;
@@ -154,102 +244,184 @@ public static class UIInspector
     /// </summary>
     public static ClickResult ClickButton(string path = null, string name = null)
     {
-        Initialize();
-
         if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(name))
-        {
             return new ClickResult { Success = false, Error = "Specify 'path' or 'name'" };
-        }
-
-        if (_buttonType == null || !_buttonType.IsValid)
-        {
-            return new ClickResult { Success = false, Error = "Button type not resolved" };
-        }
-
-        var managedButtonType = _buttonType.ManagedType;
-        if (managedButtonType == null)
-        {
-            return new ClickResult { Success = false, Error = "No managed Button type available" };
-        }
 
         try
         {
-            Component targetButton = null;
-            GameObject targetGo = null;
+            var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
+            if (docs == null || docs.Length == 0)
+                return new ClickResult { Success = false, Error = "No UIDocument found" };
 
-            if (!string.IsNullOrWhiteSpace(path))
+            foreach (var doc in docs)
             {
-                // Find by exact path
-                targetGo = GameObject.Find(path);
-                if (targetGo != null)
+                if (doc == null || !doc.gameObject.activeInHierarchy) continue;
+                var root = doc.rootVisualElement;
+                if (root == null) continue;
+
+                foreach (var btn in QueryAll<Button>(root))
                 {
-                    targetButton = targetGo.GetComponent(Il2CppType.From(managedButtonType));
-                }
-            }
-            else if (!string.IsNullOrWhiteSpace(name))
-            {
-                // Find by name (search all buttons)
-                var il2cppButtonType = Il2CppType.From(managedButtonType);
-                var buttons = UnityEngine.Object.FindObjectsOfType(il2cppButtonType);
+                    if (!IsVisible(btn) || !btn.enabledSelf) continue;
 
-                foreach (var btn in buttons)
-                {
-                    if (btn == null) continue;
+                    var btnPath = GetPath(btn);
+                    var btnText = GetButtonText(btn);
 
-                    var go = GetGameObject(btn);
-                    if (go == null) continue;
-
-                    if (go.name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    // Match by path
+                    if (!string.IsNullOrWhiteSpace(path) && btnPath == path)
                     {
-                        targetButton = btn as Component;
-                        targetGo = go;
-                        break;
+                        return DoClick(btn, btnPath);
                     }
 
-                    // Also check button text
-                    var btnText = GetTextFromChildren(go);
-                    if (btnText != null && btnText.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    // Match by name
+                    if (!string.IsNullOrWhiteSpace(name))
                     {
-                        targetButton = btn as Component;
-                        targetGo = go;
-                        break;
+                        if (btn.name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                            (btnText != null && btnText.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            return DoClick(btn, btnPath);
+                        }
                     }
                 }
             }
 
-            if (targetButton == null)
-            {
-                return new ClickResult { Success = false, Error = $"Button not found: {path ?? name}" };
-            }
+            return new ClickResult { Success = false, Error = $"Button not found: {path ?? name}" };
+        }
+        catch (Exception ex)
+        {
+            return new ClickResult { Success = false, Error = $"Click failed: {ex.Message}" };
+        }
+    }
 
-            // Check interactable
-            var interactableProp = managedButtonType.GetProperty("interactable");
-            if (interactableProp != null)
+    /// <summary>
+    /// Set a toggle value by path or name.
+    /// </summary>
+    public static ClickResult SetToggle(string path = null, string name = null, bool value = true)
+    {
+        if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(name))
+            return new ClickResult { Success = false, Error = "Specify 'path' or 'name'" };
+
+        try
+        {
+            var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
+            foreach (var doc in docs ?? Array.Empty<UIDocument>())
             {
-                var interactable = (bool)interactableProp.GetValue(targetButton);
-                if (!interactable)
+                if (doc == null || !doc.gameObject.activeInHierarchy) continue;
+                var root = doc.rootVisualElement;
+                if (root == null) continue;
+
+                foreach (var toggle in QueryAll<Toggle>(root))
                 {
-                    return new ClickResult { Success = false, Error = "Button is not interactable" };
+                    if (!IsVisible(toggle) || !toggle.enabledSelf) continue;
+
+                    var togglePath = GetPath(toggle);
+
+                    if ((!string.IsNullOrWhiteSpace(path) && togglePath == path) ||
+                        (!string.IsNullOrWhiteSpace(name) && toggle.name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        toggle.value = value;
+                        return new ClickResult
+                        {
+                            Success = true,
+                            ClickedName = toggle.name,
+                            ClickedPath = togglePath
+                        };
+                    }
                 }
             }
 
-            // Invoke onClick
-            var onClickProp = managedButtonType.GetProperty("onClick");
-            if (onClickProp != null)
+            return new ClickResult { Success = false, Error = $"Toggle not found: {path ?? name}" };
+        }
+        catch (Exception ex)
+        {
+            return new ClickResult { Success = false, Error = $"SetToggle failed: {ex.Message}" };
+        }
+    }
+
+    /// <summary>
+    /// Set a text field value by path or name.
+    /// </summary>
+    public static ClickResult SetTextField(string path = null, string name = null, string value = "")
+    {
+        if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(name))
+            return new ClickResult { Success = false, Error = "Specify 'path' or 'name'" };
+
+        try
+        {
+            var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
+            foreach (var doc in docs ?? Array.Empty<UIDocument>())
             {
-                var onClick = onClickProp.GetValue(targetButton);
-                if (onClick != null)
+                if (doc == null || !doc.gameObject.activeInHierarchy) continue;
+                var root = doc.rootVisualElement;
+                if (root == null) continue;
+
+                foreach (var field in QueryAll<TextField>(root))
                 {
-                    var invokeMethod = onClick.GetType().GetMethod("Invoke", Type.EmptyTypes);
-                    invokeMethod?.Invoke(onClick, null);
+                    if (!IsVisible(field) || !field.enabledSelf) continue;
+
+                    var fieldPath = GetPath(field);
+
+                    if ((!string.IsNullOrWhiteSpace(path) && fieldPath == path) ||
+                        (!string.IsNullOrWhiteSpace(name) && field.name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        field.value = value;
+                        return new ClickResult
+                        {
+                            Success = true,
+                            ClickedName = field.name,
+                            ClickedPath = fieldPath
+                        };
+                    }
                 }
+            }
+
+            return new ClickResult { Success = false, Error = $"TextField not found: {path ?? name}" };
+        }
+        catch (Exception ex)
+        {
+            return new ClickResult { Success = false, Error = $"SetTextField failed: {ex.Message}" };
+        }
+    }
+
+    // ==================== Helpers ====================
+
+    private static List<T> QueryAll<T>(VisualElement root) where T : VisualElement
+    {
+        try
+        {
+            var il2cppList = UQueryExtensions.Query<T>(root, null, (string)null).ToList();
+            // Convert IL2CPP list to System list
+            var result = new List<T>();
+            for (int i = 0; i < il2cppList.Count; i++)
+            {
+                result.Add(il2cppList[i]);
+            }
+            return result;
+        }
+        catch
+        {
+            return new List<T>();
+        }
+    }
+
+    private static ClickResult DoClick(Button btn, string path)
+    {
+        try
+        {
+            // UIToolkit buttons - invoke the clicked callback directly
+            // The clicked property is a Clickable manipulator with a clicked Action
+            var clickable = btn.clickable;
+            if (clickable != null)
+            {
+                // Use the clicked Action delegate directly
+                var clickedAction = clickable.clicked;
+                clickedAction?.Invoke();
             }
 
             return new ClickResult
             {
                 Success = true,
-                ClickedName = targetGo.name,
-                ClickedPath = GetPath(targetGo.transform)
+                ClickedName = btn.name,
+                ClickedPath = path
             };
         }
         catch (Exception ex)
@@ -258,391 +430,86 @@ public static class UIInspector
         }
     }
 
-    private static void ExtractUIElements(Transform parent, List<UIElementInfo> elements, int depth, string canvasName)
+    private static List<string> ConvertChoices(Il2CppSystem.Collections.Generic.List<string> choices)
     {
-        if (depth > 15 || parent == null) return;
-
-        var go = parent.gameObject;
-        if (!go.activeInHierarchy) return;
-
-        bool addedElement = false;
-
-        // Check for button
-        if (_buttonType != null && _buttonType.IsValid)
-        {
-            var managedButtonType = _buttonType.ManagedType;
-            if (managedButtonType != null)
-            {
-                var button = go.GetComponent(Il2CppType.From(managedButtonType));
-                if (button != null)
-                {
-                    var interactable = GetPropertyBool(button, "interactable", true);
-                    if (interactable)
-                    {
-                        var buttonText = GetTextFromChildren(go);
-                        elements.Add(new UIElementInfo
-                        {
-                            Type = "Button",
-                            Name = go.name,
-                            Text = buttonText,
-                            Canvas = canvasName,
-                            Path = GetPath(parent),
-                            Interactable = true
-                        });
-                        addedElement = true;
-                    }
-                }
-            }
-        }
-
-        // Check for toggle
-        if (_toggleType != null && _toggleType.IsValid && !addedElement)
-        {
-            var managedToggleType = _toggleType.ManagedType;
-            if (managedToggleType != null)
-            {
-                var toggle = go.GetComponent(Il2CppType.From(managedToggleType));
-                if (toggle != null)
-                {
-                    var toggleText = GetTextFromChildren(go);
-                    elements.Add(new UIElementInfo
-                    {
-                        Type = "Toggle",
-                        Name = go.name,
-                        Text = toggleText,
-                        Canvas = canvasName,
-                        Path = GetPath(parent),
-                        IsOn = GetPropertyBool(toggle, "isOn", false),
-                        Interactable = GetPropertyBool(toggle, "interactable", true)
-                    });
-                    addedElement = true;
-                }
-            }
-        }
-
-        // Check for input field
-        if (_inputFieldType != null && _inputFieldType.IsValid && !addedElement)
-        {
-            var managedInputFieldType = _inputFieldType.ManagedType;
-            if (managedInputFieldType != null)
-            {
-                var inputField = go.GetComponent(Il2CppType.From(managedInputFieldType));
-                if (inputField != null)
-                {
-                    var text = GetPropertyString(inputField, "text");
-                    var placeholder = GetPlaceholderText(inputField);
-                    elements.Add(new UIElementInfo
-                    {
-                        Type = "InputField",
-                        Name = go.name,
-                        Text = text,
-                        Placeholder = placeholder,
-                        Canvas = canvasName,
-                        Path = GetPath(parent),
-                        Interactable = GetPropertyBool(inputField, "interactable", true)
-                    });
-                    addedElement = true;
-                }
-            }
-        }
-
-        // Check for dropdown
-        if (_dropdownType != null && _dropdownType.IsValid && !addedElement)
-        {
-            var managedDropdownType = _dropdownType.ManagedType;
-            if (managedDropdownType != null)
-            {
-                var dropdown = go.GetComponent(Il2CppType.From(managedDropdownType));
-                if (dropdown != null)
-                {
-                    var options = GetDropdownOptions(dropdown);
-                    var selectedIndex = GetPropertyInt(dropdown, "value", 0);
-                    elements.Add(new UIElementInfo
-                    {
-                        Type = "Dropdown",
-                        Name = go.name,
-                        SelectedIndex = selectedIndex,
-                        SelectedText = selectedIndex < options.Count ? options[selectedIndex] : null,
-                        Options = options,
-                        Canvas = canvasName,
-                        Path = GetPath(parent),
-                        Interactable = GetPropertyBool(dropdown, "interactable", true)
-                    });
-                    addedElement = true;
-                }
-            }
-        }
-
-        // Check for standalone text (headers, labels)
-        if (!addedElement)
-        {
-            var textInfo = GetStandaloneText(go);
-            if (textInfo != null)
-            {
-                // Skip if it's a child of another element we already found
-                if (!HasParentWithComponent(go, _buttonType) && !HasParentWithComponent(go, _toggleType))
-                {
-                    elements.Add(new UIElementInfo
-                    {
-                        Type = textInfo.Value.fontSize >= 20 ? "Header" : "Text",
-                        Name = go.name,
-                        Text = textInfo.Value.text,
-                        Canvas = canvasName,
-                        Path = GetPath(parent),
-                        FontSize = textInfo.Value.fontSize
-                    });
-                }
-            }
-        }
-
-        // Recurse into children
-        for (int i = 0; i < parent.childCount; i++)
-        {
-            ExtractUIElements(parent.GetChild(i), elements, depth + 1, canvasName);
-        }
-    }
-
-    private static (string text, int fontSize)? GetStandaloneText(GameObject go)
-    {
-        // Try Unity UI Text
-        if (_textType != null && _textType.IsValid)
-        {
-            var managedTextType = _textType.ManagedType;
-            if (managedTextType != null)
-            {
-                var text = go.GetComponent(Il2CppType.From(managedTextType));
-                if (text != null)
-                {
-                    var textStr = GetPropertyString(text, "text");
-                    if (!string.IsNullOrWhiteSpace(textStr))
-                    {
-                        var fontSize = GetPropertyInt(text, "fontSize", 14);
-                        return (textStr, fontSize);
-                    }
-                }
-            }
-        }
-
-        // Try TMPro
-        if (_tmpTextType != null && _tmpTextType.IsValid)
-        {
-            var managedTmpType = _tmpTextType.ManagedType;
-            if (managedTmpType != null)
-            {
-                var tmp = go.GetComponent(Il2CppType.From(managedTmpType));
-                if (tmp != null)
-                {
-                    var textStr = GetPropertyString(tmp, "text");
-                    if (!string.IsNullOrWhiteSpace(textStr))
-                    {
-                        var fontSize = (int)GetPropertyFloat(tmp, "fontSize", 14f);
-                        return (textStr, fontSize);
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static string GetTextFromChildren(GameObject go)
-    {
-        // Try Unity UI Text
-        if (_textType != null && _textType.IsValid)
-        {
-            var text = FindComponentInChildren(go, _textType);
-            if (text != null)
-            {
-                var textStr = GetPropertyString(text, "text");
-                if (!string.IsNullOrWhiteSpace(textStr))
-                    return textStr;
-            }
-        }
-
-        // Try TMPro
-        if (_tmpTextType != null && _tmpTextType.IsValid)
-        {
-            var tmp = FindComponentInChildren(go, _tmpTextType);
-            if (tmp != null)
-            {
-                var textStr = GetPropertyString(tmp, "text");
-                if (!string.IsNullOrWhiteSpace(textStr))
-                    return textStr;
-            }
-        }
-
-        return null;
-    }
-
-    private static string GetPlaceholderText(object inputField)
-    {
-        try
-        {
-            if (_inputFieldType == null || !_inputFieldType.IsValid) return null;
-            var managedType = _inputFieldType.ManagedType;
-            if (managedType == null) return null;
-
-            var placeholderProp = managedType.GetProperty("placeholder");
-            if (placeholderProp != null)
-            {
-                var placeholder = placeholderProp.GetValue(inputField);
-                if (placeholder != null && _textType != null && _textType.IsValid)
-                {
-                    return GetPropertyString(placeholder, "text");
-                }
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    private static List<string> GetDropdownOptions(object dropdown)
-    {
+        if (choices == null) return null;
         var result = new List<string>();
-        try
+        for (int i = 0; i < choices.Count; i++)
         {
-            if (_dropdownType == null || !_dropdownType.IsValid) return result;
-            var managedType = _dropdownType.ManagedType;
-            if (managedType == null) return result;
-
-            var optionsProp = managedType.GetProperty("options");
-            if (optionsProp != null)
-            {
-                var options = optionsProp.GetValue(dropdown);
-                if (options != null)
-                {
-                    // It's a List<Dropdown.OptionData>, iterate using reflection
-                    var countProp = options.GetType().GetProperty("Count");
-                    var itemProp = options.GetType().GetProperty("Item");
-
-                    if (countProp != null && itemProp != null)
-                    {
-                        var count = (int)countProp.GetValue(options);
-                        for (int i = 0; i < count; i++)
-                        {
-                            var item = itemProp.GetValue(options, new object[] { i });
-                            if (item != null)
-                            {
-                                var textProp = item.GetType().GetProperty("text");
-                                if (textProp != null)
-                                {
-                                    var text = textProp.GetValue(item) as string;
-                                    result.Add(text ?? "");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            result.Add(choices[i]);
         }
-        catch { }
         return result;
     }
 
-    private static bool HasParentWithComponent(GameObject go, GameType gameType)
+    private static bool IsVisible(VisualElement element)
     {
-        if (gameType == null || !gameType.IsValid) return false;
+        if (element == null) return false;
+        // Check if element is displayed and has non-zero size
+        if (element.resolvedStyle.display == DisplayStyle.None) return false;
+        if (element.resolvedStyle.visibility == Visibility.Hidden) return false;
+        if (element.resolvedStyle.opacity < 0.01f) return false;
+        return true;
+    }
 
-        var managedType = gameType.ManagedType;
-        if (managedType == null) return false;
+    private static string GetButtonText(Button btn)
+    {
+        // Try direct text property
+        if (!string.IsNullOrWhiteSpace(btn.text))
+            return btn.text;
 
-        var parent = go.transform.parent;
+        // Try to find a label child
+        var label = UQueryExtensions.Q<Label>(btn, null, (string)null);
+        if (label != null && !string.IsNullOrWhiteSpace(label.text))
+            return label.text;
+
+        return null;
+    }
+
+    private static bool IsChildOfInteractiveElement(VisualElement element)
+    {
+        var parent = element.parent;
         while (parent != null)
         {
-            var component = parent.GetComponent(Il2CppType.From(managedType));
-            if (component != null) return true;
+            if (parent is Button || parent is Toggle || parent is TextField ||
+                parent is DropdownField || parent is Slider)
+                return true;
             parent = parent.parent;
         }
         return false;
     }
 
-    // --- Reflection helpers ---
-
-    private static GameObject GetGameObject(object component)
+    private static bool IsHeaderLabel(Label label)
     {
-        if (component == null) return null;
-        if (component is GameObject go) return go;
-        if (component is Component c) return c.gameObject;
-
-        var goProp = component.GetType().GetProperty("gameObject");
-        return goProp?.GetValue(component) as GameObject;
+        var fontSize = GetFontSize(label);
+        return fontSize >= 20;
     }
 
-    private static Component FindComponentInChildren(GameObject go, GameType gameType)
+    private static int GetFontSize(VisualElement element)
     {
-        if (go == null || gameType == null || !gameType.IsValid) return null;
-
         try
         {
-            var managedType = gameType.ManagedType;
-            if (managedType == null) return null;
-
-            var il2cppType = Il2CppType.From(managedType);
-            return go.GetComponentInChildren(il2cppType);
+            // In IL2CPP, resolvedStyle.fontSize is a float
+            var size = element.resolvedStyle.fontSize;
+            return (int)size;
         }
         catch
         {
-            return null;
+            return 14;
         }
     }
 
-    private static string GetPath(Transform t)
+    private static string GetPath(VisualElement element)
     {
         var parts = new List<string>();
-        while (t != null)
+        var current = element;
+        while (current != null)
         {
-            parts.Insert(0, t.name);
-            t = t.parent;
+            var name = current.name;
+            if (string.IsNullOrEmpty(name))
+                name = current.GetType().Name;
+            parts.Insert(0, name);
+            current = current.parent;
         }
         return string.Join("/", parts);
-    }
-
-    private static string GetPropertyString(object obj, string propertyName)
-    {
-        try
-        {
-            var prop = obj.GetType().GetProperty(propertyName);
-            return prop?.GetValue(obj) as string;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool GetPropertyBool(object obj, string propertyName, bool defaultValue)
-    {
-        try
-        {
-            var prop = obj.GetType().GetProperty(propertyName);
-            if (prop != null)
-                return (bool)prop.GetValue(obj);
-        }
-        catch { }
-        return defaultValue;
-    }
-
-    private static int GetPropertyInt(object obj, string propertyName, int defaultValue)
-    {
-        try
-        {
-            var prop = obj.GetType().GetProperty(propertyName);
-            if (prop != null)
-                return Convert.ToInt32(prop.GetValue(obj));
-        }
-        catch { }
-        return defaultValue;
-    }
-
-    private static float GetPropertyFloat(object obj, string propertyName, float defaultValue)
-    {
-        try
-        {
-            var prop = obj.GetType().GetProperty(propertyName);
-            if (prop != null)
-                return Convert.ToSingle(prop.GetValue(obj));
-        }
-        catch { }
-        return defaultValue;
     }
 }

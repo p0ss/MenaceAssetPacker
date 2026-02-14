@@ -2,15 +2,41 @@
 
 `Menace.SDK.TacticalController` -- Static class for controlling tactical game state including rounds, turns, time scale, and mission flow.
 
-## Constants
+## Enums
 
-### Faction Constants
+### FactionType
 
 ```csharp
-public const int FACTION_PLAYER = 0;
-public const int FACTION_ENEMY = 1;
-public const int FACTION_NEUTRAL = 2;
+public enum FactionType
+{
+    Neutral = 0,
+    Player = 1,
+    PlayerAI = 2,
+    Civilian = 3,
+    AlliedLocalForces = 4,
+    EnemyLocalForces = 5,
+    Pirates = 6,
+    Wildlife = 7,
+    Constructs = 8,
+    RogueArmy = 9
+}
 ```
+
+Faction types matching the game's internal `FactionType` enum.
+
+### TacticalFinishReason
+
+```csharp
+public enum TacticalFinishReason
+{
+    None = 0,
+    AllPlayerUnitsDead = 1,
+    Leave = 2,
+    LoadingSavegame = 3
+}
+```
+
+Reason for finishing a tactical mission.
 
 ## Methods
 
@@ -22,7 +48,7 @@ public const int FACTION_NEUTRAL = 2;
 public static int GetCurrentRound()
 ```
 
-Get the current round number (1-indexed).
+Get the current round number (1-indexed). Uses `TacticalManager.GetRound()` internally.
 
 #### NextRound
 
@@ -40,7 +66,23 @@ Advance to the next round.
 public static int GetCurrentFaction()
 ```
 
-Get the currently active faction index.
+Get the currently active faction ID. Uses `TacticalManager.GetActiveFactionID()` internally.
+
+#### GetCurrentFactionType
+
+```csharp
+public static FactionType GetCurrentFactionType()
+```
+
+Get the current faction as a `FactionType` enum value.
+
+#### GetFactionName
+
+```csharp
+public static string GetFactionName(FactionType faction)
+```
+
+Get the display name for a faction type.
 
 #### IsPlayerTurn
 
@@ -48,7 +90,7 @@ Get the currently active faction index.
 public static bool IsPlayerTurn()
 ```
 
-Check if it's the player's turn.
+Check if it's the player's turn (faction is `FactionType.Player`).
 
 #### NextFaction
 
@@ -72,7 +114,7 @@ End the current turn (for player faction).
 public static bool SkipAITurn()
 ```
 
-Skip the AI turn (immediately end enemy turn).
+Skip the AI turn (immediately end non-player faction turn).
 
 ### Pause/Time Control
 
@@ -104,34 +146,41 @@ public static GameObj GetActiveActor()
 public static bool SetActiveActor(GameObj actor)
 ```
 
-Get or set the currently active (selected) actor.
+Get or set the currently active (selected) actor. Uses `TacticalManager.GetActiveActor()` internally.
 
 ### Unit Counts
 
-#### GetActorCount
+#### GetTotalEnemyCount
 
 ```csharp
-public static int GetActorCount(int factionIndex)
+public static int GetTotalEnemyCount()
 ```
 
-Get count of actors for a faction.
+Get total count of enemy actors. Uses `TacticalManager.GetTotalEnemyCount()` internally.
 
-#### GetDeadCount
+#### GetDeadEnemyCount
 
 ```csharp
-public static int GetDeadCount(int factionIndex)
+public static int GetDeadEnemyCount()
 ```
 
-Get count of dead actors for a faction.
+Get count of dead enemy actors. Uses `TacticalManager.GetDeadEnemyCount()` internally.
 
-#### IsAnyPlayerUnitAlive / IsAnyEnemyAlive
+#### IsAnyPlayerUnitAlive
 
 ```csharp
 public static bool IsAnyPlayerUnitAlive()
+```
+
+Check if any player units are still alive. Uses `TacticalManager.IsAnyPlayerUnitAlive()` internally.
+
+#### IsAnyEnemyAlive
+
+```csharp
 public static bool IsAnyEnemyAlive()
 ```
 
-Check if any player or enemy units are still alive.
+Check if any AI/enemy units are still alive. Uses `TacticalManager.IsAnyAIUnitAlive()` internally.
 
 ### Mission State
 
@@ -146,10 +195,10 @@ Check if the mission is still running.
 #### FinishMission
 
 ```csharp
-public static bool FinishMission()
+public static bool FinishMission(TacticalFinishReason reason = TacticalFinishReason.Leave)
 ```
 
-Finish the mission (trigger victory/defeat screen).
+Finish the mission with the specified reason. Uses `TacticalManager.Finish(TacticalFinishReason)` internally.
 
 ### Wave Control
 
@@ -164,10 +213,10 @@ Clear all enemies from the battlefield. Returns number cleared.
 #### SpawnWave
 
 ```csharp
-public static int SpawnWave(string templateName, List<(int x, int y)> positions)
+public static int SpawnWave(string templateName, List<(int x, int y)> positions, FactionType faction = FactionType.EnemyLocalForces)
 ```
 
-Spawn a wave of enemies at specified positions. Returns number successfully spawned.
+Spawn a wave of units at specified positions for the given faction. Returns number successfully spawned.
 
 ### State Info
 
@@ -188,16 +237,18 @@ public class TacticalStateInfo
 {
     public int RoundNumber { get; set; }
     public int CurrentFaction { get; set; }
+    public FactionType CurrentFactionType { get; set; }
     public string CurrentFactionName { get; set; }
     public bool IsPlayerTurn { get; set; }
     public bool IsPaused { get; set; }
     public float TimeScale { get; set; }
     public bool IsMissionRunning { get; set; }
     public string ActiveActorName { get; set; }
-    public int PlayerAliveCount { get; set; }
-    public int PlayerDeadCount { get; set; }
-    public int EnemyAliveCount { get; set; }
-    public int EnemyDeadCount { get; set; }
+    public bool IsAnyPlayerAlive { get; set; }
+    public bool IsAnyEnemyAlive { get; set; }
+    public int TotalEnemyCount { get; set; }
+    public int DeadEnemyCount { get; set; }
+    public int AliveEnemyCount { get; set; }
 }
 ```
 
@@ -208,8 +259,21 @@ public class TacticalStateInfo
 ```csharp
 var state = TacticalController.GetTacticalState();
 DevConsole.Log($"Round {state.RoundNumber}, {state.CurrentFactionName}'s turn");
-DevConsole.Log($"Players: {state.PlayerAliveCount} alive, {state.PlayerDeadCount} dead");
-DevConsole.Log($"Enemies: {state.EnemyAliveCount} alive, {state.EnemyDeadCount} dead");
+DevConsole.Log($"Players alive: {state.IsAnyPlayerAlive}");
+DevConsole.Log($"Enemies: {state.AliveEnemyCount} alive, {state.DeadEnemyCount} dead");
+```
+
+### Working with factions
+
+```csharp
+var faction = TacticalController.GetCurrentFactionType();
+DevConsole.Log($"Current faction: {TacticalController.GetFactionName(faction)}");
+
+// Check specific faction types
+if (faction == FactionType.Pirates)
+{
+    DevConsole.Log("It's the pirates' turn!");
+}
 ```
 
 ### Controlling game speed
@@ -251,8 +315,9 @@ var positions = new List<(int, int)>
     (5, 11), (6, 11), (7, 11)
 };
 
-var spawned = TacticalController.SpawnWave("enemy.pirate_boarding_commandos", positions);
-DevConsole.Log($"Spawned wave of {spawned} enemies");
+// Spawn as pirates
+var spawned = TacticalController.SpawnWave("enemy.pirate_boarding_commandos", positions, FactionType.Pirates);
+DevConsole.Log($"Spawned wave of {spawned} pirates");
 ```
 
 ### Victory condition check
@@ -261,7 +326,17 @@ DevConsole.Log($"Spawned wave of {spawned} enemies");
 if (!TacticalController.IsAnyEnemyAlive())
 {
     DevConsole.Log("All enemies defeated!");
-    TacticalController.FinishMission();
+    TacticalController.FinishMission(TacticalFinishReason.Leave);
+}
+```
+
+### Player defeat check
+
+```csharp
+if (!TacticalController.IsAnyPlayerUnitAlive())
+{
+    DevConsole.Log("All player units lost!");
+    TacticalController.FinishMission(TacticalFinishReason.AllPlayerUnitsDead);
 }
 ```
 

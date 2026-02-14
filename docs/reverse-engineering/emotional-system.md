@@ -9,7 +9,7 @@ The Emotional State system manages temporary morale and psychological effects on
 ```
 EmotionalStates (collection per BaseUnitLeader)
 ├── BaseUnitLeader Owner                         // +0x10 (owning unit)
-├── List<EmotionalState> States                  // +0x18 (active emotions)
+├── List<EmotionalState> m_States                // +0x18 (active emotions)
 ├── int LastMissionParticipation                 // +0x20 (mission counter, init: -1)
 └── int LastOperationParticipation               // +0x24 (operation counter, init: -1)
 
@@ -21,12 +21,12 @@ EmotionalState (single active emotion)
 └── bool IsFirstMission                          // +0x2C (true if just applied)
 
 EmotionalStateTemplate (emotion definition)
-├── EmotionalStateType Type                      // +0x78 (emotion type enum)
-├── SkillTemplate Skill                          // +0x98 (skill modifier)
-├── bool IsNegative                              // +0xCC (negative emotion)
-├── bool IsStackable                             // +0xCD (can stack)
+├── EmotionalStateType StateType                 // +0x78 (emotion type enum)
+├── EffectTemplate Effect                        // +0x98 (effect modifier)
+├── bool IsPositive                              // +0xCC (positive emotion)
+├── bool IsSuperState                            // +0xCD (is super state)
 ├── IntRange Duration                            // +0xC0 (duration range)
-└── EmotionalStateResponse Response              // (replacement behavior)
+└── EmotionalStateTemplate SuperState            // +0xD0 (super state reference)
 ```
 
 ## EmotionalStateType Enum
@@ -34,15 +34,20 @@ EmotionalStateTemplate (emotion definition)
 ```c
 enum EmotionalStateType {
     None = 0,
-    Angry = 1,
-    Confident = 2,
-    Targeted = 3,        // Requires target (e.g., "hates" specific enemy)
-    Grief = 4,
-    Fear = 5,
-    Inspired = 6,
-    Vengeful = 7,
-    Traumatized = 8
-    // ... additional types
+    AnimosityTowards = 1,   // Directed at specific target
+    Determined = 2,
+    Weary = 3,
+    Disheartened = 4,
+    Eager = 5,
+    Frustrated = 6,
+    Exhausted = 7,
+    GoodwillTowards = 8,    // Directed at specific target
+    Hesitant = 9,
+    Overconfident = 10,
+    Injured = 11,
+    Bruised = 12,
+    Euphoric = 13,
+    Miserable = 14
 }
 ```
 
@@ -50,16 +55,26 @@ enum EmotionalStateType {
 
 ```c
 enum EmotionalTrigger {
-    None = 0,
-    KilledEnemy = 1,
-    WasWounded = 2,
-    AllyKilled = 3,
-    AllyWounded = 4,
-    MissionSuccess = 5,
-    MissionFailure = 6,
-    OperationStart = 7,
-    OperationEnd = 8,
-    // ... additional triggers
+    StabilizedBy = 0,
+    StabilizedOthers = 1,
+    ReceivedFriendlyFireFrom = 2,
+    DeployedXTimesWithOther = 3,
+    KilledXEnemyEntities = 4,
+    KilledXEnemyMiniBosses = 5,
+    DeployedInTheXMissionsBeforeCurrent = 6,
+    NotDeployedInTheXMissionsBeforeCurrent = 7,
+    KilledXCivElements = 8,
+    SuccessOnFavPlanet = 9,
+    FailedOnFavPlanet = 10,
+    LostOverXPercentHitpoints = 11,
+    GameEffect = 12,
+    Event = 13,
+    Cheat = 14,
+    OtherLeaderKilledCivElementOnFavPlanet = 15,
+    Fled = 16,
+    NearDeathExperience = 17,
+    LostAllSquaddies = 18,
+    Last = 19
 }
 ```
 
@@ -71,7 +86,7 @@ enum EmotionalTrigger {
 public class EmotionalStates : ISaveStateProcessor, IEnumerable<EmotionalState> {
     // Object header                              // +0x00 - 0x0F
     BaseUnitLeader Owner;                         // +0x10 (owning unit leader)
-    List<EmotionalState> States;                  // +0x18 (list of active emotions)
+    List<EmotionalState> m_States;                // +0x18 (list of active emotions)
     int LastMissionParticipation;                 // +0x20 (init: -1)
     int LastOperationParticipation;               // +0x24 (init: -1, version >= 101)
 }
@@ -84,9 +99,9 @@ public class EmotionalStates : ISaveStateProcessor, IEnumerable<EmotionalState> 
 void EmotionalStates.ctor();  // @ 1805b8f30
 
 // State management
-EmotionalState AddEmotionalState(EmotionalStateTemplate template, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random);  // @ 1805b4940
+EmotionalState AddEmotionalState(EmotionalStateTemplate template, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random, int mission);  // @ 1805b4940
 void RemoveState(int index);  // @ 1805b5060
-bool TryApplyEmotionalState(EmotionalStateTemplate template, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random);  // @ 1805b5920
+bool TryApplyEmotionalState(EmotionalStateTemplate template, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random, bool showAsReward);  // @ 1805b5920
 bool TryRemoveRandomEmotionalStates(int count, PseudoRandom random);  // @ 1805b6360
 
 // Queries
@@ -99,7 +114,7 @@ bool HasStates(EmotionalStateType[] types);  // @ 1805b4d20
 IEnumerator<EmotionalState> GetEnumerator();  // @ 1805b4a90
 
 // Events
-void TriggerEmotion(EmotionalTrigger trigger, UnitLeaderTemplate target);  // @ 1805b51b0
+void TriggerEmotion(EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random, int mission);  // @ 1805b51b0
 
 // Mission lifecycle
 void OnMissionFinished(bool isVictory);  // @ 1805b4da0
@@ -114,22 +129,22 @@ void ProcessSaveState(SaveState state);  // @ 1805b4fd0
 
 ```c
 // @ 1805b5920
-bool TryApplyEmotionalState(EmotionalStateTemplate newTemplate, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random) {
+bool TryApplyEmotionalState(EmotionalStateTemplate newTemplate, EmotionalTrigger trigger, UnitLeaderTemplate target, PseudoRandom random, bool showAsReward) {
     if (Owner == null) return false;
 
-    EmotionalStateType newType = newTemplate.Type;  // +0x78
+    EmotionalStateType newType = newTemplate.StateType;  // +0x78
     EmotionalStatesConfig config = StrategyConfig.Instance.EmotionalConfig;  // +0x1A8
 
     // Check for existing emotion of same type
-    foreach (EmotionalState existing in States) {  // +0x18
-        EmotionalStateTemplate existingTemplate = existing.Template;  // +0x10
+    foreach (EmotionalState existing in m_States) {  // +0x18
+        EmotionalStateTemplate existingTemplate = existing.GetTemplate();  // +0x10
 
-        if (existingTemplate.Type != newType) continue;
+        if (existingTemplate.StateType != newType) continue;
 
         // Same type found - handle based on polarity
-        if (existingTemplate.IsNegative == newTemplate.IsNegative) {  // +0xCC
+        if (existingTemplate.IsPositive == newTemplate.IsPositive) {  // +0xCC
             // Same polarity
-            if (existingTemplate.IsStackable) {  // +0xCD
+            if (existingTemplate.IsSuperState) {  // +0xCD
                 // Stackable: increase duration
                 existing.RemainingDuration++;  // +0x28
                 ShowNotification("emotion_extended", ...);
@@ -143,7 +158,7 @@ bool TryApplyEmotionalState(EmotionalStateTemplate newTemplate, EmotionalTrigger
             }
         } else {
             // Opposite polarity - they cancel
-            if (!existingTemplate.IsStackable) {
+            if (!existingTemplate.IsSuperState) {
                 RemoveState(i);
                 EmotionalState newState = AddEmotionalState(newTemplate, trigger, target, random);
                 ShowNotification("emotion_replaced", ...);
@@ -174,11 +189,11 @@ void OnMissionFinished(bool isVictory) {
     Roster roster = StrategyState.Instance.Roster;  // +0x70
 
     // Remove emotions targeting dead leaders
-    for (int i = States.Count - 1; i >= 0; i--) {
-        EmotionalState state = States[i];
-        EmotionalStateTemplate template = state.Template;  // +0x10
+    for (int i = m_States.Count - 1; i >= 0; i--) {
+        EmotionalState state = m_States[i];
+        EmotionalStateTemplate template = state.GetTemplate();  // +0x10
 
-        if (template.Type == EmotionalStateType.Targeted) {  // 3
+        if (template.StateType == EmotionalStateType.AnimosityTowards || template.StateType == EmotionalStateType.GoodwillTowards) {
             UnitLeaderTemplate target = state.TargetLeader;  // +0x20
             if (target != null) {
                 LeaderStatus status;
@@ -191,12 +206,12 @@ void OnMissionFinished(bool isVictory) {
     }
 
     // Reduce duration of all emotions
-    for (int i = States.Count - 1; i >= 0; i--) {
-        EmotionalState state = States[i];
+    for (int i = m_States.Count - 1; i >= 0; i--) {
+        EmotionalState state = m_States[i];
         state.IsFirstMission = false;  // +0x2C
 
         // Check for "permanent until victory" type
-        EmotionalStateTemplate template = state.Template;
+        EmotionalStateTemplate template = state.GetTemplate();
         if (template.Type == 0x40 && isVictory) {  // Special flag
             continue;  // Don't reduce
         }
@@ -247,37 +262,37 @@ string ReplacePlaceholders(string text);  // @ 1805b46c0
 void ProcessSaveState(SaveState state);  // @ 1805b4530
 ```
 
-### AddSkill Flow
+### AddEffect Flow
 
 ```c
 // @ 1805b3550
-void AddSkill(BaseUnitLeader owner) {
-    EmotionalStateTemplate template = Template;  // +0x10
+void AddEffect(BaseUnitLeader owner) {
+    EmotionalStateTemplate template = GetTemplate();  // +0x10
     if (template == null) return;
 
-    SkillTemplate skillTemplate = template.Skill;  // +0x98
-    if (skillTemplate == null) {
-        // No skill to add - log debug message
+    EffectTemplate effectTemplate = template.Effect;  // +0x98
+    if (effectTemplate == null) {
+        // No effect to add - log debug message
         return;
     }
 
-    // Targeted emotions (type 3) don't add skills if no target
-    if (template.Type != EmotionalStateType.Targeted) {
-        SkillContainer skills = owner.Skills;  // +0x38
-        Skill skill = skillTemplate.CreateSkill();
-        skills.Add(skill);
+    // Targeted emotions don't add effects if no target
+    if (template.StateType != EmotionalStateType.AnimosityTowards && template.StateType != EmotionalStateType.GoodwillTowards) {
+        EffectContainer effects = owner.Effects;  // +0x38
+        Effect effect = effectTemplate.CreateEffect();
+        effects.Add(effect);
 
         // Warn about deprecated flags
-        if (skillTemplate.HasDeprecatedFlag1) {  // +0x117
-            Debug.LogWarning("Skill has deprecated flag 1");
+        if (effectTemplate.HasDeprecatedFlag1) {  // +0x117
+            Debug.LogWarning("Effect has deprecated flag 1");
         }
-        if (skillTemplate.HasDeprecatedFlag2) {  // +0x118
-            Debug.LogWarning("Skill has deprecated flag 2");
+        if (effectTemplate.HasDeprecatedFlag2) {  // +0x118
+            Debug.LogWarning("Effect has deprecated flag 2");
         }
     }
 
     // Log debug message
-    Debug.Log($"Added emotion skill {skillTemplate.ID} for {template.Type} triggered by {Trigger}");
+    Debug.Log($"Added emotion effect {effectTemplate.ID} for {template.StateType} triggered by {Trigger}");
 }
 ```
 
@@ -288,13 +303,13 @@ void AddSkill(BaseUnitLeader owner) {
 ```c
 public class EmotionalStateTemplate : DataTemplate {
     // DataTemplate fields...
-    EmotionalStateType Type;                      // +0x78 (emotion type)
+    EmotionalStateType StateType;                 // +0x78 (emotion type)
     Sprite Icon;                                  // +0x80
-    SkillTemplate Skill;                          // +0x98 (applied skill modifier)
+    EffectTemplate Effect;                        // +0x98 (applied effect modifier)
     IntRange Duration;                            // +0xC0 (random duration range)
-    bool IsNegative;                              // +0xCC (negative emotion)
-    bool IsStackable;                             // +0xCD (can stack same type)
-    EmotionalStateTemplate ReplacementTemplate;   // +0xD0 (optional upgrade)
+    bool IsPositive;                              // +0xCC (positive emotion)
+    bool IsSuperState;                            // +0xCD (is super state)
+    EmotionalStateTemplate SuperState;            // +0xD0 (super state reference)
 }
 ```
 
@@ -306,7 +321,7 @@ void EmotionalStateTemplate.ctor();  // @ 1805b3380
 
 // Queries
 static EmotionalStateTemplate GetByType(EmotionalStateType type);  // @ 1805b2f30
-bool NeedsTarget();  // @ 1805b3370 (true for Type == Targeted)
+bool NeedsTarget();  // @ 1805b3370 (true for StateType == AnimosityTowards or GoodwillTowards)
 List<LocalizedString> GetLocalizedStrings();  // @ 1805b31f0
 ```
 
@@ -345,17 +360,17 @@ void TryExecuteEmotionalTriggers() {
 
         // Check for kills
         if (leader.Statistics.Kills > 0) {
-            emotions.TriggerEmotion(EmotionalTrigger.KilledEnemy, null);
+            emotions.TriggerEmotion(EmotionalTrigger.KilledXEnemyEntities, null, random, mission);
         }
 
-        // Check for wounds
+        // Check for wounds (significant HP loss)
         if (leader.WasWoundedThisMission) {
-            emotions.TriggerEmotion(EmotionalTrigger.WasWounded, null);
+            emotions.TriggerEmotion(EmotionalTrigger.LostOverXPercentHitpoints, null, random, mission);
         }
 
-        // Check for ally deaths
-        foreach (BaseUnitLeader dead in deadAllies) {
-            emotions.TriggerEmotion(EmotionalTrigger.AllyKilled, dead.Template);
+        // Check for stabilizing others
+        foreach (BaseUnitLeader stabilized in stabilizedAllies) {
+            emotions.TriggerEmotion(EmotionalTrigger.StabilizedOthers, stabilized.GetTemplate(), random, mission);
         }
     }
 }
@@ -401,7 +416,7 @@ class CustomTriggerPatch {
 class DurationPatch {
     static void Postfix(EmotionalState __instance) {
         // Extend positive emotions
-        if (!__instance.Template.IsNegative && __instance.RemainingDuration == 1) {
+        if (__instance.GetTemplate().IsPositive && __instance.RemainingDuration == 1) {
             __instance.RemainingDuration = 2;  // Prevent expiry
         }
     }
@@ -414,10 +429,10 @@ class DurationPatch {
 [HarmonyPatch(typeof(EmotionalStates), "OnMissionFinished")]
 class MissionFinishPatch {
     static void Prefix(EmotionalStates __instance, bool isVictory) {
-        // Clear all emotions on victory
+        // Clear all negative emotions on victory
         if (isVictory) {
-            for (int i = __instance.States.Count - 1; i >= 0; i--) {
-                if (__instance.States[i].Template.IsNegative) {
+            for (int i = __instance.m_States.Count - 1; i >= 0; i--) {
+                if (!__instance.m_States[i].GetTemplate().IsPositive) {
                     __instance.RemoveState(i);
                 }
             }
@@ -429,8 +444,9 @@ class MissionFinishPatch {
 ## Key Constants
 
 ```c
-// EmotionalStateType values
-const int TYPE_TARGETED = 3;        // Requires target leader
+// EmotionalStateType values that require target
+const int TYPE_ANIMOSITY_TOWARDS = 1;   // Requires target leader
+const int TYPE_GOODWILL_TOWARDS = 8;    // Requires target leader
 
 // Default initialization values
 const int INIT_LAST_MISSION = -1;   // 0xFFFFFFFF
@@ -444,7 +460,7 @@ const int VERSION_OPERATION_TRACKING = 101;
 
 - **BaseUnitLeader**: Owner of EmotionalStates (+0x58)
 - **EmotionalStateTemplate**: Definition of emotion types
-- **SkillTemplate**: Skill applied by emotion
+- **EffectTemplate**: Effect applied by emotion
 - **EmotionalStatesConfig**: Global emotion configuration
 - **EmotionalTriggerExtensions**: Trigger type utilities
 - **MissionResult**: Triggers emotions after combat

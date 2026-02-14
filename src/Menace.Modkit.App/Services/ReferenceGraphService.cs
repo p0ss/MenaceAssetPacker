@@ -55,7 +55,7 @@ public class EnhancedReferenceEntry : ReferenceEntry
 public class ReferenceGraphService
 {
     private const string ReferenceFileName = "references.json";
-    private const int CurrentVersion = 5; // Added fallback detection for unknown fields via instance lookup
+    private const int CurrentVersion = 6; // Exclude "name" field from fallback reference detection
 
     // Template backlinks: "TemplateType/InstanceName" → list of references
     private readonly Dictionary<string, List<ReferenceEntry>> _templateBacklinks = new(StringComparer.Ordinal);
@@ -478,7 +478,8 @@ public class ReferenceGraphService
         }
         // Fallback: check if a string value matches a known template instance
         // Handles fields without schema metadata that reference templates
-        else if (fieldMeta == null && value.ValueKind == JsonValueKind.String)
+        // Exclude "name" field which is the template's own identity, not a reference
+        else if (fieldMeta == null && value.ValueKind == JsonValueKind.String && fieldName != "name")
         {
             var refValue = value.GetString();
             if (!string.IsNullOrEmpty(refValue) && _instanceToType.TryGetValue(refValue, out var concreteType))

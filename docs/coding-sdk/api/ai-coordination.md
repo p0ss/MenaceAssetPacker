@@ -88,10 +88,12 @@ Per-faction state tracked during a turn.
 | `HasDamageDealerActed` | bool | Whether a damage dealer has acted |
 | `ActedCount` | int | Number of units that have acted |
 | `TargetedTiles` | HashSet<IntPtr> | Tiles targeted by attacks |
-| `AllyPositions` | List<(int x, int y)> | Ally positions at turn start |
-| `AllyCentroid` | (float x, float y) | Pre-computed ally centroid |
-| `EnemyPositions` | List<(int x, int y)> | Enemy positions at turn start |
-| `EnemyCentroid` | (float x, float y) | Pre-computed enemy centroid |
+| `AllyPositions` | List<(int x, int z)> | Ally positions at turn start |
+| `AllyCentroid` | (float x, float z) | Pre-computed ally centroid |
+| `EnemyPositions` | List<(int x, int z)> | Enemy positions at turn start |
+| `EnemyCentroid` | (float x, float z) | Pre-computed enemy centroid |
+
+**Note:** The game uses X/Z coordinates for the horizontal plane, not X/Y.
 | `CustomData` | Dictionary<string, object> | Mod-specific storage |
 
 ### CoordinationConfig
@@ -251,10 +253,10 @@ Get faction index from Agent object.
 #### GetActorTilePosition
 
 ```csharp
-public static (int x, int y) GetActorTilePosition(GameObj actor)
+public static (int x, int z) GetActorTilePosition(GameObj actor)
 ```
 
-Get an actor's current tile position.
+Get an actor's current tile position (X/Z coordinates).
 
 ## Console Commands
 
@@ -281,10 +283,10 @@ static void GetScoreMult_Postfix(object __instance, ref float __result)
     // Custom: Boost units on the flanks
     var pos = AICoordination.GetActorTilePosition(actor);
     float dx = pos.x - state.EnemyCentroid.x;
-    float dy = pos.y - state.EnemyCentroid.y;
+    float dz = pos.z - state.EnemyCentroid.z;
 
     // Check if unit is perpendicular to enemy centroid (flanking)
-    float angle = MathF.Atan2(dy, dx);
+    float angle = MathF.Atan2(dz, dx);
     bool isFlanking = MathF.Abs(MathF.Sin(angle)) > 0.7f;
 
     if (isFlanking)

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Il2CppInterop.Runtime.InteropTypes;
+using UnityEngine;
 
 namespace Menace.SDK;
 
@@ -74,24 +76,55 @@ public static class Inventory
     {
         try
         {
-            EnsureTypesLoaded();
+            // Try direct approach: find StrategyState type in game assembly
+            var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
-            var ssType = _strategyStateType?.ManagedType;
-            if (ssType == null) return GameObj.Null;
+            if (gameAssembly == null)
+            {
+                SdkLogger.Warning("GetOwnedItems: Assembly-CSharp not found");
+                return GameObj.Null;
+            }
 
-            var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var ss = instanceProp?.GetValue(null);
-            if (ss == null) return GameObj.Null;
+            var ssType = gameAssembly.GetTypes()
+                .FirstOrDefault(t => t.FullName == "Menace.States.StrategyState" ||
+                                     t.Name == "StrategyState");
 
-            var ownedItemsProp = ssType.GetProperty("OwnedItems", BindingFlags.Public | BindingFlags.Instance);
-            var ownedItems = ownedItemsProp?.GetValue(ss);
-            if (ownedItems == null) return GameObj.Null;
+            if (ssType == null)
+            {
+                SdkLogger.Warning("GetOwnedItems: StrategyState type not found");
+                return GameObj.Null;
+            }
 
-            return new GameObj(((Il2CppObjectBase)ownedItems).Pointer);
+            // Use Get() static method to get StrategyState singleton
+            var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            if (getMethod == null)
+            {
+                SdkLogger.Warning("GetOwnedItems: StrategyState.Get() method not found");
+                return GameObj.Null;
+            }
+
+            var ss = getMethod.Invoke(null, null);
+            if (ss == null)
+            {
+                // This is normal when not on strategy map
+                return GameObj.Null;
+            }
+
+            // Access OwnedItems at offset +0x80 (verified via REPL)
+            var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
+            var ownedItemsPtr = ssObj.ReadPtr(0x80);
+            if (ownedItemsPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning("GetOwnedItems: OwnedItems at +0x80 is null");
+                return GameObj.Null;
+            }
+
+            return new GameObj(ownedItemsPtr);
         }
         catch (Exception ex)
         {
-            ModError.ReportInternal("Inventory.GetOwnedItems", "Failed", ex);
+            SdkLogger.Error($"GetOwnedItems failed: {ex.Message}");
             return GameObj.Null;
         }
     }
@@ -107,19 +140,28 @@ public static class Inventory
         {
             EnsureTypesLoaded();
 
-            var actorType = GameType.Find("Menace.Tactical.Actor")?.ManagedType;
-            if (actorType == null) return GameObj.Null;
+            // Access IHasItemContainer.ItemContainer property
+            // Actor implements IHasItemContainer interface which has ItemContainer property
+            var hasContainerType = GameType.Find("Menace.Items.IHasItemContainer")?.ManagedType;
+            if (hasContainerType != null)
+            {
+                var proxy = GetManagedProxy(entity, hasContainerType);
+                if (proxy != null)
+                {
+                    var containerProp = hasContainerType.GetProperty("ItemContainer",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    var container = containerProp?.GetValue(proxy);
+                    if (container != null)
+                        return new GameObj(((Il2CppObjectBase)container).Pointer);
+                }
+            }
 
-            var proxy = GetManagedProxy(entity, actorType);
-            if (proxy == null) return GameObj.Null;
+            // Fallback: try direct field access via m_ItemContainer
+            var containerPtr = entity.ReadPtr("m_ItemContainer");
+            if (containerPtr != IntPtr.Zero)
+                return new GameObj(containerPtr);
 
-            // Try GetItemContainer method
-            var getContainerMethod = actorType.GetMethod("GetItemContainer",
-                BindingFlags.Public | BindingFlags.Instance);
-            var container = getContainerMethod?.Invoke(proxy, null);
-            if (container == null) return GameObj.Null;
-
-            return new GameObj(((Il2CppObjectBase)container).Pointer);
+            return GameObj.Null;
         }
         catch (Exception ex)
         {
@@ -284,13 +326,9 @@ public static class Inventory
                 var templateObj = new GameObj(((Il2CppObjectBase)template).Pointer);
                 info.TemplateName = templateObj.GetName();
 
-                // Get slot type from template
-                var slotTypeProp = template.GetType().GetProperty("SlotType", BindingFlags.Public | BindingFlags.Instance);
-                if (slotTypeProp != null)
-                {
-                    info.SlotType = Convert.ToInt32(slotTypeProp.GetValue(template));
-                    info.SlotTypeName = GetSlotTypeName(info.SlotType);
-                }
+                // Get slot type from template using m_SlotType field at offset +0xe8
+                info.SlotType = templateObj.ReadInt(0xe8);
+                info.SlotTypeName = GetSlotTypeName(info.SlotType);
             }
 
             // Get trade value
@@ -317,13 +355,12 @@ public static class Inventory
                 }
             }
 
-            // Get skill count
-            var skillsProp = itemType.GetProperty("Skills", BindingFlags.Public | BindingFlags.Instance);
-            var skills = skillsProp?.GetValue(proxy);
-            if (skills != null)
+            // Get skill count using m_Skills field (Item.Skills @ +0x30)
+            var skillsPtr = item.ReadPtr("m_Skills");
+            if (skillsPtr != IntPtr.Zero)
             {
-                var countProp = skills.GetType().GetProperty("Count");
-                info.SkillCount = (int)(countProp?.GetValue(skills) ?? 0);
+                var skillsList = new GameList(skillsPtr);
+                info.SkillCount = skillsList.Count;
             }
 
             return info;
@@ -371,10 +408,9 @@ public static class Inventory
                 }
             }
 
-            // Check for modular vehicle
-            var modVehicleProp = containerType.GetProperty("ModularVehicle",
-                BindingFlags.Public | BindingFlags.Instance);
-            info.HasModularVehicle = modVehicleProp?.GetValue(proxy) != null;
+            // Check for modular vehicle using field at offset +0x20
+            var modVehiclePtr = container.ReadPtr(0x20);
+            info.HasModularVehicle = modVehiclePtr != IntPtr.Zero;
 
             return info;
         }
@@ -452,6 +488,7 @@ public static class Inventory
 
     /// <summary>
     /// Get items with a specific tag.
+    /// Note: GetItemsWithTag in game returns count (int), so we iterate all items and filter by tag.
     /// </summary>
     public static List<ItemInfo> GetItemsWithTag(GameObj container, string tag)
     {
@@ -460,32 +497,34 @@ public static class Inventory
 
         try
         {
-            EnsureTypesLoaded();
+            // Get all items and filter by tag
+            // The game's GetItemsWithTag returns a count, not a list
+            var allItems = GetAllItems(container);
 
-            var containerType = _itemContainerType?.ManagedType;
-            if (containerType == null) return result;
-
-            var proxy = GetManagedProxy(container, containerType);
-            if (proxy == null) return result;
-
-            var getTaggedMethod = containerType.GetMethod("GetItemsWithTag",
-                BindingFlags.Public | BindingFlags.Instance);
-            var items = getTaggedMethod?.Invoke(proxy, new object[] { tag });
-            if (items == null) return result;
-
-            var listType = items.GetType();
-            var countProp = listType.GetProperty("Count");
-            var indexer = listType.GetMethod("get_Item");
-
-            int count = (int)countProp.GetValue(items);
-            for (int i = 0; i < count; i++)
+            foreach (var itemInfo in allItems)
             {
-                var item = indexer.Invoke(items, new object[] { i });
-                if (item == null) continue;
+                if (itemInfo.Pointer == IntPtr.Zero) continue;
 
-                var info = GetItemInfo(new GameObj(((Il2CppObjectBase)item).Pointer));
-                if (info != null)
-                    result.Add(info);
+                var itemObj = new GameObj(itemInfo.Pointer);
+
+                // Check if item has the tag using HasTag method on BaseItem
+                EnsureTypesLoaded();
+                var baseItemType = _baseItemType?.ManagedType;
+                if (baseItemType != null)
+                {
+                    var proxy = GetManagedProxy(itemObj, baseItemType);
+                    if (proxy != null)
+                    {
+                        var hasTagMethod = baseItemType.GetMethod("HasTag",
+                            BindingFlags.Public | BindingFlags.Instance);
+                        if (hasTagMethod != null)
+                        {
+                            var hasTag = (bool)hasTagMethod.Invoke(proxy, new object[] { tag });
+                            if (hasTag)
+                                result.Add(itemInfo);
+                        }
+                    }
+                }
             }
 
             return result;
@@ -677,6 +716,95 @@ public static class Inventory
             return $"Total Trade Value: ${total} ({items.Count} items)";
         });
 
+        // spawn <template> - Spawn an item by template name
+        DevConsole.RegisterCommand("spawn", "<template>", "Spawn an item by template name (strategy map only)", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: spawn <template_name>\nExample: spawn weapon.laser_smg\nNote: Must be on strategy map (world map), not in tactical combat or menus.";
+
+            var templateName = args[0];
+            var result = SpawnItem(templateName);
+            return result;
+        });
+
+        // give <template> - Give item to selected actor (works in tactical)
+        DevConsole.RegisterCommand("give", "<template>", "Give item to selected actor (tactical mode)", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: give <template_name>\nExample: give weapon.laser_smg";
+
+            var templateName = args[0];
+            var result = GiveItemToActor(templateName);
+            return result;
+        });
+
+        // spawnlist [filter] - List available item templates
+        DevConsole.RegisterCommand("spawnlist", "[filter]", "List item templates (optionally filtered)", args =>
+        {
+            var filter = args.Length > 0 ? args[0] : null;
+            var templates = GetItemTemplates(filter);
+
+            // Also search by partial match if exact search found nothing
+            if (templates.Count == 0 && filter != null)
+            {
+                // Try broader search
+                templates = GetItemTemplates(null)
+                    .Where(t => t.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .ToList();
+            }
+
+            if (templates.Count == 0)
+                return filter != null ? $"No templates matching '{filter}'" : "No item templates found";
+
+            var lines = new List<string> { $"Item Templates ({templates.Count}):" };
+            foreach (var t in templates.Take(50))
+            {
+                lines.Add($"  {t}");
+            }
+            if (templates.Count > 50)
+                lines.Add($"  ... and {templates.Count - 50} more (use filter to narrow down)");
+            return string.Join("\n", lines);
+        });
+
+        // spawninfo - Debug info about spawn system
+        DevConsole.RegisterCommand("spawninfo", "", "Show spawn system debug info", args =>
+        {
+            EnsureTypesLoaded();
+            var lines = new List<string> { "Spawn System Info:" };
+
+            // Check types
+            lines.Add($"  WeaponTemplate type: {(_weaponTemplateType != null ? "Found" : "NOT FOUND")}");
+            lines.Add($"  ArmorTemplate type: {(_armorTemplateType != null ? "Found" : "NOT FOUND")}");
+            lines.Add($"  BaseItemTemplate type: {(_itemTemplateType != null ? "Found" : "NOT FOUND")}");
+            lines.Add($"  StrategyState type: {(_strategyStateType != null ? "Found" : "NOT FOUND")}");
+            lines.Add($"  OwnedItems type: {(_ownedItemsType != null ? "Found" : "NOT FOUND")}");
+
+            // Check strategy state using Get() method
+            if (_strategyStateType?.ManagedType != null)
+            {
+                var getMethod = _strategyStateType.ManagedType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+                var ss = getMethod?.Invoke(null, null);
+                lines.Add($"  StrategyState.Get(): {(ss != null ? "Available" : "NULL")}");
+
+                if (ss != null)
+                {
+                    var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
+                    var ownedItemsPtr = ssObj.ReadPtr("m_OwnedItems");
+                    lines.Add($"  StrategyState.m_OwnedItems: {(ownedItemsPtr != IntPtr.Zero ? "Available" : "NULL")}");
+                }
+            }
+
+            // Count templates
+            if (_weaponTemplateType?.ManagedType != null)
+            {
+                var il2cppType = Il2CppInterop.Runtime.Il2CppType.From(_weaponTemplateType.ManagedType);
+                var weapons = Resources.FindObjectsOfTypeAll(il2cppType);
+                lines.Add($"  WeaponTemplate count: {weapons?.Length ?? 0}");
+            }
+
+            return string.Join("\n", lines);
+        });
+
         // hastag <tag> - Check for item with tag
         DevConsole.RegisterCommand("hastag", "<tag>", "Check if inventory has item with tag", args =>
         {
@@ -700,6 +828,276 @@ public static class Inventory
         });
     }
 
+    /// <summary>
+    /// Give an item to the selected actor in tactical mode.
+    /// </summary>
+    public static string GiveItemToActor(string templateName)
+    {
+        try
+        {
+            // Get selected actor
+            var actor = TacticalController.GetActiveActor();
+            if (actor.IsNull)
+                return "No actor selected. Select a unit first.";
+
+            // Find the template
+            var template = FindItemTemplate(templateName);
+            if (template.IsNull)
+                return $"Template '{templateName}' not found. Use 'spawnlist {templateName}' to search.";
+
+            // Get actor's container
+            var container = GetContainer(actor);
+            if (container.IsNull)
+                return "Actor has no item container";
+
+            // Find BaseItemTemplate.CreateItem method
+            EnsureTypesLoaded();
+            var templateType = _itemTemplateType?.ManagedType;
+            if (templateType == null)
+                return "BaseItemTemplate type not found";
+
+            var templateProxy = GetManagedProxy(template, templateType);
+            if (templateProxy == null)
+                return "Failed to get template proxy";
+
+            // Call CreateItem on the template
+            var createItemMethod = templateType.GetMethod("CreateItem",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (createItemMethod == null)
+                return "CreateItem method not found";
+
+            // CreateItem takes a GUID string
+            var guid = Guid.NewGuid().ToString();
+            var item = createItemMethod.Invoke(templateProxy, new object[] { guid });
+
+            if (item == null)
+                return "CreateItem returned null";
+
+            // Add to container
+            var containerType = _itemContainerType?.ManagedType;
+            if (containerType == null)
+                return "ItemContainer type not found";
+
+            var containerProxy = GetManagedProxy(container, containerType);
+            if (containerProxy == null)
+                return "Failed to get container proxy";
+
+            // Use Place() method to add item to container
+            // ItemContainer.Place(BaseItem item) - adds item to appropriate slot
+            var placeMethod = containerType.GetMethod("Place",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (placeMethod != null)
+            {
+                placeMethod.Invoke(containerProxy, new object[] { item });
+                return $"Gave {templateName} to {actor.GetName()}";
+            }
+
+            return "Could not find Place() method on ItemContainer";
+        }
+        catch (Exception ex)
+        {
+            return $"Give failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Spawn an item by template name and add it to owned items.
+    /// </summary>
+    public static string SpawnItem(string templateName)
+    {
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Find the template - try multiple template types
+            var template = FindItemTemplate(templateName);
+            if (template.IsNull)
+                return $"Template '{templateName}' not found. Use 'spawnlist {templateName}' to search.";
+
+            // Get OwnedItems with detailed diagnostics
+            var ownedItems = GetOwnedItems();
+            if (ownedItems.IsNull)
+            {
+                // Provide more diagnostic info
+                var ssType = _strategyStateType?.ManagedType;
+                if (ssType == null)
+                    return "Error: StrategyState type not found";
+
+                var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+                var ss = getMethod?.Invoke(null, null);
+                if (ss == null)
+                    return "Error: StrategyState.Get() returned null (are you on the strategy map?)";
+
+                var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
+                var ownedItemsPtr = ssObj.ReadPtr(0x80);
+                if (ownedItemsPtr == IntPtr.Zero)
+                    return "Error: StrategyState OwnedItems at +0x80 is null";
+
+                return "Error: Could not get OwnedItems";
+            }
+
+            var ownedType = _ownedItemsType?.ManagedType;
+            if (ownedType == null)
+                return "OwnedItems type not found";
+
+            var ownedProxy = GetManagedProxy(ownedItems, ownedType);
+            if (ownedProxy == null)
+                return "Failed to get OwnedItems proxy";
+
+            // Find the AddItem method - AddItem(BaseItemTemplate, bool showReward)
+            var addItemMethod = ownedType.GetMethod("AddItem",
+                BindingFlags.Public | BindingFlags.Instance,
+                null,
+                new[] { _itemTemplateType.ManagedType, typeof(bool) },
+                null);
+
+            if (addItemMethod == null)
+            {
+                // Try alternate signature
+                var methods = ownedType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(m => m.Name == "AddItem")
+                    .ToList();
+
+                foreach (var m in methods)
+                {
+                    var ps = m.GetParameters();
+                    if (ps.Length == 2 && ps[1].ParameterType == typeof(bool))
+                    {
+                        addItemMethod = m;
+                        break;
+                    }
+                }
+            }
+
+            if (addItemMethod == null)
+                return "AddItem method not found on OwnedItems";
+
+            // Get template proxy
+            var templateProxy = GetManagedProxy(template, _itemTemplateType.ManagedType);
+            if (templateProxy == null)
+                return "Failed to get template proxy";
+
+            // Call AddItem(template, false) - false = don't show reward UI
+            var item = addItemMethod.Invoke(ownedProxy, new object[] { templateProxy, false });
+
+            if (item != null)
+            {
+                var itemObj = new GameObj(((Il2CppObjectBase)item).Pointer);
+                return $"Spawned: {templateName} (ID: {itemObj.GetName()})";
+            }
+            else
+            {
+                return $"Spawned: {templateName} (item added to inventory)";
+            }
+        }
+        catch (Exception ex)
+        {
+            var inner = ex.InnerException ?? ex;
+            return $"Failed to spawn item: {inner.Message}";
+        }
+    }
+
+    // Additional template types to search
+    private static GameType _weaponTemplateType;
+    private static GameType _armorTemplateType;
+
+    /// <summary>
+    /// Find an item template by name. Searches multiple template types.
+    /// </summary>
+    public static GameObj FindItemTemplate(string templateName)
+    {
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Try multiple template types
+            var typesToSearch = new[]
+            {
+                _weaponTemplateType?.ManagedType,
+                _armorTemplateType?.ManagedType,
+                _itemTemplateType?.ManagedType
+            };
+
+            foreach (var templateType in typesToSearch)
+            {
+                if (templateType == null) continue;
+
+                var il2cppType = Il2CppInterop.Runtime.Il2CppType.From(templateType);
+                var objects = Resources.FindObjectsOfTypeAll(il2cppType);
+
+                if (objects != null)
+                {
+                    foreach (var obj in objects)
+                    {
+                        if (obj != null && obj.name.Equals(templateName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return new GameObj(((Il2CppObjectBase)obj).Pointer);
+                        }
+                    }
+                }
+            }
+
+            return GameObj.Null;
+        }
+        catch
+        {
+            return GameObj.Null;
+        }
+    }
+
+    /// <summary>
+    /// Get all item template names, optionally filtered. Searches multiple template types.
+    /// </summary>
+    public static List<string> GetItemTemplates(string filter = null)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Search multiple template types
+            var typesToSearch = new[]
+            {
+                _weaponTemplateType?.ManagedType,
+                _armorTemplateType?.ManagedType,
+                _itemTemplateType?.ManagedType
+            };
+
+            foreach (var templateType in typesToSearch)
+            {
+                if (templateType == null) continue;
+
+                var il2cppType = Il2CppInterop.Runtime.Il2CppType.From(templateType);
+                var objects = Resources.FindObjectsOfTypeAll(il2cppType);
+
+                if (objects != null)
+                {
+                    foreach (var obj in objects)
+                    {
+                        if (obj == null || string.IsNullOrEmpty(obj.name)) continue;
+
+                        if (filter == null ||
+                            obj.name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.Add(obj.name);
+                        }
+                    }
+                }
+            }
+
+            var sorted = result.ToList();
+            sorted.Sort();
+            return sorted;
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
     // --- Internal helpers ---
 
     private static void EnsureTypesLoaded()
@@ -708,6 +1106,8 @@ public static class Inventory
         _baseItemType ??= GameType.Find("Menace.Items.BaseItem");
         _itemContainerType ??= GameType.Find("Menace.Items.ItemContainer");
         _itemTemplateType ??= GameType.Find("Menace.Items.BaseItemTemplate");
+        _weaponTemplateType ??= GameType.Find("Menace.Items.WeaponTemplate");
+        _armorTemplateType ??= GameType.Find("Menace.Items.ArmorTemplate");
         _strategyStateType ??= GameType.Find("Menace.States.StrategyState");
         _ownedItemsType ??= GameType.Find("Menace.Strategy.OwnedItems");
     }

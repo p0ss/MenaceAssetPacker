@@ -10,7 +10,7 @@
 public static SpawnResult SpawnUnit(string templateName, int tileX, int tileY, int factionIndex = 1)
 ```
 
-Spawn a transient actor (AI enemy or temporary unit) at the specified tile.
+Spawn a transient actor (AI enemy or temporary unit) at the specified tile. Uses `TacticalManager.TrySpawnUnit()` internally, which handles actor registration automatically.
 
 **Parameters:**
 - `templateName` - EntityTemplate name (e.g., `enemy.pirate_boarding_commandos`, `enemy.construct_soldier_tier1`)

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes;
 
 namespace Menace.SDK;
 
@@ -27,6 +29,13 @@ public static class AICoordination
 
     private static readonly Dictionary<int, FactionTurnState> _factionStates = new();
     private static readonly object _stateLock = new();
+
+    // Cached types for reflection
+    private static GameType _actorType;
+    private static GameType _baseFactionType;
+
+    // Offset for SkillBehavior target tile reference (verified via audit)
+    private const uint OFFSET_SKILL_BEHAVIOR_TARGET_TILE = 0x58;
 
     /// <summary>
     /// State tracked per faction per turn.
@@ -261,17 +270,19 @@ public static class AICoordination
         if (config.EnableFocusFire && state.TargetedTiles.Count > 0)
         {
             // Check if this agent's behaviors target an already-targeted tile
+            // BehaviorInfo from AI.GetBehaviors() extracts TargetTileX/Z from the
+            // SkillBehavior.TargetTile object reference at +0x58
             var behaviors = AI.GetBehaviors(actor);
             foreach (var behavior in behaviors)
             {
                 // Check if behavior targets a tile we've already attacked
-                if (behavior.TargetTileX > 0 || behavior.TargetTileY > 0)
+                // TargetTileX/Z are extracted from SkillBehavior's TargetTile reference
+                if (behavior.TargetTileX.HasValue && behavior.TargetTileZ.HasValue)
                 {
-                    // This is a simplified check - ideally we'd compare tile pointers
-                    // For now, use position matching
-                    foreach (var (x, y) in GetTargetedTilePositions(state))
+                    // Use position matching since we track tile pointers in state
+                    foreach (var (x, z) in GetTargetedTilePositions(state))
                     {
-                        if (behavior.TargetTileX == x && behavior.TargetTileY == y)
+                        if (behavior.TargetTileX.Value == x && behavior.TargetTileZ.Value == z)
                         {
                             multiplier *= config.FocusFireBoost;
                             break;
@@ -284,7 +295,7 @@ public static class AICoordination
         return multiplier;
     }
 
-    private static IEnumerable<(int x, int y)> GetTargetedTilePositions(FactionTurnState state)
+    private static IEnumerable<(int x, int z)> GetTargetedTilePositions(FactionTurnState state)
     {
         // This would need tile pointer -> position lookup
         // For now, return empty - full implementation needs TileMap integration
@@ -416,10 +427,20 @@ public static class AICoordination
             state.HasDamageDealerActed = true;
 
         // Track targeted tile
+        // SkillBehavior stores target tile reference at +0x58 (TargetTile property)
         var activeBehavior = agent.ReadObj("m_ActiveBehavior");
         if (!activeBehavior.IsNull)
         {
-            var targetTile = activeBehavior.ReadObj("m_TargetTile");
+            // Try property-based access first (via reflection or ReadObj with property name)
+            var targetTile = activeBehavior.ReadObj("TargetTile");
+            if (targetTile.IsNull)
+            {
+                // Fallback: read tile pointer directly at offset +0x58 for SkillBehavior
+                var targetTilePtr = activeBehavior.ReadPtr(OFFSET_SKILL_BEHAVIOR_TARGET_TILE);
+                if (targetTilePtr != IntPtr.Zero)
+                    targetTile = new GameObj(targetTilePtr);
+            }
+
             if (!targetTile.IsNull)
             {
                 state.TargetedTiles.Add(targetTile.Pointer);
@@ -485,6 +506,7 @@ public static class AICoordination
 
     /// <summary>
     /// Get an actor's current tile position.
+    /// Uses Actor.GetTile() method (not direct field access) per audit findings.
     /// </summary>
     public static (int x, int y) GetActorTilePosition(GameObj actor)
     {
@@ -493,16 +515,44 @@ public static class AICoordination
 
         try
         {
-            // Actor has m_Tile field pointing to current tile
-            var tile = actor.ReadObj("m_Tile");
-            if (tile.IsNull)
-                tile = actor.ReadObj("Tile");
-            if (tile.IsNull)
-                return (-1, -1);
+            EnsureTypesLoaded();
 
-            int x = tile.ReadInt("X");
-            int y = tile.ReadInt("Y");
-            return (x, y);
+            // Use Actor.GetTile() method - the correct API per audit
+            var actorType = _actorType?.ManagedType;
+            if (actorType != null)
+            {
+                var actorProxy = GetManagedProxy(actor, actorType);
+                if (actorProxy != null)
+                {
+                    var getTileMethod = actorType.GetMethod("GetTile", BindingFlags.Public | BindingFlags.Instance);
+                    if (getTileMethod != null)
+                    {
+                        var tileObj = getTileMethod.Invoke(actorProxy, null);
+                        if (tileObj != null)
+                        {
+                            var tile = new GameObj(((Il2CppObjectBase)tileObj).Pointer);
+                            if (!tile.IsNull)
+                            {
+                                // Read tile coordinates - use m_X/m_Z properties
+                                int x = tile.ReadInt("m_X");
+                                int y = tile.ReadInt("m_Z");
+                                return (x, y);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: try property accessor
+            var tileFallback = actor.ReadObj("Tile");
+            if (!tileFallback.IsNull)
+            {
+                int x = tileFallback.ReadInt("m_X");
+                int y = tileFallback.ReadInt("m_Z");
+                return (x, y);
+            }
+
+            return (-1, -1);
         }
         catch
         {
@@ -512,28 +562,85 @@ public static class AICoordination
 
     /// <summary>
     /// Get faction index from an AIFaction object.
+    /// Uses BaseFaction.GetIndex() method per audit findings.
     /// </summary>
     public static int GetFactionIndex(GameObj aiFaction)
     {
         if (aiFaction.IsNull)
             return -1;
 
-        return aiFaction.ReadInt("m_FactionIndex");
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Use GetIndex() method from BaseFaction - the correct API
+            var factionType = _baseFactionType?.ManagedType;
+            if (factionType != null)
+            {
+                var factionProxy = GetManagedProxy(aiFaction, factionType);
+                if (factionProxy != null)
+                {
+                    var getIndexMethod = factionType.GetMethod("GetIndex", BindingFlags.Public | BindingFlags.Instance);
+                    if (getIndexMethod != null)
+                    {
+                        var result = getIndexMethod.Invoke(factionProxy, null);
+                        if (result is int index)
+                            return index;
+                    }
+                }
+            }
+
+            // Fallback: try property-based access
+            return aiFaction.ReadInt("FactionIndex");
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     /// <summary>
     /// Get faction index from an Agent object.
+    /// Uses GetAIFaction().GetIndex() method chain per audit findings.
     /// </summary>
     public static int GetAgentFactionIndex(GameObj agent)
     {
         if (agent.IsNull)
             return -1;
 
-        var faction = agent.ReadObj("m_Faction");
-        if (faction.IsNull)
-            return -1;
+        try
+        {
+            // Agent has GetAIFaction() method that returns the AIFaction
+            var faction = agent.ReadObj("m_Faction");
+            if (faction.IsNull)
+            {
+                // Try calling GetAIFaction() method
+                var agentType = GameType.Find("Menace.Tactical.AI.Agent")?.ManagedType;
+                if (agentType != null)
+                {
+                    var agentProxy = GetManagedProxy(agent, agentType);
+                    if (agentProxy != null)
+                    {
+                        var getAIFactionMethod = agentType.GetMethod("GetAIFaction", BindingFlags.Public | BindingFlags.Instance);
+                        if (getAIFactionMethod != null)
+                        {
+                            var factionObj = getAIFactionMethod.Invoke(agentProxy, null);
+                            if (factionObj != null)
+                                faction = new GameObj(((Il2CppObjectBase)factionObj).Pointer);
+                        }
+                    }
+                }
+            }
 
-        return faction.ReadInt("m_FactionIndex");
+            if (faction.IsNull)
+                return -1;
+
+            return GetFactionIndex(faction);
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -614,5 +721,31 @@ public static class AICoordination
                    $"  Weights: damage={roleData.InflictDamageWeight:F1} suppress={roleData.InflictSuppressionWeight:F1} " +
                    $"move={roleData.MoveWeight:F1} safety={roleData.SafetyScale:F1}";
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Internal Helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static void EnsureTypesLoaded()
+    {
+        _actorType ??= GameType.Find("Menace.Tactical.Actor");
+        _baseFactionType ??= GameType.Find("Menace.Tactical.AI.BaseFaction");
+    }
+
+    private static object GetManagedProxy(GameObj obj, Type managedType)
+    {
+        if (obj.IsNull || managedType == null)
+            return null;
+
+        try
+        {
+            var ptrCtor = managedType.GetConstructor(new[] { typeof(IntPtr) });
+            return ptrCtor?.Invoke(new object[] { obj.Pointer });
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

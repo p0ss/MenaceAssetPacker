@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 
@@ -11,10 +12,12 @@ namespace Menace.SDK;
 /// SDK extension for controlling entity movement in tactical combat.
 ///
 /// Based on reverse engineering findings:
-/// - Actor.MoveTo(Tile, MovementFlags, MovementAction) @ 0x1805e0a60
-/// - Actor.CalculateTilesInMovementRange() @ 0x1805de100
+/// - Actor.MoveTo(Tile, ref MovementAction, MovementFlags) @ 0x1805e0a60
+/// - Actor.CalculateTilesInMovementRange() -> Task&lt;IEnumerable&lt;Tile&gt;&gt; @ 0x1805de100
 /// - Actor.GetTilesMovedThisTurn() @ 0x1805df7c0
+/// - Actor.GetTile() - returns current tile (NOT GetCurrentTile)
 /// - Actor.IsMoving() @ 0x1805e0810
+/// - PathfindingManager.RequestProcess() for pathfinding (NOT Get())
 /// - PathfindingProcess.FindPath() for pathfinding
 /// - Direction system: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
 /// </summary>
@@ -25,6 +28,7 @@ public static class EntityMovement
     private static GameType _tileType;
     private static GameType _tacticalManagerType;
     private static GameType _pathfindingProcessType;
+    private static GameType _movementActionType;
 
     // Field offsets from actor-system.md
     private const uint OFFSET_ACTOR_START_TILE = 0xA0;
@@ -36,16 +40,16 @@ public static class EntityMovement
     private const uint OFFSET_ACTOR_TILES_MOVED = 0x154;
     private const uint OFFSET_ACTOR_MOVEMENT_MODE = 0x174;
 
-    // Movement flags (from actor-system.md)
+    // Movement flags (from reverse engineering)
     [Flags]
     public enum MovementFlags
     {
         None = 0,
-        EnterVehicle = 1,
-        ExitVehicle = 2,
-        Backward = 4,
-        Instant = 8,        // Teleport (no animation)
-        Sprint = 16
+        Force = 1,
+        ForceTeleport = 2,
+        AllowMoveThroughActors = 4,
+        KeepContainerRotationPermanently = 8,
+        Crawl = 16
     }
 
     // Direction constants
@@ -111,13 +115,32 @@ public static class EntityMovement
             if (tileProxy == null)
                 return MoveResult.Failed("Failed to get tile proxy");
 
-            // Find MoveTo method
+            // Find MoveTo method - signature: MoveTo(Tile _tile, MovementAction& _action, MovementFlags _flags)
+            var movementActionManagedType = _movementActionType?.ManagedType;
+            if (movementActionManagedType == null)
+                return MoveResult.Failed("MovementAction type not available");
+
             var moveToMethod = actorType.GetMethod("MoveTo", BindingFlags.Public | BindingFlags.Instance);
             if (moveToMethod == null)
                 return MoveResult.Failed("MoveTo method not found");
 
-            // Invoke MoveTo
-            var result = moveToMethod.Invoke(actorProxy, new object[] { tileProxy, (int)flags, null });
+            // Create a MovementAction instance for the ref parameter
+            object movementAction = null;
+            try
+            {
+                movementAction = Activator.CreateInstance(movementActionManagedType);
+            }
+            catch
+            {
+                // Some types require pointer constructor
+                var ptrCtor = movementActionManagedType.GetConstructor(new[] { typeof(IntPtr) });
+                if (ptrCtor != null)
+                    movementAction = ptrCtor.Invoke(new object[] { IntPtr.Zero });
+            }
+
+            // Invoke MoveTo with ref parameter: MoveTo(Tile, ref MovementAction, MovementFlags)
+            var args = new object[] { tileProxy, movementAction, flags };
+            var result = moveToMethod.Invoke(actorProxy, args);
 
             // MoveTo returns bool
             if (result is bool success && success)
@@ -140,7 +163,7 @@ public static class EntityMovement
     /// </summary>
     public static MoveResult Teleport(GameObj actor, int destX, int destY)
     {
-        return MoveTo(actor, destX, destY, MovementFlags.Instant);
+        return MoveTo(actor, destX, destY, MovementFlags.ForceTeleport);
     }
 
     /// <summary>
@@ -184,6 +207,8 @@ public static class EntityMovement
 
     /// <summary>
     /// Get the tiles within movement range for an actor.
+    /// Note: CalculateTilesInMovementRange returns Task&lt;IEnumerable&lt;Tile&gt;&gt;, so this method
+    /// blocks waiting for the result. Consider using GetMovementRangeAsync for non-blocking access.
     /// </summary>
     public static List<(int x, int y)> GetMovementRange(GameObj actor)
     {
@@ -204,14 +229,35 @@ public static class EntityMovement
             if (actorProxy == null)
                 return result;
 
-            // Find CalculateTilesInMovementRange method
+            // Find CalculateTilesInMovementRange method - returns Task<IEnumerable<Tile>>
             var calcMethod = actorType.GetMethod("CalculateTilesInMovementRange",
                 BindingFlags.Public | BindingFlags.Instance);
 
             if (calcMethod == null)
                 return result;
 
-            var tiles = calcMethod.Invoke(actorProxy, null);
+            var taskResult = calcMethod.Invoke(actorProxy, null);
+            if (taskResult == null)
+                return result;
+
+            // Handle Task<IEnumerable<Tile>> - get the Result property (blocks until complete)
+            object tiles = null;
+            var taskType = taskResult.GetType();
+            if (taskType.Name.StartsWith("Task"))
+            {
+                // Wait for the task to complete and get result
+                var resultProp = taskType.GetProperty("Result");
+                if (resultProp != null)
+                {
+                    tiles = resultProp.GetValue(taskResult);
+                }
+            }
+            else
+            {
+                // If not a Task, treat as direct result (shouldn't happen but handle gracefully)
+                tiles = taskResult;
+            }
+
             if (tiles == null)
                 return result;
 
@@ -237,6 +283,83 @@ public static class EntityMovement
         catch (Exception ex)
         {
             ModError.ReportInternal("EntityMovement.GetMovementRange", "Failed", ex);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Get the tiles within movement range for an actor asynchronously.
+    /// </summary>
+    public static async Task<List<(int x, int y)>> GetMovementRangeAsync(GameObj actor)
+    {
+        var result = new List<(int x, int y)>();
+
+        if (actor.IsNull || !actor.IsAlive)
+            return result;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var actorType = _actorType?.ManagedType;
+            if (actorType == null)
+                return result;
+
+            var actorProxy = GetManagedProxy(actor, actorType);
+            if (actorProxy == null)
+                return result;
+
+            // Find CalculateTilesInMovementRange method - returns Task<IEnumerable<Tile>>
+            var calcMethod = actorType.GetMethod("CalculateTilesInMovementRange",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (calcMethod == null)
+                return result;
+
+            var taskResult = calcMethod.Invoke(actorProxy, null);
+            if (taskResult == null)
+                return result;
+
+            // Await the task
+            object tiles = null;
+            if (taskResult is Task task)
+            {
+                await task.ConfigureAwait(false);
+                var resultProp = taskResult.GetType().GetProperty("Result");
+                if (resultProp != null)
+                    tiles = resultProp.GetValue(taskResult);
+            }
+            else
+            {
+                tiles = taskResult;
+            }
+
+            if (tiles == null)
+                return result;
+
+            // Iterate the result (IEnumerable<Tile>)
+            var enumerator = tiles.GetType().GetMethod("GetEnumerator")?.Invoke(tiles, null);
+            if (enumerator == null)
+                return result;
+
+            var moveNextMethod = enumerator.GetType().GetMethod("MoveNext");
+            var currentProp = enumerator.GetType().GetProperty("Current");
+
+            while ((bool)moveNextMethod.Invoke(enumerator, null))
+            {
+                var tile = currentProp.GetValue(enumerator);
+                if (tile != null)
+                {
+                    var tilePos = GetTilePosition(new GameObj(((Il2CppObjectBase)tile).Pointer));
+                    if (tilePos.HasValue)
+                        result.Add(tilePos.Value);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("EntityMovement.GetMovementRangeAsync", "Failed", ex);
         }
 
         return result;
@@ -269,7 +392,7 @@ public static class EntityMovement
             if (pmManaged == null)
                 return result;
 
-            var instanceProp = pmManaged.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = pmManaged.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             if (instanceProp == null)
                 return result;
 
@@ -277,12 +400,12 @@ public static class EntityMovement
             if (pm == null)
                 return result;
 
-            // Get a pathfinding process
-            var getMethod = pmManaged.GetMethod("Get", BindingFlags.Public | BindingFlags.Instance);
-            if (getMethod == null)
+            // Get a pathfinding process - use RequestProcess() not Get()
+            var requestProcessMethod = pmManaged.GetMethod("RequestProcess", BindingFlags.Public | BindingFlags.Instance);
+            if (requestProcessMethod == null)
                 return result;
 
-            var process = getMethod.Invoke(pm, null);
+            var process = requestProcessMethod.Invoke(pm, null);
             if (process == null)
                 return result;
 
@@ -468,6 +591,7 @@ public static class EntityMovement
         _tileType ??= GameType.Find("Menace.Tactical.Tile");
         _tacticalManagerType ??= GameType.Find("Menace.Tactical.TacticalManager");
         _pathfindingProcessType ??= GameType.Find("Menace.Tactical.PathfindingProcess");
+        _movementActionType ??= GameType.Find("Menace.Tactical.MovementAction");
     }
 
     private static GameObj GetTileAt(int x, int y)
@@ -479,12 +603,12 @@ public static class EntityMovement
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return GameObj.Null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             var tm = instanceProp?.GetValue(null);
             if (tm == null) return GameObj.Null;
 
-            var mapProp = tmType.GetProperty("Map", BindingFlags.Public | BindingFlags.Instance);
-            var map = mapProp?.GetValue(tm);
+            var getMapMethod = tmType.GetMethod("GetMap", BindingFlags.Public | BindingFlags.Instance);
+            var map = getMapMethod?.Invoke(tm, null);
             if (map == null) return GameObj.Null;
 
             var getTileMethod = map.GetType().GetMethod("GetTile",
@@ -507,6 +631,33 @@ public static class EntityMovement
         if (actor.IsNull)
             return GameObj.Null;
 
+        try
+        {
+            // Primary method: use Actor.GetTile() method
+            EnsureTypesLoaded();
+            var actorType = _actorType?.ManagedType;
+            if (actorType != null)
+            {
+                var actorProxy = GetManagedProxy(actor, actorType);
+                if (actorProxy != null)
+                {
+                    // Method is GetTile(), not GetCurrentTile()
+                    var getTileMethod = actorType.GetMethod("GetTile", BindingFlags.Public | BindingFlags.Instance);
+                    if (getTileMethod != null)
+                    {
+                        var tile = getTileMethod.Invoke(actorProxy, null);
+                        if (tile != null)
+                            return new GameObj(((Il2CppObjectBase)tile).Pointer);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to pointer-based approach
+        }
+
+        // Fallback: direct pointer read
         var tilePtr = actor.ReadPtr(OFFSET_ACTOR_CURRENT_TILE);
         return new GameObj(tilePtr);
     }
@@ -524,13 +675,13 @@ public static class EntityMovement
             var proxy = GetManagedProxy(tile, tileType);
             if (proxy == null) return null;
 
-            var xProp = tileType.GetProperty("X", BindingFlags.Public | BindingFlags.Instance);
-            var yProp = tileType.GetProperty("Y", BindingFlags.Public | BindingFlags.Instance);
+            var xProp = tileType.GetProperty("m_X", BindingFlags.Public | BindingFlags.Instance);
+            var zProp = tileType.GetProperty("m_Z", BindingFlags.Public | BindingFlags.Instance);
 
-            if (xProp == null || yProp == null) return null;
+            if (xProp == null || zProp == null) return null;
 
             var x = (int)xProp.GetValue(proxy);
-            var y = (int)yProp.GetValue(proxy);
+            var y = (int)zProp.GetValue(proxy);
 
             return (x, y);
         }

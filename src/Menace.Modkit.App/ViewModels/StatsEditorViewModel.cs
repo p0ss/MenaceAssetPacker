@@ -1221,6 +1221,16 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                 _referenceGraphService, _schemaService, _modpackManager.VanillaDataPath);
     }
 
+    // Fields that should not be copied when using CopyAllProperties
+    // These are read-only, computed, or identity fields
+    private static readonly HashSet<string> NonCopyableFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "name", "m_ID", "m_IsGarbage", "m_IsInitialized", "m_CachedPtr",
+        "DisplayTitle", "DisplayShortName", "DisplayDescription",
+        "HasIcon", "IconAssetName", // Computed from Icon property
+        "Pointer", "ObjectClass", "WasCollected", "hideFlags", "serializationData"
+    };
+
     /// <summary>
     /// Apply the result from the cloning wizard - creates the clone and saves patches.
     /// </summary>
@@ -1235,6 +1245,13 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                 return false;
             }
 
+            // If CopyAllProperties is true, copy all property values from the source
+            int propertiesCopied = 0;
+            if (result.CopyAllProperties)
+            {
+                propertiesCopied = CopyAllPropertiesToClone(result);
+            }
+
             // Save patches for reference injection
             var patchCount = SaveWizardPatches(result);
 
@@ -1245,10 +1262,12 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             var assetPatchCount = ApplyAssetPatches(result);
 
             var summary = $"Created clone '{result.CloneName}'";
+            if (propertiesCopied > 0)
+                summary += $" with {propertiesCopied} properties";
             if (patchCount > 0)
-                summary += $" with {patchCount} patch(es)";
+                summary += $", {patchCount} patch(es)";
             if (assetCount > 0)
-                summary += $" and {assetCount} asset(s)";
+                summary += $", {assetCount} asset(s)";
 
             SaveStatus = summary;
             return true;
@@ -1259,6 +1278,65 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             SaveStatus = $"Clone wizard failed: {ex.Message}";
             return false;
         }
+    }
+
+    /// <summary>
+    /// Copy all property values from the source template to the clone's pending changes.
+    /// </summary>
+    private int CopyAllPropertiesToClone(Models.CloneWizardResult result)
+    {
+        // Find the clone in the tree
+        var cloneNode = FindNode(_allTreeNodes, result.SourceTemplateType, result.CloneName);
+        if (cloneNode?.Template is not DynamicDataTemplate cloneDyn)
+        {
+            ModkitLog.Warn($"[StatsEditorViewModel] CopyAllProperties: could not find clone '{result.CloneName}'");
+            return 0;
+        }
+
+        var compositeKey = $"{result.SourceTemplateType}/{result.CloneName}";
+        if (!_pendingChanges.TryGetValue(compositeKey, out var changes))
+        {
+            changes = new Dictionary<string, object?>();
+            _pendingChanges[compositeKey] = changes;
+        }
+
+        // Get all properties from the clone template (which has source values)
+        var json = cloneDyn.GetJsonElement();
+        int count = 0;
+
+        foreach (var prop in json.EnumerateObject())
+        {
+            // Skip non-copyable fields
+            if (NonCopyableFields.Contains(prop.Name))
+                continue;
+
+            // Convert JsonElement to appropriate type for pending changes
+            object? value = prop.Value.ValueKind switch
+            {
+                JsonValueKind.String => prop.Value.GetString(),
+                JsonValueKind.Number => prop.Value.TryGetInt32(out var i) ? i :
+                                       prop.Value.TryGetInt64(out var l) ? l :
+                                       prop.Value.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                JsonValueKind.Array or JsonValueKind.Object =>
+                    System.Text.Json.Nodes.JsonNode.Parse(prop.Value.GetRawText()),
+                _ => null
+            };
+
+            changes[prop.Name] = value;
+            count++;
+        }
+
+        // Trigger save
+        if (count > 0)
+        {
+            SaveToStaging();
+        }
+
+        ModkitLog.Info($"[StatsEditorViewModel] CopyAllProperties: copied {count} properties to '{result.CloneName}'");
+        return count;
     }
 
     /// <summary>
@@ -1477,6 +1555,10 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         // Preserve JsonElement arrays/objects (from vanilla data or parsed array edits)
         if (value is JsonElement je && (je.ValueKind == JsonValueKind.Array || je.ValueKind == JsonValueKind.Object))
             return JsonNode.Parse(je.GetRawText());
+
+        // Preserve JsonNode objects (from wizard-generated patches with $append/$update)
+        if (value is JsonNode jn)
+            return jn.DeepClone();
 
         return JsonValue.Create(value.ToString());
     }

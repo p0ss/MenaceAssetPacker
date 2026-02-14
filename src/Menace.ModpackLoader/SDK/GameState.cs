@@ -26,6 +26,21 @@ public static class GameState
     }
 
     /// <summary>
+    /// True if currently in the Tactical (combat) scene.
+    /// </summary>
+    public static bool IsTactical =>
+        CurrentScene?.IndexOf("Tactical", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    /// <summary>
+    /// True if currently in a strategy/campaign scene (not tactical, not menu).
+    /// </summary>
+    public static bool IsStrategy =>
+        !string.IsNullOrEmpty(CurrentScene) &&
+        !IsTactical &&
+        CurrentScene.IndexOf("Menu", StringComparison.OrdinalIgnoreCase) < 0 &&
+        CurrentScene.IndexOf("Loading", StringComparison.OrdinalIgnoreCase) < 0;
+
+    /// <summary>
     /// The Assembly-CSharp assembly, or null if not yet loaded.
     /// </summary>
     public static Assembly GameAssembly

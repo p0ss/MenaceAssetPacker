@@ -37,11 +37,11 @@ public static class AI
         public bool HasAgent { get; set; }
         public int State { get; set; }
         public string StateName { get; set; }
-        public string SelectedBehavior { get; set; }
+        public string ActiveBehavior { get; set; }
         public int BehaviorScore { get; set; }
-        public int TargetTileX { get; set; }
-        public int TargetTileY { get; set; }
-        public string TargetActorName { get; set; }
+        public int? TargetTileX { get; set; }  // Only available on SkillBehavior
+        public int? TargetTileZ { get; set; }  // Only available on SkillBehavior
+        public string TargetActorName { get; set; }  // Only available on SkillBehavior
         public int EvaluatedTileCount { get; set; }
         public int AvailableBehaviorCount { get; set; }
     }
@@ -81,13 +81,11 @@ public static class AI
     public class TileScoreInfo
     {
         public int X { get; set; }
-        public int Y { get; set; }
+        public int Z { get; set; }
         public float UtilityScore { get; set; }
         public float SafetyScore { get; set; }
         public float DistanceScore { get; set; }
-        public float FinalScore { get; set; }
-        public int CoverLevel { get; set; }
-        public bool VisibleToOpponents { get; set; }
+        public float CombinedScore { get; set; }  // Computed via GetScore() method
     }
 
     /// <summary>
@@ -98,9 +96,9 @@ public static class AI
         public string Name { get; set; }
         public string TypeName { get; set; }
         public int Score { get; set; }
-        public int TargetTileX { get; set; }
-        public int TargetTileY { get; set; }
-        public string TargetActorName { get; set; }
+        public int? TargetTileX { get; set; }  // Only available on SkillBehavior subclass
+        public int? TargetTileZ { get; set; }  // Only available on SkillBehavior subclass
+        public string TargetActorName { get; set; }  // Only available on SkillBehavior subclass
         public bool IsSelected { get; set; }
     }
 
@@ -110,9 +108,9 @@ public static class AI
     public class AIFactionInfo
     {
         public int FactionIndex { get; set; }
-        public int AgentCount { get; set; }
+        public int ActorCount { get; set; }
         public int OpponentCount { get; set; }
-        public bool IsEvaluating { get; set; }
+        public bool IsThinking { get; set; }
     }
 
     /// <summary>
@@ -185,25 +183,25 @@ public static class AI
                 info.AvailableBehaviorCount = behaviors.ReadInt("_size");
             }
 
-            // Get selected behavior if ready to execute
+            // Get active behavior if ready to execute
             if (state >= STATE_READY_TO_EXECUTE)
             {
-                var selectedBehavior = agent.ReadObj("m_SelectedBehavior");
-                if (!selectedBehavior.IsNull)
+                var activeBehavior = agent.ReadObj("m_ActiveBehavior");
+                if (!activeBehavior.IsNull)
                 {
-                    info.SelectedBehavior = selectedBehavior.GetType()?.Name ?? "Unknown";
-                    info.BehaviorScore = selectedBehavior.ReadInt("Score");
+                    info.ActiveBehavior = activeBehavior.GetType()?.Name ?? "Unknown";
+                    info.BehaviorScore = activeBehavior.ReadInt("Score");
 
-                    // Get target tile
-                    var targetTile = selectedBehavior.ReadObj("TargetTile");
+                    // TargetTile and TargetEntity only exist on SkillBehavior subclass
+                    // Try to read them gracefully - will return null/default if not present
+                    var targetTile = activeBehavior.ReadObj("TargetTile");
                     if (!targetTile.IsNull)
                     {
                         info.TargetTileX = targetTile.ReadInt("X");
-                        info.TargetTileY = targetTile.ReadInt("Y");
+                        info.TargetTileZ = targetTile.ReadInt("Z");
                     }
 
-                    // Get target entity
-                    var targetEntity = selectedBehavior.ReadObj("TargetEntity");
+                    var targetEntity = activeBehavior.ReadObj("TargetEntity");
                     if (!targetEntity.IsNull)
                     {
                         info.TargetActorName = targetEntity.GetName();
@@ -233,10 +231,17 @@ public static class AI
 
         try
         {
-            // Get EntityTemplate from actor
-            var template = actor.ReadObj("m_Template");
+            // Get EntityTemplate from actor - try various possible field paths
+            var template = actor.ReadObj("Template");
             if (template.IsNull)
-                template = actor.ReadObj("Template");
+                template = actor.ReadObj("m_Template");
+            if (template.IsNull)
+            {
+                // Try via Entity base class hierarchy
+                var entity = actor.ReadObj("m_Entity");
+                if (!entity.IsNull)
+                    template = entity.ReadObj("Template");
+            }
             if (template.IsNull)
                 return info;
 
@@ -298,7 +303,7 @@ public static class AI
             if (behaviors.IsNull)
                 return result;
 
-            var selectedBehavior = agent.ReadObj("m_SelectedBehavior");
+            var activeBehavior = agent.ReadObj("m_ActiveBehavior");
 
             // Iterate behaviors list
             int count = behaviors.ReadInt("_size");
@@ -317,18 +322,19 @@ public static class AI
                 {
                     TypeName = behavior.GetType()?.Name ?? "Unknown",
                     Score = behavior.ReadInt("Score"),
-                    IsSelected = !selectedBehavior.IsNull && behavior.Pointer == selectedBehavior.Pointer
+                    IsSelected = !activeBehavior.IsNull && behavior.Pointer == activeBehavior.Pointer
                 };
 
                 // Try to get name from type
                 info.Name = info.TypeName;
 
-                // Get target info
+                // TargetTile and TargetEntity only exist on SkillBehavior subclass
+                // Read gracefully - will be null if not present on this behavior type
                 var targetTile = behavior.ReadObj("TargetTile");
                 if (!targetTile.IsNull)
                 {
                     info.TargetTileX = targetTile.ReadInt("X");
-                    info.TargetTileY = targetTile.ReadInt("Y");
+                    info.TargetTileZ = targetTile.ReadInt("Z");
                 }
 
                 var targetEntity = behavior.ReadObj("TargetEntity");
@@ -379,16 +385,21 @@ public static class AI
                 if (tileKey.IsNull || tileScore.IsNull)
                     continue;
 
+                // TileScore has UtilityScore, SafetyScore, DistanceScore, Tile
+                // CombinedScore would be computed via GetScore() method, but we can't call methods
+                // so we approximate by summing the component scores
+                float utilScore = tileScore.ReadFloat("UtilityScore");
+                float safeScore = tileScore.ReadFloat("SafetyScore");
+                float distScore = tileScore.ReadFloat("DistanceScore");
                 var info = new TileScoreInfo
                 {
                     X = tileKey.ReadInt("X"),
-                    Y = tileKey.ReadInt("Y"),
-                    UtilityScore = tileScore.ReadFloat("UtilityScore"),
-                    SafetyScore = tileScore.ReadFloat("SafetyScore"),
-                    DistanceScore = tileScore.ReadFloat("DistanceScore"),
-                    FinalScore = tileScore.ReadFloat("FinalScore"),
-                    CoverLevel = tileScore.ReadInt("CoverLevel"),
-                    VisibleToOpponents = tileScore.ReadBool("VisibleToOpponents")
+                    Z = tileKey.ReadInt("Z"),
+                    UtilityScore = utilScore,
+                    SafetyScore = safeScore,
+                    DistanceScore = distScore,
+                    // Approximate combined score (actual GetScore() may weight differently)
+                    CombinedScore = utilScore + safeScore + distScore
                 };
 
                 allScores.Add(info);
@@ -398,8 +409,8 @@ public static class AI
                     break;
             }
 
-            // Sort by FinalScore descending and take top N
-            allScores.Sort((a, b) => b.FinalScore.CompareTo(a.FinalScore));
+            // Sort by CombinedScore descending and take top N
+            allScores.Sort((a, b) => b.CombinedScore.CompareTo(a.CombinedScore));
             for (int i = 0; i < Math.Min(maxTiles, allScores.Count); i++)
             {
                 result.Add(allScores[i]);
@@ -432,10 +443,11 @@ public static class AI
                 int index = aiFaction.ReadInt("FactionIndex");
                 if (index == factionIndex)
                 {
-                    var agents = aiFaction.ReadObj("m_Agents");
-                    if (!agents.IsNull)
+                    // AIFaction uses m_Actors, not m_Agents
+                    var actors = aiFaction.ReadObj("m_Actors");
+                    if (!actors.IsNull)
                     {
-                        info.AgentCount = agents.ReadInt("_size");
+                        info.ActorCount = actors.ReadInt("_size");
                     }
 
                     var opponents = aiFaction.ReadObj("m_Opponents");
@@ -444,7 +456,8 @@ public static class AI
                         info.OpponentCount = opponents.ReadInt("_size");
                     }
 
-                    info.IsEvaluating = aiFaction.ReadBool("m_IsEvaluating");
+                    // m_IsEvaluating doesn't exist - try m_IsThinking or m_Thinking field
+                    info.IsThinking = aiFaction.ReadBool("m_IsThinking") || aiFaction.ReadBool("m_Thinking");
                     break;
                 }
             }
@@ -474,15 +487,15 @@ public static class AI
         if (info.State < STATE_READY_TO_EXECUTE)
             return $"Evaluating ({info.StateName})";
 
-        if (string.IsNullOrEmpty(info.SelectedBehavior))
+        if (string.IsNullOrEmpty(info.ActiveBehavior))
             return "No behavior selected";
 
-        string intent = $"{info.SelectedBehavior} (score: {info.BehaviorScore})";
+        string intent = $"{info.ActiveBehavior} (score: {info.BehaviorScore})";
 
         if (!string.IsNullOrEmpty(info.TargetActorName))
             intent += $" -> {info.TargetActorName}";
-        else if (info.TargetTileX > 0 || info.TargetTileY > 0)
-            intent += $" -> ({info.TargetTileX}, {info.TargetTileY})";
+        else if (info.TargetTileX.HasValue || info.TargetTileZ.HasValue)
+            intent += $" -> ({info.TargetTileX ?? 0}, {info.TargetTileZ ?? 0})";
 
         return intent;
     }
@@ -513,12 +526,15 @@ public static class AI
             if (!info.HasAgent)
                 return $"{actor.GetName()}: No AI agent (player unit?)";
 
+            string targetStr = !string.IsNullOrEmpty(info.TargetActorName)
+                ? info.TargetActorName
+                : $"({info.TargetTileX ?? 0}, {info.TargetTileZ ?? 0})";
             return $"{actor.GetName()}:\n" +
                    $"  State: {info.StateName}\n" +
                    $"  Tiles evaluated: {info.EvaluatedTileCount}\n" +
                    $"  Behaviors: {info.AvailableBehaviorCount}\n" +
-                   $"  Selected: {info.SelectedBehavior ?? "none"} (score: {info.BehaviorScore})\n" +
-                   $"  Target: {info.TargetActorName ?? $"({info.TargetTileX}, {info.TargetTileY})"}";
+                   $"  Active: {info.ActiveBehavior ?? "none"} (score: {info.BehaviorScore})\n" +
+                   $"  Target: {targetStr}";
         });
 
         DevConsole.RegisterCommand("airole", "[actor_name]", "Show AI RoleData for actor", args =>
@@ -572,7 +588,7 @@ public static class AI
                 string marker = b.IsSelected ? " [SELECTED]" : "";
                 string target = !string.IsNullOrEmpty(b.TargetActorName)
                     ? $" -> {b.TargetActorName}"
-                    : b.TargetTileX > 0 ? $" -> ({b.TargetTileX}, {b.TargetTileY})" : "";
+                    : b.TargetTileX.HasValue ? $" -> ({b.TargetTileX}, {b.TargetTileZ})" : "";
                 lines.Add($"  {b.TypeName}: {b.Score}{target}{marker}");
             }
             return string.Join("\n", lines);
@@ -610,7 +626,7 @@ public static class AI
             var lines = new List<string> { $"{actor.GetName()} top {count} tiles:" };
             foreach (var t in tiles)
             {
-                lines.Add($"  ({t.X}, {t.Y}): score={t.FinalScore:F1} (util={t.UtilityScore:F1}, safe={t.SafetyScore:F1})");
+                lines.Add($"  ({t.X}, {t.Z}): score={t.CombinedScore:F1} (util={t.UtilityScore:F1}, safe={t.SafetyScore:F1})");
             }
             return string.Join("\n", lines);
         });
@@ -642,23 +658,24 @@ public static class AI
     // THREADING WARNING: These methods modify AI state. They are ONLY safe to call:
     //   1. Before the faction's turn begins (e.g., in OnTurnStart hook)
     //   2. After the faction's turn ends
-    //   3. When IsAnyFactionEvaluating() returns false
+    //   3. When IsAnyFactionThinking() returns false
     //
     // Calling these during parallel evaluation WILL cause race conditions and crashes.
     // ==========================================================================
 
     /// <summary>
-    /// Check if any AI faction is currently evaluating (parallel tile/behavior scoring).
+    /// Check if any AI faction is currently thinking (parallel tile/behavior scoring).
     /// When this returns true, it is NOT safe to write to AI state.
     /// </summary>
-    public static bool IsAnyFactionEvaluating()
+    public static bool IsAnyFactionThinking()
     {
         try
         {
             var aiFactions = GameQuery.FindAll("AIFaction");
             foreach (var aiFaction in aiFactions)
             {
-                if (aiFaction.ReadBool("m_IsEvaluating"))
+                // Try m_IsThinking or m_Thinking field
+                if (aiFaction.ReadBool("m_IsThinking") || aiFaction.ReadBool("m_Thinking"))
                     return true;
             }
             return false;
@@ -680,9 +697,17 @@ public static class AI
 
         try
         {
-            var template = actor.ReadObj("m_Template");
+            // Try various possible field paths for template access
+            var template = actor.ReadObj("Template");
             if (template.IsNull)
-                template = actor.ReadObj("Template");
+                template = actor.ReadObj("m_Template");
+            if (template.IsNull)
+            {
+                // Try via Entity base class hierarchy
+                var entity = actor.ReadObj("m_Entity");
+                if (!entity.IsNull)
+                    template = entity.ReadObj("Template");
+            }
             if (template.IsNull)
                 return GameObj.Null;
 
@@ -708,7 +733,7 @@ public static class AI
     /// </summary>
     public static bool SetRoleDataFloat(GameObj actor, string fieldName, float value)
     {
-        if (IsAnyFactionEvaluating())
+        if (IsAnyFactionThinking())
         {
             ModError.ReportInternal("AI.SetRoleDataFloat",
                 $"Cannot write during AI evaluation - will cause race condition. Field: {fieldName}");
@@ -734,7 +759,7 @@ public static class AI
     /// </summary>
     public static bool SetRoleDataBool(GameObj actor, string fieldName, bool value)
     {
-        if (IsAnyFactionEvaluating())
+        if (IsAnyFactionThinking())
         {
             ModError.ReportInternal("AI.SetRoleDataBool",
                 $"Cannot write during AI evaluation - will cause race condition. Field: {fieldName}");
@@ -758,7 +783,7 @@ public static class AI
     /// </summary>
     public static bool ApplyRoleData(GameObj actor, RoleDataInfo newRole)
     {
-        if (IsAnyFactionEvaluating())
+        if (IsAnyFactionThinking())
         {
             ModError.ReportInternal("AI.ApplyRoleData",
                 "Cannot write during AI evaluation - will cause race condition");
@@ -805,7 +830,7 @@ public static class AI
     /// </summary>
     public static bool SetBehaviorScore(GameObj actor, string behaviorTypeName, int score)
     {
-        if (IsAnyFactionEvaluating())
+        if (IsAnyFactionThinking())
         {
             ModError.ReportInternal("AI.SetBehaviorScore",
                 "Cannot write during AI evaluation - will cause race condition");

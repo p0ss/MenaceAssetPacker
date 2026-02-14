@@ -88,15 +88,17 @@ public static class Roster
             var ssType = _strategyStateType?.ManagedType;
             if (ssType == null) return GameObj.Null;
 
-            var instanceProp = ssType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            var ss = instanceProp?.GetValue(null);
+            // Use Get() static method instead of s_Singleton property
+            var getMethod = ssType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var ss = getMethod?.Invoke(null, null);
             if (ss == null) return GameObj.Null;
 
-            var rosterProp = ssType.GetProperty("Roster", BindingFlags.Public | BindingFlags.Instance);
-            var roster = rosterProp?.GetValue(ss);
-            if (roster == null) return GameObj.Null;
+            // Use m_Roster field at offset +0x70 instead of Roster property
+            var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
+            var rosterPtr = ssObj.ReadPtr(0x70);
+            if (rosterPtr == IntPtr.Zero) return GameObj.Null;
 
-            return new GameObj(((Il2CppObjectBase)roster).Pointer);
+            return new GameObj(rosterPtr);
         }
         catch (Exception ex)
         {
@@ -119,14 +121,11 @@ public static class Roster
 
             EnsureTypesLoaded();
 
-            var rosterType = _rosterType?.ManagedType;
-            if (rosterType == null) return result;
+            // Use m_HiredLeaders field at offset +0x10 instead of HiredLeaders property
+            var hiredListPtr = roster.ReadPtr(0x10);
+            if (hiredListPtr == IntPtr.Zero) return result;
 
-            var proxy = GetManagedProxy(roster, rosterType);
-            if (proxy == null) return result;
-
-            var hiredProp = rosterType.GetProperty("HiredLeaders", BindingFlags.Public | BindingFlags.Instance);
-            var hiredList = hiredProp?.GetValue(proxy);
+            var hiredList = new GameObj(hiredListPtr).ToManaged();
             if (hiredList == null) return result;
 
             var listType = hiredList.GetType();
@@ -176,12 +175,11 @@ public static class Roster
 
             var info = new UnitLeaderInfo { Pointer = leader.Pointer };
 
-            // Get template name
-            var templateProp = leaderType.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
-            var template = templateProp?.GetValue(proxy);
-            if (template != null)
+            // Get template name using m_Template field at offset +0x10
+            var templatePtr = leader.ReadPtr(0x10);
+            if (templatePtr != IntPtr.Zero)
             {
-                var templateObj = new GameObj(((Il2CppObjectBase)template).Pointer);
+                var templateObj = new GameObj(templatePtr);
                 info.TemplateName = templateObj.GetName();
             }
 
@@ -227,11 +225,11 @@ public static class Roster
             if (getDeployCostsMethod != null)
                 info.DeployCost = (int)getDeployCostsMethod.Invoke(proxy, null);
 
-            // Get squaddie count (if SquadLeader)
+            // Get squaddie count (if SquadLeader) using m_Squaddies field
             try
             {
-                var squaddiesProp = proxy.GetType().GetProperty("Squaddies", BindingFlags.Public | BindingFlags.Instance);
-                var squaddies = squaddiesProp?.GetValue(proxy);
+                var squaddiesField = proxy.GetType().GetField("m_Squaddies", BindingFlags.NonPublic | BindingFlags.Instance);
+                var squaddies = squaddiesField?.GetValue(proxy);
                 if (squaddies != null)
                 {
                     var countProp = squaddies.GetType().GetProperty("Count");
@@ -284,14 +282,11 @@ public static class Roster
 
             EnsureTypesLoaded();
 
-            var rosterType = _rosterType?.ManagedType;
-            if (rosterType == null) return GameObj.Null;
+            // Use m_HiredLeaders field at offset +0x10 instead of HiredLeaders property
+            var hiredListPtr = roster.ReadPtr(0x10);
+            if (hiredListPtr == IntPtr.Zero) return GameObj.Null;
 
-            var proxy = GetManagedProxy(roster, rosterType);
-            if (proxy == null) return GameObj.Null;
-
-            var hiredProp = rosterType.GetProperty("HiredLeaders", BindingFlags.Public | BindingFlags.Instance);
-            var hiredList = hiredProp?.GetValue(proxy);
+            var hiredList = new GameObj(hiredListPtr).ToManaged();
             if (hiredList == null) return GameObj.Null;
 
             var listType = hiredList.GetType();
@@ -330,14 +325,11 @@ public static class Roster
         {
             EnsureTypesLoaded();
 
-            var leaderType = _unitLeaderType?.ManagedType;
-            if (leaderType == null) return result;
+            // Use m_Perks field at offset +0x48 instead of Perks property
+            var perksPtr = leader.ReadPtr(0x48);
+            if (perksPtr == IntPtr.Zero) return result;
 
-            var proxy = GetManagedProxy(leader, leaderType);
-            if (proxy == null) return result;
-
-            var perksProp = leaderType.GetProperty("Perks", BindingFlags.Public | BindingFlags.Instance);
-            var perks = perksProp?.GetValue(proxy);
+            var perks = new GameObj(perksPtr).ToManaged();
             if (perks == null) return result;
 
             var listType = perks.GetType();
@@ -396,14 +388,11 @@ public static class Roster
 
             EnsureTypesLoaded();
 
-            var rosterType = _rosterType?.ManagedType;
-            if (rosterType == null) return result;
+            // Use hirable leaders field at offset +0x18 directly instead of GetHirableLeaders() method
+            var hirableListPtr = roster.ReadPtr(0x18);
+            if (hirableListPtr == IntPtr.Zero) return result;
 
-            var proxy = GetManagedProxy(roster, rosterType);
-            if (proxy == null) return result;
-
-            var method = rosterType.GetMethod("GetHirableLeaders", BindingFlags.Public | BindingFlags.Instance);
-            var hirableList = method?.Invoke(proxy, null);
+            var hirableList = new GameObj(hirableListPtr).ToManaged();
             if (hirableList == null) return result;
 
             var listType = hirableList.GetType();
@@ -657,12 +646,9 @@ public static class Roster
             var proxy = GetManagedProxy(leader, leaderType);
             if (proxy == null) return GameObj.Null;
 
-            var templateProp = leaderType.GetProperty("LeaderTemplate", BindingFlags.Public | BindingFlags.Instance)
-                            ?? leaderType.GetField("LeaderTemplate", BindingFlags.Public | BindingFlags.Instance)?.GetValue(proxy) as System.Reflection.PropertyInfo;
-
-            // LeaderTemplate is a readonly field, not a property
-            var templateField = leaderType.GetField("LeaderTemplate", BindingFlags.Public | BindingFlags.Instance);
-            var template = templateField?.GetValue(proxy);
+            // LeaderTemplate is a property
+            var templateProp = leaderType.GetProperty("LeaderTemplate", BindingFlags.Public | BindingFlags.Instance);
+            var template = templateProp?.GetValue(proxy);
             if (template == null) return GameObj.Null;
 
             return new GameObj(((Il2CppObjectBase)template).Pointer);

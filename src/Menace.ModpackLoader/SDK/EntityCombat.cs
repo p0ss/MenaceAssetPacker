@@ -116,33 +116,33 @@ public static class EntityCombat
             if (actorProxy == null)
                 return CombatResult.Failed("Failed to get actor proxy");
 
-            // Get SkillContainer from actor
-            var skillContainerProp = actorType.GetProperty("SkillContainer",
+            // Get SkillContainer from actor via GetSkills() method
+            var getSkillsMethod = actorType.GetMethod("GetSkills",
                 BindingFlags.Public | BindingFlags.Instance);
-            if (skillContainerProp == null)
-                return CombatResult.Failed("SkillContainer not found");
+            if (getSkillsMethod == null)
+                return CombatResult.Failed("GetSkills method not found");
 
-            var skillContainer = skillContainerProp.GetValue(actorProxy);
+            var skillContainer = getSkillsMethod.Invoke(actorProxy, null);
             if (skillContainer == null)
                 return CombatResult.Failed("Actor has no SkillContainer");
 
-            // Find the skill by name
-            var getSkillMethod = skillContainer.GetType().GetMethod("GetSkill",
+            // Find the skill by ID using GetSkillByID method
+            var getSkillByIdMethod = skillContainer.GetType().GetMethod("GetSkillByID",
                 BindingFlags.Public | BindingFlags.Instance);
 
             object skill = null;
-            if (getSkillMethod != null)
+            if (getSkillByIdMethod != null)
             {
-                skill = getSkillMethod.Invoke(skillContainer, new object[] { skillName });
+                skill = getSkillByIdMethod.Invoke(skillContainer, new object[] { skillName, null });
             }
             else
             {
-                // Try finding via Skills list
-                var skillsProp = skillContainer.GetType().GetProperty("Skills",
+                // Try finding via GetAllSkills() method
+                var getAllSkillsMethod = skillContainer.GetType().GetMethod("GetAllSkills",
                     BindingFlags.Public | BindingFlags.Instance);
-                if (skillsProp != null)
+                if (getAllSkillsMethod != null)
                 {
-                    var skillsList = skillsProp.GetValue(skillContainer);
+                    var skillsList = getAllSkillsMethod.Invoke(skillContainer, null);
                     if (skillsList != null)
                     {
                         var enumerator = skillsList.GetType().GetMethod("GetEnumerator")?.Invoke(skillsList, null);
@@ -156,10 +156,11 @@ public static class EntityCombat
                                 var s = current.GetValue(enumerator);
                                 if (s != null)
                                 {
-                                    var nameProp = s.GetType().GetProperty("Name",
+                                    // Use GetID() method instead of Name property
+                                    var getIdMethod = s.GetType().GetMethod("GetID",
                                         BindingFlags.Public | BindingFlags.Instance);
-                                    var name = nameProp?.GetValue(s)?.ToString();
-                                    if (name == skillName)
+                                    var id = getIdMethod?.Invoke(s, null)?.ToString();
+                                    if (id == skillName)
                                     {
                                         skill = s;
                                         break;
@@ -174,12 +175,12 @@ public static class EntityCombat
             if (skill == null)
                 return CombatResult.Failed($"Skill '{skillName}' not found");
 
-            // Check if skill can be used
-            var canUseMethod = skill.GetType().GetMethod("CanUse", BindingFlags.Public | BindingFlags.Instance);
-            if (canUseMethod != null)
+            // Check if skill can be used (IsUsable() is the actual method name)
+            var isUsableMethod = skill.GetType().GetMethod("IsUsable", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (isUsableMethod != null)
             {
-                var canUse = (bool)canUseMethod.Invoke(skill, null);
-                if (!canUse)
+                var isUsable = (bool)isUsableMethod.Invoke(skill, null);
+                if (!isUsable)
                     return CombatResult.Failed($"Skill '{skillName}' cannot be used (on cooldown or no AP)");
             }
 
@@ -196,12 +197,12 @@ public static class EntityCombat
                 }
             }
 
-            // Use the skill
+            // Use the skill (Use takes 2 parameters: Tile and UsageParameter)
             var useMethod = skill.GetType().GetMethod("Use", BindingFlags.Public | BindingFlags.Instance);
             if (useMethod == null)
                 return CombatResult.Failed("Skill.Use method not found");
 
-            useMethod.Invoke(skill, new[] { targetTile });
+            useMethod.Invoke(skill, new[] { targetTile, null });
 
             ModError.Info("Menace.SDK", $"Used skill '{skillName}'");
             return CombatResult.Ok(skillName);
@@ -235,21 +236,23 @@ public static class EntityCombat
             if (actorProxy == null)
                 return result;
 
-            var skillContainerProp = actorType.GetProperty("SkillContainer",
+            // Get SkillContainer via GetSkills() method
+            var getSkillsMethod = actorType.GetMethod("GetSkills",
                 BindingFlags.Public | BindingFlags.Instance);
-            if (skillContainerProp == null)
+            if (getSkillsMethod == null)
                 return result;
 
-            var skillContainer = skillContainerProp.GetValue(actorProxy);
+            var skillContainer = getSkillsMethod.Invoke(actorProxy, null);
             if (skillContainer == null)
                 return result;
 
-            var skillsProp = skillContainer.GetType().GetProperty("Skills",
+            // Get skills list via GetAllSkills() method
+            var getAllSkillsMethod = skillContainer.GetType().GetMethod("GetAllSkills",
                 BindingFlags.Public | BindingFlags.Instance);
-            if (skillsProp == null)
+            if (getAllSkillsMethod == null)
                 return result;
 
-            var skillsList = skillsProp.GetValue(skillContainer);
+            var skillsList = getAllSkillsMethod.Invoke(skillContainer, null);
             if (skillsList == null)
                 return result;
 
@@ -557,42 +560,46 @@ public static class EntityCombat
             var type = skill.GetType();
             var info = new SkillInfo();
 
-            // Name
-            var nameProp = type.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-            info.Name = nameProp?.GetValue(skill)?.ToString() ?? "Unknown";
+            // Name via GetID() method
+            var getIdMethod = type.GetMethod("GetID", BindingFlags.Public | BindingFlags.Instance);
+            info.Name = getIdMethod?.Invoke(skill, null)?.ToString() ?? "Unknown";
 
-            // Display name (from template if available)
-            var templateProp = type.GetProperty("Template", BindingFlags.Public | BindingFlags.Instance);
-            if (templateProp != null)
+            // Display name (from template if available) via GetTemplate() method
+            var getTemplateMethod = type.GetMethod("GetTemplate", BindingFlags.Public | BindingFlags.Instance);
+            if (getTemplateMethod != null)
             {
-                var template = templateProp.GetValue(skill);
+                var template = getTemplateMethod.Invoke(skill, null);
                 if (template != null)
                 {
-                    var displayNameProp = template.GetType().GetProperty("DisplayName",
+                    // DisplayName is actually called Title on SkillTemplate
+                    var titleProp = template.GetType().GetProperty("Title",
                         BindingFlags.Public | BindingFlags.Instance);
-                    info.DisplayName = displayNameProp?.GetValue(template)?.ToString() ?? info.Name;
+                    info.DisplayName = titleProp?.GetValue(template)?.ToString() ?? info.Name;
 
-                    var rangeProp = template.GetType().GetProperty("Range",
+                    // Range is called MaxRange on SkillTemplate
+                    var maxRangeProp = template.GetType().GetProperty("MaxRange",
                         BindingFlags.Public | BindingFlags.Instance);
-                    if (rangeProp != null)
-                        info.Range = Convert.ToInt32(rangeProp.GetValue(template) ?? 0);
+                    if (maxRangeProp != null)
+                        info.Range = Convert.ToInt32(maxRangeProp.GetValue(template) ?? 0);
 
-                    var apCostProp = template.GetType().GetProperty("APCost",
+                    // APCost is called ActionPointCost on SkillTemplate
+                    var apCostProp = template.GetType().GetProperty("ActionPointCost",
                         BindingFlags.Public | BindingFlags.Instance);
                     if (apCostProp != null)
                         info.APCost = Convert.ToInt32(apCostProp.GetValue(template) ?? 0);
 
-                    var isPassiveProp = template.GetType().GetProperty("IsPassive",
+                    // IsPassive doesn't exist - use !IsActive instead
+                    var isActiveProp = template.GetType().GetProperty("IsActive",
                         BindingFlags.Public | BindingFlags.Instance);
-                    if (isPassiveProp != null)
-                        info.IsPassive = (bool)(isPassiveProp.GetValue(template) ?? false);
+                    if (isActiveProp != null)
+                        info.IsPassive = !(bool)(isActiveProp.GetValue(template) ?? true);
                 }
             }
 
-            // CanUse
-            var canUseMethod = type.GetMethod("CanUse", BindingFlags.Public | BindingFlags.Instance);
-            if (canUseMethod != null)
-                info.CanUse = (bool)canUseMethod.Invoke(skill, null);
+            // CanUse (underlying method is IsUsable)
+            var isUsableMethod = type.GetMethod("IsUsable", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (isUsableMethod != null)
+                info.CanUse = (bool)isUsableMethod.Invoke(skill, null);
 
             // Check if it's an attack skill (has damage, is weapon skill, etc.)
             info.IsAttack = info.Name.Contains("Attack") ||

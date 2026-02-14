@@ -64,7 +64,7 @@ class HitChancePatch
     static void Postfix(ref HitChanceResult __result)
     {
         // Modify hit chance after calculation
-        __result.FinalHitChance *= 1.5f; // +50% hit chance
+        __result.FinalValue *= 1.5f; // +50% hit chance
     }
 }
 ```

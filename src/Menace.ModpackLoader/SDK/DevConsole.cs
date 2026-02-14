@@ -748,15 +748,15 @@ public static class DevConsole
             var state = TacticalController.GetTacticalState();
             return $"Round: {state.RoundNumber}, {state.CurrentFactionName}'s turn\n" +
                    $"Active: {state.ActiveActorName ?? "(none)"}\n" +
-                   $"Players: {state.PlayerAliveCount} alive, {state.PlayerDeadCount} dead\n" +
-                   $"Enemies: {state.EnemyAliveCount} alive, {state.EnemyDeadCount} dead\n" +
+                   $"Players: {(state.IsAnyPlayerAlive ? "alive" : "dead")}\n" +
+                   $"Enemies: {state.AliveEnemyCount} alive, {state.DeadEnemyCount} dead\n" +
                    $"Paused: {state.IsPaused}, TimeScale: {state.TimeScale:F2}";
         });
 
         // win - Finish mission
         RegisterCommand("win", "", "Finish mission (victory)", args =>
         {
-            return TacticalController.FinishMission()
+            return TacticalController.FinishMission(TacticalFinishReason.Leave)
                 ? "Mission finished"
                 : "Failed to finish mission";
         });

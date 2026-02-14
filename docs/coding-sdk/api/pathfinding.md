@@ -12,17 +12,44 @@ The Pathfinding SDK wraps the game's internal A* pathfinding system. It provides
 
 The underlying system uses a 64x64 max grid with costs determined by surface types, structure penalties, and direction changes.
 
-## Constants
+## Enums
 
-### Surface Types
+### SurfaceType
 
 ```csharp
-public const int SURFACE_DEFAULT = 0;
-public const int SURFACE_ROAD = 1;
-public const int SURFACE_ROUGH = 2;
-public const int SURFACE_WATER = 3;
-public const int SURFACE_IMPASSABLE = 4;
+public enum SurfaceType
+{
+    Concrete = 0,
+    Metal = 1,
+    Sand = 2,
+    Earth = 3,
+    Snow = 4,
+    Water = 5,
+    Ruins = 6,
+    SandStone = 7,
+    Mud = 8,
+    Grass = 9,
+    Glass = 10,
+    Forest = 11,
+    Rock = 12,
+    DirtRoad = 13,
+    COUNT = 14
+}
 ```
+
+### CoverType
+
+```csharp
+public enum CoverType
+{
+    None = 0,
+    Light = 1,
+    Medium = 2,
+    Heavy = 3
+}
+```
+
+## Constants
 
 ### Movement Cost Multipliers
 
@@ -94,22 +121,22 @@ Get detailed movement cost information for a tile.
 ### GetSurfaceType
 
 ```csharp
-public static int GetSurfaceType(int x, int y)
+public static SurfaceType GetSurfaceType(int x, int y)
 ```
 
 Get the surface type at a tile position.
 
-**Returns:** One of the `SURFACE_*` constants.
+**Returns:** A `SurfaceType` enum value.
 
 ### GetSurfaceTypeName
 
 ```csharp
-public static string GetSurfaceTypeName(int surfaceType)
+public static string GetSurfaceTypeName(SurfaceType surfaceType)
 ```
 
-Get a human-readable name for a surface type constant.
+Get a human-readable name for a surface type.
 
-**Returns:** Surface name string (e.g., "Road", "Rough", "Water").
+**Returns:** Surface name string (e.g., "Concrete", "Water", "DirtRoad").
 
 ### GetReachableTiles
 
@@ -173,7 +200,7 @@ public class MovementCostInfo
     public int X { get; set; }
     public int Y { get; set; }
     public int BaseCost { get; set; }
-    public int SurfaceType { get; set; }
+    public SurfaceType Surface { get; set; }
     public string SurfaceTypeName { get; set; }
     public bool IsBlocked { get; set; }
     public bool HasActor { get; set; }
@@ -187,7 +214,7 @@ Detailed movement cost information for a tile.
 |----------|-------------|
 | `X`, `Y` | Tile coordinates |
 | `BaseCost` | Base movement cost for this surface type |
-| `SurfaceType` | Surface type constant (0-4) |
+| `Surface` | SurfaceType enum value |
 | `SurfaceTypeName` | Human-readable surface name |
 | `IsBlocked` | Whether the tile is impassable |
 | `HasActor` | Whether an actor occupies the tile |
@@ -304,19 +331,19 @@ if (actual.Success)
 ```csharp
 // Check surface at cursor position
 int x = 10, y = 10;
-int surfaceType = Pathfinding.GetSurfaceType(x, y);
+var surfaceType = Pathfinding.GetSurfaceType(x, y);
 string surfaceName = Pathfinding.GetSurfaceTypeName(surfaceType);
 
 DevConsole.Log($"Surface at ({x}, {y}): {surfaceName}");
 
 // Check for specific surface types
-if (surfaceType == Pathfinding.SURFACE_WATER)
+if (surfaceType == Pathfinding.SurfaceType.Water)
 {
     DevConsole.Log("This is a water tile - higher movement cost");
 }
-else if (surfaceType == Pathfinding.SURFACE_ROAD)
+else if (surfaceType == Pathfinding.SurfaceType.DirtRoad)
 {
-    DevConsole.Log("This is a road tile - faster movement");
+    DevConsole.Log("This is a dirt road tile - faster movement");
 }
 ```
 
@@ -365,9 +392,19 @@ Estimated cost from (5,5) to (15,20):
 ## Technical Notes
 
 - The pathfinding system uses A* algorithm with an internal PathfindingManager singleton
+- Use `PathfindingManager.RequestProcess()` to get a process (NOT `Get()`)
 - PathfindingProcess objects are pooled for performance
 - Maximum grid size is 64x64 tiles
 - Diagonal movement costs approximately 1.41x the base cost
 - Occupied tiles add a +2 penalty to movement cost
-- Movement costs are defined per entity in EntityTemplate.MovementCosts[]
-- Default costs by surface type: Default=10, Road=8, Rough=15, Water=20, Impassable=MAX
+- Direction must be passed as the game's Direction enum type, not as int
+- FindPath requires `Il2CppSystem.Collections.Generic.List<Vector3>`, not `System.Collections.Generic.List<Vector3>`
+- Default costs by surface type:
+  - Concrete, Metal, Grass: 10
+  - Earth, SandStone, Glass: 12
+  - Rock: 14
+  - Sand, Snow, Forest: 15
+  - Ruins: 18
+  - Mud: 20
+  - Water: 25
+  - DirtRoad: 8 (fastest)

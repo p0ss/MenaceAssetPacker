@@ -17,6 +17,9 @@ public static class Templates
     private static readonly MethodInfo TryCastMethod =
         typeof(Il2CppObjectBase).GetMethod("TryCast");
 
+    // Cache of template types we've already ensured are loaded
+    private static readonly HashSet<string> _loadedTypes = new();
+
     /// <summary>
     /// Find a specific template instance by type name and instance name.
     /// </summary>
@@ -24,6 +27,9 @@ public static class Templates
     {
         if (string.IsNullOrEmpty(templateTypeName) || string.IsNullOrEmpty(instanceName))
             return GameObj.Null;
+
+        // Ensure templates are loaded into memory via DataTemplateLoader
+        EnsureTemplatesLoaded(templateTypeName);
 
         return GameQuery.FindByName(templateTypeName, instanceName);
     }
@@ -45,6 +51,9 @@ public static class Templates
     {
         if (string.IsNullOrEmpty(templateTypeName))
             return Array.Empty<GameObj>();
+
+        // Ensure templates are loaded into memory via DataTemplateLoader
+        EnsureTemplatesLoaded(templateTypeName);
 
         return GameQuery.FindAll(templateTypeName);
     }
@@ -234,6 +243,9 @@ public static class Templates
 
         try
         {
+            // Ensure templates are loaded into memory via DataTemplateLoader
+            EnsureTemplatesLoaded(templateTypeName);
+
             var gameType = GameType.Find(templateTypeName);
             var managedType = gameType?.ManagedType;
             if (managedType == null)
@@ -318,5 +330,55 @@ public static class Templates
         if (targetType == typeof(string)) return value.ToString();
 
         return Convert.ChangeType(value, targetType);
+    }
+
+    /// <summary>
+    /// Ensures templates of the given type are loaded into memory by calling
+    /// DataTemplateLoader.GetAll&lt;T&gt;(). Templates loaded this way become
+    /// findable via Resources.FindObjectsOfTypeAll().
+    /// </summary>
+    private static void EnsureTemplatesLoaded(string templateTypeName)
+    {
+        // Only try once per type to avoid repeated reflection overhead
+        if (_loadedTypes.Contains(templateTypeName))
+            return;
+
+        try
+        {
+            var gameType = GameType.Find(templateTypeName);
+            var managedType = gameType?.ManagedType;
+            if (managedType == null)
+                return;
+
+            // Find DataTemplateLoader in Assembly-CSharp
+            var gameAssembly = GameState.GameAssembly;
+            if (gameAssembly == null)
+                return;
+
+            var loaderType = gameAssembly.GetTypes()
+                .FirstOrDefault(t => t.Name == "DataTemplateLoader");
+
+            if (loaderType == null)
+                return;
+
+            // Get the GetAll<T>() method
+            var getAllMethod = loaderType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "GetAll" && m.IsGenericMethodDefinition);
+
+            if (getAllMethod == null)
+                return;
+
+            // Call GetAll<T>() to force templates into memory
+            var genericMethod = getAllMethod.MakeGenericMethod(managedType);
+            genericMethod.Invoke(null, null);
+
+            _loadedTypes.Add(templateTypeName);
+        }
+        catch (Exception ex)
+        {
+            // Don't fail hard - just log and continue, FindAll will return empty
+            ModError.WarnInternal("Templates.EnsureTemplatesLoaded",
+                $"Failed for {templateTypeName}: {ex.Message}");
+        }
     }
 }

@@ -30,6 +30,7 @@ namespace Menace.SDK;
 public static class ModSettings
 {
     private static readonly Dictionary<string, ModSettingsGroup> _groups = new();
+    private static readonly object _fileLock = new();
     private static string _settingsPath;
     private static bool _initialized;
     private static bool _dirty;
@@ -50,8 +51,16 @@ public static class ModSettings
     /// </summary>
     public static void Register(string modName, Action<SettingsBuilder> configure)
     {
-        if (string.IsNullOrEmpty(modName) || configure == null)
+        if (string.IsNullOrEmpty(modName))
+        {
+            SdkLogger.Warning("[ModSettings] Register called with null or empty modName");
             return;
+        }
+        if (configure == null)
+        {
+            SdkLogger.Warning($"[ModSettings] Register called with null configure callback for mod '{modName}'");
+            return;
+        }
 
         var builder = new SettingsBuilder(modName);
         configure(builder);
@@ -187,7 +196,10 @@ public static class ModSettings
             }
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_settingsPath, json);
+            lock (_fileLock)
+            {
+                File.WriteAllText(_settingsPath, json);
+            }
             _dirty = false;
         }
         catch (Exception ex)
@@ -203,7 +215,11 @@ public static class ModSettings
 
         try
         {
-            var json = File.ReadAllText(_settingsPath);
+            string json;
+            lock (_fileLock)
+            {
+                json = File.ReadAllText(_settingsPath);
+            }
             var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(json);
             if (data == null) return;
 
@@ -234,7 +250,11 @@ public static class ModSettings
 
         try
         {
-            var json = File.ReadAllText(_settingsPath);
+            string json;
+            lock (_fileLock)
+            {
+                json = File.ReadAllText(_settingsPath);
+            }
             var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(json);
             if (data == null || !data.TryGetValue(group.ModName, out var modData))
                 return;

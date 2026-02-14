@@ -8,13 +8,42 @@ using UnityEngine;
 namespace Menace.SDK;
 
 /// <summary>
+/// Faction types matching the game's FactionType enum.
+/// </summary>
+public enum FactionType
+{
+    Neutral = 0,
+    Player = 1,
+    PlayerAI = 2,
+    Civilian = 3,
+    AlliedLocalForces = 4,
+    EnemyLocalForces = 5,
+    Pirates = 6,
+    Wildlife = 7,
+    Constructs = 8,
+    RogueArmy = 9
+}
+
+/// <summary>
+/// Reason for finishing a tactical mission.
+/// </summary>
+public enum TacticalFinishReason
+{
+    None = 0,
+    AllPlayerUnitsDead = 1,
+    Leave = 2,
+    LoadingSavegame = 3
+}
+
+/// <summary>
 /// SDK extension for controlling tactical game state including rounds, turns,
 /// time scale, and mission flow.
 ///
 /// Based on reverse engineering findings:
 /// - TacticalManager singleton manages game state
-/// - TacticalManager.RoundNumber @ +0x60
-/// - TacticalManager.CurrentFactionIndex @ +0xB0
+/// - TacticalManager.GetRound() for round number
+/// - TacticalManager.GetActiveFactionID() for active faction
+/// - TacticalManager.GetActiveActor() for active actor
 /// - TacticalManager.IsPaused() @ 0x180672c90
 /// - TacticalManager.SetPaused(bool) @ 0x1806753c0
 /// - TacticalManager.NextRound() @ 0x1806736b0
@@ -27,48 +56,75 @@ public static class TacticalController
     private static GameType _tacticalManagerType;
     private static GameType _tacticalStateType;
     private static GameType _baseFactionType;
+    private static GameType _tacticalFinishReasonType;
 
-    // TacticalManager offsets from turn-action-system.md
-    private const uint OFFSET_TM_ACTIVE_ACTOR = 0x50;
-    private const uint OFFSET_TM_ALL_ACTORS = 0x58;
-    private const uint OFFSET_TM_ROUND_NUMBER = 0x60;
-    private const uint OFFSET_TM_ALL_STRUCTURES = 0x78;
-    private const uint OFFSET_TM_FACTIONS = 0xA8;
-    private const uint OFFSET_TM_CURRENT_FACTION = 0xB0;
-    private const uint OFFSET_TM_PREVIOUS_FACTION = 0xB4;
-    private const uint OFFSET_TM_ROUND_CHECK_PENDING = 0xD8;
-
-    // TacticalState offsets
+    // TacticalState offsets (still needed for some operations)
     private const uint OFFSET_TS_TIME_SCALE = 0x28;
     private const uint OFFSET_TS_CURRENT_ACTION = 0x38;
-
-    // Faction constants
-    public const int FACTION_PLAYER = 0;
-    public const int FACTION_ENEMY = 1;
-    public const int FACTION_NEUTRAL = 2;
 
     /// <summary>
     /// Get the current round number (1-indexed).
     /// </summary>
     public static int GetCurrentRound()
     {
-        var tm = GetTacticalManager();
-        if (tm.IsNull)
-            return 0;
+        try
+        {
+            EnsureTypesLoaded();
 
-        return tm.ReadInt(OFFSET_TM_ROUND_NUMBER);
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return 0;
+
+            var tm = GetTacticalManagerProxy();
+            if (tm == null) return 0;
+
+            var getRoundMethod = tmType.GetMethod("GetRound", BindingFlags.Public | BindingFlags.Instance);
+            if (getRoundMethod == null) return 0;
+
+            return (int)getRoundMethod.Invoke(tm, null);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("TacticalController.GetCurrentRound", "Failed", ex);
+            return 0;
+        }
     }
 
     /// <summary>
-    /// Get the currently active faction index.
+    /// Get the currently active faction ID.
     /// </summary>
     public static int GetCurrentFaction()
     {
-        var tm = GetTacticalManager();
-        if (tm.IsNull)
-            return -1;
+        try
+        {
+            EnsureTypesLoaded();
 
-        return tm.ReadInt(OFFSET_TM_CURRENT_FACTION);
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return -1;
+
+            var tm = GetTacticalManagerProxy();
+            if (tm == null) return -1;
+
+            var getActiveFactionMethod = tmType.GetMethod("GetActiveFactionID", BindingFlags.Public | BindingFlags.Instance);
+            if (getActiveFactionMethod == null) return -1;
+
+            return (int)getActiveFactionMethod.Invoke(tm, null);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("TacticalController.GetCurrentFaction", "Failed", ex);
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Get the current faction type.
+    /// </summary>
+    public static FactionType GetCurrentFactionType()
+    {
+        var factionId = GetCurrentFaction();
+        if (factionId < 0 || factionId > 9)
+            return FactionType.Neutral;
+        return (FactionType)factionId;
     }
 
     /// <summary>
@@ -76,7 +132,7 @@ public static class TacticalController
     /// </summary>
     public static bool IsPlayerTurn()
     {
-        return GetCurrentFaction() == FACTION_PLAYER;
+        return GetCurrentFactionType() == FactionType.Player;
     }
 
     /// <summary>
@@ -263,12 +319,29 @@ public static class TacticalController
     /// </summary>
     public static GameObj GetActiveActor()
     {
-        var tm = GetTacticalManager();
-        if (tm.IsNull)
-            return GameObj.Null;
+        try
+        {
+            EnsureTypesLoaded();
 
-        var ptr = tm.ReadPtr(OFFSET_TM_ACTIVE_ACTOR);
-        return new GameObj(ptr);
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return GameObj.Null;
+
+            var tm = GetTacticalManagerProxy();
+            if (tm == null) return GameObj.Null;
+
+            var getActiveActorMethod = tmType.GetMethod("GetActiveActor", BindingFlags.Public | BindingFlags.Instance);
+            if (getActiveActorMethod == null) return GameObj.Null;
+
+            var result = getActiveActorMethod.Invoke(tm, null);
+            if (result == null) return GameObj.Null;
+
+            return new GameObj(((Il2CppObjectBase)result).Pointer);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("TacticalController.GetActiveActor", "Failed", ex);
+            return GameObj.Null;
+        }
     }
 
     /// <summary>
@@ -311,9 +384,10 @@ public static class TacticalController
     }
 
     /// <summary>
-    /// Get count of actors for a faction.
+    /// Get total count of enemy actors.
+    /// Uses TacticalManager.GetTotalEnemyCount().
     /// </summary>
-    public static int GetActorCount(int factionIndex)
+    public static int GetTotalEnemyCount()
     {
         try
         {
@@ -325,22 +399,23 @@ public static class TacticalController
             var tm = GetTacticalManagerProxy();
             if (tm == null) return 0;
 
-            var getCountMethod = tmType.GetMethod("GetActorCount", BindingFlags.Public | BindingFlags.Instance);
+            var getCountMethod = tmType.GetMethod("GetTotalEnemyCount", BindingFlags.Public | BindingFlags.Instance);
             if (getCountMethod == null) return 0;
 
-            return (int)getCountMethod.Invoke(tm, new object[] { factionIndex });
+            return (int)getCountMethod.Invoke(tm, null);
         }
         catch (Exception ex)
         {
-            ModError.ReportInternal("TacticalController.GetActorCount", "Failed", ex);
+            ModError.ReportInternal("TacticalController.GetTotalEnemyCount", "Failed", ex);
             return 0;
         }
     }
 
     /// <summary>
-    /// Get count of dead actors for a faction.
+    /// Get count of dead enemy actors.
+    /// Uses TacticalManager.GetDeadEnemyCount().
     /// </summary>
-    public static int GetDeadCount(int factionIndex)
+    public static int GetDeadEnemyCount()
     {
         try
         {
@@ -352,14 +427,14 @@ public static class TacticalController
             var tm = GetTacticalManagerProxy();
             if (tm == null) return 0;
 
-            var getDeadMethod = tmType.GetMethod("GetDeadCount", BindingFlags.Public | BindingFlags.Instance);
+            var getDeadMethod = tmType.GetMethod("GetDeadEnemyCount", BindingFlags.Public | BindingFlags.Instance);
             if (getDeadMethod == null) return 0;
 
-            return (int)getDeadMethod.Invoke(tm, new object[] { factionIndex });
+            return (int)getDeadMethod.Invoke(tm, null);
         }
         catch (Exception ex)
         {
-            ModError.ReportInternal("TacticalController.GetDeadCount", "Failed", ex);
+            ModError.ReportInternal("TacticalController.GetDeadEnemyCount", "Failed", ex);
             return 0;
         }
     }
@@ -393,18 +468,79 @@ public static class TacticalController
 
     /// <summary>
     /// Check if any player unit is still alive.
+    /// Uses TacticalManager.IsAnyPlayerUnitAlive().
     /// </summary>
     public static bool IsAnyPlayerUnitAlive()
     {
-        return GetActorCount(FACTION_PLAYER) > GetDeadCount(FACTION_PLAYER);
+        try
+        {
+            EnsureTypesLoaded();
+
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return false;
+
+            var tm = GetTacticalManagerProxy();
+            if (tm == null) return false;
+
+            var isAliveMethod = tmType.GetMethod("IsAnyPlayerUnitAlive", BindingFlags.Public | BindingFlags.Instance);
+            if (isAliveMethod == null) return false;
+
+            return (bool)isAliveMethod.Invoke(tm, null);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("TacticalController.IsAnyPlayerUnitAlive", "Failed", ex);
+            return false;
+        }
     }
 
     /// <summary>
-    /// Check if any enemy unit is still alive.
+    /// Check if any AI/enemy unit is still alive.
+    /// Uses TacticalManager.IsAnyAIUnitAlive().
     /// </summary>
     public static bool IsAnyEnemyAlive()
     {
-        return GetActorCount(FACTION_ENEMY) > GetDeadCount(FACTION_ENEMY);
+        try
+        {
+            EnsureTypesLoaded();
+
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return false;
+
+            var tm = GetTacticalManagerProxy();
+            if (tm == null) return false;
+
+            var isAliveMethod = tmType.GetMethod("IsAnyAIUnitAlive", BindingFlags.Public | BindingFlags.Instance);
+            if (isAliveMethod == null) return false;
+
+            return (bool)isAliveMethod.Invoke(tm, null);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("TacticalController.IsAnyEnemyAlive", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get the name of a faction type.
+    /// </summary>
+    public static string GetFactionName(FactionType faction)
+    {
+        return faction switch
+        {
+            FactionType.Neutral => "Neutral",
+            FactionType.Player => "Player",
+            FactionType.PlayerAI => "Player AI",
+            FactionType.Civilian => "Civilian",
+            FactionType.AlliedLocalForces => "Allied Local Forces",
+            FactionType.EnemyLocalForces => "Enemy Local Forces",
+            FactionType.Pirates => "Pirates",
+            FactionType.Wildlife => "Wildlife",
+            FactionType.Constructs => "Constructs",
+            FactionType.RogueArmy => "Rogue Army",
+            _ => $"Unknown ({(int)faction})"
+        };
     }
 
     /// <summary>
@@ -412,8 +548,6 @@ public static class TacticalController
     /// </summary>
     public static TacticalStateInfo GetTacticalState()
     {
-        var tm = GetTacticalManager();
-
         var activeActor = GetActiveActor();
         string activeActorName = null;
         if (!activeActor.IsNull)
@@ -421,26 +555,26 @@ public static class TacticalController
             activeActorName = activeActor.GetName();
         }
 
+        var currentFaction = GetCurrentFactionType();
+        var totalEnemies = GetTotalEnemyCount();
+        var deadEnemies = GetDeadEnemyCount();
+
         return new TacticalStateInfo
         {
             RoundNumber = GetCurrentRound(),
-            CurrentFaction = GetCurrentFaction(),
-            CurrentFactionName = GetCurrentFaction() switch
-            {
-                0 => "Player",
-                1 => "Enemy",
-                2 => "Neutral",
-                _ => $"Faction {GetCurrentFaction()}"
-            },
+            CurrentFaction = (int)currentFaction,
+            CurrentFactionType = currentFaction,
+            CurrentFactionName = GetFactionName(currentFaction),
             IsPlayerTurn = IsPlayerTurn(),
             IsPaused = IsPaused(),
             TimeScale = GetTimeScale(),
             IsMissionRunning = IsMissionRunning(),
             ActiveActorName = activeActorName,
-            PlayerAliveCount = GetActorCount(FACTION_PLAYER) - GetDeadCount(FACTION_PLAYER),
-            PlayerDeadCount = GetDeadCount(FACTION_PLAYER),
-            EnemyAliveCount = GetActorCount(FACTION_ENEMY) - GetDeadCount(FACTION_ENEMY),
-            EnemyDeadCount = GetDeadCount(FACTION_ENEMY)
+            IsAnyPlayerAlive = IsAnyPlayerUnitAlive(),
+            IsAnyEnemyAlive = IsAnyEnemyAlive(),
+            TotalEnemyCount = totalEnemies,
+            DeadEnemyCount = deadEnemies,
+            AliveEnemyCount = totalEnemies - deadEnemies
         };
     }
 
@@ -448,16 +582,18 @@ public static class TacticalController
     {
         public int RoundNumber { get; set; }
         public int CurrentFaction { get; set; }
+        public FactionType CurrentFactionType { get; set; }
         public string CurrentFactionName { get; set; }
         public bool IsPlayerTurn { get; set; }
         public bool IsPaused { get; set; }
         public float TimeScale { get; set; }
         public bool IsMissionRunning { get; set; }
         public string ActiveActorName { get; set; }
-        public int PlayerAliveCount { get; set; }
-        public int PlayerDeadCount { get; set; }
-        public int EnemyAliveCount { get; set; }
-        public int EnemyDeadCount { get; set; }
+        public bool IsAnyPlayerAlive { get; set; }
+        public bool IsAnyEnemyAlive { get; set; }
+        public int TotalEnemyCount { get; set; }
+        public int DeadEnemyCount { get; set; }
+        public int AliveEnemyCount { get; set; }
     }
 
     /// <summary>
@@ -473,10 +609,11 @@ public static class TacticalController
     /// </summary>
     /// <param name="templateName">EntityTemplate name for enemies</param>
     /// <param name="positions">Tile positions to spawn at</param>
+    /// <param name="faction">Faction type for spawned units (default: EnemyLocalForces)</param>
     /// <returns>Number successfully spawned</returns>
-    public static int SpawnWave(string templateName, List<(int x, int y)> positions)
+    public static int SpawnWave(string templateName, List<(int x, int y)> positions, FactionType faction = FactionType.EnemyLocalForces)
     {
-        var results = EntitySpawner.SpawnGroup(templateName, positions, FACTION_ENEMY);
+        var results = EntitySpawner.SpawnGroup(templateName, positions, (int)faction);
         return results.FindAll(r => r.Success).Count;
     }
 
@@ -485,16 +622,19 @@ public static class TacticalController
     /// </summary>
     public static bool SkipAITurn()
     {
-        if (GetCurrentFaction() != FACTION_ENEMY)
+        var faction = GetCurrentFactionType();
+        // Skip if current faction is not player-controlled
+        if (faction == FactionType.Player)
             return false;
 
         return NextFaction();
     }
 
     /// <summary>
-    /// Finish the mission (trigger victory/defeat screen).
+    /// Finish the mission with the specified reason.
     /// </summary>
-    public static bool FinishMission()
+    /// <param name="reason">The reason for finishing the mission</param>
+    public static bool FinishMission(TacticalFinishReason reason = TacticalFinishReason.Leave)
     {
         try
         {
@@ -506,11 +646,27 @@ public static class TacticalController
             var tm = GetTacticalManagerProxy();
             if (tm == null) return false;
 
+            // Find the game's TacticalFinishReason enum type
+            _tacticalFinishReasonType ??= GameType.Find("Menace.Tactical.TacticalFinishReason");
+            var gameReasonType = _tacticalFinishReasonType?.ManagedType;
+
             var finishMethod = tmType.GetMethod("Finish", BindingFlags.Public | BindingFlags.Instance);
             if (finishMethod == null) return false;
 
-            finishMethod.Invoke(tm, null);
-            ModError.Info("Menace.SDK", "Mission finished");
+            // Convert our enum to the game's enum
+            object gameReason;
+            if (gameReasonType != null)
+            {
+                gameReason = Enum.ToObject(gameReasonType, (int)reason);
+            }
+            else
+            {
+                // Fallback: try passing the int value directly
+                gameReason = (int)reason;
+            }
+
+            finishMethod.Invoke(tm, new object[] { gameReason });
+            ModError.Info("Menace.SDK", $"Mission finished with reason: {reason}");
             return true;
         }
         catch (Exception ex)
@@ -529,29 +685,6 @@ public static class TacticalController
         _baseFactionType ??= GameType.Find("Menace.Tactical.AI.BaseFaction");
     }
 
-    private static GameObj GetTacticalManager()
-    {
-        try
-        {
-            EnsureTypesLoaded();
-
-            var tmType = _tacticalManagerType?.ManagedType;
-            if (tmType == null) return GameObj.Null;
-
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-            if (instanceProp == null) return GameObj.Null;
-
-            var instance = instanceProp.GetValue(null);
-            if (instance == null) return GameObj.Null;
-
-            return new GameObj(((Il2CppObjectBase)instance).Pointer);
-        }
-        catch
-        {
-            return GameObj.Null;
-        }
-    }
-
     private static object GetTacticalManagerProxy()
     {
         try
@@ -561,7 +694,7 @@ public static class TacticalController
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             return instanceProp?.GetValue(null);
         }
         catch
@@ -580,7 +713,7 @@ public static class TacticalController
             if (tsType == null) return null;
 
             // Try Instance property first
-            var instanceProp = tsType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tsType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             if (instanceProp != null)
                 return instanceProp.GetValue(null);
 

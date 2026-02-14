@@ -10,9 +10,9 @@ namespace Menace.SDK;
 /// Calls the game's actual combat calculation code for accurate results.
 ///
 /// Based on reverse engineering findings:
-/// - Skill.GetHitchance(sourceTile, targetTile, attackProps, defenseProps, target, includeDistance)
+/// - Skill.GetHitchance(from, targetTile, properties, defenderProperties, includeDropoff, overrideTargetEntity, forImmediateUse)
 ///   @ 0x1806dba90
-/// - Returns HitChanceResult struct with FinalHitChance, Accuracy, CoverMult, DodgeMult
+/// - Returns HitChanceResult struct with FinalValue, Accuracy, CoverMult, DefenseMult, AccuracyDropoff, IncludeDropoff, AlwaysHits
 /// </summary>
 public static class CombatSimulation
 {
@@ -26,12 +26,13 @@ public static class CombatSimulation
     /// </summary>
     public class HitChanceResult
     {
-        public float FinalHitChance { get; set; }
+        public float FinalValue { get; set; }
         public float Accuracy { get; set; }
         public float CoverMult { get; set; }
-        public float DodgeMult { get; set; }
-        public float DistancePenalty { get; set; }
-        public bool IncludesDistance { get; set; }
+        public float DefenseMult { get; set; }
+        public float AccuracyDropoff { get; set; }
+        public bool IncludeDropoff { get; set; }
+        public bool AlwaysHits { get; set; }
         public string SkillName { get; set; }
         public float Distance { get; set; }
     }
@@ -42,13 +43,13 @@ public static class CombatSimulation
     public static HitChanceResult GetHitChance(GameObj attacker, GameObj target)
     {
         if (attacker.IsNull || target.IsNull)
-            return new HitChanceResult { FinalHitChance = -1 };
+            return new HitChanceResult { FinalValue = -1 };
 
         // Get attacker's primary attack skill
         var skills = EntityCombat.GetSkills(attacker);
         var attackSkill = skills.Find(s => s.IsAttack);
         if (attackSkill == null)
-            return new HitChanceResult { FinalHitChance = -1 };
+            return new HitChanceResult { FinalValue = -1 };
 
         return GetHitChance(attacker, target, attackSkill.Name);
     }
@@ -62,7 +63,7 @@ public static class CombatSimulation
 
         if (attacker.IsNull || target.IsNull)
         {
-            result.FinalHitChance = -1;
+            result.FinalValue = -1;
             return result;
         }
 
@@ -76,7 +77,7 @@ public static class CombatSimulation
 
             if (actorType == null || tileType == null || skillType == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
@@ -84,7 +85,7 @@ public static class CombatSimulation
             var targetProxy = GetManagedProxy(target, actorType);
             if (attackerProxy == null || targetProxy == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
@@ -94,7 +95,7 @@ public static class CombatSimulation
             var targetTile = getTileMethod?.Invoke(targetProxy, null);
             if (sourceTile == null || targetTile == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
@@ -106,21 +107,21 @@ public static class CombatSimulation
                 result.Distance = Convert.ToSingle(distObj);
             }
 
-            // Get skill container
-            var skillContainerProp = actorType.GetProperty("SkillContainer", BindingFlags.Public | BindingFlags.Instance);
-            var skillContainer = skillContainerProp?.GetValue(attackerProxy);
+            // Get skills via GetSkills() method
+            var getSkillsMethod = actorType.GetMethod("GetSkills", BindingFlags.Public | BindingFlags.Instance);
+            var skillContainer = getSkillsMethod?.Invoke(attackerProxy, null);
             if (skillContainer == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
             // Find the skill
             object skill = null;
-            var skillsProp = skillContainer.GetType().GetProperty("Skills", BindingFlags.Public | BindingFlags.Instance);
-            if (skillsProp != null)
+            var skillsField = skillContainer.GetType().GetField("m_Skills", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (skillsField != null)
             {
-                var skillsList = skillsProp.GetValue(skillContainer);
+                var skillsList = skillsField.GetValue(skillContainer);
                 if (skillsList != null)
                 {
                     var enumerator = skillsList.GetType().GetMethod("GetEnumerator")?.Invoke(skillsList, null);
@@ -149,66 +150,69 @@ public static class CombatSimulation
 
             if (skill == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
             // Call GetHitchance on the skill
-            // Signature: GetHitchance(Tile sourceTile, Tile targetTile, EntityProperties attackProps,
-            //                         EntityProperties defenseProps, Entity target, bool includeDistance)
             var getHitchanceMethod = skill.GetType().GetMethod("GetHitchance", BindingFlags.Public | BindingFlags.Instance);
             if (getHitchanceMethod == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
             // Call with null for attackProps/defenseProps to let the game build them
+            // Signature: GetHitchance(from, targetTile, properties, defenderProperties, includeDropoff, overrideTargetEntity, forImmediateUse)
             var hitChanceResult = getHitchanceMethod.Invoke(skill, new object[]
             {
                 sourceTile,
                 targetTile,
-                null,  // attackProps - game will build
-                null,  // defenseProps - game will build
-                targetProxy,
-                true   // includeDistance
+                null,  // properties - game will build
+                null,  // defenderProperties - game will build
+                true,  // includeDropoff
+                targetProxy,  // overrideTargetEntity
+                false  // forImmediateUse
             });
 
             if (hitChanceResult == null)
             {
-                result.FinalHitChance = -1;
+                result.FinalValue = -1;
                 return result;
             }
 
             // Extract fields from HitChanceResult struct
             var resultType = hitChanceResult.GetType();
 
-            var finalHitChanceField = resultType.GetField("FinalHitChance", BindingFlags.Public | BindingFlags.Instance);
+            var finalValueField = resultType.GetField("FinalValue", BindingFlags.Public | BindingFlags.Instance);
             var accuracyField = resultType.GetField("Accuracy", BindingFlags.Public | BindingFlags.Instance);
             var coverMultField = resultType.GetField("CoverMult", BindingFlags.Public | BindingFlags.Instance);
-            var dodgeMultField = resultType.GetField("DodgeMult", BindingFlags.Public | BindingFlags.Instance);
-            var distPenaltyField = resultType.GetField("DistancePenalty", BindingFlags.Public | BindingFlags.Instance);
-            var includesDistField = resultType.GetField("IncludesDistance", BindingFlags.Public | BindingFlags.Instance);
+            var defenseMultField = resultType.GetField("DefenseMult", BindingFlags.Public | BindingFlags.Instance);
+            var accuracyDropoffField = resultType.GetField("AccuracyDropoff", BindingFlags.Public | BindingFlags.Instance);
+            var includeDropoffField = resultType.GetField("IncludeDropoff", BindingFlags.Public | BindingFlags.Instance);
+            var alwaysHitsField = resultType.GetField("AlwaysHits", BindingFlags.Public | BindingFlags.Instance);
 
-            if (finalHitChanceField != null)
-                result.FinalHitChance = Convert.ToSingle(finalHitChanceField.GetValue(hitChanceResult));
+            if (finalValueField != null)
+                result.FinalValue = Convert.ToSingle(finalValueField.GetValue(hitChanceResult));
             if (accuracyField != null)
                 result.Accuracy = Convert.ToSingle(accuracyField.GetValue(hitChanceResult));
             if (coverMultField != null)
                 result.CoverMult = Convert.ToSingle(coverMultField.GetValue(hitChanceResult));
-            if (dodgeMultField != null)
-                result.DodgeMult = Convert.ToSingle(dodgeMultField.GetValue(hitChanceResult));
-            if (distPenaltyField != null)
-                result.DistancePenalty = Convert.ToSingle(distPenaltyField.GetValue(hitChanceResult));
-            if (includesDistField != null)
-                result.IncludesDistance = (bool)includesDistField.GetValue(hitChanceResult);
+            if (defenseMultField != null)
+                result.DefenseMult = Convert.ToSingle(defenseMultField.GetValue(hitChanceResult));
+            if (accuracyDropoffField != null)
+                result.AccuracyDropoff = Convert.ToSingle(accuracyDropoffField.GetValue(hitChanceResult));
+            if (includeDropoffField != null)
+                result.IncludeDropoff = (bool)includeDropoffField.GetValue(hitChanceResult);
+            if (alwaysHitsField != null)
+                result.AlwaysHits = (bool)alwaysHitsField.GetValue(hitChanceResult);
 
             return result;
         }
         catch (Exception ex)
         {
-            ModError.ReportInternal("CombatSimulation.GetHitChance", "Failed", ex);
-            result.FinalHitChance = -1;
+            ModError.Report("Menace.SDK", "CombatSimulation.GetHitChance failed", ex, ErrorSeverity.Error);
+            result.FinalValue = -1;
             return result;
         }
     }
@@ -233,7 +237,7 @@ public static class CombatSimulation
             if (targetInfo.FactionIndex == attackerInfo?.FactionIndex) continue; // Same faction
 
             var hitChance = GetHitChance(attacker, target);
-            if (hitChance.FinalHitChance >= 0)
+            if (hitChance.FinalValue >= 0)
             {
                 results.Add((targetInfo.Name, hitChance));
             }
@@ -262,12 +266,12 @@ public static class CombatSimulation
                 return $"Target '{targetName}' not found";
 
             var result = GetHitChance(actor, target);
-            if (result.FinalHitChance < 0)
+            if (result.FinalValue < 0)
                 return "Could not calculate hit chance";
 
-            return $"Hit chance vs {targetName}: {result.FinalHitChance:F0}%\n" +
-                   $"Accuracy: {result.Accuracy:F1}, Cover: {result.CoverMult:F2}, Dodge: {result.DodgeMult:F2}\n" +
-                   $"Distance: {result.Distance:F1}, Penalty: {result.DistancePenalty:F1}";
+            return $"Hit chance vs {targetName}: {result.FinalValue:F0}%\n" +
+                   $"Accuracy: {result.Accuracy:F1}, Cover: {result.CoverMult:F2}, Defense: {result.DefenseMult:F2}\n" +
+                   $"Distance: {result.Distance:F1}, Dropoff: {result.AccuracyDropoff:F1}";
         });
 
         DevConsole.RegisterCommand("hitchances", "", "Show hit chances against all enemies", args =>
@@ -283,7 +287,7 @@ public static class CombatSimulation
             var lines = new List<string> { "Hit chances:" };
             foreach (var (name, result) in results)
             {
-                lines.Add($"  {name}: {result.FinalHitChance:F0}% (dist: {result.Distance:F1})");
+                lines.Add($"  {name}: {result.FinalValue:F0}% (dist: {result.Distance:F1})");
             }
             return string.Join("\n", lines);
         });

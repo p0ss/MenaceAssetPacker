@@ -13,12 +13,19 @@ namespace Menace.SDK;
 ///
 /// Based on reverse engineering findings:
 /// - Map : BaseMap&lt;Tile&gt; with max 42x42 tiles
-/// - Tile.GetCover(direction, attacker, ignoreAllies) @ 0x180680b20
+/// - Tile.GetCover(Direction, Entity, EntityProperties, bool realCover) @ 0x180680b20
 /// - Tile.HasActor() @ 0x180681cd0
 /// - Tile.HasLineOfSightTo(other, flags) @ 0x180681d70
 /// - Tile.IsVisibleToFaction(factionId) @ 0x180682140
-/// - Map.GetTile(x, y) via Tiles array
+/// - Tile.IsVisibleToPlayer() for player visibility check
+/// - Map.GetTile(x, z) via Tiles array
+/// - Map.GetTileAtPos(Vector3) for world position lookup
 /// - TacticalManager.Instance.Map @ +0x28
+///
+/// COORDINATE SYSTEM NOTE:
+/// The game uses X/Z coordinates for tiles (Y is elevation/height).
+/// TileInfo.X = game's X coordinate
+/// TileInfo.Z = game's Z coordinate (formerly named Y in SDK)
 /// </summary>
 public static class TileMap
 {
@@ -26,6 +33,7 @@ public static class TileMap
     private static GameType _tileType;
     private static GameType _mapType;
     private static GameType _tacticalManagerType;
+    private static GameType _directionType;
 
     // Direction constants (clockwise from North)
     public const int DIR_NORTH = 0;
@@ -37,11 +45,11 @@ public static class TileMap
     public const int DIR_WEST = 6;
     public const int DIR_NORTHWEST = 7;
 
-    // Cover types
+    // Cover types (matches game's CoverType enum)
     public const int COVER_NONE = 0;
-    public const int COVER_HALF = 1;
-    public const int COVER_FULL = 2;
-    public const int COVER_ELEVATED = 3;
+    public const int COVER_LIGHT = 1;
+    public const int COVER_MEDIUM = 2;
+    public const int COVER_HEAVY = 3;
 
     // Tile field offsets from tile-map-system.md
     private const uint OFFSET_TILE_POS_X = 0x10;
@@ -68,16 +76,21 @@ public static class TileMap
 
     /// <summary>
     /// Tile information structure.
+    /// Note: X and Z map to game's X and Z coordinates respectively.
+    /// The game uses Y for elevation/height, not horizontal position.
     /// </summary>
     public class TileInfo
     {
+        /// <summary>Game's X coordinate (horizontal).</summary>
         public int X { get; set; }
-        public int Y { get; set; }
+        /// <summary>Game's Z coordinate (horizontal depth). Note: Game uses X/Z for horizontal, Y for elevation.</summary>
+        public int Z { get; set; }
+        /// <summary>Tile elevation (game's Y axis).</summary>
         public float Elevation { get; set; }
         public bool IsBlocked { get; set; }
         public bool HasActor { get; set; }
         public string ActorName { get; set; }
-        public int[] CoverValues { get; set; }  // Cover per direction (0-7)
+        public int[] CoverValues { get; set; }  // Cover per direction (0-7): None=0, Light=1, Medium=2, Heavy=3
         public bool[] HalfCoverFlags { get; set; }  // Half cover (4 cardinal)
         public bool IsVisibleToPlayer { get; set; }
         public bool BlocksLOS { get; set; }
@@ -108,12 +121,12 @@ public static class TileMap
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return GameObj.Null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             var tm = instanceProp?.GetValue(null);
             if (tm == null) return GameObj.Null;
 
-            var mapProp = tmType.GetProperty("Map", BindingFlags.Public | BindingFlags.Instance);
-            var map = mapProp?.GetValue(tm);
+            var getMapMethod = tmType.GetMethod("GetMap", BindingFlags.Public | BindingFlags.Instance);
+            var map = getMapMethod?.Invoke(tm, null);
             if (map == null) return GameObj.Null;
 
             return new GameObj(((Il2CppObjectBase)map).Pointer);
@@ -145,13 +158,13 @@ public static class TileMap
 
             var info = new MapInfo { Pointer = mapObj.Pointer };
 
-            var widthProp = mapType.GetProperty("Width", BindingFlags.Public | BindingFlags.Instance);
-            var heightProp = mapType.GetProperty("Height", BindingFlags.Public | BindingFlags.Instance);
-            var fogProp = mapType.GetProperty("UseFogOfWar", BindingFlags.Public | BindingFlags.Instance);
+            var getSizeXMethod = mapType.GetMethod("GetSizeX", BindingFlags.Public | BindingFlags.Instance);
+            var getSizeZMethod = mapType.GetMethod("GetSizeZ", BindingFlags.Public | BindingFlags.Instance);
+            var isUsingFogMethod = mapType.GetMethod("IsUsingFogOfWar", BindingFlags.Public | BindingFlags.Instance);
 
-            if (widthProp != null) info.Width = (int)widthProp.GetValue(proxy);
-            if (heightProp != null) info.Height = (int)heightProp.GetValue(proxy);
-            if (fogProp != null) info.UseFogOfWar = (bool)fogProp.GetValue(proxy);
+            if (getSizeXMethod != null) info.Width = (int)getSizeXMethod.Invoke(proxy, null);
+            if (getSizeZMethod != null) info.Height = (int)getSizeZMethod.Invoke(proxy, null);
+            if (isUsingFogMethod != null) info.UseFogOfWar = (bool)isUsingFogMethod.Invoke(proxy, null);
 
             return info;
         }
@@ -165,7 +178,9 @@ public static class TileMap
     /// <summary>
     /// Get a tile at specific coordinates.
     /// </summary>
-    public static GameObj GetTile(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static GameObj GetTile(int x, int z)
     {
         try
         {
@@ -174,46 +189,80 @@ public static class TileMap
             var tmType = _tacticalManagerType?.ManagedType;
             if (tmType == null) return GameObj.Null;
 
-            var instanceProp = tmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            var instanceProp = tmType.GetProperty("s_Singleton", BindingFlags.Public | BindingFlags.Static);
             var tm = instanceProp?.GetValue(null);
             if (tm == null) return GameObj.Null;
 
-            var mapProp = tmType.GetProperty("Map", BindingFlags.Public | BindingFlags.Instance);
-            var map = mapProp?.GetValue(tm);
+            var getMapMethod = tmType.GetMethod("GetMap", BindingFlags.Public | BindingFlags.Instance);
+            var map = getMapMethod?.Invoke(tm, null);
             if (map == null) return GameObj.Null;
 
             var getTileMethod = map.GetType().GetMethod("GetTile",
                 BindingFlags.Public | BindingFlags.Instance,
                 null, new[] { typeof(int), typeof(int) }, null);
 
-            var tile = getTileMethod?.Invoke(map, new object[] { x, y });
+            var tile = getTileMethod?.Invoke(map, new object[] { x, z });
             if (tile == null) return GameObj.Null;
 
             return new GameObj(((Il2CppObjectBase)tile).Pointer);
         }
         catch (Exception ex)
         {
-            ModError.ReportInternal("TileMap.GetTile", $"Failed for ({x}, {y})", ex);
+            ModError.ReportInternal("TileMap.GetTile", $"Failed for ({x}, {z})", ex);
             return GameObj.Null;
         }
     }
 
     /// <summary>
     /// Get tile at a world position.
+    /// Uses native Map.GetTileAtPos when available for accurate results.
     /// </summary>
     public static GameObj GetTileAtWorldPos(Vector3 worldPos)
     {
+        try
+        {
+            EnsureTypesLoaded();
+
+            var mapObj = GetMap();
+            if (mapObj.IsNull) goto fallback;
+
+            var mapType = _mapType?.ManagedType;
+            if (mapType == null) goto fallback;
+
+            var proxy = GetManagedProxy(mapObj, mapType);
+            if (proxy == null) goto fallback;
+
+            // Try native GetTileAtPos(Vector3)
+            var getTileAtPosMethod = mapType.GetMethod("GetTileAtPos",
+                BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { typeof(Vector3) }, null);
+
+            if (getTileAtPosMethod != null)
+            {
+                var tile = getTileAtPosMethod.Invoke(proxy, new object[] { worldPos });
+                if (tile != null)
+                    return new GameObj(((Il2CppObjectBase)tile).Pointer);
+            }
+        }
+        catch
+        {
+            // Fall through to manual calculation
+        }
+
+        fallback:
         int x = (int)(worldPos.x / TILE_SIZE);
-        int y = (int)(worldPos.z / TILE_SIZE);
-        return GetTile(x, y);
+        int z = (int)(worldPos.z / TILE_SIZE);
+        return GetTile(x, z);
     }
 
     /// <summary>
     /// Get detailed information about a tile.
     /// </summary>
-    public static TileInfo GetTileInfo(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static TileInfo GetTileInfo(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetTileInfo(tile);
     }
 
@@ -232,7 +281,7 @@ public static class TileMap
             {
                 Pointer = tile.Pointer,
                 X = tile.ReadInt(OFFSET_TILE_POS_X),
-                Y = tile.ReadInt(OFFSET_TILE_POS_Y),
+                Z = tile.ReadInt(OFFSET_TILE_POS_Y),  // Game stores Z in POS_Y field
                 Elevation = tile.ReadFloat(OFFSET_TILE_ELEVATION)
             };
 
@@ -283,16 +332,23 @@ public static class TileMap
 
     /// <summary>
     /// Get cover value in a specific direction (0-7).
+    /// Returns: None=0, Light=1, Medium=2, Heavy=3
     /// </summary>
-    public static int GetCover(int x, int y, int direction)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    /// <param name="direction">Direction index (0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW)</param>
+    public static int GetCover(int x, int z, int direction)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetCover(tile, direction);
     }
 
     /// <summary>
     /// Get cover value in a specific direction (0-7).
+    /// Returns: None=0, Light=1, Medium=2, Heavy=3
     /// </summary>
+    /// <param name="tile">The tile to check</param>
+    /// <param name="direction">Direction index (0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW)</param>
     public static int GetCover(GameObj tile, int direction)
     {
         if (tile.IsNull || direction < 0 || direction > 7) return 0;
@@ -307,10 +363,19 @@ public static class TileMap
             var proxy = GetManagedProxy(tile, tileType);
             if (proxy == null) return 0;
 
+            // GetCover(Direction _dir, Entity _specificToEntity, EntityProperties _entityProperties, Boolean _realCover)
             var getCoverMethod = tileType.GetMethod("GetCover", BindingFlags.Public | BindingFlags.Instance);
             if (getCoverMethod != null)
             {
-                var result = getCoverMethod.Invoke(proxy, new object[] { direction, null, true });
+                // Convert direction int to Direction enum
+                object directionEnum = direction;
+                if (_directionType?.ManagedType != null)
+                {
+                    directionEnum = Enum.ToObject(_directionType.ManagedType, direction);
+                }
+
+                // Invoke with 4 parameters: Direction, Entity (null), EntityProperties (null), bool realCover (true)
+                var result = getCoverMethod.Invoke(proxy, new object[] { directionEnum, null, null, true });
                 return Convert.ToInt32(result);
             }
 
@@ -325,10 +390,13 @@ public static class TileMap
 
     /// <summary>
     /// Get cover in all 8 directions.
+    /// Returns array of cover values: None=0, Light=1, Medium=2, Heavy=3
     /// </summary>
-    public static int[] GetAllCover(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static int[] GetAllCover(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetAllCover(tile);
     }
 
@@ -349,15 +417,20 @@ public static class TileMap
 
     /// <summary>
     /// Check if a tile is visible to a specific faction.
+    /// Uses native Tile.IsVisibleToFaction when available.
     /// </summary>
-    public static bool IsVisibleToFaction(int x, int y, int factionId)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    /// <param name="factionId">Faction ID to check visibility for</param>
+    public static bool IsVisibleToFaction(int x, int z, int factionId)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return IsVisibleToFaction(tile, factionId);
     }
 
     /// <summary>
     /// Check if a tile is visible to a specific faction.
+    /// Uses native Tile.IsVisibleToFaction when available.
     /// </summary>
     public static bool IsVisibleToFaction(GameObj tile, int factionId)
     {
@@ -365,6 +438,27 @@ public static class TileMap
 
         try
         {
+            EnsureTypesLoaded();
+
+            var tileType = _tileType?.ManagedType;
+            if (tileType != null)
+            {
+                var proxy = GetManagedProxy(tile, tileType);
+                if (proxy != null)
+                {
+                    // Try native IsVisibleToFaction(int factionId)
+                    var isVisibleMethod = tileType.GetMethod("IsVisibleToFaction",
+                        BindingFlags.Public | BindingFlags.Instance,
+                        null, new[] { typeof(int) }, null);
+
+                    if (isVisibleMethod != null)
+                    {
+                        return (bool)isVisibleMethod.Invoke(proxy, new object[] { factionId });
+                    }
+                }
+            }
+
+            // Fallback to bitmask
             var visibilityMask = Marshal.ReadInt64(tile.Pointer + (int)OFFSET_TILE_VISIBILITY_MASK);
             ulong bit = 1UL << factionId;
             return (visibilityMask & (long)bit) != 0;
@@ -377,18 +471,60 @@ public static class TileMap
 
     /// <summary>
     /// Check if a tile is visible to the player.
+    /// Uses native Tile.IsVisibleToPlayer when available.
     /// </summary>
-    public static bool IsVisibleToPlayer(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static bool IsVisibleToPlayer(int x, int z)
     {
-        return IsVisibleToFaction(x, y, 1) || IsVisibleToFaction(x, y, 2);
+        var tile = GetTile(x, z);
+        return IsVisibleToPlayer(tile);
+    }
+
+    /// <summary>
+    /// Check if a tile is visible to the player.
+    /// Uses native Tile.IsVisibleToPlayer when available.
+    /// </summary>
+    public static bool IsVisibleToPlayer(GameObj tile)
+    {
+        if (tile.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var tileType = _tileType?.ManagedType;
+            if (tileType != null)
+            {
+                var proxy = GetManagedProxy(tile, tileType);
+                if (proxy != null)
+                {
+                    // Try native IsVisibleToPlayer method
+                    var isVisibleMethod = tileType.GetMethod("IsVisibleToPlayer", BindingFlags.Public | BindingFlags.Instance);
+                    if (isVisibleMethod != null)
+                    {
+                        return (bool)isVisibleMethod.Invoke(proxy, null);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to faction check
+        }
+
+        // Fallback to faction checks
+        return IsVisibleToFaction(tile, 1) || IsVisibleToFaction(tile, 2);
     }
 
     /// <summary>
     /// Check if a tile is blocked (impassable).
     /// </summary>
-    public static bool IsBlocked(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static bool IsBlocked(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return IsBlocked(tile);
     }
 
@@ -413,9 +549,11 @@ public static class TileMap
     /// <summary>
     /// Check if a tile has an actor on it.
     /// </summary>
-    public static bool HasActor(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static bool HasActor(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return HasActor(tile);
     }
 
@@ -451,9 +589,11 @@ public static class TileMap
     /// <summary>
     /// Get the actor on a tile.
     /// </summary>
-    public static GameObj GetActorOnTile(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static GameObj GetActorOnTile(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetActorOnTile(tile);
     }
 
@@ -489,9 +629,12 @@ public static class TileMap
     /// <summary>
     /// Get the neighbor tile in a direction.
     /// </summary>
-    public static GameObj GetNeighbor(int x, int y, int direction)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    /// <param name="direction">Direction index (0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW)</param>
+    public static GameObj GetNeighbor(int x, int z, int direction)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetNeighbor(tile, direction);
     }
 
@@ -527,9 +670,11 @@ public static class TileMap
     /// <summary>
     /// Get all 8 neighbors of a tile.
     /// </summary>
-    public static GameObj[] GetAllNeighbors(int x, int y)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate (horizontal depth)</param>
+    public static GameObj[] GetAllNeighbors(int x, int z)
     {
-        var tile = GetTile(x, y);
+        var tile = GetTile(x, z);
         return GetAllNeighbors(tile);
     }
 
@@ -549,10 +694,14 @@ public static class TileMap
     /// <summary>
     /// Get the direction from one tile to another.
     /// </summary>
-    public static int GetDirectionTo(int fromX, int fromY, int toX, int toY)
+    /// <param name="fromX">Source tile X coordinate</param>
+    /// <param name="fromZ">Source tile Z coordinate</param>
+    /// <param name="toX">Target tile X coordinate</param>
+    /// <param name="toZ">Target tile Z coordinate</param>
+    public static int GetDirectionTo(int fromX, int fromZ, int toX, int toZ)
     {
-        var fromTile = GetTile(fromX, fromY);
-        var toTile = GetTile(toX, toY);
+        var fromTile = GetTile(fromX, fromZ);
+        var toTile = GetTile(toX, toZ);
         return GetDirectionTo(fromTile, toTile);
     }
 
@@ -592,78 +741,92 @@ public static class TileMap
     }
 
     /// <summary>
-    /// Get the distance between two tiles.
+    /// Get the distance between two tiles (in tile units).
+    /// Note: Game's GetDistanceTo returns Int32, not float.
     /// </summary>
-    public static float GetDistance(int x1, int y1, int x2, int y2)
+    /// <param name="x1">First tile X coordinate</param>
+    /// <param name="z1">First tile Z coordinate</param>
+    /// <param name="x2">Second tile X coordinate</param>
+    /// <param name="z2">Second tile Z coordinate</param>
+    public static int GetDistance(int x1, int z1, int x2, int z2)
     {
-        var tile1 = GetTile(x1, y1);
-        var tile2 = GetTile(x2, y2);
+        var tile1 = GetTile(x1, z1);
+        var tile2 = GetTile(x2, z2);
         return GetDistance(tile1, tile2);
     }
 
     /// <summary>
-    /// Get the distance between two tiles.
+    /// Get the distance between two tiles (in tile units).
+    /// Note: Game's GetDistanceTo returns Int32, not float.
     /// </summary>
-    public static float GetDistance(GameObj tile1, GameObj tile2)
+    public static int GetDistance(GameObj tile1, GameObj tile2)
     {
-        if (tile1.IsNull || tile2.IsNull) return -1f;
+        if (tile1.IsNull || tile2.IsNull) return -1;
 
         try
         {
             EnsureTypesLoaded();
 
             var tileType = _tileType?.ManagedType;
-            if (tileType == null) return -1f;
+            if (tileType == null) return -1;
 
             var proxy1 = GetManagedProxy(tile1, tileType);
-            if (proxy1 == null) return -1f;
+            if (proxy1 == null) return -1;
 
             var proxy2 = GetManagedProxy(tile2, tileType);
-            if (proxy2 == null) return -1f;
+            if (proxy2 == null) return -1;
 
             var getDistanceMethod = tileType.GetMethod("GetDistanceTo", BindingFlags.Public | BindingFlags.Instance);
             if (getDistanceMethod != null)
             {
                 var result = getDistanceMethod.Invoke(proxy1, new[] { proxy2 });
-                return Convert.ToSingle(result);
+                return Convert.ToInt32(result);
             }
 
-            return -1f;
+            return -1;
         }
         catch
         {
-            return -1f;
+            return -1;
         }
     }
 
     /// <summary>
     /// Get Manhattan distance between two tiles.
     /// </summary>
-    public static int GetManhattanDistance(int x1, int y1, int x2, int y2)
+    /// <param name="x1">First tile X coordinate</param>
+    /// <param name="z1">First tile Z coordinate</param>
+    /// <param name="x2">Second tile X coordinate</param>
+    /// <param name="z2">Second tile Z coordinate</param>
+    public static int GetManhattanDistance(int x1, int z1, int x2, int z2)
     {
-        return Math.Abs(x2 - x1) + Math.Abs(y2 - y1);
+        return Math.Abs(x2 - x1) + Math.Abs(z2 - z1);
     }
 
     /// <summary>
     /// Convert tile coordinates to world position.
     /// </summary>
-    public static Vector3 TileToWorld(int x, int y, float elevation = 0f)
+    /// <param name="x">Game's X coordinate</param>
+    /// <param name="z">Game's Z coordinate</param>
+    /// <param name="elevation">Elevation (game's Y axis)</param>
+    public static Vector3 TileToWorld(int x, int z, float elevation = 0f)
     {
         return new Vector3(
             x * TILE_SIZE + TILE_SIZE / 2f,
             elevation,
-            y * TILE_SIZE + TILE_SIZE / 2f
+            z * TILE_SIZE + TILE_SIZE / 2f
         );
     }
 
     /// <summary>
     /// Convert world position to tile coordinates.
     /// </summary>
-    public static (int x, int y) WorldToTile(Vector3 worldPos)
+    /// <returns>Tuple of (x, z) tile coordinates</returns>
+    public static (int x, int z) WorldToTile(Vector3 worldPos)
     {
         int x = (int)(worldPos.x / TILE_SIZE);
-        int y = (int)(worldPos.z / TILE_SIZE);
-        return (x, y);
+        int z = (int)(worldPos.z / TILE_SIZE);
+        return (x, z);
     }
 
     /// <summary>
@@ -692,10 +855,10 @@ public static class TileMap
     {
         return coverType switch
         {
-            0 => "None",
-            1 => "Half",
-            2 => "Full",
-            3 => "Elevated",
+            COVER_NONE => "None",
+            COVER_LIGHT => "Light",
+            COVER_MEDIUM => "Medium",
+            COVER_HEAVY => "Heavy",
             _ => "Unknown"
         };
     }
@@ -720,7 +883,7 @@ public static class TileMap
 
             var lines = new List<string>
             {
-                $"Tile ({info.X}, {info.Y}) - Elevation: {info.Elevation:F1}",
+                $"Tile ({info.X}, {info.Z}) - Elevation: {info.Elevation:F1}",
                 $"Blocked: {info.IsBlocked}, Visible: {info.IsVisibleToPlayer}",
                 $"HasActor: {info.HasActor}" + (info.HasActor ? $" ({info.ActorName})" : ""),
                 $"Effects: {info.HasEffects}, Blocks LOS: {info.BlocksLOS}"
@@ -778,21 +941,21 @@ public static class TileMap
             return $"Tile ({x}, {y}) visible: {IsVisibleToPlayer(x, y)}";
         });
 
-        // dist <x1> <y1> <x2> <y2> - Get distance between tiles
-        DevConsole.RegisterCommand("dist", "<x1> <y1> <x2> <y2>", "Get distance between tiles", args =>
+        // dist <x1> <z1> <x2> <z2> - Get distance between tiles
+        DevConsole.RegisterCommand("dist", "<x1> <z1> <x2> <z2>", "Get distance between tiles", args =>
         {
             if (args.Length < 4)
-                return "Usage: dist <x1> <y1> <x2> <y2>";
-            if (!int.TryParse(args[0], out int x1) || !int.TryParse(args[1], out int y1) ||
-                !int.TryParse(args[2], out int x2) || !int.TryParse(args[3], out int y2))
+                return "Usage: dist <x1> <z1> <x2> <z2>";
+            if (!int.TryParse(args[0], out int x1) || !int.TryParse(args[1], out int z1) ||
+                !int.TryParse(args[2], out int x2) || !int.TryParse(args[3], out int z2))
                 return "Invalid coordinates";
 
-            var distance = GetDistance(x1, y1, x2, y2);
-            var manhattan = GetManhattanDistance(x1, y1, x2, y2);
-            var direction = GetDirectionTo(x1, y1, x2, y2);
+            var distance = GetDistance(x1, z1, x2, z2);
+            var manhattan = GetManhattanDistance(x1, z1, x2, z2);
+            var direction = GetDirectionTo(x1, z1, x2, z2);
 
-            return $"Distance from ({x1},{y1}) to ({x2},{y2}):\n" +
-                   $"  Distance: {distance:F1}\n" +
+            return $"Distance from ({x1},{z1}) to ({x2},{z2}):\n" +
+                   $"  Distance: {distance}\n" +
                    $"  Manhattan: {manhattan}\n" +
                    $"  Direction: {GetDirectionName(direction)}";
         });
@@ -824,6 +987,7 @@ public static class TileMap
         _tileType ??= GameType.Find("Menace.Tactical.Tile");
         _mapType ??= GameType.Find("Menace.Tactical.Map");
         _tacticalManagerType ??= GameType.Find("Menace.Tactical.TacticalManager");
+        _directionType ??= GameType.Find("Menace.Tactical.Direction");
     }
 
     private static object GetManagedProxy(GameObj obj, Type managedType)
@@ -839,5 +1003,33 @@ public static class TileMap
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Try to use native Tile.IsVisibleToPlayer() method.
+    /// Returns null if method not available.
+    /// </summary>
+    private static bool? IsVisibleToPlayerNative(GameObj tile, Type tileType, object proxy)
+    {
+        if (tile.IsNull || tileType == null || proxy == null)
+            return null;
+
+        try
+        {
+            var isVisibleMethod = tileType.GetMethod("IsVisibleToPlayer",
+                BindingFlags.Public | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+
+            if (isVisibleMethod != null)
+            {
+                return (bool)isVisibleMethod.Invoke(proxy, null);
+            }
+        }
+        catch
+        {
+            // Fall through
+        }
+
+        return null;
     }
 }

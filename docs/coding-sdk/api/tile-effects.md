@@ -17,14 +17,14 @@ This is based on the game's `TileEffectHandler` system with support for various 
 ### GetEffects
 
 ```csharp
-public static List<EffectInfo> GetEffects(int x, int y)
+public static List<EffectInfo> GetEffects(int x, int z)
 public static List<EffectInfo> GetEffects(GameObj tile)
 ```
 
 Get all effects currently on a tile.
 
 **Parameters:**
-- `x`, `y` - Tile coordinates
+- `x`, `z` - Tile coordinates
 - `tile` - Tile game object
 
 **Returns:** List of `EffectInfo` objects describing each effect on the tile.
@@ -32,7 +32,7 @@ Get all effects currently on a tile.
 ### HasEffects
 
 ```csharp
-public static bool HasEffects(int x, int y)
+public static bool HasEffects(int x, int z)
 public static bool HasEffects(GameObj tile)
 ```
 
@@ -43,13 +43,13 @@ Check if a tile has any effects.
 ### HasEffectType
 
 ```csharp
-public static bool HasEffectType(int x, int y, string typeNameContains)
+public static bool HasEffectType(int x, int z, string typeNameContains)
 ```
 
 Check if a tile has a specific effect type by name pattern. Matches against both the effect type name and template name (case-insensitive).
 
 **Parameters:**
-- `x`, `y` - Tile coordinates
+- `x`, `z` - Tile coordinates
 - `typeNameContains` - Substring to match in the effect type or template name
 
 **Returns:** `true` if a matching effect is found.
@@ -57,7 +57,7 @@ Check if a tile has a specific effect type by name pattern. Matches against both
 ### IsOnFire
 
 ```csharp
-public static bool IsOnFire(int x, int y)
+public static bool IsOnFire(int x, int z)
 ```
 
 Check if a tile is on fire.
@@ -67,7 +67,7 @@ Check if a tile is on fire.
 ### HasSmoke
 
 ```csharp
-public static bool HasSmoke(int x, int y)
+public static bool HasSmoke(int x, int z)
 ```
 
 Check if a tile has smoke.
@@ -77,7 +77,7 @@ Check if a tile has smoke.
 ### HasAmmo
 
 ```csharp
-public static bool HasAmmo(int x, int y)
+public static bool HasAmmo(int x, int z)
 ```
 
 Check if a tile has an ammo crate or refill effect.
@@ -87,7 +87,7 @@ Check if a tile has an ammo crate or refill effect.
 ### HasBleedingUnit
 
 ```csharp
-public static bool HasBleedingUnit(int x, int y)
+public static bool HasBleedingUnit(int x, int z)
 ```
 
 Check if a tile has a bleeding out unit marker.
@@ -97,14 +97,14 @@ Check if a tile has a bleeding out unit marker.
 ### ClearEffects
 
 ```csharp
-public static int ClearEffects(int x, int y)
+public static int ClearEffects(int x, int z)
 public static int ClearEffects(GameObj tile)
 ```
 
 Remove all effects from a tile.
 
 **Parameters:**
-- `x`, `y` - Tile coordinates
+- `x`, `z` - Tile coordinates
 - `tile` - Tile game object
 
 **Returns:** Number of effects removed.
@@ -112,17 +112,17 @@ Remove all effects from a tile.
 ### SpawnEffect
 
 ```csharp
-public static bool SpawnEffect(int x, int y, string templateName, int delay = 0)
-public static bool SpawnEffect(GameObj tile, string templateName, int delay = 0)
+public static bool SpawnEffect(int x, int z, string templateName, float delay = 0f)
+public static bool SpawnEffect(GameObj tile, string templateName, float delay = 0f)
 ```
 
 Spawn a tile effect by template name.
 
 **Parameters:**
-- `x`, `y` - Tile coordinates
+- `x`, `z` - Tile coordinates
 - `tile` - Tile game object
 - `templateName` - Name of the effect template (e.g., "Fire", "Smoke")
-- `delay` - Optional delay in rounds before the effect activates (default: 0)
+- `delay` - Optional delay in seconds before the effect activates (default: 0f)
 
 **Returns:** `true` if the effect was spawned successfully.
 
@@ -161,14 +161,14 @@ public class EffectInfo
 
 ```csharp
 int targetX = 5;
-int targetY = 10;
+int targetZ = 10;
 
-if (TileEffects.IsOnFire(targetX, targetY))
+if (TileEffects.IsOnFire(targetX, targetZ))
 {
     DevConsole.Log("Warning: Target tile is on fire!");
 }
 
-if (TileEffects.HasSmoke(targetX, targetY))
+if (TileEffects.HasSmoke(targetX, targetZ))
 {
     DevConsole.Log("Tile has smoke - visibility reduced");
 }
@@ -177,7 +177,7 @@ if (TileEffects.HasSmoke(targetX, targetY))
 ### Listing effects on a tile
 
 ```csharp
-var effects = TileEffects.GetEffects(x, y);
+var effects = TileEffects.GetEffects(x, z);
 foreach (var effect in effects)
 {
     var duration = effect.Duration > 0
@@ -194,19 +194,19 @@ foreach (var effect in effects)
 
 ```csharp
 // Spawn fire immediately
-bool success = TileEffects.SpawnEffect(x, y, "Fire");
+bool success = TileEffects.SpawnEffect(x, z, "Fire");
 if (success)
-    DevConsole.Log($"Fire started at ({x}, {y})");
+    DevConsole.Log($"Fire started at ({x}, {z})");
 
-// Spawn smoke with 1 round delay
-TileEffects.SpawnEffect(x, y, "Smoke", delay: 1);
+// Spawn smoke with 1 second delay
+TileEffects.SpawnEffect(x, z, "Smoke", delay: 1f);
 ```
 
 ### Clearing tile effects
 
 ```csharp
 // Clear all effects (fire, smoke, etc.) from a tile
-int cleared = TileEffects.ClearEffects(x, y);
+int cleared = TileEffects.ClearEffects(x, z);
 DevConsole.Log($"Removed {cleared} effects from tile");
 ```
 
@@ -227,7 +227,7 @@ foreach (var template in templates)
 var actor = TacticalController.GetActiveActor();
 var pos = EntityMovement.GetPosition(actor);
 
-if (TileEffects.HasAmmo((int)pos.x, (int)pos.y))
+if (TileEffects.HasAmmo((int)pos.x, (int)pos.z))
 {
     DevConsole.Log("Standing on ammo crate - refill available");
 }
@@ -237,13 +237,13 @@ if (TileEffects.HasAmmo((int)pos.x, (int)pos.y))
 
 ```csharp
 // Check for any poison-related effect
-if (TileEffects.HasEffectType(x, y, "Poison"))
+if (TileEffects.HasEffectType(x, z, "Poison"))
 {
     DevConsole.Log("Tile has poison effect!");
 }
 
 // Check for any healing effect
-if (TileEffects.HasEffectType(x, y, "Heal"))
+if (TileEffects.HasEffectType(x, z, "Heal"))
 {
     DevConsole.Log("Tile provides healing");
 }
@@ -253,11 +253,11 @@ if (TileEffects.HasEffectType(x, y, "Heal"))
 
 The following console commands are registered by `RegisterConsoleCommands()`:
 
-- `effects <x> <y>` - List all effects on a tile at the specified coordinates
-- `hasfire <x> <y>` - Check if a tile is on fire
-- `hassmoke <x> <y>` - Check if a tile has smoke
-- `cleareffects <x> <y>` - Remove all effects from a tile
-- `spawneffect <x> <y> <template>` - Spawn an effect on a tile using the specified template name
+- `effects <x> <z>` - List all effects on a tile at the specified coordinates
+- `hasfire <x> <z>` - Check if a tile is on fire
+- `hassmoke <x> <z>` - Check if a tile has smoke
+- `cleareffects <x> <z>` - Remove all effects from a tile
+- `spawneffect <x> <z> <template>` - Spawn an effect on a tile using the specified template name
 - `effecttypes` - List all available effect templates (shows first 30)
 
 ### Console Command Examples

@@ -328,28 +328,47 @@ public class CloningWizardViewModel : INotifyPropertyChanged
 
                     foreach (var field in assetFields)
                     {
+                        // Try the schema field name first (e.g., "Icon")
+                        // If not found, try the extracted format "{FieldName}AssetName" (e.g., "IconAssetName")
+                        // The extracted data uses synthetic names for Unity asset references
+                        string? assetName = null;
+                        string extractedFieldName = field.Name;
+
                         if (template.TryGetProperty(field.Name, out var assetValue) &&
                             assetValue.ValueKind == JsonValueKind.String)
                         {
-                            var assetName = assetValue.GetString();
-                            if (!string.IsNullOrEmpty(assetName) &&
-                                !assetName.StartsWith("(") &&
-                                !assetName.EndsWith(")"))
+                            assetName = assetValue.GetString();
+                        }
+                        else
+                        {
+                            // Try the extracted format: {FieldName}AssetName
+                            var extractedName = $"{field.Name}AssetName";
+                            if (template.TryGetProperty(extractedName, out var extractedValue) &&
+                                extractedValue.ValueKind == JsonValueKind.String)
                             {
-                                var category = InferAssetCategory(field.Type);
-                                AssetDependencies.Add(new AssetDependency
-                                {
-                                    FieldName = field.Name,
-                                    Category = category,
-                                    OriginalAsset = assetName,
-                                    Strategy = category switch
-                                    {
-                                        "sprite" or "texture" or "audio" => AssetCloneStrategy.KeepOriginal,
-                                        _ => AssetCloneStrategy.KeepOriginal
-                                    },
-                                    NewAssetName = GenerateClonedAssetName(assetName, _state.SuggestedCloneName)
-                                });
+                                assetName = extractedValue.GetString();
+                                extractedFieldName = extractedName;
                             }
+                        }
+
+                        if (!string.IsNullOrEmpty(assetName) &&
+                            !assetName.StartsWith("(") &&
+                            !assetName.EndsWith(")"))
+                        {
+                            var category = InferAssetCategory(field.Type);
+                            AssetDependencies.Add(new AssetDependency
+                            {
+                                FieldName = field.Name, // Use schema field name for patching
+                                ExtractedFieldName = extractedFieldName, // Track what's in the JSON
+                                Category = category,
+                                OriginalAsset = assetName,
+                                Strategy = category switch
+                                {
+                                    "sprite" or "texture" or "audio" => AssetCloneStrategy.KeepOriginal,
+                                    _ => AssetCloneStrategy.KeepOriginal
+                                },
+                                NewAssetName = GenerateClonedAssetName(assetName, _state.SuggestedCloneName)
+                            });
                         }
                     }
                     break;

@@ -72,8 +72,11 @@ public class ReferenceSelection
 /// </summary>
 public class AssetDependency
 {
-    /// <summary>The field name that references this asset</summary>
+    /// <summary>The schema field name that references this asset (e.g., "Icon")</summary>
     public required string FieldName { get; init; }
+
+    /// <summary>The field name as it appears in extracted JSON (e.g., "IconAssetName")</summary>
+    public string ExtractedFieldName { get; init; } = "";
 
     /// <summary>Category of asset (e.g., "sprite", "prefab", "audio")</summary>
     public required string Category { get; init; }

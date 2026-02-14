@@ -6,8 +6,11 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Il2CppInterop.Runtime;
 using MelonLoader;
 using Menace.SDK;
+using Menace.SDK.Repl;
+using UnityEngine;
 
 namespace Menace.ModpackLoader.Mcp;
 
@@ -259,8 +262,12 @@ public static class GameMcpServer
                 "/ai" => HandleAI(request),
                 // UI and log inspection
                 "/ui" => HandleUI(request),
+                "/ui-diag" => HandleUIDiag(),
+                "/type-query" => HandleTypeQuery(request),
                 "/logs" => HandleLogs(request),
                 "/click" => HandleClick(request),
+                // REPL for live code execution
+                "/repl" => HandleRepl(request),
                 _ => new { error = "Unknown endpoint", path }
             };
 
@@ -452,8 +459,8 @@ public static class GameMcpServer
             timeScale = state.TimeScale,
             isMissionRunning = state.IsMissionRunning,
             activeActor = state.ActiveActorName,
-            players = new { alive = state.PlayerAliveCount, dead = state.PlayerDeadCount },
-            enemies = new { alive = state.EnemyAliveCount, dead = state.EnemyDeadCount }
+            players = new { anyAlive = state.IsAnyPlayerAlive },
+            enemies = new { alive = state.AliveEnemyCount, dead = state.DeadEnemyCount, total = state.TotalEnemyCount }
         };
     }
 
@@ -751,7 +758,7 @@ public static class GameMcpServer
         return new
         {
             x = info.X,
-            y = info.Y,
+            y = info.Z,
             elevation = info.Elevation,
             isBlocked = info.IsBlocked,
             hasActor = info.HasActor,
@@ -993,10 +1000,10 @@ public static class GameMcpServer
                     actor = info.Name,
                     faction = info.FactionIndex,
                     state = agentInfo.StateName,
-                    behavior = agentInfo.SelectedBehavior,
+                    behavior = agentInfo.ActiveBehavior,
                     score = agentInfo.BehaviorScore,
                     targetActor = agentInfo.TargetActorName,
-                    targetTile = new { x = agentInfo.TargetTileX, y = agentInfo.TargetTileY },
+                    targetTile = new { x = agentInfo.TargetTileX, z = agentInfo.TargetTileZ },
                     intent = AI.GetAIIntent(actor)
                 });
             }
@@ -1030,10 +1037,10 @@ public static class GameMcpServer
             hasAgent = true,
             state = agentInfo.State,
             stateName = agentInfo.StateName,
-            behavior = agentInfo.SelectedBehavior,
+            behavior = agentInfo.ActiveBehavior,
             score = agentInfo.BehaviorScore,
             targetActor = agentInfo.TargetActorName,
-            targetTile = new { x = agentInfo.TargetTileX, y = agentInfo.TargetTileY },
+            targetTile = new { x = agentInfo.TargetTileX, z = agentInfo.TargetTileZ },
             evaluatedTiles = agentInfo.EvaluatedTileCount,
             availableBehaviors = agentInfo.AvailableBehaviorCount,
             intent = AI.GetAIIntent(actor)
@@ -1085,7 +1092,7 @@ public static class GameMcpServer
                 score = b.Score,
                 isSelected = b.IsSelected,
                 targetActor = b.TargetActorName,
-                targetTile = new { x = b.TargetTileX, y = b.TargetTileY }
+                targetTile = new { x = b.TargetTileX, z = b.TargetTileZ }
             }).ToList()
         };
     }
@@ -1103,13 +1110,11 @@ public static class GameMcpServer
             tiles = tiles.Select(t => new
             {
                 x = t.X,
-                y = t.Y,
-                finalScore = t.FinalScore,
+                z = t.Z,
+                combinedScore = t.CombinedScore,
                 utilityScore = t.UtilityScore,
                 safetyScore = t.SafetyScore,
-                distanceScore = t.DistanceScore,
-                coverLevel = t.CoverLevel,
-                visibleToEnemies = t.VisibleToOpponents
+                distanceScore = t.DistanceScore
             }).ToList()
         };
     }
@@ -1142,12 +1147,12 @@ public static class GameMcpServer
                 targets = allResults.Select(r => new
                 {
                     target = r.targetName,
-                    hitChance = r.result.FinalHitChance,
+                    hitChance = r.result.FinalValue,
                     accuracy = r.result.Accuracy,
                     coverMult = r.result.CoverMult,
-                    dodgeMult = r.result.DodgeMult,
+                    defenseMult = r.result.DefenseMult,
                     distance = r.result.Distance,
-                    distancePenalty = r.result.DistancePenalty,
+                    accuracyDropoff = r.result.AccuracyDropoff,
                     skill = r.result.SkillName
                 }).ToList()
             };
@@ -1167,7 +1172,7 @@ public static class GameMcpServer
             result = CombatSimulation.GetHitChance(attacker, target);
         }
 
-        if (result.FinalHitChance < 0)
+        if (result.FinalValue < 0)
             return new { error = "Could not calculate hit chance" };
 
         return new
@@ -1175,13 +1180,14 @@ public static class GameMcpServer
             attacker = attacker.GetName(),
             target = target.GetName(),
             skill = result.SkillName,
-            hitChance = result.FinalHitChance,
+            hitChance = result.FinalValue,
             accuracy = result.Accuracy,
             coverMult = result.CoverMult,
-            dodgeMult = result.DodgeMult,
+            defenseMult = result.DefenseMult,
             distance = result.Distance,
-            distancePenalty = result.DistancePenalty,
-            includesDistance = result.IncludesDistance
+            accuracyDropoff = result.AccuracyDropoff,
+            includeDropoff = result.IncludeDropoff,
+            alwaysHits = result.AlwaysHits
         };
     }
 
@@ -1291,6 +1297,185 @@ public static class GameMcpServer
         else
         {
             return new { error = result.Error };
+        }
+    }
+
+    private static object HandleUIDiag()
+    {
+        try
+        {
+            return UIInspector.GetDiagnostics();
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message, stack = ex.StackTrace };
+        }
+    }
+
+    private static object HandleTypeQuery(HttpListenerRequest request)
+    {
+        var typeName = request.QueryString["type"];
+        var assembly = request.QueryString["assembly"] ?? "Assembly-CSharp";
+        var action = request.QueryString["action"] ?? "info"; // info, find, count
+
+        if (string.IsNullOrEmpty(typeName))
+        {
+            return new { error = "Specify 'type' parameter (e.g., type=UnityEngine.Canvas)" };
+        }
+
+        try
+        {
+            var gameType = GameType.Find(typeName, assembly);
+
+            var result = new Dictionary<string, object>
+            {
+                ["requested"] = typeName,
+                ["assembly"] = assembly,
+                ["found"] = gameType?.IsValid ?? false,
+                ["fullName"] = gameType?.FullName ?? "NULL",
+                ["classPointer"] = gameType?.IsValid == true ? $"0x{gameType.ClassPointer:X}" : "NULL"
+            };
+
+            if (gameType?.IsValid == true)
+            {
+                var managedType = gameType.ManagedType;
+                result["managedType"] = managedType?.FullName ?? "NULL";
+                result["managedAssembly"] = managedType?.Assembly?.GetName()?.Name ?? "NULL";
+                result["isIl2CppPrefixed"] = managedType?.FullName?.StartsWith("Il2Cpp") ?? false;
+
+                if (action == "count" && managedType != null)
+                {
+                    try
+                    {
+                        var il2cppType = Il2CppType.From(managedType);
+                        var objects = UnityEngine.Object.FindObjectsOfType(il2cppType);
+                        result["objectCount"] = objects?.Length ?? 0;
+
+                        // List first 10 object names
+                        var names = new List<string>();
+                        if (objects != null)
+                        {
+                            for (int i = 0; i < Math.Min(objects.Length, 10); i++)
+                            {
+                                var obj = objects[i];
+                                if (obj != null)
+                                {
+                                    var go = obj is Component c ? c.gameObject : obj as GameObject;
+                                    names.Add(go?.name ?? obj.name ?? "?");
+                                }
+                            }
+                        }
+                        result["objectNames"] = names;
+                    }
+                    catch (Exception ex)
+                    {
+                        result["countError"] = ex.Message;
+                    }
+                }
+            }
+
+            // Also search assemblies to see what's available
+            if (action == "find")
+            {
+                var matches = new List<string>();
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        var asmName = asm.GetName().Name;
+                        foreach (var t in asm.GetTypes())
+                        {
+                            if (t.Name.Contains(typeName.Split('.').Last()))
+                            {
+                                matches.Add($"{asmName}: {t.FullName}");
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                result["assemblyMatches"] = matches.Take(20).ToList();
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message, stack = ex.StackTrace };
+        }
+    }
+
+    // ==================== REPL ====================
+
+    private static object HandleRepl(HttpListenerRequest request)
+    {
+        // Get code from POST body or query parameter
+        string code = null;
+
+        if (request.HttpMethod == "POST" && request.HasEntityBody)
+        {
+            using var reader = new System.IO.StreamReader(request.InputStream, request.ContentEncoding);
+            var body = reader.ReadToEnd();
+
+            // Try to parse as JSON first
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("code", out var codeElement))
+                {
+                    code = codeElement.GetString();
+                }
+            }
+            catch
+            {
+                // Not JSON, treat as raw code
+                code = body;
+            }
+        }
+
+        // Fallback to query parameter
+        if (string.IsNullOrEmpty(code))
+        {
+            code = request.QueryString["code"];
+        }
+
+        if (string.IsNullOrEmpty(code))
+        {
+            return new
+            {
+                error = "No code provided. Send POST with JSON { \"code\": \"...\" } or query param ?code=...",
+                available = ReplPanel.IsAvailable
+            };
+        }
+
+        if (!ReplPanel.IsAvailable)
+        {
+            return new
+            {
+                error = "REPL not available. Roslyn may not have loaded correctly.",
+                available = false
+            };
+        }
+
+        try
+        {
+            var result = ReplPanel.Evaluate(code);
+
+            return new
+            {
+                success = result.Success,
+                value = result.DisplayText,
+                error = result.Success ? null : result.Error,
+                valueType = result.Value?.GetType()?.FullName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                success = false,
+                error = ex.Message,
+                stack = ex.StackTrace
+            };
         }
     }
 

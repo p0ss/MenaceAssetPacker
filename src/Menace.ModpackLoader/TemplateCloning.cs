@@ -243,100 +243,84 @@ public partial class ModpackLoaderMod
 
     /// <summary>
     /// Register a cloned template in DataTemplateLoader's internal registry.
-    /// Uses managed reflection on the IL2CPP proxy type first, falls back gracefully.
+    /// DataTemplateLoader has two dictionaries:
+    /// - Offset 0x10: Dictionary&lt;Type, DataTemplate[]&gt; - all templates array
+    /// - Offset 0x18: Dictionary&lt;Type, Dictionary&lt;string, DataTemplate&gt;&gt; - name lookup
     /// </summary>
     private void RegisterInLoader(Assembly gameAssembly, UnityEngine.Object clone, Type templateType, string name)
     {
         try
         {
             var loaderType = gameAssembly.GetTypes()
-                .FirstOrDefault(t => t.Name == "DataTemplateLoader");
+                .FirstOrDefault(t => t.FullName == "Menace.Tools.DataTemplateLoader" ||
+                                     t.Name == "DataTemplateLoader");
 
             if (loaderType == null)
             {
-                SdkLogger.Warning("  RegisterInLoader: DataTemplateLoader not found");
+                // Not a fatal error - clone still exists in Resources
                 return;
             }
 
-            // Strategy 1: Try to use the public TryGet<T> to verify registration isn't needed,
-            // and if so, use Add/Register method if available
-            // Strategy 2: Access internal dictionaries via reflection
+            // Get singleton via GetSingleton() method
+            var getSingleton = loaderType.GetMethod("GetSingleton",
+                BindingFlags.Public | BindingFlags.Static);
 
-            // Get the singleton instance
-            object singleton = null;
-            var singletonProp = loaderType.GetProperty("Instance",
-                BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-            if (singletonProp != null)
+            if (getSingleton == null)
             {
-                singleton = singletonProp.GetValue(null);
+                SdkLogger.Warning("  RegisterInLoader: GetSingleton method not found");
+                return;
+            }
+
+            var singleton = getSingleton.Invoke(null, null);
+            if (singleton == null)
+            {
+                SdkLogger.Warning("  RegisterInLoader: GetSingleton returned null");
+                return;
+            }
+
+            // Access the name lookup dictionary at offset 0x18
+            // It's Dictionary<Type, Dictionary<string, DataTemplate>>
+            var singletonPtr = ((Il2CppObjectBase)singleton).Pointer;
+            if (singletonPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning("  RegisterInLoader: singleton pointer is null");
+                return;
+            }
+
+            // Read the dictionary pointer at offset 0x18
+            var nameLookupPtr = Marshal.ReadIntPtr(singletonPtr + 0x18);
+            if (nameLookupPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning("  RegisterInLoader: name lookup dictionary is null");
+                return;
+            }
+
+            // Cast clone to the template type
+            var genericTryCast = TryCastMethod.MakeGenericMethod(templateType);
+            var castClone = genericTryCast.Invoke(clone, null);
+            if (castClone == null)
+            {
+                SdkLogger.Warning($"  RegisterInLoader: failed to cast clone to {templateType.Name}");
+                return;
+            }
+
+            // Try using reflection on the outer dictionary to get/create inner dictionary
+            // and add the clone
+            var outerDictType = singleton.GetType().GetField("m_NameLookup",
+                BindingFlags.NonPublic | BindingFlags.Instance)?.FieldType;
+
+            // Get inner dictionary for this type via indexer or TryGetValue
+            bool registered = TryRegisterViaReflection(gameAssembly, singleton, templateType, castClone, name);
+
+            if (registered)
+            {
+                SdkLogger.Msg($"    Registered '{name}' in DataTemplateLoader");
             }
             else
             {
-                // Try GetSingleton or s_Singleton field
-                var getSingleton = loaderType.GetMethod("GetSingleton",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                if (getSingleton != null)
-                {
-                    singleton = getSingleton.Invoke(null, null);
-                }
-                else
-                {
-                    var singletonField = loaderType.GetField("s_Singleton",
-                        BindingFlags.NonPublic | BindingFlags.Static) ??
-                        loaderType.GetField("_instance",
-                        BindingFlags.NonPublic | BindingFlags.Static);
-                    if (singletonField != null)
-                        singleton = singletonField.GetValue(null);
-                }
+                SdkLogger.Warning($"  RegisterInLoader: could not register '{name}' — " +
+                    "clone exists in memory but may not be findable via DataTemplateLoader.Get()");
             }
-
-            if (singleton == null)
-            {
-                SdkLogger.Warning("  RegisterInLoader: could not get DataTemplateLoader singleton");
-                return;
-            }
-
-            // Look for the template maps dictionary: m_TemplateMaps or similar
-            // It's typically Dictionary<Type, Dictionary<string, DataTemplate>> or similar
-            var mapsField = FindInstanceField(loaderType,
-                "m_TemplateMaps", "_templateMaps", "m_templateMaps", "TemplateMaps");
-
-            if (mapsField != null)
-            {
-                var maps = mapsField.GetValue(singleton);
-                if (maps != null)
-                {
-                    if (TryAddToTemplateMaps(maps, templateType, clone, name))
-                        return;
-                }
-            }
-
-            // Fallback: look for any Dictionary field and try to add
-            var allFields = loaderType.GetFields(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            foreach (var field in allFields)
-            {
-                var fieldType = field.FieldType;
-                if (!fieldType.IsGenericType) continue;
-
-                var genDef = fieldType.GetGenericTypeDefinition();
-                var genArgs = fieldType.GetGenericArguments();
-
-                // Look for Dictionary<Type, Dictionary<string, T>> pattern
-                if (genDef.Name.Contains("Dictionary") && genArgs.Length == 2)
-                {
-                    var maps = field.GetValue(singleton);
-                    if (maps != null && TryAddToTemplateMaps(maps, templateType, clone, name))
-                    {
-                        SdkLogger.Msg($"    Registered '{name}' via field '{field.Name}'");
-                        return;
-                    }
-                }
-            }
-
-            SdkLogger.Warning($"  RegisterInLoader: could not find template registry to add '{name}' — " +
-                "clone exists in memory but may not be findable via DataTemplateLoader.Get()");
         }
         catch (Exception ex)
         {
@@ -345,60 +329,131 @@ public partial class ModpackLoaderMod
     }
 
     /// <summary>
-    /// Try to add a clone to the outer template maps dictionary.
-    /// The maps object is expected to be Dictionary-like with Type keys
-    /// and inner Dictionary-like values with string keys.
+    /// Try to register a clone using reflection on the DataTemplateLoader fields.
+    /// The DataTemplateLoader has a field m_TemplateMaps of type
+    /// Dictionary&lt;Type, Dictionary&lt;string, DataTemplate&gt;&gt;
+    /// We need to add our clone to the inner dictionary for the template type.
     /// </summary>
-    private bool TryAddToTemplateMaps(object maps, Type templateType, UnityEngine.Object clone, string name)
+    private bool TryRegisterViaReflection(Assembly gameAssembly, object singleton, Type templateType, object castClone, string name)
     {
         try
         {
-            var mapsType = maps.GetType();
+            var loaderType = singleton.GetType();
 
-            // Try to get the inner dictionary for this template type using indexer or TryGetValue
-            object innerDict = null;
+            // First approach: try to find the field by known names
+            var mapField = FindInstanceField(loaderType,
+                "m_TemplateMaps", "m_NameLookup", "_templateMaps", "_nameLookup",
+                "TemplateMaps", "NameLookup", "templateMaps", "nameLookup");
 
-            // Try indexer: maps[templateType]
-            var indexer = mapsType.GetProperty("Item");
-            if (indexer != null)
+            if (mapField != null)
             {
-                try
+                var outerDict = mapField.GetValue(singleton);
+                if (outerDict != null)
                 {
-                    innerDict = indexer.GetValue(maps, new object[] { templateType });
+                    var il2cppType = Il2CppType.From(templateType);
+                    if (TryAddToOuterDictionary(gameAssembly, templateType, outerDict, il2cppType, castClone, name))
+                        return true;
                 }
-                catch
+            }
+
+            // Second approach: scan all dictionary fields for compatible types
+            var fields = loaderType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            foreach (var field in fields)
+            {
+                var fieldType = field.FieldType;
+                if (!fieldType.IsGenericType) continue;
+
+                // Look for Dictionary<Type, Dictionary<string, T>>
+                // In IL2CPP, the type names will be different, so check by structure
+                var genArgs = fieldType.GetGenericArguments();
+                if (genArgs.Length != 2) continue;
+
+                // Check if first arg is Type-like (System.Type or Il2CppSystem.Type)
+                var firstArgName = genArgs[0].Name;
+                if (!firstArgName.Contains("Type")) continue;
+
+                // Check if second arg is also a Dictionary
+                if (!genArgs[1].IsGenericType) continue;
+                var innerGenDef = genArgs[1].GetGenericTypeDefinition();
+                var innerDefName = innerGenDef.Name;
+                if (!innerDefName.StartsWith("Dictionary")) continue;
+
+                var outerDict = field.GetValue(singleton);
+                if (outerDict == null) continue;
+
+                var il2cppType = Il2CppType.From(templateType);
+                if (TryAddToOuterDictionary(gameAssembly, templateType, outerDict, il2cppType, castClone, name))
+                    return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"    TryRegisterViaReflection: {ex.Message}");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Try to add a clone to an outer dictionary (Type -> inner dict) and then
+    /// to the inner dictionary (string -> DataTemplate).
+    /// If the inner dictionary doesn't exist, calls GetAll&lt;T&gt;() to force load
+    /// templates and retries once.
+    /// </summary>
+    private bool TryAddToOuterDictionary(Assembly gameAssembly, Type templateType, object outerDict, object il2cppType, object castClone, string name)
+    {
+        try
+        {
+            var outerDictType = outerDict.GetType();
+            var tryGetMethod = outerDictType.GetMethod("TryGetValue");
+
+            if (tryGetMethod == null)
+                return false;
+
+            // Check if inner dict exists for this template type
+            var parameters = new object[] { il2cppType, null };
+            var exists = (bool)tryGetMethod.Invoke(outerDict, parameters);
+
+            object innerDict;
+            if (exists)
+            {
+                innerDict = parameters[1];
+            }
+            else
+            {
+                // Inner dictionary doesn't exist for this type
+                // Force load templates via GetAll<T>() and retry
+                SdkLogger.Msg($"    No inner dictionary for {templateType.Name}, forcing GetAll<T>()...");
+                EnsureTemplatesLoaded(gameAssembly, templateType);
+
+                // Retry the lookup
+                parameters = new object[] { il2cppType, null };
+                exists = (bool)tryGetMethod.Invoke(outerDict, parameters);
+
+                if (!exists)
                 {
-                    // Key doesn't exist yet — try to find the Il2CppType version
-                    try
-                    {
-                        var il2cppType = Il2CppType.From(templateType);
-                        innerDict = indexer.GetValue(maps, new object[] { il2cppType });
-                    }
-                    catch { }
+                    SdkLogger.Warning($"    Still no inner dictionary after GetAll<T>() - template type may not be registered");
+                    return false;
                 }
+
+                innerDict = parameters[1];
             }
 
             if (innerDict == null)
                 return false;
 
-            // Cast clone to the correct template type for the inner dictionary
-            var genericTryCast = TryCastMethod.MakeGenericMethod(templateType);
-            var castClone = genericTryCast.Invoke(clone, null);
-            if (castClone == null)
-                return false;
-
-            // Add to inner dictionary: innerDict[name] = castClone
-            var innerType = innerDict.GetType();
-            var innerIndexer = innerType.GetProperty("Item");
+            // Add to inner dictionary using indexer: innerDict[name] = castClone
+            var innerDictType = innerDict.GetType();
+            var innerIndexer = innerDictType.GetProperty("Item");
             if (innerIndexer != null)
             {
                 innerIndexer.SetValue(innerDict, castClone, new object[] { name });
                 return true;
             }
 
-            // Try Add method
-            var addMethod = innerType.GetMethod("Add", new[] { typeof(string), templateType }) ??
-                            innerType.GetMethod("set_Item");
+            // Try Add method as fallback
+            var addMethod = innerDictType.GetMethod("Add");
             if (addMethod != null)
             {
                 addMethod.Invoke(innerDict, new object[] { name, castClone });
@@ -407,7 +462,7 @@ public partial class ModpackLoaderMod
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"    TryAddToTemplateMaps: {ex.Message}");
+            SdkLogger.Warning($"    TryAddToOuterDictionary: {ex.Message}");
         }
 
         return false;
