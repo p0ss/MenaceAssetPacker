@@ -79,6 +79,8 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- MoonSharp: Pure C# Lua interpreter for scripting support -->
+    <PackageReference Include="MoonSharp" Version="2.0.0.0" />
     <!--
       Roslyn 4.3.0 uses System.Collections.Immutable 6.0.0, which is DIFFERENT from
       MelonLoader 0.7.2's bundled 9.0.0 in MonoBleedingEdgePatches. Different versions

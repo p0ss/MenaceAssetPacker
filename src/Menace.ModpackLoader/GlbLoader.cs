@@ -137,16 +137,22 @@ public static class GlbLoader
         // Create a default material if none exist
         if (materialMap.Count == 0)
         {
-            var defaultMat = new UnityMaterial(Shader.Find("Standard"));
+            var defaultShader = Shader.Find("HDRP/Lit") ??
+                                Shader.Find("HDRenderPipeline/Lit") ??
+                                Shader.Find("Standard");
+            var defaultMat = new UnityMaterial(defaultShader);
             defaultMat.name = $"{modelName}_DefaultMaterial";
             materialMap[-1] = defaultMat;
             result.Materials.Add(defaultMat);
         }
 
         // Create root prefab GameObject
+        // Keep active - when instantiated as an attachment, it needs to be visible.
+        // DontDestroyOnLoad ensures it persists across scene loads.
         var rootGO = new GameObject(modelName);
         UnityEngine.Object.DontDestroyOnLoad(rootGO);
-        rootGO.SetActive(false); // Keep inactive until needed
+        // Hide the prefab itself by moving it far away (prefabs shouldn't render in scene)
+        rootGO.transform.position = new Vector3(0, -10000, 0);
 
         // Load meshes and create child GameObjects
         foreach (var gltfMesh in modelRoot.LogicalMeshes)
@@ -226,11 +232,20 @@ public static class GlbLoader
 
     /// <summary>
     /// Create a Unity Material from a GLTF material.
+    /// Uses HDRP shaders for compatibility with Menace's render pipeline.
     /// </summary>
     private static UnityMaterial CreateMaterial(GltfMaterial gltfMat,
         Dictionary<int, Texture2D> textures, string modelName)
     {
-        var shader = Shader.Find("Standard");
+        // Try HDRP shaders first (game uses High Definition Render Pipeline)
+        var shader = Shader.Find("HDRP/Lit");
+        if (shader == null)
+            shader = Shader.Find("HDRenderPipeline/Lit");
+        if (shader == null)
+            shader = Shader.Find("HD/Lit");
+        // Fallback to Standard (won't render correctly in HDRP but better than null)
+        if (shader == null)
+            shader = Shader.Find("Standard");
         if (shader == null)
             shader = Shader.Find("Diffuse");
 

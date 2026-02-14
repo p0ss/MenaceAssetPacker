@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 
 using ModelContextProtocol.Server;
@@ -6,127 +8,173 @@ using ModelContextProtocol.Server;
 namespace Menace.Modkit.Mcp.Tools;
 
 /// <summary>
-/// Tools for inspecting the Modkit UI state.
-/// Allows AI assistants to "see" what the user sees.
+/// Tools for inspecting and interacting with the Modkit UI.
+/// Communicates with the desktop app's HTTP server on port 21421.
 /// </summary>
 [McpServerToolType]
 public static class UITools
 {
-    private static readonly string StateFilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".menace-modkit",
-        "ui-state.json"
-    );
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private const string BaseUrl = "http://127.0.0.1:21421";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
 
     /// <summary>
     /// Get the current UI state of the Modkit application.
-    /// Returns the current section, view, and visible text elements.
-    /// Use this to understand what the user is looking at.
+    /// Returns the current section, view, and detailed view-specific data.
     /// </summary>
-    [McpServerTool(Name = "modkit_ui", ReadOnly = true), Description("Get the current UI state of the Modkit application. Shows what section the user is in and what text/headings are visible on screen.")]
-    public static object GetUIState()
+    [McpServerTool(Name = "modkit_ui", ReadOnly = true), Description("Get the current UI state of the Modkit application. Shows section, view, and detailed content like selected templates, field values, and available actions.")]
+    public static async Task<object> GetUIState()
     {
         try
         {
-            if (!File.Exists(StateFilePath))
+            var response = await Http.GetAsync($"{BaseUrl}/ui/state");
+            if (!response.IsSuccessStatusCode)
             {
-                return new
-                {
-                    modkitRunning = false,
-                    error = "Modkit app is not running. Please start the Menace Modkit application."
-                };
+                return new { modkitRunning = false, error = $"HTTP {(int)response.StatusCode}" };
             }
 
-            // Check if file is stale (more than 5 seconds old)
-            var fileInfo = new FileInfo(StateFilePath);
-            var age = DateTime.UtcNow - fileInfo.LastWriteTimeUtc;
-            if (age > TimeSpan.FromSeconds(5))
-            {
-                return new
-                {
-                    modkitRunning = false,
-                    error = $"Modkit app state is stale ({age.TotalSeconds:F0}s old). The app may have closed or frozen."
-                };
-            }
-
-            var json = File.ReadAllText(StateFilePath);
-            var state = JsonSerializer.Deserialize<UIStateResponse>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (state == null)
-            {
-                return new { error = "Failed to parse UI state" };
-            }
-
-            // Format the output for easy reading
-            return new
-            {
-                modkitRunning = true,
-                currentSection = state.CurrentSection,
-                currentView = state.CurrentView,
-                windowTitle = state.WindowTitle,
-                visibleContent = FormatElements(state.Elements)
-            };
+            var json = await response.Content.ReadAsStringAsync();
+            var state = JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+            return new { modkitRunning = true, state };
         }
-        catch (IOException ex)
+        catch (HttpRequestException)
         {
-            return new
-            {
-                modkitRunning = false,
-                error = $"Failed to read UI state: {ex.Message}"
-            };
+            return new { modkitRunning = false, error = "Modkit app is not running. Please start the Menace Modkit application." };
+        }
+        catch (TaskCanceledException)
+        {
+            return new { modkitRunning = false, error = "Connection timed out. The app may be frozen or not responding." };
         }
         catch (Exception ex)
         {
-            return new
-            {
-                modkitRunning = false,
-                error = $"Error reading UI state: {ex.Message}"
-            };
+            return new { modkitRunning = false, error = ex.Message };
         }
     }
 
-    private static List<FormattedElement> FormatElements(List<UIElement>? elements)
+    /// <summary>
+    /// Navigate to a section in the Modkit app.
+    /// </summary>
+    [McpServerTool(Name = "modkit_navigate"), Description("Navigate to a section in the Modkit app. Sections: 'Home', 'ModLoader', 'ModdingTools'. SubSections for ModLoader: 'LoadOrder', 'Saves', 'Settings'. SubSections for ModdingTools: 'Data', 'Assets', 'Code', 'Docs', 'Settings'.")]
+    public static async Task<object> Navigate(string section, string? subSection = null)
     {
-        if (elements == null || elements.Count == 0)
-            return new List<FormattedElement>();
+        try
+        {
+            var body = new { section, subSection };
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"{BaseUrl}/ui/navigate", content);
 
-        return elements
-            .Where(e => !string.IsNullOrWhiteSpace(e.Text) || !string.IsNullOrWhiteSpace(e.Hint))
-            .Select(e => new FormattedElement
-            {
-                Type = e.Type,
-                Text = e.Text,
-                State = e.Hint,
-                Indent = e.Depth
-            })
-            .ToList();
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return new { error = "Modkit app is not running" };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message };
+        }
     }
 
-    private class UIStateResponse
+    /// <summary>
+    /// Select an item in the current view.
+    /// </summary>
+    [McpServerTool(Name = "modkit_select"), Description("Select an item in the current view. Targets: 'modpack' (select active modpack), 'templateType' (expand a template category like 'WeaponTemplate'), 'template' (select a specific template by name).")]
+    public static async Task<object> Select(string target, string value)
     {
-        public string CurrentSection { get; set; } = "";
-        public string? CurrentView { get; set; }
-        public string? WindowTitle { get; set; }
-        public string? Timestamp { get; set; }
-        public List<UIElement>? Elements { get; set; }
+        try
+        {
+            var body = new { target, value };
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"{BaseUrl}/ui/select", content);
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return new { error = "Modkit app is not running" };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message };
+        }
     }
 
-    private class UIElement
+    /// <summary>
+    /// Set a field value on the currently selected template.
+    /// </summary>
+    [McpServerTool(Name = "modkit_set_field"), Description("Set a field value on the currently selected template in the Stats Editor. Requires being on the Data view with a template selected.")]
+    public static async Task<object> SetField(string field, object? value)
     {
-        public string Type { get; set; } = "";
-        public string? Text { get; set; }
-        public string? Hint { get; set; }
-        public int Depth { get; set; }
+        try
+        {
+            var body = new { field, value };
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"{BaseUrl}/ui/set-field", content);
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return new { error = "Modkit app is not running" };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message };
+        }
     }
 
-    private class FormattedElement
+    /// <summary>
+    /// Click a button in the Modkit app.
+    /// </summary>
+    [McpServerTool(Name = "modkit_click"), Description("Click a button or trigger an action. Navigation: 'home', 'modloader', 'moddingtools', 'loadorder', 'saves', 'data', 'assets', 'code', 'docs', 'settings'. Actions: 'save' (save changes), 'revert' (discard changes).")]
+    public static async Task<object> Click(string button)
     {
-        public string Type { get; set; } = "";
-        public string? Text { get; set; }
-        public string? State { get; set; }
-        public int Indent { get; set; }
+        try
+        {
+            var body = new { button };
+            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            var response = await Http.PostAsync($"{BaseUrl}/ui/click", content);
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return new { error = "Modkit app is not running" };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Get available actions for the current view.
+    /// </summary>
+    [McpServerTool(Name = "modkit_actions", ReadOnly = true), Description("Get the list of available navigation and actions for the current view.")]
+    public static async Task<object> GetActions()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"{BaseUrl}/ui/actions");
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<JsonElement>(json, JsonOptions);
+        }
+        catch (HttpRequestException)
+        {
+            return new { error = "Modkit app is not running" };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message };
+        }
     }
 }

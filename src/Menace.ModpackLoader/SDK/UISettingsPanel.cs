@@ -199,26 +199,41 @@ public class UISettingsPanel
 
         foreach (var modName in mods)
         {
-            // Mod header - compact
-            var modHeader = new Label(modName);
-            modHeader.style.fontSize = 12;
-            modHeader.style.color = new Color(0.7f, 0.75f, 0.8f);
-            modHeader.style.unityFontStyleAndWeight = FontStyle.Bold;
-            modHeader.style.backgroundColor = new Color(0.06f, 0.06f, 0.08f);
-            modHeader.style.paddingTop = 4;
-            modHeader.style.paddingBottom = 4;
-            modHeader.style.paddingLeft = 8;
-            modHeader.style.marginTop = 8;
-            modHeader.style.marginBottom = 4;
-            _settingsContainer.Add(modHeader);
+            // Mod foldout - collapsible accordion
+            var foldout = new Foldout();
+            foldout.text = modName;
+            foldout.value = true; // Start expanded
+            foldout.style.marginTop = 6;
+            foldout.style.marginBottom = 2;
+
+            // Style the foldout toggle
+            var toggle = foldout.Q<Toggle>();
+            if (toggle != null)
+            {
+                toggle.style.backgroundColor = new Color(0.06f, 0.06f, 0.08f);
+                toggle.style.paddingTop = 4;
+                toggle.style.paddingBottom = 4;
+                toggle.style.paddingLeft = 6;
+                toggle.style.marginBottom = 2;
+
+                var label = toggle.Q<Label>();
+                if (label != null)
+                {
+                    label.style.fontSize = 12;
+                    label.style.color = new Color(0.7f, 0.75f, 0.8f);
+                    label.style.unityFontStyleAndWeight = FontStyle.Bold;
+                }
+            }
 
             var settings = ModSettings.GetSettingsForMod(modName);
             foreach (var setting in settings)
             {
                 var row = CreateSettingRow(modName, setting);
                 if (row != null)
-                    _settingsContainer.Add(row);
+                    foldout.Add(row);
             }
+
+            _settingsContainer.Add(foldout);
         }
     }
 

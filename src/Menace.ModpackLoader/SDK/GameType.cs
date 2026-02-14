@@ -109,11 +109,7 @@ public class GameType
             // Search Assembly-CSharp managed proxy for the type
             var gameAssembly = GameState.GameAssembly;
             if (gameAssembly == null)
-            {
-                ModError.WarnInternal("GameType.TryResolveByShortName",
-                    $"GameAssembly is null for '{shortName}'");
                 return IntPtr.Zero;
-            }
 
             // Don't filter by IsAbstract - template base classes like WeaponTemplate are abstract
             // but we still need to resolve them for FindObjectsOfTypeAll queries
@@ -121,11 +117,7 @@ public class GameType
                 .FirstOrDefault(t => t.Name == shortName);
 
             if (managedType == null)
-            {
-                ModError.WarnInternal("GameType.TryResolveByShortName",
-                    $"No type named '{shortName}' in {gameAssembly.GetName().Name}");
                 return IntPtr.Zero;
-            }
 
             // Extract namespace from the managed type and resolve via IL2CPP
             // The managed proxy has "Il2Cpp" prefix we need to strip for IL2CPP lookup
@@ -138,18 +130,14 @@ public class GameType
             var realNs = dotIdx > 0 ? fullName[..dotIdx] : "";
             var realName = dotIdx > 0 ? fullName[(dotIdx + 1)..] : fullName;
 
-            var ptr = TryResolveClass("Assembly-CSharp", realNs, realName);
+            // Try both with and without .dll extension
+            var ptr = TryResolveClass("Assembly-CSharp.dll", realNs, realName);
             if (ptr == IntPtr.Zero)
-            {
-                ModError.WarnInternal("GameType.TryResolveByShortName",
-                    $"IL2CPP resolve failed: '{shortName}' -> '{originalFullName}' -> ns='{realNs}' name='{realName}'");
-            }
+                ptr = TryResolveClass("Assembly-CSharp", realNs, realName);
             return ptr;
         }
-        catch (Exception ex)
+        catch
         {
-            ModError.WarnInternal("GameType.TryResolveByShortName",
-                $"Exception for '{shortName}': {ex.Message}");
             return IntPtr.Zero;
         }
     }
@@ -283,13 +271,17 @@ public class GameType
     }
 
     /// <summary>
-    /// Check if a type is a valid IL2CPP proxy type (inherits from Il2CppObjectBase).
+    /// Check if a type is a valid IL2CPP proxy type (inherits from Il2CppObjectBase or is an enum).
     /// Abstract types are allowed - they're still valid for type queries like FindObjectsOfTypeAll.
     /// </summary>
     private static bool IsValidIl2CppProxy(Type type)
     {
         if (type == null)
             return false;
+
+        // Enums are valid IL2CPP types too
+        if (type.IsEnum)
+            return true;
 
         // Must inherit from Il2CppObjectBase to be an actual IL2CPP proxy
         // Abstract types are valid - we need them for type queries

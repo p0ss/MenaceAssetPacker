@@ -155,12 +155,16 @@ public class App : Application
                     () => $"{viewModel.CurrentSection}/{viewModel.CurrentSubSection}",
                     () => viewModel.SelectedViewModel?.GetType().Name ?? "Unknown"
                 );
+
+                // Start HTTP server for UI automation/testing
+                UIHttpServer.Instance.Start(viewModel);
             }
         }
     }
 
     private void OnExit(object? sender, ControlledApplicationLifetimeExitEventArgs e)
     {
+        UIHttpServer.Instance.Dispose();
         KillChildProcesses();
     }
 

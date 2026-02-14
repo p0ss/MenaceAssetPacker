@@ -230,6 +230,29 @@ public partial class ModpackLoaderMod
                     SdkLogger.Msg($"    Added {customSpriteNames.Count} custom sprite(s) to lookup");
             }
 
+            // Check BundleLoader for custom assets (GLB models, audio, etc.)
+            // These are runtime-loaded and won't be found by FindObjectsOfTypeAll
+            // Try multiple type name variants to handle IL2CPP naming differences
+            var il2cppTypeName = Il2CppType.From(elementType).Name;
+            var simpleTypeName = elementType.Name;
+            var typeNamesToTry = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { il2cppTypeName, simpleTypeName };
+
+            var addedCount = 0;
+            foreach (var typeName in typeNamesToTry)
+            {
+                var bundleAssets = BundleLoader.GetAssetsByType(typeName);
+                foreach (var asset in bundleAssets)
+                {
+                    if (asset != null && !string.IsNullOrEmpty(asset.name) && !lookup.ContainsKey(asset.name))
+                    {
+                        lookup[asset.name] = asset;
+                        addedCount++;
+                    }
+                }
+            }
+            if (addedCount > 0)
+                SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) from BundleLoader to lookup");
+
             // Force-load templates via DataTemplateLoader before FindObjectsOfTypeAll
             // This ensures referenced templates are in memory
             var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()

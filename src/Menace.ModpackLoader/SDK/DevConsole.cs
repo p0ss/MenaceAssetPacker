@@ -251,6 +251,50 @@ public static class DevConsole
     }
 
     /// <summary>
+    /// Execute a command programmatically and return the result.
+    /// Used by LuaScriptEngine to expose console commands to Lua scripts.
+    /// </summary>
+    /// <param name="input">Command string (e.g., "roster" or "emotions applyemotion Darby Determined")</param>
+    /// <returns>Tuple of (success, result). On success, result is the command output. On failure, result is the error message.</returns>
+    public static (bool Success, string Result) ExecuteCommandWithResult(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return (false, "Empty command");
+
+        var parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return (false, "Empty command");
+
+        var cmdName = parts[0];
+        var args = parts.Skip(1).ToArray();
+
+        if (_commands.TryGetValue(cmdName, out var cmd))
+        {
+            try
+            {
+                var result = cmd.Handler(args);
+                return (true, result ?? "(ok)");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Error: {ex.Message}");
+            }
+        }
+
+        return (false, $"Unknown command: {cmdName}");
+    }
+
+    /// <summary>
+    /// Get list of all registered command names.
+    /// </summary>
+    public static IEnumerable<string> GetCommandNames() => _commands.Keys;
+
+    /// <summary>
+    /// Check if a command is registered.
+    /// </summary>
+    public static bool HasCommand(string name) => !string.IsNullOrEmpty(name) && _commands.ContainsKey(name);
+
+    /// <summary>
     /// Set the REPL evaluator for C# expression evaluation in the Console panel.
     /// Called by ModpackLoaderMod after Roslyn initialization.
     /// </summary>

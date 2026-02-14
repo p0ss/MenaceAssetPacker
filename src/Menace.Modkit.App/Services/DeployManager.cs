@@ -479,8 +479,17 @@ public class DeployManager
             try
             {
                 var baseName = Path.GetFileNameWithoutExtension(glbPath);
-                var outputPath = Path.Combine(modelsDir, baseName + ".bundle");
 
+                // Copy the original GLB file to models/ for runtime loading via GlbLoader
+                // (GlbBundler currently only creates manifests, not actual AssetBundles)
+                var glbOutputPath = Path.Combine(modelsDir, baseName + ".glb");
+                File.Copy(glbPath, glbOutputPath, overwrite: true);
+                var glbRel = Path.GetRelativePath(modsBasePath, glbOutputPath);
+                files.Add(glbRel);
+                ModkitLog.Info($"[DeployManager] Copied GLB: {Path.GetFileName(glbPath)} → models/");
+
+                // Also run GlbBundler for manifest/texture extraction (future use)
+                var outputPath = Path.Combine(modelsDir, baseName + ".bundle");
                 var result = GlbBundler.ConvertToBundleAsync(glbPath, outputPath, unityVersion).Result;
                 if (result.Success)
                 {
@@ -489,11 +498,10 @@ public class DeployManager
                         var rel = Path.GetRelativePath(modsBasePath, convertedFile);
                         files.Add(rel);
                     }
-                    ModkitLog.Info($"[DeployManager] Converted GLB: {Path.GetFileName(glbPath)} → {result.ConvertedAssets.Count} assets");
                 }
                 else
                 {
-                    ModkitLog.Warn($"[DeployManager] GLB conversion warning for {Path.GetFileName(glbPath)}: {result.Message}");
+                    ModkitLog.Warn($"[DeployManager] GLB manifest warning for {Path.GetFileName(glbPath)}: {result.Message}");
                 }
             }
             catch (Exception ex)

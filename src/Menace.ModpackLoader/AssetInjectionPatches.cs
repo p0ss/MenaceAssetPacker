@@ -179,6 +179,136 @@ public static class AssetReplacer
         return _customSprites.Keys;
     }
 
+    // Custom audio clips loaded from files, keyed by name
+    private static readonly Dictionary<string, AudioClip> _customAudioClips
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Load a custom AudioClip from a WAV file and register it by name.
+    /// The clip will be available via BundleLoader for template field resolution.
+    /// </summary>
+    public static AudioClip LoadCustomAudio(string diskFilePath, string clipName)
+    {
+        if (_customAudioClips.TryGetValue(clipName, out var existing))
+            return existing;
+
+        if (!File.Exists(diskFilePath))
+        {
+            SdkLogger.Warning($"  Audio file not found: {diskFilePath}");
+            return null;
+        }
+
+        try
+        {
+            var ext = Path.GetExtension(diskFilePath).ToLowerInvariant();
+            AudioClip clip = null;
+
+            if (ext == ".wav")
+            {
+                clip = LoadWavFileInternal(diskFilePath, clipName);
+            }
+            else if (ext == ".ogg")
+            {
+                SdkLogger.Warning($"  OGG files not supported for custom audio. Convert to WAV: {diskFilePath}");
+                return null;
+            }
+
+            if (clip == null)
+            {
+                SdkLogger.Warning($"  Failed to load audio: {diskFilePath}");
+                return null;
+            }
+
+            clip.name = clipName;
+            clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+            _customAudioClips[clipName] = clip;
+
+            // Register with BundleLoader so it can be found in name lookups
+            BundleLoader.RegisterAsset(clipName, clip, "AudioClip");
+
+            SdkLogger.Msg($"  Loaded custom audio: '{clipName}' ({clip.length:F2}s, {clip.channels}ch)");
+            return clip;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Error($"  Failed to load audio '{clipName}': {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Internal WAV loading that returns an AudioClip directly.
+    /// </summary>
+    private static AudioClip LoadWavFileInternal(string filePath, string clipName)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        if (bytes.Length < 44)
+            return null;
+
+        // Verify RIFF/WAVE header
+        if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F')
+            return null;
+        if (bytes[8] != 'W' || bytes[9] != 'A' || bytes[10] != 'V' || bytes[11] != 'E')
+            return null;
+
+        // Parse WAV chunks
+        int pos = 12;
+        int channels = 0, sampleRate = 0, bitsPerSample = 0, dataOffset = 0, dataSize = 0;
+
+        while (pos < bytes.Length - 8)
+        {
+            var chunkId = System.Text.Encoding.ASCII.GetString(bytes, pos, 4);
+            var chunkSize = BitConverter.ToInt32(bytes, pos + 4);
+
+            if (chunkId == "fmt ")
+            {
+                var audioFormat = BitConverter.ToInt16(bytes, pos + 8);
+                if (audioFormat != 1) return null; // PCM only
+                channels = BitConverter.ToInt16(bytes, pos + 10);
+                sampleRate = BitConverter.ToInt32(bytes, pos + 12);
+                bitsPerSample = BitConverter.ToInt16(bytes, pos + 22);
+            }
+            else if (chunkId == "data")
+            {
+                dataOffset = pos + 8;
+                dataSize = chunkSize;
+                break;
+            }
+
+            pos += 8 + chunkSize;
+            if (chunkSize % 2 != 0) pos++;
+        }
+
+        if (channels == 0 || sampleRate == 0 || bitsPerSample == 0 || dataOffset == 0)
+            return null;
+
+        int bytesPerSample = bitsPerSample / 8;
+        int totalSamples = dataSize / (bytesPerSample * channels);
+        var samples = new float[totalSamples * channels];
+        int sampleIndex = 0;
+
+        for (int i = 0; i < dataSize && sampleIndex < samples.Length; i += bytesPerSample)
+        {
+            int bytePos = dataOffset + i;
+            if (bytePos >= bytes.Length) break;
+
+            float sample = bitsPerSample switch
+            {
+                8 => (bytes[bytePos] - 128) / 128f,
+                16 => BitConverter.ToInt16(bytes, bytePos) / 32768f,
+                24 => ((bytes[bytePos] | (bytes[bytePos + 1] << 8) | (sbyte)bytes[bytePos + 2] << 16)) / 8388608f,
+                32 => BitConverter.ToInt32(bytes, bytePos) / 2147483648f,
+                _ => 0f
+            };
+            samples[sampleIndex++] = sample;
+        }
+
+        var clip = AudioClip.Create(clipName, totalSamples, channels, sampleRate, false);
+        clip.SetData(samples, 0);
+        return clip;
+    }
+
     /// <summary>
     /// Register a disk-file asset replacement. Called during modpack loading.
     /// The asset kind is inferred from the file extension.
@@ -1283,4 +1413,7 @@ public static class AssetInjectionPatches
 
     public static void LoadPendingSprites()
         => AssetReplacer.LoadPendingSprites();
+
+    public static AudioClip LoadCustomAudio(string diskFilePath, string clipName)
+        => AssetReplacer.LoadCustomAudio(diskFilePath, clipName);
 }

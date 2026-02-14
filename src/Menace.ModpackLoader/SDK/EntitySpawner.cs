@@ -65,7 +65,7 @@ public static class EntitySpawner
             EnsureTypesLoaded();
 
             // Find the template
-            var template = Templates.Find("EntityTemplate", templateName);
+            var template = Templates.Find("Menace.Tactical.EntityTemplate", templateName);
             if (template.IsNull)
             {
                 return SpawnResult.Failed($"Template '{templateName}' not found");
@@ -110,7 +110,15 @@ public static class EntitySpawner
             }
 
             // Get TrySpawnUnit method: TrySpawnUnit(FactionType _faction, EntityTemplate _template, Tile _tile, out Actor _unit)
-            var trySpawnMethod = tmType.GetMethod("TrySpawnUnit", BindingFlags.Public | BindingFlags.Instance);
+            // Must specify parameter types to avoid ambiguous match with other overloads
+            var actorType = GameType.Find("Menace.Tactical.Actor")?.ManagedType;
+            if (actorType == null)
+            {
+                return SpawnResult.Failed("Actor type not found");
+            }
+            var actorByRefType = actorType.MakeByRefType();
+            var trySpawnMethod = tmType.GetMethod("TrySpawnUnit", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { _factionType.ManagedType, _entityTemplateType.ManagedType, _tileType.ManagedType, actorByRefType }, null);
             if (trySpawnMethod == null)
             {
                 return SpawnResult.Failed("TacticalManager.TrySpawnUnit method not found");
@@ -179,22 +187,83 @@ public static class EntitySpawner
         {
             EnsureTypesLoaded();
 
-            var actors = GameQuery.FindAll(_actorType);
-            if (factionFilter < 0)
-                return actors;
+            // Actors are stored in TacticalManager.m_Factions[].m_Actors, not as Unity Resources
+            var tmType = _tacticalManagerType?.ManagedType;
+            if (tmType == null) return Array.Empty<GameObj>();
 
-            var filtered = new List<GameObj>();
-            foreach (var actor in actors)
+            var getMethod = tmType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var tm = getMethod?.Invoke(null, null);
+            if (tm == null) return Array.Empty<GameObj>();
+
+            // Get m_Factions property
+            var factionsProperty = tmType.GetProperty("m_Factions", BindingFlags.Public | BindingFlags.Instance);
+            if (factionsProperty == null) return Array.Empty<GameObj>();
+
+            var factions = factionsProperty.GetValue(tm);
+            if (factions == null) return Array.Empty<GameObj>();
+
+            var result = new List<GameObj>();
+            var factionList = (System.Collections.IEnumerable)factions;
+
+            int factionIdx = 0;
+            foreach (var faction in factionList)
             {
-                if (!actor.IsNull && actor.IsAlive)
+                if (faction == null)
                 {
-                    var faction = actor.ReadInt(OFFSET_ENTITY_FACTION_INDEX);
-                    if (faction == factionFilter)
-                        filtered.Add(actor);
+                    factionIdx++;
+                    continue;
                 }
+
+                // Skip if filtering by faction
+                if (factionFilter >= 0 && factionIdx != factionFilter)
+                {
+                    factionIdx++;
+                    continue;
+                }
+
+                // Get m_Actors from this faction
+                var factionType = faction.GetType();
+                var actorsProp = factionType.GetProperty("m_Actors", BindingFlags.Public | BindingFlags.Instance);
+                if (actorsProp == null)
+                {
+                    factionIdx++;
+                    continue;
+                }
+
+                var actors = actorsProp.GetValue(faction);
+                if (actors == null)
+                {
+                    factionIdx++;
+                    continue;
+                }
+
+                // Il2CppSystem.Collections.Generic.List cannot be cast to System.Collections.IEnumerable
+                // Use Count property and indexer via reflection instead
+                var actorsType = actors.GetType();
+                var countProp = actorsType.GetProperty("Count");
+                var itemProp = actorsType.GetProperty("Item");
+                if (countProp == null || itemProp == null)
+                {
+                    factionIdx++;
+                    continue;
+                }
+
+                var count = (int)countProp.GetValue(actors);
+                for (int i = 0; i < count; i++)
+                {
+                    var actor = itemProp.GetValue(actors, new object[] { i });
+                    if (actor != null)
+                    {
+                        var ptr = ((Il2CppObjectBase)actor).Pointer;
+                        if (ptr != IntPtr.Zero)
+                            result.Add(new GameObj(ptr));
+                    }
+                }
+
+                factionIdx++;
             }
 
-            return filtered.ToArray();
+            return result.ToArray();
         }
         catch (Exception ex)
         {

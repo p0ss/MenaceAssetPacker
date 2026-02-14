@@ -68,6 +68,14 @@ public partial class ModpackLoaderMod : MelonMod
         // Initialize boot skip patches (splash/intro skipping in dev mode)
         BootSkip.Initialize(HarmonyInstance);
 
+        // Initialize Lua scripting engine
+        LuaScriptEngine.Instance.Initialize(LoggerInstance);
+        GameState.SceneLoaded += LuaScriptEngine.Instance.OnSceneLoaded;
+        GameState.TacticalReady += LuaScriptEngine.Instance.OnTacticalReady;
+
+        // Load Lua scripts from modpacks
+        LoadLuaScripts();
+
         // Emit startup banner to Player.log for game dev triage
         PlayerLog("========================================");
         PlayerLog("THIS GAME SESSION IS RUNNING MODDED");
@@ -82,6 +90,7 @@ public partial class ModpackLoaderMod : MelonMod
             PlayerLog($"Modpack plugins: {pluginSummary}");
         PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
         PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
+        PlayerLog($"Lua scripts loaded: {LuaScriptEngine.Instance.LoadedScriptCount}");
         PlayerLog("========================================");
     }
 
@@ -289,6 +298,35 @@ public partial class ModpackLoaderMod : MelonMod
         SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
     }
 
+    /// <summary>
+    /// Load Lua scripts from all modpacks.
+    /// Scripts are loaded from the scripts/ directory within each modpack.
+    /// </summary>
+    private void LoadLuaScripts()
+    {
+        int scriptCount = 0;
+
+        foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
+        {
+            if (string.IsNullOrEmpty(modpack.DirectoryPath))
+                continue;
+
+            var scriptsDir = Path.Combine(modpack.DirectoryPath, "scripts");
+            if (!Directory.Exists(scriptsDir))
+                continue;
+
+            var luaFiles = Directory.GetFiles(scriptsDir, "*.lua", SearchOption.AllDirectories);
+            foreach (var luaFile in luaFiles)
+            {
+                if (LuaScriptEngine.Instance.LoadModpackScript(modpack.Name, luaFile))
+                    scriptCount++;
+            }
+        }
+
+        if (scriptCount > 0)
+            SdkLogger.Msg($"Loaded {scriptCount} Lua script(s)");
+    }
+
     private void LoadModpackAssets(Modpack modpack)
     {
         if (modpack.Assets == null || string.IsNullOrEmpty(modpack.DirectoryPath))
@@ -309,20 +347,46 @@ public partial class ModpackLoaderMod : MelonMod
                 if (File.Exists(fullPath))
                 {
                     _registeredAssetPaths.Add(assetPath);
-                    AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
-                    SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
+                    var ext = Path.GetExtension(assetPath).ToLowerInvariant();
+                    var assetName = Path.GetFileNameWithoutExtension(assetPath);
 
                     // For texture files, also load as a custom Sprite so template patches
                     // can reference them by name (e.g., Icon fields on WeaponTemplate)
-                    var ext = Path.GetExtension(assetPath).ToLowerInvariant();
                     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp")
                     {
-                        var spriteName = Path.GetFileNameWithoutExtension(assetPath);
-                        var sprite = AssetReplacer.LoadCustomSprite(fullPath, spriteName);
+                        AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
+                        SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
+
+                        var sprite = AssetReplacer.LoadCustomSprite(fullPath, assetName);
                         if (sprite != null)
-                            SdkLogger.Msg($"  Custom sprite ready: '{spriteName}'");
+                            SdkLogger.Msg($"  Custom sprite ready: '{assetName}'");
                         else
-                            SdkLogger.Warning($"  Failed to load custom sprite: '{spriteName}'");
+                            SdkLogger.Warning($"  Failed to load custom sprite: '{assetName}'");
+                    }
+                    // For GLB/GLTF files, load as custom 3D model
+                    // Registers mesh, materials, textures, and prefab with BundleLoader
+                    else if (ext == ".glb" || ext == ".gltf")
+                    {
+                        var model = GlbLoader.LoadGlb(fullPath);
+                        if (model != null)
+                            SdkLogger.Msg($"  Custom model loaded: '{assetName}' ({model.Meshes.Count} meshes)");
+                        else
+                            SdkLogger.Warning($"  Failed to load custom model: '{assetName}'");
+                    }
+                    // For audio files, load as custom AudioClip
+                    else if (ext == ".wav" || ext == ".ogg")
+                    {
+                        var clip = AssetReplacer.LoadCustomAudio(fullPath, assetName);
+                        if (clip != null)
+                            SdkLogger.Msg($"  Custom audio loaded: '{assetName}'");
+                        else
+                            SdkLogger.Warning($"  Failed to load custom audio: '{assetName}'");
+                    }
+                    else
+                    {
+                        // Other asset types - just register for replacement
+                        AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
+                        SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
                     }
                 }
                 else
