@@ -16,12 +16,15 @@ public static class MenuInjector
     private static bool _initialized;
     private static bool _injected;
     private static Button _modsButton;
+    private static UISettingsPanel _settingsPanel;
+    private static VisualElement _currentRoot;
 
     // Configuration
     public static string MenuButtonText { get; set; } = "Mods";
 
-    // IMGUI settings panel state
+    // IMGUI fallback state (used if UIToolkit panel fails)
     private static bool _showSettingsPanel;
+    private static bool _useImguiFallback;
     private static Vector2 _settingsScroll;
     private static Rect _panelRect;
 
@@ -44,23 +47,27 @@ public static class MenuInjector
         _injected = false;
         _modsButton = null;
         _showSettingsPanel = false;
+        _currentRoot = null;
+
+        // Destroy old UIToolkit panel (will be recreated on new root)
+        _settingsPanel?.Destroy();
+        _settingsPanel = null;
 
         SdkLogger.Msg($"[MenuInjector] Scene loaded: '{sceneName}'");
 
-        if (!ModSettings.HasAnySettings())
-        {
-            SdkLogger.Msg("[MenuInjector] No mod settings registered, skipping injection");
-            return;
-        }
+        // Log settings status for debugging
+        var hasSettings = ModSettings.HasAnySettings();
+        var settingsCount = ModSettings.GetRegisteredMods().Count();
+        SdkLogger.Msg($"[MenuInjector] Settings status: hasSettings={hasSettings}, modCount={settingsCount}");
 
-        // Check if this looks like a main menu scene
+        // Check if this looks like a main menu scene OR has title UI
         if (!IsMainMenuScene(sceneName))
         {
-            SdkLogger.Msg($"[MenuInjector] Scene '{sceneName}' does not look like main menu");
-            return;
+            SdkLogger.Msg($"[MenuInjector] Scene '{sceneName}' does not look like main menu, will check for title UI");
         }
 
         // Delay injection to let the UI fully initialize
+        // Always attempt - we'll check for TitleUIScreen in TryInjectMenuButton
         GameState.RunDelayed(30, () => TryInjectMenuButton());
     }
 
@@ -74,6 +81,78 @@ public static class MenuInjector
                lower.Contains("frontend") ||
                lower == "init" ||
                lower == "boot";
+    }
+
+    private static bool IsTitleUIDocument(UIDocument doc)
+    {
+        if (doc == null) return false;
+        var name = doc.gameObject.name?.ToLowerInvariant() ?? "";
+        return name.Contains("title") || name.Contains("mainmenu") || name.Contains("main_menu");
+    }
+
+    /// <summary>
+    /// Check if we're on the actual main menu (not mission planning or other screens).
+    /// Look for VISIBLE buttons that only exist on the main title menu.
+    /// </summary>
+    private static bool IsActualMainMenu(VisualElement root)
+    {
+        if (root == null) return false;
+
+        var buttons = QueryAll<Button>(root);
+
+        // Main menu specific buttons - if we find "Quit" or "New Game", we're on the title screen
+        // But if we also see "Abort Mission" or "Continue", we're on the ESC menu during a mission
+        bool hasQuitButton = false;
+        bool hasNewGameButton = false;
+        bool hasMissionButton = false;  // Abort Mission, Start Mission, Continue (mission context)
+
+        foreach (var btn in buttons)
+        {
+            // Only check VISIBLE buttons - hidden buttons shouldn't affect detection
+            if (!IsButtonVisible(btn)) continue;
+
+            var text = GetButtonText(btn)?.ToLowerInvariant() ?? "";
+            var btnName = btn.name?.ToLowerInvariant() ?? "";
+
+            if (text.Contains("quit") || btnName.Contains("quit"))
+                hasQuitButton = true;
+            if (text.Contains("new game") || btnName.Contains("newgame"))
+                hasNewGameButton = true;
+            // These indicate we're in a mission context (ESC menu or mission planning)
+            if (text.Contains("abort mission") || btnName.Contains("abortmission") ||
+                text.Contains("start mission") || btnName.Contains("startmission") ||
+                btnName.Contains("continuebutton"))  // ContinueButton is mission-specific
+                hasMissionButton = true;
+        }
+
+        // We're on the pure main menu if we have Quit/New Game but NO mission-specific buttons
+        var isMainMenu = (hasQuitButton || hasNewGameButton) && !hasMissionButton;
+
+        SdkLogger.Msg($"[MenuInjector] Menu detection: Quit={hasQuitButton}, NewGame={hasNewGameButton}, MissionBtn={hasMissionButton} => IsMainMenu={isMainMenu}");
+
+        return isMainMenu;
+    }
+
+    /// <summary>
+    /// Check if a button is visible (displayed and not hidden).
+    /// </summary>
+    private static bool IsButtonVisible(Button btn)
+    {
+        if (btn == null) return false;
+        try
+        {
+            // Check display style
+            if (btn.resolvedStyle.display == DisplayStyle.None) return false;
+            // Check visibility
+            if (btn.resolvedStyle.visibility == Visibility.Hidden) return false;
+            // Check opacity
+            if (btn.resolvedStyle.opacity < 0.01f) return false;
+            return true;
+        }
+        catch
+        {
+            return true; // If we can't check, assume visible
+        }
     }
 
     private static void TryInjectMenuButton()
@@ -92,27 +171,66 @@ public static class MenuInjector
                 return;
             }
 
+            // Prioritize title/main menu documents
+            UIDocument targetDoc = null;
             foreach (var doc in docs)
             {
                 if (doc == null || !doc.gameObject.activeInHierarchy) continue;
-                var root = doc.rootVisualElement;
-                if (root == null) continue;
-
-                // Strategy 1: Find a button container (element with multiple Button children)
-                var buttonContainer = FindButtonContainer(root);
-                if (buttonContainer != null)
+                if (IsTitleUIDocument(doc))
                 {
-                    InjectIntoContainer(buttonContainer);
-                    return;
+                    targetDoc = doc;
+                    SdkLogger.Msg($"[MenuInjector] Found title UI document: {doc.gameObject.name}");
+                    break;
                 }
+            }
 
-                // Strategy 2: Find a specific button to inject near
-                var referenceButton = FindReferenceButton(root);
-                if (referenceButton != null)
+            // If no title doc, try any active doc
+            if (targetDoc == null)
+            {
+                foreach (var doc in docs)
                 {
-                    InjectNearButton(referenceButton);
-                    return;
+                    if (doc != null && doc.gameObject.activeInHierarchy)
+                    {
+                        targetDoc = doc;
+                        break;
+                    }
                 }
+            }
+
+            if (targetDoc == null)
+            {
+                SdkLogger.Msg("[MenuInjector] No suitable UIDocument found");
+                return;
+            }
+
+            var root = targetDoc.rootVisualElement;
+            if (root == null)
+            {
+                SdkLogger.Msg("[MenuInjector] UIDocument has no root element");
+                return;
+            }
+
+            // Log buttons for debugging
+            var allButtons = QueryAll<Button>(root);
+            SdkLogger.Msg($"[MenuInjector] Found {allButtons.Count} buttons in UI");
+
+            // Store root for UIToolkit settings panel
+            _currentRoot = root;
+
+            // Strategy 1: Find a button container (element with multiple Button children)
+            var buttonContainer = FindButtonContainer(root);
+            if (buttonContainer != null)
+            {
+                InjectIntoContainer(buttonContainer);
+                return;
+            }
+
+            // Strategy 2: Find a specific button to inject near
+            var referenceButton = FindReferenceButton(root);
+            if (referenceButton != null)
+            {
+                InjectNearButton(referenceButton);
+                return;
             }
 
             SdkLogger.Msg("[MenuInjector] Could not find suitable injection point");
@@ -169,29 +287,50 @@ public static class MenuInjector
 
     /// <summary>
     /// Find a button that looks like a menu item we can inject near.
+    /// Specifically look for Settings button on main menu (not ESC menu buttons).
     /// </summary>
     private static Button FindReferenceButton(VisualElement root)
     {
         var buttons = QueryAll<Button>(root);
 
-        // Priority order of button names/text to look for
-        string[] priorityNames = {
-            "settings", "options", "config",
-            "newgame", "new game", "start",
-            "continue", "load",
-            "quit", "exit"
-        };
+        // First, try to find the Settings button that's in the main menu group
+        // (should be near New Game, Tutorial, Load, etc.)
+        Button settingsBtn = null;
+        Button newGameBtn = null;
 
+        foreach (var btn in buttons)
+        {
+            var btnText = GetButtonText(btn)?.ToLowerInvariant() ?? "";
+            if (btnText == "settings")
+                settingsBtn = btn;
+            if (btnText == "new game")
+                newGameBtn = btn;
+        }
+
+        // If we found Settings that shares a parent with New Game, use it
+        if (settingsBtn != null && newGameBtn != null && settingsBtn.parent == newGameBtn.parent)
+        {
+            SdkLogger.Msg($"[MenuInjector] Found Settings button in main menu group");
+            return settingsBtn;
+        }
+
+        // Fallback: find Settings button anyway
+        if (settingsBtn != null)
+        {
+            SdkLogger.Msg($"[MenuInjector] Found Settings button");
+            return settingsBtn;
+        }
+
+        // Last resort: try other buttons
+        string[] priorityNames = { "credits", "quit", "exit" };
         foreach (var targetName in priorityNames)
         {
             foreach (var btn in buttons)
             {
-                var btnName = btn.name?.ToLowerInvariant() ?? "";
                 var btnText = GetButtonText(btn)?.ToLowerInvariant() ?? "";
-
-                if (btnName.Contains(targetName) || btnText.Contains(targetName))
+                if (btnText.Contains(targetName))
                 {
-                    SdkLogger.Msg($"[MenuInjector] Found reference button: {btn.name} ('{GetButtonText(btn)}')");
+                    SdkLogger.Msg($"[MenuInjector] Found reference button: '{GetButtonText(btn)}'");
                     return btn;
                 }
             }
@@ -299,6 +438,9 @@ public static class MenuInjector
         btn.style.marginTop = 4;
         btn.style.marginBottom = 4;
 
+        // Prevent auto-focus which causes unwanted highlight
+        btn.focusable = false;
+
         return btn;
     }
 
@@ -331,6 +473,28 @@ public static class MenuInjector
     private static void OnModsButtonClick()
     {
         SdkLogger.Msg("[MenuInjector] Mods button clicked");
+
+        // Try UIToolkit panel first
+        if (_currentRoot != null && !_useImguiFallback)
+        {
+            try
+            {
+                if (_settingsPanel == null)
+                {
+                    _settingsPanel = new UISettingsPanel();
+                    _settingsPanel.Create(_currentRoot);
+                }
+                _settingsPanel.Show();
+                return;
+            }
+            catch (Exception ex)
+            {
+                SdkLogger.Warning($"[MenuInjector] UIToolkit panel failed, using IMGUI fallback: {ex.Message}");
+                _useImguiFallback = true;
+            }
+        }
+
+        // Fallback to IMGUI
         _showSettingsPanel = true;
     }
 
@@ -339,7 +503,25 @@ public static class MenuInjector
     /// </summary>
     public static void ToggleSettingsPanel()
     {
-        _showSettingsPanel = !_showSettingsPanel;
+        if (_settingsPanel != null && !_useImguiFallback)
+        {
+            if (_settingsPanel.IsVisible)
+                _settingsPanel.Hide();
+            else
+                _settingsPanel.Show();
+        }
+        else
+        {
+            _showSettingsPanel = !_showSettingsPanel;
+        }
+    }
+
+    /// <summary>
+    /// Called from ModpackLoaderMod.OnUpdate() to poll for settings changes.
+    /// </summary>
+    internal static void Update()
+    {
+        _settingsPanel?.PollChanges();
     }
 
     // ==================== Helpers ====================
@@ -362,14 +544,16 @@ public static class MenuInjector
         }
     }
 
-    // ==================== IMGUI Settings Panel ====================
+    // ==================== IMGUI Settings Panel (Fallback) ====================
 
     /// <summary>
-    /// Draw the IMGUI settings panel. Called from ModpackLoaderMod.OnGUI().
+    /// Draw the IMGUI settings panel (fallback mode only).
+    /// Called from ModpackLoaderMod.OnGUI().
     /// </summary>
     internal static void Draw()
     {
-        if (!_showSettingsPanel) return;
+        // Only draw IMGUI if UIToolkit panel is not in use
+        if (!_showSettingsPanel || (_settingsPanel != null && !_useImguiFallback)) return;
 
         InitStyles();
 

@@ -184,23 +184,14 @@ public static class BlackMarket
         {
             EnsureTypesLoaded();
 
-            var bmType = _blackMarketType?.ManagedType;
-            if (bmType == null) return null;
-
-            var proxy = GetManagedProxy(bm, bmType);
-            if (proxy == null) return null;
-
             var info = new BlackMarketInfo { Pointer = bm.Pointer };
 
-            // Get stacks list
-            var stacksProp = bmType.GetProperty("Stacks", BindingFlags.Public | BindingFlags.Instance);
-            var stacks = stacksProp?.GetValue(proxy);
-            if (stacks != null)
-            {
-                var listType = stacks.GetType();
-                var countProp = listType.GetProperty("Count");
-                info.StackCount = (int)(countProp?.GetValue(stacks) ?? 0);
+            // Get stacks list using direct offset access (Stacks property doesn't exist)
+            var (stacks, listType, count) = GetStacksList(bm);
+            info.StackCount = count;
 
+            if (stacks != null && listType != null)
+            {
                 // Count total items across all stacks
                 var indexer = listType.GetMethod("get_Item");
                 for (int i = 0; i < info.StackCount; i++)
@@ -271,21 +262,12 @@ public static class BlackMarket
 
             EnsureTypesLoaded();
 
-            var bmType = _blackMarketType?.ManagedType;
-            if (bmType == null) return result;
+            // Get stacks list using direct offset access (Stacks property doesn't exist)
+            var (stacks, listType, count) = GetStacksList(bm);
+            if (stacks == null || listType == null) return result;
 
-            var proxy = GetManagedProxy(bm, bmType);
-            if (proxy == null) return result;
-
-            var stacksProp = bmType.GetProperty("Stacks", BindingFlags.Public | BindingFlags.Instance);
-            var stacks = stacksProp?.GetValue(proxy);
-            if (stacks == null) return result;
-
-            var listType = stacks.GetType();
-            var countProp = listType.GetProperty("Count");
             var indexer = listType.GetMethod("get_Item");
 
-            int count = (int)countProp.GetValue(stacks);
             for (int i = 0; i < count; i++)
             {
                 var stack = indexer.Invoke(stacks, new object[] { i });
@@ -319,19 +301,9 @@ public static class BlackMarket
 
             EnsureTypesLoaded();
 
-            var bmType = _blackMarketType?.ManagedType;
-            if (bmType == null) return null;
-
-            var proxy = GetManagedProxy(bm, bmType);
-            if (proxy == null) return null;
-
-            var stacksProp = bmType.GetProperty("Stacks", BindingFlags.Public | BindingFlags.Instance);
-            var stacks = stacksProp?.GetValue(proxy);
-            if (stacks == null) return null;
-
-            var listType = stacks.GetType();
-            var countProp = listType.GetProperty("Count");
-            int count = (int)countProp.GetValue(stacks);
+            // Get stacks list using direct offset access (Stacks property doesn't exist)
+            var (stacks, listType, count) = GetStacksList(bm);
+            if (stacks == null || listType == null) return null;
 
             if (index < 0 || index >= count) return null;
 
@@ -362,19 +334,9 @@ public static class BlackMarket
 
             EnsureTypesLoaded();
 
-            var bmType = _blackMarketType?.ManagedType;
-            if (bmType == null) return GameObj.Null;
-
-            var proxy = GetManagedProxy(bm, bmType);
-            if (proxy == null) return GameObj.Null;
-
-            var stacksProp = bmType.GetProperty("Stacks", BindingFlags.Public | BindingFlags.Instance);
-            var stacks = stacksProp?.GetValue(proxy);
-            if (stacks == null) return GameObj.Null;
-
-            var listType = stacks.GetType();
-            var countProp = listType.GetProperty("Count");
-            int count = (int)countProp.GetValue(stacks);
+            // Get stacks list using direct offset access (Stacks property doesn't exist)
+            var (stacks, listType, count) = GetStacksList(bm);
+            if (stacks == null || listType == null) return GameObj.Null;
 
             if (index < 0 || index >= count) return GameObj.Null;
 
@@ -981,6 +943,46 @@ public static class BlackMarket
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Get the stacks list from BlackMarket using direct offset access.
+    /// The "Stacks" property doesn't exist - we need to read at offset +0x10.
+    /// </summary>
+    private static (object list, Type listType, int count) GetStacksList(GameObj bm)
+    {
+        if (bm.IsNull) return (null, null, 0);
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            // Read stacks list at offset +0x10
+            var stacksPtr = bm.ReadPtr(0x10);
+            if (stacksPtr == IntPtr.Zero) return (null, null, 0);
+
+            // Get typed list using explicit generic type construction
+            // Use concrete type directly since GameType.Find doesn't handle nested types well
+            var stackType = typeof(Il2CppMenace.Strategy.BlackMarket.BlackMarketItemStack);
+            if (stackType == null) return (null, null, 0);
+
+            var listGenericType = typeof(Il2CppSystem.Collections.Generic.List<>);
+            var listTyped = listGenericType.MakeGenericType(stackType);
+            var ptrCtor = listTyped.GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null) return (null, null, 0);
+
+            var list = ptrCtor.Invoke(new object[] { stacksPtr });
+            if (list == null) return (null, null, 0);
+
+            var countProp = listTyped.GetProperty("Count");
+            int count = (int)(countProp?.GetValue(list) ?? 0);
+
+            return (list, listTyped, count);
+        }
+        catch
+        {
+            return (null, null, 0);
         }
     }
 

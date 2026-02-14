@@ -71,7 +71,7 @@ public static class BootSkip
         {
             settings.AddHeader("Boot Sequence");
             settings.AddToggle(SkipSplashKey, "Skip Splash Screen", false);
-            settings.AddToggle(SkipIntroKey, "Skip Intro Movie", false);
+            settings.AddToggle(SkipIntroKey, "Skip Intro Movie", true);
             settings.AddText(MainMenuSceneKey, "Main Menu Scene", "MainMenu");
 
             settings.AddHeader("Information");

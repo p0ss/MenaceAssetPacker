@@ -299,21 +299,43 @@ public readonly struct GameObj : IEquatable<GameObj>
 
         try
         {
-            // Use the il2cpp method to get name — more reliable than field offset
             var klass = IL2CPP.il2cpp_object_get_class(Pointer);
             if (klass == IntPtr.Zero) return null;
 
-            // Read the m_Name field (common on UnityEngine.Object)
+            // Try m_Name field first (some Unity objects)
             var nameField = OffsetCache.FindField(klass, "m_Name");
-            if (nameField == IntPtr.Zero) return null;
+            if (nameField != IntPtr.Zero)
+            {
+                var offset = IL2CPP.il2cpp_field_get_offset(nameField);
+                if (offset != 0)
+                {
+                    var strPtr = Marshal.ReadIntPtr(Pointer + (int)offset);
+                    if (strPtr != IntPtr.Zero)
+                        return IL2CPP.Il2CppStringToManaged(strPtr);
+                }
+            }
 
-            var offset = IL2CPP.il2cpp_field_get_offset(nameField);
-            if (offset == 0) return null;
+            // Fallback: use "name" property via managed type (UnityEngine.Object.name)
+            var gameType = GetGameType();
+            var managedType = gameType?.ManagedType;
+            if (managedType != null)
+            {
+                var nameProp = managedType.GetProperty("name",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (nameProp != null)
+                {
+                    var ptrCtor = managedType.GetConstructor(new[] { typeof(IntPtr) });
+                    if (ptrCtor != null)
+                    {
+                        var proxy = ptrCtor.Invoke(new object[] { Pointer });
+                        var name = nameProp.GetValue(proxy);
+                        if (name != null)
+                            return name.ToString();
+                    }
+                }
+            }
 
-            var strPtr = Marshal.ReadIntPtr(Pointer + (int)offset);
-            if (strPtr == IntPtr.Zero) return null;
-
-            return IL2CPP.Il2CppStringToManaged(strPtr);
+            return null;
         }
         catch
         {

@@ -139,13 +139,23 @@ public static class Operation
                 info.FriendlyFaction = friendlyObj.GetName();
             }
 
-            // Get planet
+            // Get planet - GetPlanet(bool) requires a bool parameter
+            // Planet name is on m_Template, not directly on Planet object
             var getPlanetMethod = opType.GetMethod("GetPlanet", BindingFlags.Public | BindingFlags.Instance);
-            var planet = getPlanetMethod?.Invoke(proxy, null);
-            if (planet != null)
+            if (getPlanetMethod != null)
             {
-                var planetObj = new GameObj(((Il2CppObjectBase)planet).Pointer);
-                info.Planet = planetObj.GetName();
+                var planet = getPlanetMethod.Invoke(proxy, new object[] { false });
+                if (planet != null)
+                {
+                    var planetObj = new GameObj(((Il2CppObjectBase)planet).Pointer);
+                    // Planet has m_Template field which contains the name
+                    var planetTemplatePtr = planetObj.ReadPtr("m_Template");
+                    if (planetTemplatePtr != IntPtr.Zero)
+                    {
+                        var planetTemplateObj = new GameObj(planetTemplatePtr);
+                        info.Planet = planetTemplateObj.GetName();
+                    }
+                }
             }
 
             // Get mission info - use direct field read at offset +0x40

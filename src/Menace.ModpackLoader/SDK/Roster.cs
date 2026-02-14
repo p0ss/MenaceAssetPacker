@@ -121,16 +121,25 @@ public static class Roster
 
             EnsureTypesLoaded();
 
-            // Use m_HiredLeaders field at offset +0x10 instead of HiredLeaders property
+            // Use m_HiredLeaders field at offset +0x10
             var hiredListPtr = roster.ReadPtr(0x10);
             if (hiredListPtr == IntPtr.Zero) return result;
 
-            var hiredList = new GameObj(hiredListPtr).ToManaged();
+            // Get the typed list using explicit generic type construction
+            // GameObj.ToManaged() fails for generic types like List<T>
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return result;
+
+            var listGenericType = typeof(Il2CppSystem.Collections.Generic.List<>);
+            var listTyped = listGenericType.MakeGenericType(leaderType);
+            var ptrCtor = listTyped.GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null) return result;
+
+            var hiredList = ptrCtor.Invoke(new object[] { hiredListPtr });
             if (hiredList == null) return result;
 
-            var listType = hiredList.GetType();
-            var countProp = listType.GetProperty("Count");
-            var indexer = listType.GetMethod("get_Item");
+            var countProp = listTyped.GetProperty("Count");
+            var indexer = listTyped.GetMethod("get_Item");
 
             int count = (int)countProp.GetValue(hiredList);
             for (int i = 0; i < count; i++)
@@ -220,10 +229,9 @@ public static class Roster
             if (isUnavailableMethod != null)
                 info.IsUnavailable = (bool)isUnavailableMethod.Invoke(proxy, null);
 
-            // Get deploy cost
-            var getDeployCostsMethod = leaderType.GetMethod("GetDeployCosts", BindingFlags.Public | BindingFlags.Instance);
-            if (getDeployCostsMethod != null)
-                info.DeployCost = (int)getDeployCostsMethod.Invoke(proxy, null);
+            // Get deploy cost - GetDeployCosts returns OperationResources, not int
+            // For now, skip this as it requires parsing the OperationResources struct
+            // TODO: Parse OperationResources to get total deploy cost
 
             // Get squaddie count (if SquadLeader) using m_Squaddies field
             try
@@ -277,32 +285,12 @@ public static class Roster
     {
         try
         {
-            var roster = GetRoster();
-            if (roster.IsNull) return GameObj.Null;
-
-            EnsureTypesLoaded();
-
-            // Use m_HiredLeaders field at offset +0x10 instead of HiredLeaders property
-            var hiredListPtr = roster.ReadPtr(0x10);
-            if (hiredListPtr == IntPtr.Zero) return GameObj.Null;
-
-            var hiredList = new GameObj(hiredListPtr).ToManaged();
-            if (hiredList == null) return GameObj.Null;
-
-            var listType = hiredList.GetType();
-            var countProp = listType.GetProperty("Count");
-            var indexer = listType.GetMethod("get_Item");
-
-            int count = (int)countProp.GetValue(hiredList);
-            for (int i = 0; i < count; i++)
+            // Use GetHiredLeaders() which properly handles the generic list
+            var leaders = GetHiredLeaders();
+            foreach (var leader in leaders)
             {
-                var leader = indexer.Invoke(hiredList, new object[] { i });
-                if (leader == null) continue;
-
-                var leaderObj = new GameObj(((Il2CppObjectBase)leader).Pointer);
-                var info = GetLeaderInfo(leaderObj);
-                if (info?.Nickname?.Contains(nickname, StringComparison.OrdinalIgnoreCase) == true)
-                    return leaderObj;
+                if (leader?.Nickname?.Contains(nickname, StringComparison.OrdinalIgnoreCase) == true)
+                    return new GameObj(leader.Pointer);
             }
 
             return GameObj.Null;
@@ -325,14 +313,17 @@ public static class Roster
         {
             EnsureTypesLoaded();
 
-            // Use m_Perks field at offset +0x48 instead of Perks property
+            // Use m_Perks field at offset +0x48
             var perksPtr = leader.ReadPtr(0x48);
             if (perksPtr == IntPtr.Zero) return result;
 
-            var perks = new GameObj(perksPtr).ToManaged();
+            // Get typed list to work around GameObj.ToManaged() failing for generic types
+            var perkTemplateType = GameType.Find("Menace.Strategy.PerkTemplate")?.ManagedType;
+            if (perkTemplateType == null) return result;
+
+            var (perks, listType) = GetTypedList(perksPtr, perkTemplateType);
             if (perks == null) return result;
 
-            var listType = perks.GetType();
             var countProp = listType.GetProperty("Count");
             var indexer = listType.GetMethod("get_Item");
 
@@ -388,14 +379,17 @@ public static class Roster
 
             EnsureTypesLoaded();
 
-            // Use hirable leaders field at offset +0x18 directly instead of GetHirableLeaders() method
+            // Use hirable leaders field at offset +0x18
             var hirableListPtr = roster.ReadPtr(0x18);
             if (hirableListPtr == IntPtr.Zero) return result;
 
-            var hirableList = new GameObj(hirableListPtr).ToManaged();
+            // Get typed list to work around GameObj.ToManaged() failing for generic types
+            var templateType = GameType.Find("Menace.Strategy.UnitLeaderTemplate")?.ManagedType;
+            if (templateType == null) return result;
+
+            var (hirableList, listType) = GetTypedList(hirableListPtr, templateType);
             if (hirableList == null) return result;
 
-            var listType = hirableList.GetType();
             var countProp = listType.GetProperty("Count");
             var indexer = listType.GetMethod("get_Item");
 
@@ -793,6 +787,29 @@ public static class Roster
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Get a typed IL2CPP list from a pointer. Works around GameObj.ToManaged() failing for generic types.
+    /// </summary>
+    private static (object list, Type listType) GetTypedList(IntPtr listPtr, Type elementType)
+    {
+        if (listPtr == IntPtr.Zero || elementType == null) return (null, null);
+
+        try
+        {
+            var listGenericType = typeof(Il2CppSystem.Collections.Generic.List<>);
+            var listTyped = listGenericType.MakeGenericType(elementType);
+            var ptrCtor = listTyped.GetConstructor(new[] { typeof(IntPtr) });
+            if (ptrCtor == null) return (null, null);
+
+            var list = ptrCtor.Invoke(new object[] { listPtr });
+            return (list, listTyped);
+        }
+        catch
+        {
+            return (null, null);
         }
     }
 }

@@ -76,15 +76,82 @@ public class GameType
                 break;
         }
 
+        // Fallback: if no namespace was provided and we didn't find it,
+        // search managed types by short name to discover the full namespace
+        if (ptr == IntPtr.Zero && string.IsNullOrEmpty(ns))
+        {
+            ptr = TryResolveByShortName(typeName);
+        }
+
         var result = ptr != IntPtr.Zero ? FromPointer(ptr) : Invalid;
         if (result.IsValid)
             result = new GameType(ptr, fullTypeName); // ensure we store the requested name
 
-        _nameCache[cacheKey] = result;
+        // Only cache valid results - invalid lookups may succeed later
+        // (e.g., short name lookups before templates are loaded)
         if (result.IsValid)
+        {
+            _nameCache[cacheKey] = result;
             _ptrCache[ptr] = result;
+        }
 
         return result;
+    }
+
+    /// <summary>
+    /// Search for a type by short name (no namespace) by scanning managed assemblies.
+    /// Returns the IL2CPP class pointer if found.
+    /// </summary>
+    private static IntPtr TryResolveByShortName(string shortName)
+    {
+        try
+        {
+            // Search Assembly-CSharp managed proxy for the type
+            var gameAssembly = GameState.GameAssembly;
+            if (gameAssembly == null)
+            {
+                ModError.WarnInternal("GameType.TryResolveByShortName",
+                    $"GameAssembly is null for '{shortName}'");
+                return IntPtr.Zero;
+            }
+
+            // Don't filter by IsAbstract - template base classes like WeaponTemplate are abstract
+            // but we still need to resolve them for FindObjectsOfTypeAll queries
+            var managedType = gameAssembly.GetTypes()
+                .FirstOrDefault(t => t.Name == shortName);
+
+            if (managedType == null)
+            {
+                ModError.WarnInternal("GameType.TryResolveByShortName",
+                    $"No type named '{shortName}' in {gameAssembly.GetName().Name}");
+                return IntPtr.Zero;
+            }
+
+            // Extract namespace from the managed type and resolve via IL2CPP
+            // The managed proxy has "Il2Cpp" prefix we need to strip for IL2CPP lookup
+            var fullName = managedType.FullName ?? "";
+            var originalFullName = fullName;
+            if (fullName.StartsWith("Il2Cpp"))
+                fullName = fullName.Substring(6);
+
+            var dotIdx = fullName.LastIndexOf('.');
+            var realNs = dotIdx > 0 ? fullName[..dotIdx] : "";
+            var realName = dotIdx > 0 ? fullName[(dotIdx + 1)..] : fullName;
+
+            var ptr = TryResolveClass("Assembly-CSharp", realNs, realName);
+            if (ptr == IntPtr.Zero)
+            {
+                ModError.WarnInternal("GameType.TryResolveByShortName",
+                    $"IL2CPP resolve failed: '{shortName}' -> '{originalFullName}' -> ns='{realNs}' name='{realName}'");
+            }
+            return ptr;
+        }
+        catch (Exception ex)
+        {
+            ModError.WarnInternal("GameType.TryResolveByShortName",
+                $"Exception for '{shortName}': {ex.Message}");
+            return IntPtr.Zero;
+        }
     }
 
     /// <summary>
@@ -217,13 +284,15 @@ public class GameType
 
     /// <summary>
     /// Check if a type is a valid IL2CPP proxy type (inherits from Il2CppObjectBase).
+    /// Abstract types are allowed - they're still valid for type queries like FindObjectsOfTypeAll.
     /// </summary>
     private static bool IsValidIl2CppProxy(Type type)
     {
-        if (type == null || type.IsAbstract)
+        if (type == null)
             return false;
 
         // Must inherit from Il2CppObjectBase to be an actual IL2CPP proxy
+        // Abstract types are valid - we need them for type queries
         return typeof(Il2CppObjectBase).IsAssignableFrom(type);
     }
 

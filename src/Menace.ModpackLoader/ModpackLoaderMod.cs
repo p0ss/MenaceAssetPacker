@@ -56,6 +56,9 @@ public partial class ModpackLoaderMod : MelonMod
         // Controlled via ModSettings - starts automatically if enabled
         GameMcpServer.Initialize(LoggerInstance);
 
+        // Initialize menu injection for mod settings UI
+        MenuInjector.Initialize();
+
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
 
@@ -91,6 +94,7 @@ public partial class ModpackLoaderMod : MelonMod
         GameState.NotifySceneLoaded(sceneName);
         GameQuery.ClearCache();
         DllLoader.NotifySceneLoaded(buildIndex, sceneName);
+        MenuInjector.OnSceneLoaded(sceneName);
 
         // Retry template patches on every scene until all types are found.
         // Some builds (e.g. EA) load templates in later scenes, not the title screen.
@@ -111,6 +115,7 @@ public partial class ModpackLoaderMod : MelonMod
     {
         GameState.ProcessUpdate();
         DevConsole.Update();
+        MenuInjector.Update();
         DllLoader.NotifyUpdate();
     }
 
@@ -118,6 +123,7 @@ public partial class ModpackLoaderMod : MelonMod
     {
         DevConsole.Draw();
         ErrorNotification.Draw();
+        MenuInjector.Draw();
         DllLoader.NotifyOnGUI();
     }
 
