@@ -69,12 +69,18 @@ public partial class ModpackLoaderMod : MelonMod
         BootSkip.Initialize(HarmonyInstance);
 
         // Initialize Lua scripting engine
-        LuaScriptEngine.Instance.Initialize(LoggerInstance);
-        GameState.SceneLoaded += LuaScriptEngine.Instance.OnSceneLoaded;
-        GameState.TacticalReady += LuaScriptEngine.Instance.OnTacticalReady;
-
-        // Load Lua scripts from modpacks
-        LoadLuaScripts();
+        try
+        {
+            LuaScriptEngine.Instance.Initialize(LoggerInstance);
+            GameState.SceneLoaded += LuaScriptEngine.Instance.OnSceneLoaded;
+            GameState.TacticalReady += LuaScriptEngine.Instance.OnTacticalReady;
+            LoadLuaScripts();
+        }
+        catch (Exception ex)
+        {
+            LoggerInstance.Error($"[LuaEngine] Failed to initialize: {ex.GetType().Name}: {ex.Message}");
+            LoggerInstance.Error($"[LuaEngine] Stack: {ex.StackTrace}");
+        }
 
         // Emit startup banner to Player.log for game dev triage
         PlayerLog("========================================");

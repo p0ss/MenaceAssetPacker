@@ -104,6 +104,7 @@ public static class BundleLoader
     /// </summary>
     public static void RegisterAsset(string name, UnityEngine.Object asset, string typeName, string modpackName = "Runtime")
     {
+        SdkLogger.Msg($"  [BundleLoader] RegisterAsset: '{name}' type={typeName} asset={asset?.name ?? "null"} from={modpackName}");
         RegisterAssetInternal(name, asset, typeName, modpackName);
     }
 
@@ -183,6 +184,17 @@ public static class BundleLoader
             if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 results.Add(kvp.Value);
         }
+
+        // Debug logging for GameObject lookups
+        if (typeName.Equals("GameObject", StringComparison.OrdinalIgnoreCase))
+        {
+            SdkLogger.Msg($"    [BundleLoader] GetAssetsByType(GameObject): found {results.Count} assets");
+            foreach (var asset in results)
+            {
+                SdkLogger.Msg($"      - {asset?.name ?? "null"}");
+            }
+        }
+
         return results;
     }
 

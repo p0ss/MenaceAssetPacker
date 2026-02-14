@@ -233,25 +233,41 @@ public partial class ModpackLoaderMod
             // Check BundleLoader for custom assets (GLB models, audio, etc.)
             // These are runtime-loaded and won't be found by FindObjectsOfTypeAll
             // Try multiple type name variants to handle IL2CPP naming differences
-            var il2cppTypeName = Il2CppType.From(elementType).Name;
-            var simpleTypeName = elementType.Name;
-            var typeNamesToTry = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { il2cppTypeName, simpleTypeName };
-
-            var addedCount = 0;
-            foreach (var typeName in typeNamesToTry)
+            try
             {
-                var bundleAssets = BundleLoader.GetAssetsByType(typeName);
-                foreach (var asset in bundleAssets)
+                var simpleTypeName = elementType.Name;
+                string il2cppTypeName;
+                try
                 {
-                    if (asset != null && !string.IsNullOrEmpty(asset.name) && !lookup.ContainsKey(asset.name))
+                    il2cppTypeName = Il2CppType.From(elementType)?.Name ?? simpleTypeName;
+                }
+                catch
+                {
+                    il2cppTypeName = simpleTypeName;
+                }
+
+                var typeNamesToTry = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { il2cppTypeName, simpleTypeName };
+
+                var addedCount = 0;
+                foreach (var typeName in typeNamesToTry)
+                {
+                    var bundleAssets = BundleLoader.GetAssetsByType(typeName);
+                    foreach (var asset in bundleAssets)
                     {
-                        lookup[asset.name] = asset;
-                        addedCount++;
+                        if (asset != null && !string.IsNullOrEmpty(asset.name) && !lookup.ContainsKey(asset.name))
+                        {
+                            lookup[asset.name] = asset;
+                            addedCount++;
+                        }
                     }
                 }
+                if (addedCount > 0)
+                    SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) from BundleLoader to lookup");
             }
-            if (addedCount > 0)
-                SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) from BundleLoader to lookup");
+            catch (Exception ex)
+            {
+                SdkLogger.Warning($"    BundleLoader lookup failed for {elementType.Name}: {ex.Message}");
+            }
 
             // Force-load templates via DataTemplateLoader before FindObjectsOfTypeAll
             // This ensures referenced templates are in memory

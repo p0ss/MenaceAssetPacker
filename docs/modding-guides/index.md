@@ -20,7 +20,8 @@ MyMod-modpack/
   modpack.json      <- Manifest describing your mod
   patches/          <- Data changes (stats, balance)
   assets/           <- Replacement textures, models
-  src/              <- Source code (optional)
+  scripts/          <- Lua scripts (optional)
+  src/              <- C# source code (optional)
   dlls/             <- Compiled code (optional)
 ```
 
@@ -42,13 +43,17 @@ This guide is organized by complexity:
 - [3D Models](05-3d-models.md) - Replace meshes (requires external tools)
 - [Audio](06-audio.md) - Replace sound effects and music
 
-### Tier 3: SDK Coding
+### Tier 3: Scripting
+
+- [Lua Scripting](11-lua-scripting.md) - Simple scripting with Lua (no C# required)
+
+### Tier 4: SDK Coding
 
 - [SDK Getting Started](../coding-sdk/getting-started.md) - Canonical entry point for current plugin lifecycle and setup
 - [What Is the SDK?](../coding-sdk/what-is-sdk.md) - Runtime model, scope, and when to use SDK vs patches
 - [SDK API Reference](../coding-sdk/index.md) - Full API surface across all tiers
 
-### Tier 4: Advanced Code
+### Tier 5: Advanced Code
 
 - [Advanced Code & Security](10-advanced-code.md) - DLLs, Harmony, and security considerations
 
