@@ -23,8 +23,8 @@ public static class EarlyTemplateInjection
 {
     private static readonly MelonLogger.Instance _log = new("EarlyTemplateInjection");
 
-    // Settings
-    private const string SETTINGS_NAME = "Modpack Loader";
+    // Settings - must match GameMcpServer.SETTINGS_NAME where the setting is registered
+    private const string SETTINGS_NAME = "MCP Server";
     private const string SETTING_KEY_EARLY_INJECTION = "EarlyInjection";
     private static bool _useEarlyInjection = false;
     private static bool _initialized = false;
