@@ -39,13 +39,14 @@ public partial class ModpackLoaderMod : MelonMod
 
     public override void OnInitializeMelon()
     {
-        SdkLogger.Msg($"{ModkitVersion.LoaderFull} initialized");
-
-        // Initialize SDK subsystems
+        // Initialize SDK subsystems - order matters!
+        // SdkLogger must be initialized FIRST so all subsequent logs go to both MelonLoader and DevConsole
+        SdkLogger.Initialize(LoggerInstance);
         OffsetCache.Initialize();
         DevConsole.Initialize();
         DevConsole.ApplyInputPatches(HarmonyInstance);
-        SdkLogger.Initialize(LoggerInstance); // Set up dual logging to file and DevConsole
+
+        SdkLogger.Msg($"{ModkitVersion.LoaderFull} initialized");
         ModSettings.Initialize();
         InitializeRepl();
 
@@ -82,8 +83,8 @@ public partial class ModpackLoaderMod : MelonMod
         }
         catch (Exception ex)
         {
-            LoggerInstance.Error($"[LuaEngine] Failed to initialize: {ex.GetType().Name}: {ex.Message}");
-            LoggerInstance.Error($"[LuaEngine] Stack: {ex.StackTrace}");
+            SdkLogger.Error($"[LuaEngine] Failed to initialize: {ex.GetType().Name}: {ex.Message}");
+            SdkLogger.Error($"[LuaEngine] Stack: {ex.StackTrace}");
         }
 
         // Emit startup banner to Player.log for game dev triage

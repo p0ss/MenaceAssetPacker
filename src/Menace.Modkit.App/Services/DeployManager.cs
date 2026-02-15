@@ -341,7 +341,7 @@ public class DeployManager
     // ---------------------------------------------------------------
 
     /// <summary>
-    /// Merge all modpack patches and attempt to compile them into an asset bundle.
+    /// Merge all modpack patches and clones, then attempt to compile them into an asset bundle.
     /// Returns list of deployed files (relative to modsBasePath). Falls back silently
     /// if compilation fails — the runtime JSON loader will handle the patches instead.
     /// </summary>
@@ -353,8 +353,32 @@ public class DeployManager
         // Collect ordered patch sets from all modpacks
         var orderedPatchSets = new List<Dictionary<string, Dictionary<string, Dictionary<string, JsonElement>>>>();
 
+        // Collect clone definitions from all modpacks
+        var mergedClones = new MergedCloneSet();
+
         foreach (var modpack in modpacks)
         {
+            // Clones from clones/*.json files
+            var clonesDir = Path.Combine(modpack.Path, "clones");
+            if (Directory.Exists(clonesDir))
+            {
+                var modpackClones = new Dictionary<string, Dictionary<string, string>>();
+                foreach (var cloneFile in Directory.GetFiles(clonesDir, "*.json"))
+                {
+                    var templateType = Path.GetFileNameWithoutExtension(cloneFile);
+                    try
+                    {
+                        var json = File.ReadAllText(cloneFile);
+                        var cloneMap = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                        if (cloneMap != null && cloneMap.Count > 0)
+                            modpackClones[templateType] = cloneMap;
+                    }
+                    catch { }
+                }
+                if (modpackClones.Count > 0)
+                    mergedClones.AddFromModpack(modpackClones);
+            }
+
             // Patches from stats/*.json files
             var statsDir = Path.Combine(modpack.Path, "stats");
             if (Directory.Exists(statsDir))
@@ -362,7 +386,7 @@ public class DeployManager
                 var statsPatches = new Dictionary<string, Dictionary<string, Dictionary<string, JsonElement>>>();
                 foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
                 {
-                    var templateType = System.IO.Path.GetFileNameWithoutExtension(statsFile);
+                    var templateType = Path.GetFileNameWithoutExtension(statsFile);
                     try
                     {
                         var json = File.ReadAllText(statsFile);
@@ -407,11 +431,10 @@ public class DeployManager
             files.AddRange(glbFiles);
         }
 
-        if (orderedPatchSets.Count == 0)
-            return files;
-
         var merged = MergedPatchSet.MergePatchSets(orderedPatchSets);
-        if (merged.Patches.Count == 0)
+
+        // Only skip compilation if there are no patches AND no clones
+        if (merged.Patches.Count == 0 && !mergedClones.HasClones)
             return files;
 
         // Determine game data path and Unity version
@@ -425,24 +448,30 @@ public class DeployManager
 
         try
         {
+            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s)");
             var compiler = new BundleCompiler();
             var result = await compiler.CompileDataPatchBundleAsync(
-                merged, gameInstallPath, unityVersion, outputPath, ct);
+                merged, mergedClones, gameInstallPath, unityVersion, outputPath, ct);
 
             if (result.Success && result.OutputPath != null)
             {
+                ModkitLog.Info($"[DeployManager] Bundle compiled: {result.Message}");
                 // Track all files in the compiled directory
                 foreach (var file in Directory.GetFiles(compiledDir, "*", SearchOption.AllDirectories))
                 {
                     files.Add(Path.GetRelativePath(modsBasePath, file));
                 }
             }
-            // If compilation failed, the JSON patches in each modpack's modpack.json
-            // will be used by the runtime loader instead — no action needed.
+            else
+            {
+                ModkitLog.Warn($"[DeployManager] Bundle compilation failed: {result.Message}");
+                foreach (var warn in result.Warnings)
+                    ModkitLog.Warn($"[DeployManager]   - {warn}");
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Bundle compilation is best-effort; JSON fallback handles patches.
+            ModkitLog.Error($"[DeployManager] Bundle compilation exception: {ex.Message}");
         }
 
         return files;

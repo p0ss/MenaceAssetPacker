@@ -18,7 +18,7 @@ public static class ModkitVersion
     /// <summary>
     /// Version string for MelonLoader attribute (must be compile-time constant).
     /// </summary>
-    public const string MelonVersion = "22.0.2";
+    public const string MelonVersion = "22.0.3";
 
     /// <summary>
     /// Short display version (e.g., "v19").

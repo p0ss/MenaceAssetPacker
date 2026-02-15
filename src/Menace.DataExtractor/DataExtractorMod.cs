@@ -482,7 +482,7 @@ namespace Menace.DataExtractor
         /// </summary>
         private void InitDevConsoleReflection()
         {
-            if (_devConsoleType != null) return; // Already initialized
+            if (_devConsoleAvailable) return; // Already initialized successfully
 
             try
             {
@@ -503,8 +503,9 @@ namespace Menace.DataExtractor
                             _devConsoleLog = dcType.GetMethod("Log", BindingFlags.Public | BindingFlags.Static);
                             _devConsoleShowPanel = dcType.GetMethod("ShowPanel", BindingFlags.Public | BindingFlags.Static);
                             _devConsoleIsVisible = dcType.GetProperty("IsVisible", BindingFlags.Public | BindingFlags.Static);
-                            _devConsoleAvailable = _devConsoleLog != null && _devConsoleShowPanel != null;
-                            LoggerInstance.Msg($"[DevConsole] Log={_devConsoleLog != null}, ShowPanel={_devConsoleShowPanel != null}, IsVisible={_devConsoleIsVisible != null}");
+                            // Only require Log for availability - ShowPanel is optional
+                            _devConsoleAvailable = _devConsoleLog != null;
+                            LoggerInstance.Msg($"[DevConsole] Found! Log={_devConsoleLog != null}, ShowPanel={_devConsoleShowPanel != null}");
                             return;
                         }
                     }
@@ -526,18 +527,25 @@ namespace Menace.DataExtractor
         {
             LoggerInstance.Msg(message);
 
-            if (_devConsoleAvailable)
+            // Try DevConsole logging even if initialization previously failed - ModpackLoader might be loaded now
+            if (_devConsoleLog == null && !_devConsoleAvailable)
+            {
+                InitDevConsoleReflection();
+            }
+
+            // Log to DevConsole if available (don't require ShowPanel for logging to work)
+            if (_devConsoleLog != null)
             {
                 try
                 {
-                    // Open the Log panel if not already visible
+                    // Open the Log panel if method is available
                     _devConsoleShowPanel?.Invoke(null, new object[] { "Log" });
-                    _devConsoleLog?.Invoke(null, new object[] { $"[DataExtractor] {message}" });
+                    _devConsoleLog.Invoke(null, new object[] { $"[DataExtractor] {message}" });
                 }
                 catch (Exception ex)
                 {
                     LoggerInstance.Warning($"[DevConsole] Call failed: {ex.Message}");
-                    _devConsoleAvailable = false; // Don't keep trying
+                    _devConsoleLog = null; // Mark as broken so we stop trying
                 }
             }
         }

@@ -136,18 +136,54 @@ public static class EarlyTemplateInjection
             harmony.Patch(loadGameMethod, prefix: new HarmonyMethod(loadPrefix));
             _log.Msg($"Patched {loadGameMethod.Name}");
         }
+
+        // Hook BlackMarket.FillUp for blackmarket_refresh event
+        var blackMarketType = gameAssembly.GetType("Menace.Strategy.BlackMarket");
+        if (blackMarketType != null)
+        {
+            var fillUpMethod = blackMarketType.GetMethod("FillUp",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+            if (fillUpMethod != null)
+            {
+                var bmPrefix = typeof(EarlyTemplateInjection).GetMethod(nameof(BlackMarketFillUp_Prefix),
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                harmony.Patch(fillUpMethod, prefix: new HarmonyMethod(bmPrefix));
+                _log.Msg("Patched BlackMarket.FillUp");
+            }
+            else
+            {
+                _log.Warning("BlackMarket.FillUp method not found");
+            }
+        }
+        else
+        {
+            _log.Warning("BlackMarket type not found");
+        }
     }
 
     /// <summary>
     /// Prefix for CreateNewGame - injects templates before campaign initialization.
+    /// Fires campaign_start Lua event for modders to hook into.
     /// </summary>
     private static void CreateNewGame_Prefix()
     {
         InjectTemplatesNow("CreateNewGame");
+
+        // Fire Lua event so modders can inject into pools
+        try
+        {
+            LuaScriptEngine.Instance.OnCampaignStart();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"Error firing campaign_start Lua event: {ex.Message}");
+        }
     }
 
     /// <summary>
     /// Prefix for OnOperationFinished - ensures templates exist before black market refresh.
+    /// Fires operation_end Lua event for modders to hook into.
     /// </summary>
     private static void OnOperationFinished_Prefix()
     {
@@ -157,14 +193,53 @@ public static class EarlyTemplateInjection
         {
             InjectTemplatesNow("OnOperationFinished");
         }
+
+        // Always fire operation_end event for Lua scripts
+        try
+        {
+            LuaScriptEngine.Instance.OnOperationEnd();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"Error firing operation_end Lua event: {ex.Message}");
+        }
     }
 
     /// <summary>
     /// Prefix for LoadGame - injects templates before loading saved campaign.
+    /// Fires campaign_loaded Lua event for modders to hook into.
     /// </summary>
     private static void LoadGame_Prefix()
     {
         InjectTemplatesNow("LoadGame");
+
+        // Fire Lua event so modders can react to save load
+        try
+        {
+            LuaScriptEngine.Instance.OnCampaignLoaded();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"Error firing campaign_loaded Lua event: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Prefix for BlackMarket.FillUp - fires blackmarket_refresh event before restock.
+    /// Modders can use this to add items to the black market pool.
+    /// </summary>
+    private static void BlackMarketFillUp_Prefix()
+    {
+        _log.Msg("[BlackMarket.FillUp] Firing blackmarket_refresh Lua event");
+
+        try
+        {
+            LuaScriptEngine.Instance.OnBlackMarketRefresh();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"Error firing blackmarket_refresh Lua event: {ex.Message}");
+        }
     }
 
     /// <summary>

@@ -25,7 +25,6 @@ public static class GameMcpServer
     private static HttpListener _listener;
     private static Thread _serverThread;
     private static bool _running;
-    private static MelonLogger.Instance _log;
     private static bool _initialized;
 
     public const int PORT = 7655;
@@ -51,7 +50,7 @@ public static class GameMcpServer
     {
         if (_initialized) return;
         _initialized = true;
-        _log = logger;
+        // Logger parameter kept for API compatibility - we use SdkLogger for dual output
 
         // Register settings
         RegisterSettings();
@@ -66,7 +65,7 @@ public static class GameMcpServer
         }
         else
         {
-            _log.Msg("[GameMcp] Server disabled in settings (enable in DevConsole -> Settings -> MCP Server)");
+            SdkLogger.Msg("[GameMcp] Server disabled in settings (enable in DevConsole -> Settings -> MCP Server)");
         }
     }
 
@@ -150,7 +149,7 @@ public static class GameMcpServer
     /// </summary>
     public static void Start(MelonLogger.Instance logger)
     {
-        _log = logger;
+        // Logger parameter kept for API compatibility - we use SdkLogger for dual output
         Start();
     }
 
@@ -161,7 +160,7 @@ public static class GameMcpServer
     {
         if (_running)
         {
-            _log?.Warning("[GameMcp] Server already running");
+            SdkLogger.Warning("[GameMcp] Server already running");
             return;
         }
 
@@ -179,11 +178,11 @@ public static class GameMcpServer
             };
             _serverThread.Start();
 
-            _log?.Msg($"[GameMcp] Server started on {BASE_URL}");
+            SdkLogger.Msg($"[GameMcp] Server started on {BASE_URL}");
         }
         catch (Exception ex)
         {
-            _log?.Error($"[GameMcp] Failed to start server: {ex.Message}");
+            SdkLogger.Error($"[GameMcp] Failed to start server: {ex.Message}");
         }
     }
 
@@ -202,7 +201,7 @@ public static class GameMcpServer
         }
         catch { }
         _listener = null;
-        _log?.Msg("[GameMcp] Server stopped");
+        SdkLogger.Msg("[GameMcp] Server stopped");
     }
 
     private static void ServerLoop()
@@ -220,7 +219,7 @@ public static class GameMcpServer
             }
             catch (Exception ex)
             {
-                if (_log != null) _log.Warning($"[GameMcp] Error accepting request: {ex.Message}");
+                SdkLogger.Warning($"[GameMcp] Error accepting request: {ex.Message}");
             }
         }
     }
@@ -272,6 +271,8 @@ public static class GameMcpServer
                 "/click" => HandleClick(request),
                 // REPL for live code execution
                 "/repl" => HandleRepl(request),
+                // Console command execution
+                "/cmd" => HandleCmd(request),
                 _ => new { error = "Unknown endpoint", path }
             };
 
@@ -1479,6 +1480,73 @@ public static class GameMcpServer
                 success = false,
                 error = ex.Message,
                 stack = ex.StackTrace
+            };
+        }
+    }
+
+    // ==================== Console Command Execution ====================
+
+    private static object HandleCmd(HttpListenerRequest request)
+    {
+        // Get command from POST body or query parameter
+        string command = null;
+
+        if (request.HttpMethod == "POST" && request.HasEntityBody)
+        {
+            using var reader = new System.IO.StreamReader(request.InputStream, request.ContentEncoding);
+            var body = reader.ReadToEnd();
+
+            // Try to parse as JSON first
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("command", out var cmdElement))
+                {
+                    command = cmdElement.GetString();
+                }
+                else if (doc.RootElement.TryGetProperty("cmd", out var cmdElement2))
+                {
+                    command = cmdElement2.GetString();
+                }
+            }
+            catch
+            {
+                // Not JSON, treat as raw command
+                command = body;
+            }
+        }
+
+        // Fallback to query parameter
+        if (string.IsNullOrEmpty(command))
+        {
+            command = request.QueryString["cmd"] ?? request.QueryString["command"];
+        }
+
+        if (string.IsNullOrEmpty(command))
+        {
+            return new
+            {
+                error = "No command provided. Send POST with JSON { \"cmd\": \"...\" } or query param ?cmd=..."
+            };
+        }
+
+        try
+        {
+            var (success, result) = DevConsole.ExecuteCommandWithResult(command);
+            return new
+            {
+                success,
+                command,
+                result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                success = false,
+                command,
+                error = ex.Message
             };
         }
     }

@@ -6,7 +6,17 @@ using MelonLoader;
 
 namespace Menace.SDK;
 
-public enum ErrorSeverity { Info, Warning, Error, Fatal }
+/// <summary>
+/// Error severity levels. Used as flags for filtering in DevConsole.
+/// </summary>
+[Flags]
+public enum ErrorSeverity
+{
+    Info = 1,
+    Warning = 2,
+    Error = 4,
+    Fatal = 8
+}
 
 public class ModErrorEntry
 {
