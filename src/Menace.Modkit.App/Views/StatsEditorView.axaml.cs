@@ -689,7 +689,8 @@ public class StatsEditorView : UserControl
     var vanillaScrollViewer = new ScrollViewer
     {
       Background = new SolidColorBrush(Color.Parse("#252525")),
-      Padding = new Thickness(16)
+      Padding = new Thickness(16),
+      VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
     };
 
     var vanillaContent = new ContentControl();
@@ -749,7 +750,8 @@ public class StatsEditorView : UserControl
     var modifiedScrollViewer = new ScrollViewer
     {
       Background = new SolidColorBrush(Color.Parse("#252525")),
-      Padding = new Thickness(16)
+      Padding = new Thickness(16),
+      VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
     };
 
     var modifiedContent = new ContentControl();
@@ -1099,7 +1101,7 @@ public class StatsEditorView : UserControl
         };
       }
 
-      var panel = new StackPanel { Spacing = 12, Margin = new Thickness(0, 0, 0, 24) };
+      var panel = new StackPanel { Spacing = 12, Margin = new Thickness(0, 0, 0, 60) };
 
       string? currentGroup = null;
       StackPanel? groupPanel = null;
@@ -1296,9 +1298,12 @@ public class StatsEditorView : UserControl
         BorderThickness = new Thickness(1),
         Padding = new Thickness(8, 6),
         FontSize = 12,
-        Tag = name
+        Tag = name,
+        TextWrapping = TextWrapping.Wrap,
+        AcceptsReturn = true,
+        MaxHeight = 200  // Prevent excessively tall text boxes
       };
-      textBox.TextChanged += OnEditableTextBoxChanged;
+      textBox.LostFocus += OnEditableTextBoxLostFocus;  // Use LostFocus instead of TextChanged for stability
       fieldStack.Children.Add(textBox);
     }
     else
@@ -2699,6 +2704,14 @@ public class StatsEditorView : UserControl
   }
 
   private void OnEditableTextBoxChanged(object? sender, TextChangedEventArgs e)
+  {
+    if (sender is TextBox tb && tb.Tag is string fieldName && DataContext is StatsEditorViewModel vm)
+    {
+      vm.UpdateModifiedProperty(fieldName, tb.Text ?? "");
+    }
+  }
+
+  private void OnEditableTextBoxLostFocus(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
   {
     if (sender is TextBox tb && tb.Tag is string fieldName && DataContext is StatsEditorViewModel vm)
     {

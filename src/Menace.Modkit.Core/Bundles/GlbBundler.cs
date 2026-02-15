@@ -518,6 +518,173 @@ public class GlbBundler
         return await Task.Run(() => ConvertToBundleCore(glbPath, outputPath, unityVersion), ct);
     }
 
+    /// <summary>
+    /// Convert a GLB file to native Unity assets within an existing assets file.
+    /// Creates Mesh assets using MeshAssetCreator for proper native asset handling.
+    /// </summary>
+    /// <param name="glbPath">Path to the GLB file.</param>
+    /// <param name="am">The AssetsManager instance.</param>
+    /// <param name="afileInst">The assets file instance to add assets to.</param>
+    /// <param name="nextPathId">Reference to the next available PathID (will be incremented).</param>
+    /// <param name="unityVersion">Unity version string for the bundle.</param>
+    /// <returns>Result containing created assets and any warnings.</returns>
+    public static GlbNativeConvertResult ConvertToNativeAssets(
+        string glbPath,
+        AssetsTools.NET.Extra.AssetsManager am,
+        AssetsTools.NET.Extra.AssetsFileInstance afileInst,
+        ref long nextPathId,
+        string unityVersion)
+    {
+        var result = new GlbNativeConvertResult();
+
+        try
+        {
+            // Parse GLB
+            var parseResult = ParseGlb(glbPath);
+            if (!parseResult.Success)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Failed to parse GLB: {parseResult.Error}";
+                return result;
+            }
+
+            result.SourceName = parseResult.SourceName;
+
+            // Create Mesh assets for each extracted mesh
+            foreach (var extractedMesh in parseResult.Meshes)
+            {
+                var meshResult = MeshAssetCreator.CreateMesh(
+                    am, afileInst, extractedMesh, nextPathId++);
+
+                if (meshResult.Success)
+                {
+                    result.CreatedMeshes.Add(new GlbNativeConvertResult.MeshInfo
+                    {
+                        Name = extractedMesh.Name,
+                        PathId = meshResult.PathId,
+                        VertexCount = meshResult.VertexCount,
+                        IndexCount = meshResult.IndexCount,
+                        SubMeshCount = meshResult.SubMeshCount,
+                        VertexBufferSize = meshResult.VertexBufferSize,
+                        IndexBufferSize = meshResult.IndexBufferSize,
+                        Stride = meshResult.Stride,
+                        Uses16BitIndices = meshResult.Uses16BitIndices
+                    });
+                }
+                else
+                {
+                    result.Warnings.Add($"Failed to create mesh '{extractedMesh.Name}': {meshResult.ErrorMessage}");
+                }
+            }
+
+            // TODO: Create Texture2D assets from GLB materials
+            // This would use TextureAssetCreator for each material's textures
+            foreach (var material in parseResult.Materials)
+            {
+                // For now, just track material info in result
+                result.ExtractedMaterials.Add(new GlbNativeConvertResult.MaterialInfo
+                {
+                    Name = material.Name,
+                    BaseColorTexture = material.BaseColorTextureName,
+                    NormalTexture = material.NormalTextureName,
+                    MetallicRoughnessTexture = material.MetallicRoughnessTextureName,
+                    HasTextureData = material.BaseColorTextureData != null
+                });
+            }
+
+            // Create prefab structures for each mesh
+            // This creates GameObject + Transform + MeshFilter + MeshRenderer
+            if (result.CreatedMeshes.Count > 0)
+            {
+                var afile = afileInst.file;
+
+                // Find templates for prefab components
+                var goTemplate = NativePrefabCreator.FindGameObjectTemplate(afile);
+                var trTemplate = NativePrefabCreator.FindTransformTemplate(afile);
+                var mfTemplate = NativePrefabCreator.FindMeshFilterTemplate(afile);
+                var mrTemplate = NativePrefabCreator.FindMeshRendererTemplate(afile);
+
+                if (goTemplate != null && trTemplate != null && mfTemplate != null && mrTemplate != null)
+                {
+                    foreach (var meshInfo in result.CreatedMeshes)
+                    {
+                        // Use empty material list for now (renderer will use default)
+                        var materialPathIds = new List<long>();
+
+                        var prefabResult = NativePrefabCreator.CreateMeshPrefab(
+                            afile,
+                            meshInfo.Name,
+                            meshInfo.PathId,
+                            materialPathIds,
+                            ref nextPathId,
+                            goTemplate,
+                            trTemplate,
+                            mfTemplate,
+                            mrTemplate);
+
+                        if (prefabResult.Success)
+                        {
+                            result.CreatedPrefabs.Add(new GlbNativeConvertResult.PrefabInfo
+                            {
+                                Name = meshInfo.Name,
+                                GameObjectPathId = prefabResult.GameObjectPathId,
+                                TransformPathId = prefabResult.TransformPathId,
+                                MeshFilterPathId = prefabResult.MeshFilterPathId,
+                                MeshRendererPathId = prefabResult.MeshRendererPathId,
+                                ResourcePath = prefabResult.ResourcePath
+                            });
+                        }
+                        else
+                        {
+                            result.Warnings.Add($"Failed to create prefab for mesh '{meshInfo.Name}': {prefabResult.ErrorMessage}");
+                        }
+                    }
+                }
+                else
+                {
+                    result.Warnings.Add("Could not find templates for prefab creation");
+                }
+            }
+
+            // Track skeleton info
+            if (parseResult.Skeletons.Count > 0)
+            {
+                var skeleton = parseResult.Skeletons[0];
+                result.SkeletonInfo = new GlbNativeConvertResult.SkeletonData
+                {
+                    Name = skeleton.Name,
+                    BoneCount = skeleton.Bones.Count,
+                    BoneNames = skeleton.Bones.Select(b => b.Name).ToList()
+                };
+            }
+
+            // Track animation info
+            foreach (var anim in parseResult.Animations)
+            {
+                result.AnimationInfo.Add(new GlbNativeConvertResult.AnimationData
+                {
+                    Name = anim.Name,
+                    Duration = anim.Duration,
+                    TrackCount = anim.Tracks.Count
+                });
+            }
+
+            result.Success = result.CreatedMeshes.Count > 0 ||
+                             result.Warnings.Count < parseResult.Meshes.Count;
+            result.Message = $"Created {result.CreatedMeshes.Count} mesh(es), " +
+                            $"{result.CreatedPrefabs.Count} prefab(s), " +
+                            $"extracted {result.ExtractedMaterials.Count} material(s), " +
+                            $"{result.AnimationInfo.Count} animation(s)";
+        }
+        catch (Exception ex)
+        {
+            result.Success = false;
+            result.ErrorMessage = $"GLB native conversion failed: {ex.Message}";
+        }
+
+        return result;
+    }
+
     private static GlbConvertResult ConvertToBundleCore(string glbPath, string outputPath, string unityVersion)
     {
         var result = new GlbConvertResult();
@@ -670,4 +837,87 @@ public class GlbParseResult
     public List<GlbBundler.ExtractedMaterial> Materials { get; set; } = new();
     public List<GlbBundler.ExtractedSkeleton> Skeletons { get; set; } = new();
     public List<GlbBundler.ExtractedAnimation> Animations { get; set; } = new();
+}
+
+/// <summary>
+/// Result of converting GLB to native Unity assets.
+/// </summary>
+public class GlbNativeConvertResult
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string SourceName { get; set; } = string.Empty;
+    public List<string> Warnings { get; set; } = new();
+
+    /// <summary>
+    /// Information about created Mesh assets.
+    /// </summary>
+    public List<MeshInfo> CreatedMeshes { get; set; } = new();
+
+    /// <summary>
+    /// Information about extracted materials (textures not yet converted to native assets).
+    /// </summary>
+    public List<MaterialInfo> ExtractedMaterials { get; set; } = new();
+
+    /// <summary>
+    /// Skeleton/armature information if present.
+    /// </summary>
+    public SkeletonData? SkeletonInfo { get; set; }
+
+    /// <summary>
+    /// Animation information.
+    /// </summary>
+    public List<AnimationData> AnimationInfo { get; set; } = new();
+
+    /// <summary>
+    /// Information about created Prefab structures.
+    /// </summary>
+    public List<PrefabInfo> CreatedPrefabs { get; set; } = new();
+
+    public class MeshInfo
+    {
+        public string Name { get; set; } = string.Empty;
+        public long PathId { get; set; }
+        public int VertexCount { get; set; }
+        public int IndexCount { get; set; }
+        public int SubMeshCount { get; set; }
+        public int VertexBufferSize { get; set; }
+        public int IndexBufferSize { get; set; }
+        public int Stride { get; set; }
+        public bool Uses16BitIndices { get; set; }
+    }
+
+    public class MaterialInfo
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? BaseColorTexture { get; set; }
+        public string? NormalTexture { get; set; }
+        public string? MetallicRoughnessTexture { get; set; }
+        public bool HasTextureData { get; set; }
+    }
+
+    public class SkeletonData
+    {
+        public string Name { get; set; } = string.Empty;
+        public int BoneCount { get; set; }
+        public List<string> BoneNames { get; set; } = new();
+    }
+
+    public class AnimationData
+    {
+        public string Name { get; set; } = string.Empty;
+        public float Duration { get; set; }
+        public int TrackCount { get; set; }
+    }
+
+    public class PrefabInfo
+    {
+        public string Name { get; set; } = string.Empty;
+        public long GameObjectPathId { get; set; }
+        public long TransformPathId { get; set; }
+        public long MeshFilterPathId { get; set; }
+        public long MeshRendererPathId { get; set; }
+        public string ResourcePath { get; set; } = string.Empty;
+    }
 }

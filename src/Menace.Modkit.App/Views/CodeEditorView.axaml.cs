@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -15,8 +16,8 @@ using TextMateSharp.Grammars;
 namespace Menace.Modkit.App.Views;
 
 /// <summary>
-/// Code editor view: browse vanilla decompiled .cs (read-only) and per-modpack source files.
-/// Left panel: tree views. Right panel: code viewer/editor. Bottom panel: build output.
+/// Code editor view: Lua script editor with API reference.
+/// Left panel: Scripts tree + Lua API reference. Right panel: code editor.
 /// </summary>
 public class CodeEditorView : UserControl
 {
@@ -24,6 +25,7 @@ public class CodeEditorView : UserControl
     private CodeEditorViewModel? _boundViewModel;
     private bool _isUpdatingText;
     private bool _textMateReady;
+    private TextMate.Installation? _textMateInstallation;
 
     public CodeEditorView()
     {
@@ -49,6 +51,7 @@ public class CodeEditorView : UserControl
         if (_boundViewModel != null)
         {
             _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _boundViewModel.InsertTextRequested -= OnInsertTextRequested;
             _boundViewModel = null;
         }
 
@@ -60,6 +63,7 @@ public class CodeEditorView : UserControl
         if (_boundViewModel != null)
         {
             _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _boundViewModel.InsertTextRequested -= OnInsertTextRequested;
             _boundViewModel = null;
         }
 
@@ -69,6 +73,7 @@ public class CodeEditorView : UserControl
         {
             _boundViewModel = vm;
             _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _boundViewModel.InsertTextRequested += OnInsertTextRequested;
 
             if (_textEditor != null)
             {
@@ -78,6 +83,25 @@ public class CodeEditorView : UserControl
                 _isUpdatingText = false;
             }
         }
+    }
+
+    private void OnInsertTextRequested(string text)
+    {
+        if (_textEditor == null || _boundViewModel == null)
+            return;
+
+        // If no file is open or file is read-only, don't insert
+        if (_boundViewModel.IsReadOnly)
+        {
+            _boundViewModel.BuildStatus = "Select a script file first";
+            return;
+        }
+
+        // Insert text at cursor position
+        var offset = _textEditor.CaretOffset;
+        _textEditor.Document.Insert(offset, text);
+        _textEditor.CaretOffset = offset + text.Length;
+        _textEditor.Focus();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -114,8 +138,9 @@ public class CodeEditorView : UserControl
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
                 var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
-                var textMateInstallation = _textEditor.InstallTextMate(registryOptions);
-                textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("csharp"));
+                _textMateInstallation = _textEditor.InstallTextMate(registryOptions);
+                // Default to Lua syntax highlighting
+                _textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("lua"));
             });
             _textMateReady = true;
         }
@@ -350,58 +375,72 @@ public class CodeEditorView : UserControl
 
     private Control BuildTreesContainer()
     {
-        // Sub-grid for the two trees
+        // Sub-grid for Scripts and Lua API Reference
         var grid = new Grid
         {
             RowDefinitions = new RowDefinitions("Auto,150,Auto,Auto,Auto,*")
         };
 
-        // Row 0: Mod Source label
-        var modSourceLabel = new TextBlock
+        // Row 0: Scripts label
+        var scriptsLabel = new TextBlock
         {
-            Text = "Mod Sources",
+            Text = "Scripts",
             FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
             Margin = new Thickness(8, 8, 8, 4)
         };
-        grid.Children.Add(modSourceLabel);
-        Grid.SetRow(modSourceLabel, 0);
+        grid.Children.Add(scriptsLabel);
+        Grid.SetRow(scriptsLabel, 0);
 
-        // Row 1: Mod Source Tree (fixed height)
-        var modTree = new TreeView
+        // Row 1: Scripts Tree (fixed height)
+        var scriptsTree = new TreeView
         {
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
             Margin = new Thickness(8),
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
-        modTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("ModSourceTree"));
-        modTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedFile") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        modTree.ItemTemplate = CreateCodeTreeTemplate();
-        modTree.SelectionChanged += OnTreeSelectionChanged;
-        modTree.ContainerPrepared += OnTreeContainerPrepared;
+        scriptsTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("ScriptsTree"));
+        scriptsTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedFile") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        scriptsTree.ItemTemplate = CreateCodeTreeTemplate();
+        scriptsTree.SelectionChanged += OnTreeSelectionChanged;
+        scriptsTree.ContainerPrepared += OnTreeContainerPrepared;
 
-        var modTreeScroll = new ScrollViewer { Content = modTree };
-        grid.Children.Add(modTreeScroll);
-        Grid.SetRow(modTreeScroll, 1);
+        var scriptsTreeScroll = new ScrollViewer { Content = scriptsTree };
+        grid.Children.Add(scriptsTreeScroll);
+        Grid.SetRow(scriptsTreeScroll, 1);
 
-        // Row 2: Add/Remove file buttons
+        // Row 2: Template dropdown + Add/Remove file buttons
         var fileButtonRow = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
             Margin = new Thickness(8, 4, 8, 8)
         };
 
+        var templateCombo = new ComboBox
+        {
+            MinWidth = 120,
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        templateCombo.Classes.Add("input");
+        templateCombo.Bind(ComboBox.ItemsSourceProperty, new Avalonia.Data.Binding("ScriptTemplates"));
+        templateCombo.Bind(ComboBox.SelectedItemProperty, new Avalonia.Data.Binding("SelectedTemplate") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        templateCombo.PlaceholderText = "Template...";
+        fileButtonRow.Children.Add(templateCombo);
+        Grid.SetColumn(templateCombo, 0);
+
         var addButton = new Button
         {
-            Content = "+ Add File",
-            FontSize = 11
+            Content = "+ Add",
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 4, 0)
         };
         addButton.Classes.Add("primary");
         addButton.Click += OnAddFileClick;
         fileButtonRow.Children.Add(addButton);
-        Grid.SetColumn(addButton, 0);
+        Grid.SetColumn(addButton, 1);
 
         var removeButton = new Button
         {
@@ -416,91 +455,149 @@ public class CodeEditorView : UserControl
         });
         removeButton.Click += OnRemoveFileClick;
         fileButtonRow.Children.Add(removeButton);
-        Grid.SetColumn(removeButton, 1);
+        Grid.SetColumn(removeButton, 2);
 
         grid.Children.Add(fileButtonRow);
         Grid.SetRow(fileButtonRow, 2);
 
         // Row 3: Separator
-        var sep2 = new Border
+        var sep = new Border
         {
             Height = 1,
             Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
             Margin = new Thickness(0, 4)
         };
-        grid.Children.Add(sep2);
-        Grid.SetRow(sep2, 3);
+        grid.Children.Add(sep);
+        Grid.SetRow(sep, 3);
 
-        // Row 4: Vanilla Code label (hidden when no code available)
-        var vanillaLabel = new TextBlock
+        // Row 4: Lua API Reference label
+        var apiLabel = new TextBlock
         {
-            Text = "Vanilla Code (read-only)",
+            Text = "Lua API Reference",
             FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
-            Opacity = 0.7,
             Margin = new Thickness(8, 8, 8, 4)
         };
-        vanillaLabel.Bind(TextBlock.IsVisibleProperty,
-            new Avalonia.Data.Binding("ShowVanillaCodeWarning") { Converter = BoolInverseConverter.Instance });
-        grid.Children.Add(vanillaLabel);
-        Grid.SetRow(vanillaLabel, 4);
+        grid.Children.Add(apiLabel);
+        Grid.SetRow(apiLabel, 4);
 
-        // Row 5: Vanilla Code Tree (takes remaining space, hidden when no code available)
-        var vanillaTree = new TreeView
+        // Row 5: Lua API Tree (takes remaining space)
+        var apiTree = new TreeView
         {
             Background = Brushes.Transparent,
             Foreground = Brushes.White,
             Margin = new Thickness(8),
             ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Avalonia.Controls.Panel?>(() => new StackPanel())
         };
-        vanillaTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("VanillaCodeTree"));
-        vanillaTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedFile") { Mode = Avalonia.Data.BindingMode.TwoWay });
-        vanillaTree.ItemTemplate = CreateCodeTreeTemplate();
-        vanillaTree.SelectionChanged += OnTreeSelectionChanged;
-        vanillaTree.ContainerPrepared += OnTreeContainerPrepared;
+        apiTree.Bind(TreeView.ItemsSourceProperty, new Avalonia.Data.Binding("LuaApiTree"));
+        apiTree.Bind(TreeView.SelectedItemProperty, new Avalonia.Data.Binding("SelectedApiItem") { Mode = Avalonia.Data.BindingMode.TwoWay });
+        apiTree.ItemTemplate = CreateLuaApiTreeTemplate();
+        apiTree.DoubleTapped += OnApiTreeDoubleTapped;
+        apiTree.ContainerPrepared += OnApiTreeContainerPrepared;
 
-        var vanillaTreeScroll = new ScrollViewer { Content = vanillaTree };
-        vanillaTreeScroll.Bind(ScrollViewer.IsVisibleProperty,
-            new Avalonia.Data.Binding("ShowVanillaCodeWarning") { Converter = BoolInverseConverter.Instance });
-        grid.Children.Add(vanillaTreeScroll);
-        Grid.SetRow(vanillaTreeScroll, 5);
-
-        // Row 5 (overlay): Message when no vanilla code available
-        var noCodePanel = new Border
-        {
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            Padding = new Thickness(16),
-            Margin = new Thickness(8)
-        };
-        var noCodeStack = new StackPanel { Spacing = 12 };
-        noCodeStack.Children.Add(new TextBlock
-        {
-            Text = "No Decompiled Code Found",
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Brushes.White,
-            TextWrapping = TextWrapping.Wrap
-        });
-        noCodeStack.Children.Add(new TextBlock
-        {
-            Text = "To browse vanilla game code, run asset extraction first:\n\n" +
-                   "1. Go to Tool Settings (under Modding Tools)\n" +
-                   "2. Click 'Force Extract Assets'\n" +
-                   "3. Wait for AssetRipper to complete\n\n" +
-                   "This extracts decompiled C# source files from the game.\n\n" +
-                   "You can still create and edit modpack source files in the panel above.",
-            FontSize = 12,
-            Foreground = Brushes.White,
-            Opacity = 0.8,
-            TextWrapping = TextWrapping.Wrap
-        });
-        noCodePanel.Child = noCodeStack;
-        noCodePanel.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("ShowVanillaCodeWarning"));
-        grid.Children.Add(noCodePanel);
-        Grid.SetRow(noCodePanel, 5);
+        var apiTreeScroll = new ScrollViewer { Content = apiTree };
+        grid.Children.Add(apiTreeScroll);
+        Grid.SetRow(apiTreeScroll, 5);
 
         return grid;
+    }
+
+    private Avalonia.Controls.Templates.ITreeDataTemplate CreateLuaApiTreeTemplate()
+    {
+        return new Avalonia.Controls.Templates.FuncTreeDataTemplate<LuaApiItem>(
+            (item, _) =>
+            {
+                var panel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6
+                };
+
+                // Icon/type indicator
+                var typeText = item.ItemType switch
+                {
+                    LuaApiItemType.Category => "",
+                    LuaApiItemType.Function => "fn",
+                    LuaApiItemType.Event => "ev",
+                    _ => ""
+                };
+
+                if (!string.IsNullOrEmpty(typeText))
+                {
+                    var typeBadge = new Border
+                    {
+                        Background = item.ItemType == LuaApiItemType.Function
+                            ? new SolidColorBrush(Color.Parse("#3B7DD8"))
+                            : new SolidColorBrush(Color.Parse("#8B5CF6")),
+                        CornerRadius = new CornerRadius(3),
+                        Padding = new Thickness(4, 1),
+                        Child = new TextBlock
+                        {
+                            Text = typeText,
+                            FontSize = 9,
+                            Foreground = Brushes.White,
+                            FontFamily = new FontFamily("monospace")
+                        }
+                    };
+                    panel.Children.Add(typeBadge);
+                }
+
+                var nameBlock = new TextBlock
+                {
+                    FontSize = 12,
+                    Foreground = item.IsCategory
+                        ? Brushes.White
+                        : new SolidColorBrush(Color.Parse("#9CDCFE")),
+                    FontWeight = item.IsCategory ? FontWeight.SemiBold : FontWeight.Normal,
+                    FontFamily = item.IsCategory ? FontFamily.Default : new FontFamily("monospace")
+                };
+                nameBlock.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("Name"));
+                panel.Children.Add(nameBlock);
+
+                // Add description for non-categories
+                if (!item.IsCategory && !string.IsNullOrEmpty(item.Description))
+                {
+                    var descBlock = new TextBlock
+                    {
+                        Text = " - " + item.Description,
+                        FontSize = 11,
+                        Foreground = new SolidColorBrush(Color.Parse("#666666")),
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 200
+                    };
+                    panel.Children.Add(descBlock);
+                }
+
+                return panel;
+            },
+            item => item.Children);
+    }
+
+    private void OnApiTreeDoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (DataContext is not CodeEditorViewModel vm)
+            return;
+
+        // Get the tapped item from the event source - walk up the visual tree to find the TreeViewItem
+        var source = e.Source as Control;
+        while (source != null && source is not TreeViewItem)
+        {
+            source = source.Parent as Control;
+        }
+
+        if (source is TreeViewItem tvi && tvi.DataContext is LuaApiItem item)
+        {
+            vm.InsertApiItem(item);
+        }
+    }
+
+    private void OnApiTreeContainerPrepared(object? sender, ContainerPreparedEventArgs e)
+    {
+        if (e.Container is TreeViewItem tvi && tvi.DataContext is LuaApiItem item)
+        {
+            tvi.IsExpanded = item.IsExpanded;
+        }
     }
 
     private Avalonia.Controls.Templates.ITreeDataTemplate CreateCodeTreeTemplate()
@@ -622,15 +719,15 @@ public class CodeEditorView : UserControl
         saveButton.Click += OnSaveClick;
         headerRow.Children.Add(saveButton);
 
-        // Build button placeholder (Phase 4 will wire compilation)
-        var buildButton = new Button
+        // Docs button - opens Lua scripting documentation
+        var docsButton = new Button
         {
-            Content = "Build",
+            Content = "Lua Docs",
             FontSize = 11
         };
-        buildButton.Classes.Add("secondary");
-        buildButton.Click += OnBuildClick;
-        headerRow.Children.Add(buildButton);
+        docsButton.Classes.Add("secondary");
+        docsButton.Click += OnDocsClick;
+        headerRow.Children.Add(docsButton);
 
         header.Child = headerRow;
         DockPanel.SetDock(header, Dock.Top);
@@ -671,11 +768,8 @@ public class CodeEditorView : UserControl
             Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
             BorderBrush = new SolidColorBrush(Color.Parse("#2D2D2D")),
             BorderThickness = new Thickness(0, 1, 0, 0),
-            MaxHeight = 150,
-            Padding = new Thickness(12, 8)
+            Padding = new Thickness(12, 6)
         };
-
-        var stack = new StackPanel();
 
         var statusRow = new StackPanel
         {
@@ -683,15 +777,14 @@ public class CodeEditorView : UserControl
             Spacing = 12
         };
 
-        var outputLabel = new TextBlock
+        var statusLabel = new TextBlock
         {
-            Text = "Output",
+            Text = "Status:",
             FontSize = 11,
-            FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
             Opacity = 0.7
         };
-        statusRow.Children.Add(outputLabel);
+        statusRow.Children.Add(statusLabel);
 
         var statusText = new TextBlock
         {
@@ -701,25 +794,17 @@ public class CodeEditorView : UserControl
         statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("BuildStatus"));
         statusRow.Children.Add(statusText);
 
-        stack.Children.Add(statusRow);
-
-        var outputBox = new TextBox
+        // Hint text
+        var hintText = new TextBlock
         {
-            IsReadOnly = true,
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new FontFamily("monospace"),
+            Text = "Double-click API items to insert code at cursor",
             FontSize = 11,
-            Foreground = new SolidColorBrush(Color.Parse("#AAAAAA")),
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            BorderThickness = new Thickness(0),
-            MaxHeight = 100,
-            Margin = new Thickness(0, 4, 0, 0)
+            Foreground = new SolidColorBrush(Color.Parse("#666666")),
+            Margin = new Thickness(20, 0, 0, 0)
         };
-        outputBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("BuildOutput"));
-        stack.Children.Add(outputBox);
+        statusRow.Children.Add(hintText);
 
-        border.Child = stack;
+        border.Child = statusRow;
         return border;
     }
 
@@ -743,11 +828,19 @@ public class CodeEditorView : UserControl
             vm.SaveFile();
     }
 
-    private async void OnBuildClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnDocsClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        // Navigate to Lua scripting documentation in Docs tab
         if (DataContext is CodeEditorViewModel vm)
         {
-            await vm.BuildModpackAsync();
+            if (vm.NavigateToLuaDocs != null)
+            {
+                vm.NavigateToLuaDocs();
+            }
+            else
+            {
+                vm.BuildStatus = "Navigation not available";
+            }
         }
     }
 

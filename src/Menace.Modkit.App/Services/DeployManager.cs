@@ -68,6 +68,10 @@ public class DeployManager
             progress?.Report($"Deploying {modpack.Name}...");
             await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
 
+            // Deploy patched game data if it exists (from previous full deployment)
+            // Note: For clones to work, a full "Deploy All" is needed to compile merged bundles
+            await Task.Run(() => DeployPatchedGameData(modsBasePath), ct);
+
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
             progress?.Report($"Deployed {modpack.Name}");
             return new DeployResult { Success = true, Message = $"Deployed {modpack.Name}", DeployedCount = 1 };
@@ -169,7 +173,11 @@ public class DeployManager
             var bundleFiles = await TryCompileBundleAsync(modpacks, modsBasePath, ct);
             deployedFiles.AddRange(bundleFiles);
 
-            // Step 5: Save deploy state
+            // Step 5: Deploy patched game data files (resources.assets, globalgamemanagers)
+            progress?.Report("Deploying patched game data...");
+            await Task.Run(() => DeployPatchedGameData(modsBasePath), ct);
+
+            // Step 6: Save deploy state
             var state = new DeployState
             {
                 DeployedModpacks = deployedModpacks,
@@ -280,6 +288,10 @@ public class DeployManager
                     ModkitLog.Info($"[DeployManager] Core DLL preserved: {Path.GetFileName(dllPath)}");
                 }
             }, ct);
+
+            // Restore original game data files
+            progress?.Report("Restoring original game data...");
+            await Task.Run(() => RestoreOriginalGameData(modsBasePath), ct);
 
             // Clear deploy state
             var emptyState = new DeployState();
@@ -405,6 +417,20 @@ public class DeployManager
                 orderedPatchSets.Add(modpack.Patches);
         }
 
+        // Collect audio entries from all modpacks for native AudioClip creation
+        var modpackAssetsDirs = modpacks
+            .Select(m => Path.Combine(m.Path, "assets"))
+            .Where(Directory.Exists)
+            .ToList();
+        var audioCollectResult = AudioBundler.CollectAudioEntriesFromModpacks(modpackAssetsDirs);
+        var audioEntries = audioCollectResult.Entries;
+
+        if (audioCollectResult.Warnings.Count > 0)
+        {
+            foreach (var warn in audioCollectResult.Warnings)
+                ModkitLog.Warn($"[DeployManager] Audio: {warn}");
+        }
+
         // Collect and deploy texture entries from all modpacks
         foreach (var modpack in modpacks)
         {
@@ -433,8 +459,9 @@ public class DeployManager
 
         var merged = MergedPatchSet.MergePatchSets(orderedPatchSets);
 
-        // Only skip compilation if there are no patches AND no clones
-        if (merged.Patches.Count == 0 && !mergedClones.HasClones)
+        // Only skip compilation if there are no patches, no clones, AND no audio
+        bool hasAudio = audioEntries.Count > 0;
+        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio)
             return files;
 
         // Determine game data path and Unity version
@@ -448,10 +475,10 @@ public class DeployManager
 
         try
         {
-            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s)");
+            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s)");
             var compiler = new BundleCompiler();
             var result = await compiler.CompileDataPatchBundleAsync(
-                merged, mergedClones, gameInstallPath, unityVersion, outputPath, ct);
+                merged, mergedClones, audioEntries.Count > 0 ? audioEntries : null, gameInstallPath, unityVersion, outputPath, ct);
 
             if (result.Success && result.OutputPath != null)
             {
@@ -909,6 +936,82 @@ public class DeployManager
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// Deploy patched game data files (resources.assets, globalgamemanagers) to the game's data directory.
+    /// Creates backups of originals if they don't exist.
+    /// </summary>
+    private void DeployPatchedGameData(string modsBasePath)
+    {
+        var gameInstallPath = _modpackManager.GetGameInstallPath();
+        if (string.IsNullOrEmpty(gameInstallPath))
+            return;
+
+        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
+        if (string.IsNullOrEmpty(gameDataDir))
+            return;
+
+        var compiledDir = Path.Combine(modsBasePath, "compiled");
+        if (!Directory.Exists(compiledDir))
+            return;
+
+        // Files to patch: resources.assets and globalgamemanagers
+        var filesToPatch = new[]
+        {
+            ("resources.assets.patched", "resources.assets"),
+            ("globalgamemanagers.patched", "globalgamemanagers")
+        };
+
+        foreach (var (patchedName, originalName) in filesToPatch)
+        {
+            var patchedPath = Path.Combine(compiledDir, patchedName);
+            if (!File.Exists(patchedPath))
+                continue;
+
+            var originalPath = Path.Combine(gameDataDir, originalName);
+            var backupPath = Path.Combine(gameDataDir, originalName + ".original");
+
+            // Create backup if it doesn't exist
+            if (File.Exists(originalPath) && !File.Exists(backupPath))
+            {
+                ModkitLog.Info($"[DeployManager] Creating backup: {originalName} -> {originalName}.original");
+                File.Copy(originalPath, backupPath);
+            }
+
+            // Copy patched file over original
+            ModkitLog.Info($"[DeployManager] Deploying patched: {patchedName} -> {originalName}");
+            File.Copy(patchedPath, originalPath, overwrite: true);
+        }
+    }
+
+    /// <summary>
+    /// Restore original game data files from backups.
+    /// </summary>
+    private void RestoreOriginalGameData(string modsBasePath)
+    {
+        var gameInstallPath = _modpackManager.GetGameInstallPath();
+        if (string.IsNullOrEmpty(gameInstallPath))
+            return;
+
+        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
+        if (string.IsNullOrEmpty(gameDataDir))
+            return;
+
+        // Files to restore
+        var filesToRestore = new[] { "resources.assets", "globalgamemanagers" };
+
+        foreach (var originalName in filesToRestore)
+        {
+            var originalPath = Path.Combine(gameDataDir, originalName);
+            var backupPath = Path.Combine(gameDataDir, originalName + ".original");
+
+            if (File.Exists(backupPath))
+            {
+                ModkitLog.Info($"[DeployManager] Restoring original: {originalName}.original -> {originalName}");
+                File.Copy(backupPath, originalPath, overwrite: true);
+            }
+        }
     }
 }
 

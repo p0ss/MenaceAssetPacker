@@ -14,64 +14,53 @@ using Menace.Modkit.App.Services;
 namespace Menace.Modkit.App.ViewModels;
 
 /// <summary>
-/// ViewModel for the Code tab: browse vanilla decompiled code (read-only)
-/// and edit per-modpack source files.
+/// ViewModel for the Code tab: Lua script editor with API reference.
+/// Focuses on Lua scripting for modders with an integrated API browser.
 /// </summary>
 public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
 {
-    /// <summary>
-    /// Special value in the modpack dropdown that triggers the create mod dialog.
-    /// </summary>
     public const string CreateNewModOption = "+ Create New Mod...";
 
     private readonly ModpackManager _modpackManager;
-    private readonly VanillaCodeService _vanillaCodeService;
-    private readonly CompilationService _compilationService;
 
-    // Master copies of trees for filtering
-    private List<CodeTreeNode> _allVanillaCodeNodes = new();
-    private List<CodeTreeNode> _allModSourceNodes = new();
+    private List<LuaApiItem> _allLuaApiNodes = new();
+    private List<CodeTreeNode> _allScriptNodes = new();
 
     public CodeEditorViewModel()
     {
         _modpackManager = new ModpackManager();
-        _vanillaCodeService = new VanillaCodeService();
-        _compilationService = new CompilationService();
-        VanillaCodeTree = new ObservableCollection<CodeTreeNode>();
-        ModSourceTree = new ObservableCollection<CodeTreeNode>();
+        LuaApiTree = new ObservableCollection<LuaApiItem>();
+        ScriptsTree = new ObservableCollection<CodeTreeNode>();
         AvailableModpacks = new ObservableCollection<string>();
         SearchResults = new ObservableCollection<SearchResultItem>();
+        ScriptTemplates = new ObservableCollection<string>();
 
-        FileContent = "// Select a .cs file from the tree to view its contents";
+        FileContent = "-- Select a .lua file from the Scripts panel to edit\n-- Or double-click an API item to insert code";
         IsReadOnly = true;
 
         LoadModpacks();
-        LoadVanillaTree();
+        LoadLuaApiTree();
+        LoadScriptTemplates();
     }
 
     internal ModpackManager ModpackManager => _modpackManager;
 
-    public ObservableCollection<CodeTreeNode> VanillaCodeTree { get; }
-    public ObservableCollection<CodeTreeNode> ModSourceTree { get; }
+    public ObservableCollection<LuaApiItem> LuaApiTree { get; }
+    public ObservableCollection<CodeTreeNode> ScriptsTree { get; }
     public ObservableCollection<string> AvailableModpacks { get; }
+    public ObservableCollection<string> ScriptTemplates { get; }
 
-    private bool _showVanillaCodeWarning;
+    public event Action<string>? InsertTextRequested;
+
     /// <summary>
-    /// True when no decompiled vanilla code is available (AssetRipper extraction not done).
+    /// Action to navigate to Lua docs. Set by MainViewModel for cross-tab navigation.
     /// </summary>
-    public bool ShowVanillaCodeWarning
-    {
-        get => _showVanillaCodeWarning;
-        private set => this.RaiseAndSetIfChanged(ref _showVanillaCodeWarning, value);
-    }
+    public Action? NavigateToLuaDocs { get; set; }
 
     // ISearchableViewModel implementation
     public ObservableCollection<SearchResultItem> SearchResults { get; }
     public ObservableCollection<string> SectionFilters { get; } = new() { "All Sections" };
 
-    /// <summary>
-    /// True when search mode is active (3+ characters entered).
-    /// </summary>
     public bool IsSearching => SearchText.Length >= 3;
 
     private SearchPanelBuilder.SortOption _currentSortOption = SearchPanelBuilder.SortOption.Relevance;
@@ -96,10 +85,6 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
-    // ---------------------------------------------------------------
-    // Selected modpack
-    // ---------------------------------------------------------------
-
     private string? _selectedModpack;
     public string? SelectedModpack
     {
@@ -109,14 +94,24 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             if (_selectedModpack != value)
             {
                 this.RaiseAndSetIfChanged(ref _selectedModpack, value);
-                LoadModSourceTree();
+                LoadScriptsTree();
             }
         }
     }
 
-    // ---------------------------------------------------------------
-    // Selected file and content
-    // ---------------------------------------------------------------
+    private string? _selectedTemplate;
+    public string? SelectedTemplate
+    {
+        get => _selectedTemplate;
+        set => this.RaiseAndSetIfChanged(ref _selectedTemplate, value);
+    }
+
+    private LuaApiItem? _selectedApiItem;
+    public LuaApiItem? SelectedApiItem
+    {
+        get => _selectedApiItem;
+        set => this.RaiseAndSetIfChanged(ref _selectedApiItem, value);
+    }
 
     private CodeTreeNode? _selectedFile;
     public CodeTreeNode? SelectedFile
@@ -153,27 +148,12 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         set => this.RaiseAndSetIfChanged(ref _currentFilePath, value);
     }
 
-    // ---------------------------------------------------------------
-    // Build output (populated by Phase 4 compilation)
-    // ---------------------------------------------------------------
-
-    private string _buildOutput = string.Empty;
-    public string BuildOutput
-    {
-        get => _buildOutput;
-        set => this.RaiseAndSetIfChanged(ref _buildOutput, value);
-    }
-
     private string _buildStatus = string.Empty;
     public string BuildStatus
     {
         get => _buildStatus;
         set => this.RaiseAndSetIfChanged(ref _buildStatus, value);
     }
-
-    // ---------------------------------------------------------------
-    // Search and filtering
-    // ---------------------------------------------------------------
 
     private string _searchText = string.Empty;
     public string SearchText
@@ -183,67 +163,54 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         {
             if (_searchText != value)
             {
-                var wasSearching = IsSearching;
-                var currentSelection = _selectedFile;
-
                 this.RaiseAndSetIfChanged(ref _searchText, value);
                 this.RaisePropertyChanged(nameof(IsSearching));
 
-                // Only generate search results when 3+ characters entered
                 if (IsSearching)
-                {
                     GenerateSearchResults();
-                }
                 else
-                {
                     SearchResults.Clear();
-                }
-
-                // When clearing search, preserve selection
-                if (wasSearching && !IsSearching && currentSelection != null)
-                {
-                    FocusSelectedInTree();
-                }
             }
         }
     }
 
-    /// <summary>
-    /// Forces search to execute immediately (called when Enter is pressed).
-    /// </summary>
+    public void InsertSelectedApiItem()
+    {
+        if (_selectedApiItem != null && !_selectedApiItem.IsCategory && !string.IsNullOrEmpty(_selectedApiItem.InsertText))
+        {
+            InsertTextRequested?.Invoke(_selectedApiItem.InsertText);
+        }
+    }
+
+    public void InsertApiItem(LuaApiItem item)
+    {
+        if (item != null && !item.IsCategory && !string.IsNullOrEmpty(item.InsertText))
+        {
+            InsertTextRequested?.Invoke(item.InsertText);
+        }
+    }
+
     public void ExecuteSearch()
     {
         if (!string.IsNullOrWhiteSpace(_searchText))
-        {
             GenerateSearchResults();
-        }
     }
 
-    /// <summary>
-    /// Called when user clicks on a search result to select it.
-    /// </summary>
     public void SelectSearchResult(SearchResultItem item)
     {
         if (item.SourceNode is CodeTreeNode node)
-        {
             SelectedFile = node;
-        }
     }
 
-    /// <summary>
-    /// Called when user double-clicks a search result to select it and exit search mode.
-    /// </summary>
     public void SelectAndExitSearch(SearchResultItem item)
     {
         if (item.SourceNode is CodeTreeNode node)
         {
-            // Clear search to switch back to tree view (use backing field to skip FocusSelectedInTree in setter)
             _searchText = string.Empty;
             this.RaisePropertyChanged(nameof(SearchText));
             this.RaisePropertyChanged(nameof(IsSearching));
             SearchResults.Clear();
 
-            // Defer selection to give TreeView time to create containers
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 _selectedFile = node;
@@ -252,30 +219,14 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
-    /// <summary>
-    /// Expands tree to show and focus the currently selected file.
-    /// </summary>
-    public void FocusSelectedInTree()
-    {
-        // CodeEditorView doesn't have a single tree, but both trees are always visible
-        // The selection will be preserved and visible
-    }
+    public void FocusSelectedInTree() { }
 
-    /// <summary>
-    /// Populates the section filter dropdown.
-    /// </summary>
     private void PopulateSectionFilters()
     {
         SectionFilters.Clear();
         SectionFilters.Add("All Sections");
-        SectionFilters.Add("Vanilla Code");
-        SectionFilters.Add("Mod Sources");
-
-        // Add top-level vanilla folders
-        foreach (var node in _allVanillaCodeNodes.Where(n => !n.IsFile).OrderBy(n => n.Name))
-        {
-            SectionFilters.Add($"Vanilla: {node.Name}");
-        }
+        SectionFilters.Add("Scripts");
+        SectionFilters.Add("API Reference");
     }
 
     private void GenerateSearchResults()
@@ -286,59 +237,70 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         var results = new List<SearchResultItem>();
         var sectionFilter = _selectedSectionFilter;
         var filterBySection = !string.IsNullOrEmpty(sectionFilter) && sectionFilter != "All Sections";
+        var searchLower = _searchText.ToLowerInvariant();
 
-        // Search vanilla code tree
-        void SearchNode(CodeTreeNode node, string parentPath, bool isVanilla, string topLevelFolder)
+        void SearchScriptNode(CodeTreeNode node, string parentPath)
         {
-            var currentPath = string.IsNullOrEmpty(parentPath)
-                ? node.Name
-                : $"{parentPath} / {node.Name}";
+            var currentPath = string.IsNullOrEmpty(parentPath) ? node.Name : $"{parentPath} / {node.Name}";
 
             if (node.IsFile)
             {
-                // Apply section filter
-                if (filterBySection)
-                {
-                    if (sectionFilter == "Vanilla Code" && !isVanilla) return;
-                    if (sectionFilter == "Mod Sources" && isVanilla) return;
-                    if (sectionFilter!.StartsWith("Vanilla: "))
-                    {
-                        var expectedFolder = sectionFilter.Substring("Vanilla: ".Length);
-                        if (!isVanilla || !topLevelFolder.Equals(expectedFolder, StringComparison.OrdinalIgnoreCase))
-                            return;
-                    }
-                }
+                if (filterBySection && sectionFilter == "API Reference") return;
 
                 var nameLower = node.Name.ToLowerInvariant();
-                var searchLower = _searchText.ToLowerInvariant();
                 if (nameLower.Contains(searchLower))
                 {
-                    // Lazy load snippet - only read file if needed
                     var snippet = GetFileSnippet(node.FullPath);
-
                     results.Add(new SearchResultItem
                     {
-                        Breadcrumb = (isVanilla ? "[Vanilla] " : "[Mod] ") + parentPath,
+                        Breadcrumb = "[Script] " + parentPath,
                         Name = node.Name,
                         Snippet = snippet,
                         Score = nameLower.StartsWith(searchLower) ? 100 : 50,
                         SourceNode = node,
-                        TypeIndicator = Path.GetExtension(node.Name)
+                        TypeIndicator = ".lua"
                     });
                 }
             }
             else
             {
                 foreach (var child in node.Children)
-                    SearchNode(child, currentPath, isVanilla, topLevelFolder);
+                    SearchScriptNode(child, currentPath);
             }
         }
 
-        foreach (var root in _allVanillaCodeNodes)
-            SearchNode(root, "", true, root.Name);
+        void SearchApiNode(LuaApiItem item, string parentPath)
+        {
+            if (filterBySection && sectionFilter == "Scripts") return;
 
-        foreach (var root in _allModSourceNodes)
-            SearchNode(root, "", false, root.Name);
+            var currentPath = string.IsNullOrEmpty(parentPath) ? item.Name : $"{parentPath} / {item.Name}";
+            var nameLower = item.Name.ToLowerInvariant();
+            var descLower = item.Description.ToLowerInvariant();
+
+            if (nameLower.Contains(searchLower) || descLower.Contains(searchLower))
+            {
+                var typeIndicator = item.ItemType == LuaApiItemType.Event ? "event" :
+                                   item.ItemType == LuaApiItemType.Function ? "func" : "cat";
+                results.Add(new SearchResultItem
+                {
+                    Breadcrumb = "[API] " + parentPath,
+                    Name = item.Name,
+                    Snippet = item.Description,
+                    Score = nameLower.StartsWith(searchLower) ? 100 : (nameLower.Contains(searchLower) ? 75 : 50),
+                    SourceNode = item,
+                    TypeIndicator = typeIndicator
+                });
+            }
+
+            foreach (var child in item.Children)
+                SearchApiNode(child, currentPath);
+        }
+
+        foreach (var root in _allScriptNodes)
+            SearchScriptNode(root, "");
+
+        foreach (var root in _allLuaApiNodes)
+            SearchApiNode(root, "");
 
         ApplySearchResultsSort(results);
     }
@@ -354,7 +316,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             for (int i = 0; i < 3 && !reader.EndOfStream; i++)
             {
                 var line = reader.ReadLine()?.Trim();
-                if (!string.IsNullOrEmpty(line) && !line.StartsWith("//") && !line.StartsWith("using"))
+                if (!string.IsNullOrEmpty(line) && !line.StartsWith("--"))
                     lines.Add(line);
             }
             return string.Join(" | ", lines).Truncate(120);
@@ -383,134 +345,16 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             SearchResults.Add(item);
     }
 
-    private void ApplySearchFilter()
-    {
-        var hasQuery = !string.IsNullOrWhiteSpace(_searchText);
-        var query = hasQuery ? _searchText.Trim() : null;
-
-        // Filter vanilla code tree
-        VanillaCodeTree.Clear();
-        if (!hasQuery)
-        {
-            foreach (var node in _allVanillaCodeNodes)
-                VanillaCodeTree.Add(node);
-        }
-        else
-        {
-            foreach (var node in _allVanillaCodeNodes)
-            {
-                var filtered = FilterCodeNode(node, query);
-                if (filtered != null)
-                    VanillaCodeTree.Add(filtered);
-            }
-            // Multi-pass expansion to handle TreeView container creation timing
-            SetExpansionState(VanillaCodeTree, true);
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(VanillaCodeTree, true), Avalonia.Threading.DispatcherPriority.Background);
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(VanillaCodeTree, true), Avalonia.Threading.DispatcherPriority.Background);
-        }
-
-        // Filter mod source tree
-        ModSourceTree.Clear();
-        if (!hasQuery)
-        {
-            foreach (var node in _allModSourceNodes)
-                ModSourceTree.Add(node);
-        }
-        else
-        {
-            foreach (var node in _allModSourceNodes)
-            {
-                var filtered = FilterCodeNode(node, query);
-                if (filtered != null)
-                    ModSourceTree.Add(filtered);
-            }
-            // Multi-pass expansion to handle TreeView container creation timing
-            SetExpansionState(ModSourceTree, true);
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(ModSourceTree, true), Avalonia.Threading.DispatcherPriority.Background);
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => SetExpansionState(ModSourceTree, true), Avalonia.Threading.DispatcherPriority.Background);
-        }
-    }
-
-    private CodeTreeNode? FilterCodeNode(CodeTreeNode node, string? query)
-    {
-        // File node: check if name matches
-        if (node.IsFile)
-        {
-            if (query == null)
-                return node;
-            if (node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
-                return node;
-            return null;
-        }
-
-        // Folder: check if folder name matches (include all children)
-        if (query != null && node.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
-        {
-            node.IsExpanded = true;
-            return node;
-        }
-
-        // Check children recursively
-        var matchingChildren = new List<CodeTreeNode>();
-        foreach (var child in node.Children)
-        {
-            var filtered = FilterCodeNode(child, query);
-            if (filtered != null)
-                matchingChildren.Add(filtered);
-        }
-
-        if (matchingChildren.Count == 0)
-            return null;
-
-        // If all children match, return original node (expanded for visibility)
-        if (matchingChildren.Count == node.Children.Count)
-        {
-            node.IsExpanded = true;
-            return node;
-        }
-
-        // Create filtered copy with only matching children
-        var copy = new CodeTreeNode
-        {
-            Name = node.Name,
-            FullPath = node.FullPath,
-            IsFile = false,
-            IsReadOnly = node.IsReadOnly,
-            IsExpanded = true
-        };
-        foreach (var child in matchingChildren)
-            copy.Children.Add(child);
-
-        return copy;
-    }
-
     public void ExpandAll()
     {
-        // Set expansion state multiple times with UI thread yields to allow
-        // TreeView to create containers for newly-visible children
-        SetExpansionState(VanillaCodeTree, true);
-        SetExpansionState(ModSourceTree, true);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            SetExpansionState(VanillaCodeTree, true);
-            SetExpansionState(ModSourceTree, true);
-        }, Avalonia.Threading.DispatcherPriority.Background);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            SetExpansionState(VanillaCodeTree, true);
-            SetExpansionState(ModSourceTree, true);
-        }, Avalonia.Threading.DispatcherPriority.Background);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            SetExpansionState(VanillaCodeTree, true);
-            SetExpansionState(ModSourceTree, true);
-        }, Avalonia.Threading.DispatcherPriority.Background);
+        SetExpansionState(ScriptsTree, true);
+        SetLuaApiExpansionState(LuaApiTree, true);
     }
 
     public void CollapseAll()
     {
-        SetExpansionState(VanillaCodeTree, false);
-        SetExpansionState(ModSourceTree, false);
+        SetExpansionState(ScriptsTree, false);
+        SetLuaApiExpansionState(LuaApiTree, false);
     }
 
     private static void SetExpansionState(IEnumerable<CodeTreeNode> nodes, bool expanded)
@@ -525,87 +369,133 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
-    // ---------------------------------------------------------------
-    // Data loading
-    // ---------------------------------------------------------------
+    private static void SetLuaApiExpansionState(IEnumerable<LuaApiItem> items, bool expanded)
+    {
+        foreach (var item in items)
+        {
+            item.IsExpanded = expanded;
+            SetLuaApiExpansionState(item.Children, expanded);
+        }
+    }
 
     private void LoadModpacks()
     {
         AvailableModpacks.Clear();
         AvailableModpacks.Add(CreateNewModOption);
         var modpacks = _modpackManager.GetStagingModpacks();
-        Services.ModkitLog.Info($"[CodeEditorViewModel] Found {modpacks.Count} modpacks");
         foreach (var mp in modpacks)
             AvailableModpacks.Add(mp.Name);
 
-        // Select first actual modpack (skip the Create option)
         if (AvailableModpacks.Count > 1 && _selectedModpack == null)
             SelectedModpack = AvailableModpacks[1];
     }
 
-    private void LoadVanillaTree()
+    private void LoadLuaApiTree()
     {
-        VanillaCodeTree.Clear();
-        _allVanillaCodeNodes.Clear();
-        var tree = _vanillaCodeService.BuildVanillaCodeTree();
-        if (tree != null && tree.Children.Count > 0)
+        LuaApiTree.Clear();
+        _allLuaApiNodes.Clear();
+
+        var apiTree = LuaApiReference.GetApiTree();
+        foreach (var item in apiTree)
         {
-            // Add children directly (hide root folder like Assets/Data views do)
-            Services.ModkitLog.Info($"[CodeEditorViewModel] Vanilla tree loaded: {tree.Name} with {tree.Children.Count} children");
-            foreach (var child in tree.Children)
-            {
-                child.IsExpanded = true;
-                VanillaCodeTree.Add(child);
-                _allVanillaCodeNodes.Add(child);
-            }
-            ShowVanillaCodeWarning = false;
-        }
-        else
-        {
-            Services.ModkitLog.Info("[CodeEditorViewModel] Vanilla tree is null or empty - no decompiled code found");
-            ShowVanillaCodeWarning = true;
+            LuaApiTree.Add(item);
+            _allLuaApiNodes.Add(item);
         }
 
         PopulateSectionFilters();
     }
 
-    private void LoadModSourceTree()
+    private void LoadScriptTemplates()
     {
-        ModSourceTree.Clear();
-        _allModSourceNodes.Clear();
+        ScriptTemplates.Clear();
+        foreach (var (name, _, _) in LuaApiReference.GetScriptTemplates())
+            ScriptTemplates.Add(name);
+    }
+
+    private void LoadScriptsTree()
+    {
+        ScriptsTree.Clear();
+        _allScriptNodes.Clear();
 
         if (string.IsNullOrEmpty(_selectedModpack))
-        {
-            Services.ModkitLog.Info("[CodeEditorViewModel] No modpack selected, skipping mod source tree");
             return;
-        }
 
         var modpacks = _modpackManager.GetStagingModpacks();
         var modpack = modpacks.FirstOrDefault(m => m.Name == _selectedModpack);
         if (modpack == null)
-        {
-            Services.ModkitLog.Warn($"[CodeEditorViewModel] Modpack '{_selectedModpack}' not found");
             return;
+
+        var scriptsDir = Path.Combine(modpack.Path, "scripts");
+        if (!Directory.Exists(scriptsDir))
+        {
+            try { Directory.CreateDirectory(scriptsDir); }
+            catch { return; }
         }
 
-        var tree = VanillaCodeService.BuildModSourceTree(modpack.Path, modpack.Name);
-        // Add children directly (hide root folder like Assets/Data views do)
-        Services.ModkitLog.Info($"[CodeEditorViewModel] Mod source tree loaded: {tree.Name} with {tree.Children.Count} children");
+        var tree = BuildScriptsTree(scriptsDir, modpack.Name);
         foreach (var child in tree.Children)
         {
             child.IsExpanded = true;
-            ModSourceTree.Add(child);
-            _allModSourceNodes.Add(child);
+            ScriptsTree.Add(child);
+            _allScriptNodes.Add(child);
         }
+    }
+
+    private static CodeTreeNode BuildScriptsTree(string scriptsDir, string modpackName)
+    {
+        var root = new CodeTreeNode
+        {
+            Name = modpackName,
+            FullPath = scriptsDir,
+            IsFile = false,
+            IsReadOnly = false,
+            IsExpanded = true
+        };
+
+        if (Directory.Exists(scriptsDir))
+        {
+            foreach (var file in Directory.GetFiles(scriptsDir, "*.lua", SearchOption.AllDirectories).OrderBy(f => f))
+            {
+                var relativePath = Path.GetRelativePath(scriptsDir, file);
+                var parts = relativePath.Split(Path.DirectorySeparatorChar);
+
+                var current = root;
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    var existing = current.Children.FirstOrDefault(c => c.Name == parts[i] && !c.IsFile);
+                    if (existing == null)
+                    {
+                        existing = new CodeTreeNode
+                        {
+                            Name = parts[i],
+                            FullPath = Path.Combine(current.FullPath, parts[i]),
+                            IsFile = false,
+                            IsReadOnly = false,
+                            IsExpanded = true
+                        };
+                        current.Children.Add(existing);
+                    }
+                    current = existing;
+                }
+
+                current.Children.Add(new CodeTreeNode
+                {
+                    Name = parts[^1],
+                    FullPath = file,
+                    IsFile = true,
+                    IsReadOnly = false
+                });
+            }
+        }
+
+        return root;
     }
 
     private void LoadFileContent()
     {
-        Services.ModkitLog.Info($"[CodeEditorViewModel] LoadFileContent: _selectedFile={_selectedFile?.Name}, IsFile={_selectedFile?.IsFile}");
-
         if (_selectedFile == null || !_selectedFile.IsFile)
         {
-            FileContent = "// Select a .cs file from the tree to view its contents";
+            FileContent = "-- Select a .lua file from the Scripts panel to edit\n-- Or double-click an API item to insert code";
             IsReadOnly = true;
             CurrentFilePath = string.Empty;
             return;
@@ -616,21 +506,14 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
 
         try
         {
-            var content = File.ReadAllText(_selectedFile.FullPath);
-            Services.ModkitLog.Info($"[CodeEditorViewModel] Loaded file: {_selectedFile.FullPath}, length={content.Length}");
-            FileContent = content;
+            FileContent = File.ReadAllText(_selectedFile.FullPath);
         }
         catch (Exception ex)
         {
-            Services.ModkitLog.Error($"[CodeEditorViewModel] Error loading file: {ex.Message}");
-            FileContent = $"// Error loading file: {ex.Message}";
+            FileContent = $"-- Error loading file: {ex.Message}";
             IsReadOnly = true;
         }
     }
-
-    // ---------------------------------------------------------------
-    // File operations
-    // ---------------------------------------------------------------
 
     public void SaveFile()
     {
@@ -655,12 +538,6 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         try
         {
             File.WriteAllText(_selectedFile.FullPath, FileContent);
-
-            // Also sync the manifest's source list
-            var relativePath = GetModRelativePath(_selectedFile.FullPath);
-            if (relativePath != null)
-                _modpackManager.SaveStagingSource(_selectedModpack, relativePath, FileContent);
-
             BuildStatus = $"Saved: {_selectedFile.Name}";
         }
         catch (Exception ex)
@@ -683,13 +560,42 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             return;
         }
 
-        if (!fileName.EndsWith(".cs"))
-            fileName += ".cs";
+        if (!fileName.EndsWith(".lua"))
+            fileName += ".lua";
 
-        var relativePath = Path.Combine("src", fileName);
-        _modpackManager.AddStagingSource(_selectedModpack, relativePath);
-        LoadModSourceTree();
+        var modpacks = _modpackManager.GetStagingModpacks();
+        var modpack = modpacks.FirstOrDefault(m => m.Name == _selectedModpack);
+        if (modpack == null)
+        {
+            BuildStatus = "Cannot add file: Modpack not found";
+            return;
+        }
+
+        var scriptsDir = Path.Combine(modpack.Path, "scripts");
+        Directory.CreateDirectory(scriptsDir);
+
+        var fullPath = Path.Combine(scriptsDir, fileName);
+        if (File.Exists(fullPath))
+        {
+            BuildStatus = $"File already exists: {fileName}";
+            return;
+        }
+
+        var content = GetTemplateContent();
+        File.WriteAllText(fullPath, content);
+
+        LoadScriptsTree();
         BuildStatus = $"Added: {fileName}";
+    }
+
+    private string GetTemplateContent()
+    {
+        if (string.IsNullOrEmpty(_selectedTemplate))
+            return "-- New Lua Script\nlog(\"Script loaded!\")\n";
+
+        var templates = LuaApiReference.GetScriptTemplates();
+        var template = templates.FirstOrDefault(t => t.Name == _selectedTemplate);
+        return template.Content ?? "-- New Lua Script\nlog(\"Script loaded!\")\n";
     }
 
     public void RemoveFile()
@@ -697,123 +603,33 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         if (_selectedFile == null || _selectedFile.IsReadOnly || string.IsNullOrEmpty(_selectedModpack))
             return;
 
-        var relativePath = GetModRelativePath(_selectedFile.FullPath);
-        if (relativePath == null) return;
-
-        _modpackManager.RemoveStagingSource(_selectedModpack, relativePath);
-        FileContent = string.Empty;
-        SelectedFile = null;
-        LoadModSourceTree();
-        BuildStatus = "File removed";
-    }
-
-    /// <summary>
-    /// Compile the selected modpack's source code using Roslyn.
-    /// </summary>
-    public async Task BuildModpackAsync()
-    {
-        if (string.IsNullOrEmpty(_selectedModpack))
+        try
         {
-            BuildStatus = "No modpack selected";
-            return;
-        }
+            if (File.Exists(_selectedFile.FullPath))
+                File.Delete(_selectedFile.FullPath);
 
-        var modpacks = _modpackManager.GetStagingModpacks();
-        var manifest = modpacks.FirstOrDefault(m => m.Name == _selectedModpack);
-        if (manifest == null)
+            FileContent = "-- Select a .lua file from the Scripts panel to edit";
+            SelectedFile = null;
+            LoadScriptsTree();
+            BuildStatus = "File removed";
+        }
+        catch (Exception ex)
         {
-            BuildStatus = "Modpack not found";
-            return;
+            BuildStatus = $"Failed to remove file: {ex.Message}";
         }
-
-        if (!manifest.Code.HasAnySources)
-        {
-            BuildStatus = "No source files to compile";
-            return;
-        }
-
-        BuildStatus = "Compiling...";
-        BuildOutput = string.Empty;
-
-        var result = await _compilationService.CompileModpackAsync(manifest);
-
-        // Format output
-        var sb = new StringBuilder();
-
-        if (result.SecurityWarnings.Count > 0)
-        {
-            sb.AppendLine("=== Security Scan ===");
-            foreach (var warning in result.SecurityWarnings)
-                sb.AppendLine(warning.ToString());
-            sb.AppendLine();
-        }
-
-        if (result.Diagnostics.Count > 0)
-        {
-            sb.AppendLine("=== Compilation ===");
-            foreach (var diag in result.Diagnostics)
-                sb.AppendLine(diag.ToString());
-            sb.AppendLine();
-        }
-
-        if (result.Success)
-        {
-            sb.AppendLine($"Build succeeded: {result.OutputDllPath}");
-
-            // Update security status based on scan results
-            if (result.SecurityWarnings.Count == 0)
-            {
-                manifest.SecurityStatus = SecurityStatus.SourceVerified;
-                BuildStatus = "Build succeeded - Source Verified";
-            }
-            else
-            {
-                manifest.SecurityStatus = SecurityStatus.SourceWithWarnings;
-                BuildStatus = $"Build succeeded - {result.SecurityWarnings.Count} security warning(s)";
-            }
-            manifest.SaveToFile();
-        }
-        else
-        {
-            var errorCount = result.Diagnostics.Count(d => d.Severity == Models.DiagnosticSeverity.Error);
-            BuildStatus = $"Build failed - {errorCount} error(s)";
-        }
-
-        BuildOutput = sb.ToString();
     }
 
     public void RefreshAll()
     {
         LoadModpacks();
-        LoadVanillaTree();
-        LoadModSourceTree();
+        LoadLuaApiTree();
+        LoadScriptsTree();
     }
 
-    /// <summary>
-    /// Create a new modpack and select it.
-    /// </summary>
     public void CreateModpack(string name, string? author, string? description)
     {
         var manifest = _modpackManager.CreateModpack(name, author ?? "", description ?? "");
-        // Refresh the list and select the new modpack
         LoadModpacks();
         SelectedModpack = manifest.Name;
-    }
-
-    private string? GetModRelativePath(string fullPath)
-    {
-        if (string.IsNullOrEmpty(_selectedModpack)) return null;
-        var modpacks = _modpackManager.GetStagingModpacks();
-        var modpack = modpacks.FirstOrDefault(m => m.Name == _selectedModpack);
-        if (modpack == null) return null;
-
-        try
-        {
-            return Path.GetRelativePath(modpack.Path, fullPath);
-        }
-        catch
-        {
-            return null;
-        }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
@@ -652,6 +653,13 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         if (_modifiedProperties[fieldName] is bool)
             return;
 
+        // Check if value actually changed before marking as edited
+        var currentVal = _modifiedProperties[fieldName];
+        if (currentVal is string currentStr && currentStr == text)
+            return;  // No change, skip
+        if (currentVal?.ToString() == text)
+            return;  // No change, skip
+
         _userEditedFields.Add(fieldName);
 
         // If the vanilla value is an array, try to parse the edited text back as JSON array
@@ -872,8 +880,6 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
             return;
 
-        _userEditedFields.Add(fieldName);
-
         var sb = new StringBuilder();
         sb.Append('[');
         for (int i = 0; i < items.Count; i++)
@@ -886,7 +892,15 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         sb.Append(']');
 
         using var doc = JsonDocument.Parse(sb.ToString());
-        _modifiedProperties[fieldName] = doc.RootElement.Clone();
+        var newElement = doc.RootElement.Clone();
+
+        // Only mark as edited if the value actually changed
+        var currentVal = _modifiedProperties[fieldName];
+        if (currentVal is JsonElement currentEl && currentEl.GetRawText() == newElement.GetRawText())
+            return;  // No change, skip
+
+        _userEditedFields.Add(fieldName);
+        _modifiedProperties[fieldName] = newElement;
         this.RaisePropertyChanged(nameof(HasModifications));
     }
 
@@ -901,11 +915,19 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
             return;
 
-        _userEditedFields.Add(fieldName);
         try
         {
             using var doc = JsonDocument.Parse(jsonText);
-            _modifiedProperties[fieldName] = doc.RootElement.Clone();
+            var newElement = doc.RootElement.Clone();
+
+            // Only mark as edited if the value actually changed
+            // This prevents spurious field additions during render when TextChanged fires
+            var currentVal = _modifiedProperties[fieldName];
+            if (currentVal is JsonElement currentEl && currentEl.GetRawText() == newElement.GetRawText())
+                return;  // No change, skip
+
+            _userEditedFields.Add(fieldName);
+            _modifiedProperties[fieldName] = newElement;
             this.RaisePropertyChanged(nameof(HasModifications));
         }
         catch
@@ -1007,7 +1029,7 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             // Only write file if there are instances with fields
             if (root.Count > 0)
             {
-                var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 _modpackManager.SaveStagingTemplate(_currentModpackName, typeKvp.Key, json);
                 fileCount++;
             }
@@ -1082,7 +1104,7 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         foreach (var (templateType, clones) in byType)
         {
             var json = System.Text.Json.JsonSerializer.Serialize(clones,
-                new JsonSerializerOptions { WriteIndented = true });
+                new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             _modpackManager.SaveStagingClones(_currentModpackName, templateType, json);
         }
     }

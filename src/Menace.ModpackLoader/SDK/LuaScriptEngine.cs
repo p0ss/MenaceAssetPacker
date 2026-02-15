@@ -85,6 +85,29 @@ namespace Menace.SDK;
 ///   get_actor_at(x, z)             - Get actor on tile
 ///   get_distance(x1, z1, x2, z2)   - Get distance between tiles
 ///
+/// Spawn API (experimental - may crash):
+///   spawn_unit(template, x, y, faction?) - Spawn unit at tile, returns {success, error, entity}
+///   destroy_entity(actor, immediate?)    - Kill an entity
+///   clear_enemies(immediate?)            - Clear all enemies, returns count
+///   list_entities(faction?)              - List entities by faction (-1 for all)
+///   get_entity_info(actor)               - Get entity info as table
+///
+/// Tile Effects API:
+///   get_tile_effects(x, z)               - Get all effects on tile as table
+///   has_effects(x, z)                    - Check if tile has any effects
+///   is_on_fire(x, z)                     - Check if tile is on fire
+///   has_smoke(x, z)                      - Check if tile has smoke
+///   spawn_effect(x, z, template, delay?) - Spawn effect on tile
+///   clear_tile_effects(x, z)             - Remove all effects, returns count
+///   get_effect_templates()               - List available effect template names
+///
+/// Inventory/Item API:
+///   give_item(actor?, template)          - Give item to actor (nil = active actor)
+///   get_inventory(actor?)                - Get all items as table
+///   get_equipped_weapons(actor?)         - Get equipped weapons
+///   get_equipped_armor(actor?)           - Get equipped armor
+///   get_item_templates(filter?)          - List item template names
+///
 /// Tactical Events:
 ///   scene_loaded(sceneName)        - Fired when a scene loads
 ///   tactical_ready()               - Fired when tactical battle is ready
@@ -112,23 +135,90 @@ public class LuaScriptEngine
     private readonly Dictionary<string, List<DynValue>> _eventHandlers = new();
     private readonly List<(string ModId, string ScriptPath, Script Script)> _loadedScripts = new();
 
-    // Supported events
+    // Supported events - see TacticalEventHooks.cs for event source
     private static readonly HashSet<string> ValidEvents = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Tactical events
+        // Scene/mission lifecycle
         "scene_loaded",
         "tactical_ready",
         "mission_start",
+
+        // Combat events (from TacticalEventHooks)
+        "actor_killed",
+        "damage_received",
+        "attack_missed",
+        "attack_start",
+        "critical_hit",
+        "overwatch_triggered",
+        "grenade_thrown",
+        "bleeding_out",
+        "stabilized",
+        "suppressed",
+        "suppression_applied",
+
+        // Actor state events
+        "actor_state_changed",
+        "morale_changed",
+        "hp_changed",
+        "armor_changed",
+        "ap_changed",
+
+        // Visibility events
+        "discovered",
+        "visible_to_player",
+        "hidden_from_player",
+
+        // Movement events
+        "move_start",
+        "move_complete",
+
+        // Skill events
+        "skill_used",
+        "skill_complete",
+        "skill_added",
+        "offmap_ability_used",
+        "offmap_ability_canceled",
+
+        // Turn/round events
         "turn_start",
         "turn_end",
-        "actor_killed",
-        "actor_damaged",
-        "ability_used",
-        // Strategy events (for pool injection hooks)
+        "round_start",
+        "round_end",
+
+        // Entity events
+        "entity_spawned",
+        "actor_spawned",  // alias for entity_spawned (actor subset)
+        "reinforcements_spawned",
+        "element_destroyed",
+        "element_malfunction",
+
+        // Mission events
+        "objective_changed",
+
+        // Strategy events (from EarlyTemplateInjection)
         "campaign_start",
         "campaign_loaded",
         "operation_end",
-        "blackmarket_refresh"
+        "blackmarket_refresh",
+
+        // Strategy events (from StrategyEventHooks)
+        "leader_hired",
+        "leader_dismissed",
+        "leader_permadeath",
+        "leader_levelup",
+        "faction_trust_changed",
+        "faction_status_changed",
+        "faction_upgrade_unlocked",
+        "squaddie_killed",
+        "squaddie_added",
+        "mission_ended",
+        "operation_finished",
+        "blackmarket_item_added",
+        "blackmarket_restocked",
+
+        // Legacy compatibility aliases
+        "actor_damaged",  // alias for damage_received
+        "ability_used"    // alias for skill_used
     };
 
     private LuaScriptEngine()
@@ -240,6 +330,22 @@ public class LuaScriptEngine
         script.Globals["clear_enemies"] = DynValue.NewCallback((ctx, args) => DynValue.NewNumber(EntitySpawner.ClearEnemies(args.Count == 0 || args[0].Boolean)));
         script.Globals["list_entities"] = DynValue.NewCallback((ctx, args) => LuaListEntities(args.Count > 0 ? (int)args[0].Number : -1));
         script.Globals["get_entity_info"] = DynValue.NewCallback((ctx, args) => LuaGetEntityInfo(args[0]));
+
+        // --- Tile Effects API ---
+        script.Globals["get_tile_effects"] = DynValue.NewCallback((ctx, args) => LuaGetTileEffects((int)args[0].Number, (int)args[1].Number));
+        script.Globals["has_effects"] = DynValue.NewCallback((ctx, args) => DynValue.NewBoolean(TileEffects.HasEffects((int)args[0].Number, (int)args[1].Number)));
+        script.Globals["is_on_fire"] = DynValue.NewCallback((ctx, args) => DynValue.NewBoolean(TileEffects.IsOnFire((int)args[0].Number, (int)args[1].Number)));
+        script.Globals["has_smoke"] = DynValue.NewCallback((ctx, args) => DynValue.NewBoolean(TileEffects.HasSmoke((int)args[0].Number, (int)args[1].Number)));
+        script.Globals["spawn_effect"] = DynValue.NewCallback((ctx, args) => DynValue.NewBoolean(TileEffects.SpawnEffect((int)args[0].Number, (int)args[1].Number, args[2].String, args.Count > 3 ? (float)args[3].Number : 0f)));
+        script.Globals["clear_tile_effects"] = DynValue.NewCallback((ctx, args) => DynValue.NewNumber(TileEffects.ClearEffects((int)args[0].Number, (int)args[1].Number)));
+        script.Globals["get_effect_templates"] = DynValue.NewCallback((ctx, args) => LuaGetEffectTemplates());
+
+        // --- Inventory/Item API ---
+        script.Globals["give_item"] = DynValue.NewCallback((ctx, args) => LuaGiveItem(args[0], args[1].String));
+        script.Globals["get_inventory"] = DynValue.NewCallback((ctx, args) => LuaGetInventory(args[0]));
+        script.Globals["get_equipped_weapons"] = DynValue.NewCallback((ctx, args) => LuaGetEquippedWeapons(args[0]));
+        script.Globals["get_equipped_armor"] = DynValue.NewCallback((ctx, args) => LuaGetEquippedArmor(args[0]));
+        script.Globals["get_item_templates"] = DynValue.NewCallback((ctx, args) => LuaGetItemTemplates(args.Count > 0 ? args[0].String : null));
     }
 
     /// <summary>
@@ -895,6 +1001,284 @@ public class LuaScriptEngine
     {
         var actor = TileMap.GetActorOnTile(x, z);
         return GameObjToLuaActor(actor);
+    }
+
+    // --- Spawn (experimental) ---
+
+    private DynValue LuaSpawnUnit(string templateName, int x, int y, int faction)
+    {
+        try
+        {
+            var result = EntitySpawner.SpawnUnit(templateName, x, y, faction);
+
+            var table = new Table(_lua);
+            table["success"] = result.Success;
+            table["error"] = result.Error ?? "";
+            if (result.Success && !result.Entity.IsNull)
+            {
+                table["entity"] = GameObjToLuaActor(result.Entity);
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"spawn_unit failed: {ex.Message}");
+            var table = new Table(_lua);
+            table["success"] = false;
+            table["error"] = ex.Message;
+            return DynValue.NewTable(table);
+        }
+    }
+
+    private bool LuaDestroyEntity(DynValue actorVal, bool immediate)
+    {
+        var actor = LuaToGameObj(actorVal);
+        return EntitySpawner.DestroyEntity(actor, immediate);
+    }
+
+    private DynValue LuaListEntities(int factionFilter)
+    {
+        try
+        {
+            var entities = EntitySpawner.ListEntities(factionFilter);
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var entity in entities)
+            {
+                if (!entity.IsNull)
+                    table[i++] = GameObjToLuaActor(entity);
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"list_entities failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
+    }
+
+    private DynValue LuaGetEntityInfo(DynValue actorVal)
+    {
+        var actor = LuaToGameObj(actorVal);
+        var info = EntitySpawner.GetEntityInfo(actor);
+        if (info == null) return DynValue.Nil;
+
+        var table = new Table(_lua);
+        table["entity_id"] = info.EntityId;
+        table["name"] = info.Name ?? "";
+        table["type_name"] = info.TypeName ?? "";
+        table["faction"] = info.FactionIndex;
+        table["alive"] = info.IsAlive;
+        table["ptr"] = info.Pointer.ToInt64();
+        return DynValue.NewTable(table);
+    }
+
+    // --- Tile Effects ---
+
+    private DynValue LuaGetTileEffects(int x, int z)
+    {
+        try
+        {
+            var effects = TileEffects.GetEffects(x, z);
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var effect in effects)
+            {
+                var effectTable = new Table(_lua);
+                effectTable["type"] = effect.TypeName ?? "";
+                effectTable["template"] = effect.TemplateName ?? "";
+                effectTable["duration"] = effect.Duration;
+                effectTable["rounds_left"] = effect.RoundsRemaining;
+                effectTable["blocks_los"] = effect.BlocksLOS;
+                table[i++] = effectTable;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_tile_effects failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
+    }
+
+    private DynValue LuaGetEffectTemplates()
+    {
+        try
+        {
+            var templates = TileEffects.GetAvailableEffectTemplates();
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var name in templates)
+            {
+                table[i++] = name;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_effect_templates failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
+    }
+
+    // --- Inventory ---
+
+    private DynValue LuaGiveItem(DynValue actorVal, string templateName)
+    {
+        try
+        {
+            // If no actor specified, use active actor
+            GameObj actor;
+            if (actorVal.IsNil())
+            {
+                actor = TacticalController.GetActiveActor();
+            }
+            else
+            {
+                actor = LuaToGameObj(actorVal);
+            }
+
+            if (actor.IsNull)
+            {
+                var table = new Table(_lua);
+                table["success"] = false;
+                table["error"] = "No actor selected";
+                return DynValue.NewTable(table);
+            }
+
+            var result = Inventory.GiveItemToActor(templateName);
+            var resultTable = new Table(_lua);
+            resultTable["success"] = !result.StartsWith("Error") && !result.StartsWith("No") && !result.StartsWith("Template") && !result.StartsWith("Failed") && !result.StartsWith("Could not");
+            resultTable["message"] = result;
+            return DynValue.NewTable(resultTable);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"give_item failed: {ex.Message}");
+            var table = new Table(_lua);
+            table["success"] = false;
+            table["error"] = ex.Message;
+            return DynValue.NewTable(table);
+        }
+    }
+
+    private DynValue LuaGetInventory(DynValue actorVal)
+    {
+        try
+        {
+            var actor = LuaToGameObj(actorVal);
+            if (actor.IsNull)
+            {
+                actor = TacticalController.GetActiveActor();
+            }
+            if (actor.IsNull) return DynValue.Nil;
+
+            var container = Inventory.GetContainer(actor);
+            if (container.IsNull) return DynValue.Nil;
+
+            var items = Inventory.GetAllItems(container);
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var item in items)
+            {
+                var itemTable = new Table(_lua);
+                itemTable["name"] = item.TemplateName ?? "";
+                itemTable["slot"] = item.SlotTypeName ?? "";
+                itemTable["slot_id"] = item.SlotType;
+                itemTable["value"] = item.TradeValue;
+                itemTable["rarity"] = item.Rarity ?? "Common";
+                itemTable["skills"] = item.SkillCount;
+                itemTable["temporary"] = item.IsTemporary;
+                table[i++] = itemTable;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_inventory failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
+    }
+
+    private DynValue LuaGetEquippedWeapons(DynValue actorVal)
+    {
+        try
+        {
+            var actor = LuaToGameObj(actorVal);
+            if (actor.IsNull)
+            {
+                actor = TacticalController.GetActiveActor();
+            }
+            if (actor.IsNull) return DynValue.Nil;
+
+            var weapons = Inventory.GetEquippedWeapons(actor);
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var weapon in weapons)
+            {
+                var weaponTable = new Table(_lua);
+                weaponTable["name"] = weapon.TemplateName ?? "";
+                weaponTable["slot"] = weapon.SlotTypeName ?? "";
+                weaponTable["value"] = weapon.TradeValue;
+                weaponTable["rarity"] = weapon.Rarity ?? "Common";
+                weaponTable["skills"] = weapon.SkillCount;
+                table[i++] = weaponTable;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_equipped_weapons failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
+    }
+
+    private DynValue LuaGetEquippedArmor(DynValue actorVal)
+    {
+        try
+        {
+            var actor = LuaToGameObj(actorVal);
+            if (actor.IsNull)
+            {
+                actor = TacticalController.GetActiveActor();
+            }
+            if (actor.IsNull) return DynValue.Nil;
+
+            var armor = Inventory.GetEquippedArmor(actor);
+            if (armor == null) return DynValue.Nil;
+
+            var table = new Table(_lua);
+            table["name"] = armor.TemplateName ?? "";
+            table["value"] = armor.TradeValue;
+            table["rarity"] = armor.Rarity ?? "Common";
+            table["skills"] = armor.SkillCount;
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_equipped_armor failed: {ex.Message}");
+            return DynValue.Nil;
+        }
+    }
+
+    private DynValue LuaGetItemTemplates(string filter)
+    {
+        try
+        {
+            var templates = Inventory.GetItemTemplates(filter);
+            var table = new Table(_lua);
+            int i = 1;
+            foreach (var name in templates)
+            {
+                table[i++] = name;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"get_item_templates failed: {ex.Message}");
+            return DynValue.NewTable(new Table(_lua));
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

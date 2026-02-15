@@ -1,8 +1,8 @@
 {
   "manifestVersion": 2,
   "name": "LuaExample",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Menace Modkit",
-  "description": "Example modpack demonstrating Lua scripting",
+  "description": "Example modpack demonstrating Lua scripting with tactical and strategy event hooks",
   "loadOrder": 50
 }

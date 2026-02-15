@@ -1,14 +1,12 @@
 # Lua Scripting
 
-Don't want to write C#? Lua scripting provides a simpler way to create mods using the familiar Lua language. Lua scripts can execute any console command and respond to game events.
+Coding can seem complex, but Lua scripting provides a simpler way to create mods.  
 
-## Why Lua?
+There is a reason Lua ends up as the universal modding script, its dead easy. 
 
-- **Simpler syntax** - No compilation, types, or boilerplate
-- **Quick iteration** - Edit scripts without recompiling
-- **Full console access** - All 137+ console commands available
-- **Event-driven** - React to game events like turn start, scene load, etc.
-- **Safe sandbox** - No file system or network access
+Lua scripts can execute any console command and respond to game events.
+
+
 
 ## Getting Started
 
@@ -18,19 +16,26 @@ Create a `scripts/` folder in your modpack and add `.lua` files:
 MyMod-modpack/
   modpack.json
   scripts/
-    main.lua
-    tactical_helper.lua
+    some_name.lua
 ```
 
 All `.lua` files in `scripts/` are loaded automatically when your modpack loads.
 
-## Lua API Reference
+## What you can do in Lua
 
 ### Commands
 
 ```lua
 -- Execute any console command
+
+cmd("roster")
+
+-- store that as a "result" variable for later
+
 local result = cmd("roster")
+
+-- check what we got back from it
+
 if result.success then
     log("Roster: " .. result.result)
 else
@@ -38,11 +43,13 @@ else
 end
 
 -- Check if a command exists
+
 if has_command("operation") then
     cmd("operation hasactive")
 end
 
 -- Get list of all available commands
+
 local all_commands = commands()
 for i, name in ipairs(all_commands) do
     log(name)
@@ -54,15 +61,6 @@ The `cmd()` function returns a table with:
 - `result` - string, the command output
 - `data` - table, structured data (for supported commands)
 
-### Logging
-
-```lua
-log("Normal message")      -- White text
-warn("Warning message")    -- Yellow text
-error("Error message")     -- Red text
-```
-
-All messages are prefixed with `[Lua]` in the console.
 
 ### Events
 
@@ -127,19 +125,22 @@ The Lua engine exposes the full tactical SDK, giving you direct access to actors
 ### Actor Query
 
 ```lua
--- Get all actors in the battle
+-- Get all actors in the 
+
 local actors = get_actors()
 for i, actor in ipairs(actors) do
     log(actor.name .. " at (" .. actor.x .. ", " .. actor.y .. ")")
 end
 
 -- Get only player-controlled actors
+
 local squad = get_player_actors()
 for i, actor in ipairs(squad) do
     log("Squad member: " .. actor.name)
 end
 
 -- Get enemy actors
+
 local enemies = get_enemy_actors()
 log("Enemy count: " .. #enemies)
 
@@ -378,6 +379,161 @@ Direction constants for cover/facing:
 - 5 = Southwest
 - 6 = West
 - 7 = Northwest
+
+### Spawn API (Experimental)
+
+> **Warning:** The spawn API is experimental and may crash the game in some situations. Use with caution.
+
+```lua
+-- Spawn a unit at a tile
+-- faction: 0=Neutral, 1=Player, 2=PlayerAI, 3=Civilian, 4=AlliedLocalForces,
+--          5=EnemyLocalForces, 6=Pirates, 7=Wildlife, 8=Constructs, 9=RogueArmy
+local result = spawn_unit("Grunt", 10, 15, 5)  -- Spawn enemy at (10, 15)
+if result.success then
+    log("Spawned: " .. result.entity.name)
+else
+    warn("Spawn failed: " .. result.error)
+end
+
+-- Spawn player-faction unit
+spawn_unit("Grunt", 5, 5, 1)
+
+-- Destroy an entity
+local enemy = get_enemy_actors()[1]
+if enemy then
+    destroy_entity(enemy)          -- With death animation
+    destroy_entity(enemy, true)    -- Instant removal
+end
+
+-- Clear all enemies
+local count = clear_enemies()      -- With animation
+local count = clear_enemies(true)  -- Instant
+log("Cleared " .. count .. " enemies")
+
+-- List entities by faction
+local all = list_entities()        -- All factions
+local enemies = list_entities(5)   -- EnemyLocalForces only
+local players = list_entities(1)   -- Player faction
+
+for i, entity in ipairs(all) do
+    log(entity.name .. " (faction " .. entity.faction .. ")")
+end
+
+-- Get detailed entity info
+local info = get_entity_info(enemy)
+if info then
+    log("Entity ID: " .. info.entity_id)
+    log("Type: " .. info.type_name)
+    log("Faction: " .. info.faction)
+    log("Alive: " .. tostring(info.alive))
+end
+```
+
+Faction constants:
+- 0 = Neutral
+- 1 = Player
+- 2 = PlayerAI
+- 3 = Civilian
+- 4 = AlliedLocalForces
+- 5 = EnemyLocalForces
+- 6 = Pirates
+- 7 = Wildlife
+- 8 = Constructs
+- 9 = RogueArmy
+
+### Tile Effects
+
+```lua
+-- Get all effects on a tile
+local effects = get_tile_effects(10, 15)
+for i, effect in ipairs(effects) do
+    log(effect.type .. ": " .. effect.template)
+    log("  Rounds left: " .. effect.rounds_left)
+    log("  Blocks LOS: " .. tostring(effect.blocks_los))
+end
+
+-- Quick checks
+if is_on_fire(10, 15) then
+    log("Tile is burning!")
+end
+
+if has_smoke(10, 15) then
+    log("Tile has smoke cover")
+end
+
+if has_effects(10, 15) then
+    log("Tile has some effects")
+end
+
+-- Spawn effects
+spawn_effect(10, 15, "FireTileEffectTemplate")
+spawn_effect(10, 15, "SmokeTileEffectTemplate", 0.5)  -- 0.5 second delay
+
+-- Clear all effects from a tile
+local count = clear_tile_effects(10, 15)
+log("Cleared " .. count .. " effects")
+
+-- List available effect templates
+local templates = get_effect_templates()
+for i, name in ipairs(templates) do
+    log(name)
+end
+```
+
+### Inventory & Items
+
+```lua
+-- Give item to selected actor
+local result = give_item(nil, "weapon.laser_smg")  -- nil = active actor
+if result.success then
+    log(result.message)
+else
+    warn("Failed: " .. result.message)
+end
+
+-- Give item to specific actor
+local actor = find_actor("Leader1")
+give_item(actor, "armor.heavy_vest")
+
+-- Get actor's inventory
+local items = get_inventory(actor)
+for i, item in ipairs(items) do
+    log(item.name .. " [" .. item.slot .. "]")
+    log("  Value: $" .. item.value)
+    log("  Rarity: " .. item.rarity)
+    log("  Skills: " .. item.skills)
+end
+
+-- Get equipped weapons
+local weapons = get_equipped_weapons(actor)
+for i, weapon in ipairs(weapons) do
+    log("Weapon: " .. weapon.name .. " (" .. weapon.rarity .. ")")
+end
+
+-- Get equipped armor
+local armor = get_equipped_armor(actor)
+if armor then
+    log("Armor: " .. armor.name .. " - $" .. armor.value)
+end
+
+-- Search for item templates
+local templates = get_item_templates("laser")  -- Filter by "laser"
+for i, name in ipairs(templates) do
+    log(name)
+end
+
+-- Get all templates
+local all = get_item_templates()
+log("Total item templates: " .. #all)
+```
+
+Slot types:
+- Weapon1, Weapon2
+- Armor
+- Accessory1, Accessory2
+- Consumable1, Consumable2
+- Grenade
+- VehicleWeapon, VehicleArmor, VehicleAccessory
 
 ## Example: Tactical Helper
 
@@ -818,6 +974,38 @@ end)
 | `get_actor_at(x, z)` | `actor` or `nil` | Get actor on tile |
 | `get_distance(x1, z1, x2, z2)` | `number` | Get tile distance |
 
+### Spawn (Experimental)
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `spawn_unit(template, x, y, faction?)` | `{success, error, entity}` | Spawn unit at tile |
+| `destroy_entity(actor, immediate?)` | `boolean` | Kill an entity |
+| `clear_enemies(immediate?)` | `number` | Clear all enemies |
+| `list_entities(faction?)` | `[actor, ...]` | List entities by faction |
+| `get_entity_info(actor)` | `table` or `nil` | Get entity info |
+
+### Tile Effects
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `get_tile_effects(x, z)` | `[effect, ...]` | Get effects on tile |
+| `has_effects(x, z)` | `boolean` | Check for any effects |
+| `is_on_fire(x, z)` | `boolean` | Check if tile burning |
+| `has_smoke(x, z)` | `boolean` | Check for smoke |
+| `spawn_effect(x, z, template, delay?)` | `boolean` | Spawn effect on tile |
+| `clear_tile_effects(x, z)` | `number` | Remove all effects |
+| `get_effect_templates()` | `[string, ...]` | List effect templates |
+
+### Inventory
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `give_item(actor?, template)` | `{success, message}` | Give item to actor |
+| `get_inventory(actor?)` | `[item, ...]` | Get all items |
+| `get_equipped_weapons(actor?)` | `[weapon, ...]` | Get equipped weapons |
+| `get_equipped_armor(actor?)` | `table` or `nil` | Get equipped armor |
+| `get_item_templates(filter?)` | `[string, ...]` | List item templates |
+
 ### Black Market
 
 | Function | Returns | Description |
@@ -827,17 +1015,210 @@ end)
 
 ### Events
 
+#### Lifecycle Events
+
 | Event | Callback Args | Description |
 |-------|---------------|-------------|
 | `scene_loaded` | `sceneName` | Scene loaded |
 | `tactical_ready` | - | Battle ready |
 | `mission_start` | `{name, biome, difficulty}` | Mission started |
+
+#### Combat Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `actor_killed` | `{actor, actor_ptr, killer, killer_ptr, faction}` | Actor dies |
+| `damage_received` | `{target, target_ptr, attacker, attacker_ptr, skill, skill_ptr}` | Actor takes damage |
+| `attack_missed` | `{attacker, attacker_ptr, target, target_ptr}` | Attack misses |
+| `attack_start` | `{attacker, attacker_ptr, tile_ptr}` | Attack begins |
+| `bleeding_out` | `{actor, actor_ptr}` | Actor starts bleeding out |
+| `stabilized` | `{actor, actor_ptr}` | Actor stabilized |
+| `suppressed` | `{actor, actor_ptr}` | Actor fully suppressed |
+| `suppression_applied` | `{target, target_ptr, attacker, attacker_ptr, amount}` | Suppression applied |
+
+#### Actor State Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `actor_state_changed` | `{actor, actor_ptr}` | Actor state changes |
+| `morale_changed` | `{actor, actor_ptr, state}` | Morale state changes |
+| `hp_changed` | `{actor, actor_ptr, old_hp, new_hp, delta}` | HP changes |
+| `armor_changed` | `{actor, actor_ptr}` | Armor changes |
+| `ap_changed` | `{actor, actor_ptr, old_ap, new_ap, delta}` | Action points change |
+
+#### Visibility Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `discovered` | `{discovered, discovered_ptr, discoverer, discoverer_ptr}` | Entity discovered |
+| `visible_to_player` | `{entity, entity_ptr}` | Entity becomes visible |
+| `hidden_from_player` | `{entity, entity_ptr}` | Entity becomes hidden |
+
+#### Movement Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `move_start` | `{actor, actor_ptr, from_tile_ptr, to_tile_ptr, action}` | Movement begins |
+| `move_complete` | `{actor, actor_ptr, tile_ptr}` | Movement finishes |
+
+#### Skill Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `skill_used` | `{user, user_ptr, skill, skill_ptr}` | Skill is used |
+| `skill_complete` | `{skill, skill_ptr}` | Skill execution finishes |
+| `skill_added` | `{actor, actor_ptr, skill, skill_ptr}` | Skill added to actor |
+| `offmap_ability_used` | `{ability, ability_ptr}` | Offmap ability used |
+| `offmap_ability_canceled` | `{ability, ability_ptr}` | Offmap ability canceled |
+
+#### Turn/Round Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
 | `turn_start` | `{faction, factionName}` | Turn started |
 | `turn_end` | `{faction, factionName}` | Turn ended |
+| `round_start` | `{round}` | New round begins |
+
+#### Entity Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `entity_spawned` | `{entity, entity_ptr}` | Entity spawns |
+| `element_destroyed` | `{element, element_ptr}` | Element destroyed (vehicles, objects) |
+| `element_malfunction` | `{element, element_ptr}` | Element malfunctions |
+
+#### Mission Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `objective_changed` | `{objective, objective_ptr, state}` | Objective state changes |
+
+#### Strategy Events (Lifecycle)
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
 | `campaign_start` | - | New campaign started |
 | `campaign_loaded` | - | Saved campaign loaded |
 | `operation_end` | - | Operation completed |
-| `blackmarket_refresh` | - | Black market restocking |
+| `operation_finished` | - | Operation fully completed |
+| `mission_ended` | `{mission_ptr, status}` | Mission ended |
+
+#### Roster Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `leader_hired` | `{leader, leader_ptr, template}` | Leader joins roster |
+| `leader_dismissed` | `{leader, leader_ptr}` | Leader dismissed |
+| `leader_permadeath` | `{leader, leader_ptr}` | Leader dies permanently |
+| `leader_levelup` | `{leader, leader_ptr, perk}` | Leader gains a perk |
+| `squaddie_killed` | `{squaddie_id}` | Squaddie dies |
+| `squaddie_added` | `{squaddie, alive_count}` | Squaddie added |
+
+#### Faction Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `faction_trust_changed` | `{faction, faction_ptr, delta}` | Faction trust changes |
+| `faction_status_changed` | `{faction, faction_ptr, status}` | Faction status changes |
+| `faction_upgrade_unlocked` | `{faction, faction_ptr, upgrade, upgrade_ptr}` | Faction upgrade unlocked |
+
+#### Black Market Events
+
+| Event | Callback Args | Description |
+|-------|---------------|-------------|
+| `blackmarket_refresh` | - | Black market restocking (pre) |
+| `blackmarket_restocked` | - | Black market restocked (post) |
+| `blackmarket_item_added` | `{item, item_ptr}` | Item added to market |
+
+### Example: Reacting to Combat Events
+
+```lua
+-- Log all kills
+on("actor_killed", function(data)
+    log(data.actor .. " was killed by " .. data.killer)
+end)
+
+-- Track damage
+on("damage_received", function(data)
+    log(data.target .. " took damage from " .. data.attacker .. " using " .. data.skill)
+end)
+
+-- React to HP changes
+on("hp_changed", function(data)
+    if data.delta < 0 then
+        log(data.actor .. " lost " .. (-data.delta) .. " HP")
+        if data.new_hp < 20 then
+            warn(data.actor .. " is critically wounded!")
+        end
+    else
+        log(data.actor .. " healed " .. data.delta .. " HP")
+    end
+end)
+
+-- Track movement
+on("move_start", function(data)
+    log(data.actor .. " is moving")
+end)
+
+on("move_complete", function(data)
+    log(data.actor .. " finished moving")
+end)
+
+-- Track rounds
+on("round_start", function(data)
+    log("=== ROUND " .. data.round .. " ===")
+end)
+```
+
+### Example: Reacting to Strategy Events
+
+```lua
+-- Track roster changes
+on("leader_hired", function(data)
+    log("Welcome to the team: " .. data.leader)
+end)
+
+on("leader_permadeath", function(data)
+    warn("We lost " .. data.leader .. " forever...")
+end)
+
+on("leader_levelup", function(data)
+    log(data.leader .. " gained perk: " .. data.perk)
+end)
+
+-- Track faction relations
+on("faction_trust_changed", function(data)
+    if data.delta > 0 then
+        log(data.faction .. " trust increased by " .. data.delta)
+    else
+        warn(data.faction .. " trust decreased by " .. (-data.delta))
+    end
+end)
+
+on("faction_upgrade_unlocked", function(data)
+    log("Unlocked " .. data.upgrade .. " from " .. data.faction)
+end)
+
+-- Track black market
+on("blackmarket_restocked", function()
+    log("Black market has new items!")
+end)
+
+-- Track operations
+on("mission_ended", function(data)
+    log("Mission complete! Status: " .. data.status)
+end)
+```
+
+### Logging
+
+```lua
+log("Normal message")      -- White text
+warn("Warning message")    -- Yellow text
+error("Error message")     -- Red text
+```
+
+All messages are prefixed with `[Lua]` in the console.
 
 ---
 

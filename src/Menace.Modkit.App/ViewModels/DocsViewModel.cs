@@ -563,6 +563,49 @@ public sealed class DocsViewModel : ViewModelBase, ISearchableViewModel
     }
 
     /// <summary>
+    /// Navigate to a document by name pattern (case-insensitive partial match).
+    /// Used for cross-tab navigation like "lua-scripting" or "Lua Scripting".
+    /// </summary>
+    public bool NavigateToDocByName(string namePattern)
+    {
+        if (string.IsNullOrEmpty(namePattern))
+            return false;
+
+        var patternLower = namePattern.ToLowerInvariant().Replace(" ", "").Replace("-", "");
+
+        DocTreeNode? FindMatchingNode(IEnumerable<DocTreeNode> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.IsFile)
+                {
+                    var nameLower = node.Name.ToLowerInvariant().Replace(" ", "").Replace("-", "");
+                    var pathLower = node.RelativePath.ToLowerInvariant().Replace(" ", "").Replace("-", "");
+                    if (nameLower.Contains(patternLower) || pathLower.Contains(patternLower))
+                        return node;
+                }
+                else
+                {
+                    var found = FindMatchingNode(node.Children);
+                    if (found != null)
+                        return found;
+                }
+            }
+            return null;
+        }
+
+        var matchingNode = FindMatchingNode(_allDocNodes);
+        if (matchingNode != null)
+        {
+            ExpandToNode(matchingNode);
+            SelectedNode = matchingNode;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Navigate to a document by relative path (for internal links).
     /// Validates paths to prevent navigation outside the docs directory.
     /// </summary>

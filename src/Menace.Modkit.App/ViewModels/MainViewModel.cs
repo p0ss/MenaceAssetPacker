@@ -58,6 +58,13 @@ public sealed class MainViewModel : ViewModelBase
 
         // Share the reference graph service from StatsEditor to AssetBrowser
         AssetBrowser.SetReferenceGraphService(StatsEditor.ReferenceGraphService);
+
+        // Wire up cross-tab navigation: code editor → docs (Lua scripting guide)
+        CodeEditor.NavigateToLuaDocs = () =>
+        {
+            NavigateTo(Docs, "Docs");
+            Docs.NavigateToDocByName("lua-scripting");
+        };
     }
 
     // Home

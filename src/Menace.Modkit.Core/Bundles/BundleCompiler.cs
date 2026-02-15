@@ -28,6 +28,26 @@ public class BundleCompiler
         public List<string> Warnings { get; set; } = new();
         public int ClonesCreated { get; set; }
         public int PatchesApplied { get; set; }
+        public int AudioClipsCreated { get; set; }
+        public int TexturesCreated { get; set; }
+        public int SpritesCreated { get; set; }
+    }
+
+    /// <summary>
+    /// Texture entry for native texture/sprite creation.
+    /// </summary>
+    public class TextureEntry
+    {
+        /// <summary>Name of the texture asset (without extension).</summary>
+        public string AssetName { get; set; } = string.Empty;
+        /// <summary>Full path to the source PNG file.</summary>
+        public string SourceFilePath { get; set; } = string.Empty;
+        /// <summary>Resource path for ResourceManager (e.g., "assets/textures/my_icon").</summary>
+        public string ResourcePath { get; set; } = string.Empty;
+        /// <summary>Whether to also create a Sprite asset referencing the texture.</summary>
+        public bool CreateSprite { get; set; } = true;
+        /// <summary>Pixels per unit for the sprite (default 100).</summary>
+        public float PixelsPerUnit { get; set; } = 100f;
     }
 
     /// <summary>
@@ -61,11 +81,61 @@ public class BundleCompiler
         string outputPath,
         CancellationToken ct = default)
     {
+        return await CompileDataPatchBundleAsync(
+            mergedPatches, mergedClones, null, gameDataPath, unityVersion, outputPath, ct);
+    }
+
+    /// <summary>
+    /// Compile merged patches, clones, and audio assets into an asset bundle.
+    /// This reads base game assets, creates clones and audio clips, applies patches, and writes a new bundle.
+    /// </summary>
+    /// <param name="mergedPatches">The merged patches from all active modpacks.</param>
+    /// <param name="mergedClones">The merged clone definitions from all active modpacks.</param>
+    /// <param name="audioEntries">Audio files to convert to native AudioClip assets.</param>
+    /// <param name="gameDataPath">Path to the game's data directory (contains level files, resources.assets, etc.)</param>
+    /// <param name="unityVersion">The Unity version string (e.g. "2020.3.18f1").</param>
+    /// <param name="outputPath">Path to write the output .bundle file.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<BundleCompileResult> CompileDataPatchBundleAsync(
+        MergedPatchSet mergedPatches,
+        MergedCloneSet? mergedClones,
+        List<AudioBundler.AudioEntry>? audioEntries,
+        string gameDataPath,
+        string unityVersion,
+        string outputPath,
+        CancellationToken ct = default)
+    {
+        return await CompileDataPatchBundleAsync(
+            mergedPatches, mergedClones, audioEntries, null, gameDataPath, unityVersion, outputPath, ct);
+    }
+
+    /// <summary>
+    /// Compile merged patches, clones, audio assets, and textures into an asset bundle.
+    /// This is the main compilation entry point that handles all asset types.
+    /// </summary>
+    /// <param name="mergedPatches">The merged patches from all active modpacks.</param>
+    /// <param name="mergedClones">The merged clone definitions from all active modpacks.</param>
+    /// <param name="audioEntries">Audio files to convert to native AudioClip assets.</param>
+    /// <param name="textureEntries">PNG files to convert to native Texture2D/Sprite assets.</param>
+    /// <param name="gameDataPath">Path to the game's data directory (contains level files, resources.assets, etc.)</param>
+    /// <param name="unityVersion">The Unity version string (e.g. "2020.3.18f1").</param>
+    /// <param name="outputPath">Path to write the output .bundle file.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<BundleCompileResult> CompileDataPatchBundleAsync(
+        MergedPatchSet mergedPatches,
+        MergedCloneSet? mergedClones,
+        List<AudioBundler.AudioEntry>? audioEntries,
+        List<TextureEntry>? textureEntries,
+        string gameDataPath,
+        string unityVersion,
+        string outputPath,
+        CancellationToken ct = default)
+    {
         return await Task.Run(() =>
         {
             try
             {
-                return CompileDataPatchBundleCore(mergedPatches, mergedClones, gameDataPath, unityVersion, outputPath);
+                return CompileDataPatchBundleCore(mergedPatches, mergedClones, audioEntries, textureEntries, gameDataPath, unityVersion, outputPath);
             }
             catch (Exception ex)
             {
@@ -81,6 +151,8 @@ public class BundleCompiler
     private BundleCompileResult CompileDataPatchBundleCore(
         MergedPatchSet mergedPatches,
         MergedCloneSet? mergedClones,
+        List<AudioBundler.AudioEntry>? audioEntries,
+        List<TextureEntry>? textureEntries,
         string gameDataPath,
         string unityVersion,
         string outputPath)
@@ -89,11 +161,13 @@ public class BundleCompiler
 
         bool hasPatches = mergedPatches.Patches.Count > 0;
         bool hasClones = mergedClones?.HasClones == true;
+        bool hasAudio = audioEntries?.Count > 0;
+        bool hasTextures = textureEntries?.Count > 0;
 
-        if (!hasPatches && !hasClones)
+        if (!hasPatches && !hasClones && !hasAudio && !hasTextures)
         {
             result.Success = false;
-            result.Message = "No patches or clones to compile";
+            result.Message = "No patches, clones, audio, or texture assets to compile";
             return result;
         }
 
@@ -120,18 +194,55 @@ public class BundleCompiler
                 ? afile.AssetInfos.Max(i => i.PathId) + 1
                 : 1;
 
-            // Build lookup of existing assets by name for cloning and patching
-            var assetsByName = BuildAssetNameLookup(am, primaryFileInst);
-            result.Warnings.Add($"Asset lookup indexed {assetsByName.Count} MonoBehaviour assets from {primaryDataFile}");
+            // Build lookup of existing assets by ID for cloning
+            // Uses raw byte scanning (Unity 6 doesn't embed type trees)
+            var assetsByName = BuildAssetNameLookup(afile);
+            result.Warnings.Add($"Asset lookup indexed {assetsByName.Count} template assets from {primaryDataFile}");
+
+            // Load globalgamemanagers to get ResourceManager path mappings
+            var ggmPath = Path.Combine(Path.GetDirectoryName(primaryDataFile)!, "globalgamemanagers");
+            var resourcePathLookup = new Dictionary<string, string>(); // templateName -> resourcePath
+            byte[]? ggmBytes = null;
+
+            if (File.Exists(ggmPath) && (hasClones || hasAudio || hasTextures))
+            {
+                try
+                {
+                    var ggmInst = am.LoadAssetsFile(ggmPath, false);
+                    var ggmFile = ggmInst.file;
+
+                    // Parse ResourceManager to build path lookup
+                    foreach (var info in ggmFile.AssetInfos)
+                    {
+                        if (info.TypeId == 147) // ResourceManager
+                        {
+                            var absOffset = info.GetAbsoluteByteOffset(ggmFile);
+                            ggmFile.Reader.BaseStream.Position = absOffset;
+                            var rmBytes = ggmFile.Reader.ReadBytes((int)info.ByteSize);
+
+                            resourcePathLookup = ParseResourceManager(rmBytes, assetsByName);
+                            result.Warnings.Add($"ResourceManager indexed {resourcePathLookup.Count} template paths");
+                            break;
+                        }
+                    }
+
+                    // Read the full globalgamemanagers file for later patching
+                    ggmBytes = File.ReadAllBytes(ggmPath);
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"Failed to parse globalgamemanagers: {ex.Message}");
+                }
+            }
 
             // ===== PHASE 1: PROCESS CLONES =====
             var clonedAssets = new Dictionary<string, AssetFileInfo>();
+            var cloneSourceMap = new Dictionary<string, string>(); // cloneName -> sourceName
 
             if (hasClones)
             {
                 var cloneResult = ProcessClones(
-                    am, primaryFileInst, mergedClones!, mergedPatches,
-                    assetsByName, clonedAssets, ref nextPathId);
+                    afile, mergedClones!, assetsByName, clonedAssets, cloneSourceMap, ref nextPathId);
 
                 result.ClonesCreated = clonedAssets.Count;
                 result.Warnings.AddRange(cloneResult.Warnings);
@@ -149,6 +260,9 @@ public class BundleCompiler
             }
 
             // ===== PHASE 2: PROCESS PATCHES =====
+            // NOTE: Raw byte cloning doesn't support field-level patching.
+            // Patches for cloned assets should be applied at runtime via the injection system.
+            // For now, we just track which patches couldn't be applied.
             int totalPatched = 0;
 
             if (hasPatches)
@@ -160,27 +274,16 @@ public class BundleCompiler
                     foreach (var (assetName, fieldPatches) in instances)
                     {
                         // Check if this is a cloned asset we just created
-                        if (clonedAssets.TryGetValue(assetName, out var clonedInfo))
+                        if (clonedAssets.ContainsKey(assetName))
                         {
-                            // Already patched during clone creation, skip
+                            // Clones will have patches applied at runtime
+                            // (raw byte cloning doesn't support field-level patching)
                             continue;
                         }
 
-                        // Find existing asset
-                        if (assetsByName.TryGetValue(assetName, out var existing))
-                        {
-                            try
-                            {
-                                TemplatePatchSerializer.ApplyPatches(existing.field, fieldPatches);
-                                existing.info.SetNewData(existing.field);
-                                totalPatched++;
-                            }
-                            catch (Exception ex)
-                            {
-                                result.Warnings.Add($"Patch failed for '{assetName}': {ex.Message}");
-                            }
-                        }
-                        else
+                        // For non-clone assets, we can't patch without type trees
+                        // The runtime injection system will handle these
+                        if (!assetsByName.ContainsKey(assetName))
                         {
                             result.Warnings.Add($"Patch target '{assetName}' not found");
                         }
@@ -190,20 +293,66 @@ public class BundleCompiler
 
             result.PatchesApplied = totalPatched;
 
+            // ===== PHASE 2.5: PROCESS AUDIO ASSETS =====
+            var audioAssets = new Dictionary<string, AssetFileInfo>();
+            var audioResourcePaths = new Dictionary<string, string>(); // assetName -> resourcePath
+
+            if (hasAudio)
+            {
+                var audioResult = ProcessAudioAssets(
+                    afile, audioEntries!, audioAssets, audioResourcePaths, ref nextPathId);
+
+                result.AudioClipsCreated = audioAssets.Count;
+                result.Warnings.AddRange(audioResult.Warnings);
+
+                if (audioAssets.Count > 0)
+                {
+                    result.Warnings.Add($"Created {audioAssets.Count} native AudioClip asset(s)");
+                }
+            }
+
+            // ===== PHASE 2.6: PROCESS TEXTURE ASSETS =====
+            var textureAssets = new Dictionary<string, AssetFileInfo>();
+            var spriteAssets = new Dictionary<string, AssetFileInfo>();
+            var textureResourcePaths = new Dictionary<string, string>(); // assetName -> resourcePath
+            var spriteResourcePaths = new Dictionary<string, string>(); // assetName -> resourcePath
+
+            if (hasTextures)
+            {
+                var textureResult = ProcessTextureAssets(
+                    afile, textureEntries!, textureAssets, spriteAssets,
+                    textureResourcePaths, spriteResourcePaths, ref nextPathId);
+
+                result.TexturesCreated = textureAssets.Count;
+                result.SpritesCreated = spriteAssets.Count;
+                result.Warnings.AddRange(textureResult.Warnings);
+
+                if (textureAssets.Count > 0)
+                {
+                    result.Warnings.Add($"Created {textureAssets.Count} native Texture2D asset(s)");
+                }
+                if (spriteAssets.Count > 0)
+                {
+                    result.Warnings.Add($"Created {spriteAssets.Count} native Sprite asset(s)");
+                }
+            }
+
             // Check if we have any work to write
-            if (result.ClonesCreated == 0 && totalPatched == 0)
+            if (result.ClonesCreated == 0 && totalPatched == 0 && result.AudioClipsCreated == 0 && result.TexturesCreated == 0)
             {
                 result.Success = false;
                 result.Message = "No assets were modified. Check warnings for details.";
                 return result;
             }
 
-            // ===== PHASE 3: WRITE BUNDLE =====
+            // ===== PHASE 3: WRITE OUTPUT =====
             var dir = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
 
             bool bundleWritten = false;
+            byte[]? serializedBytes = null;
+
             try
             {
                 using var ms = new MemoryStream();
@@ -212,28 +361,71 @@ public class BundleCompiler
                     afile.Write(writer);
                 }
 
-                var serializedBytes = ms.ToArray();
+                serializedBytes = ms.ToArray();
+
+                // Write raw assets file for manual testing/replacement
+                // This can be copied over resources.assets to test if cloning works
+                var rawAssetsPath = Path.Combine(dir!, "resources.assets.patched");
+                File.WriteAllBytes(rawAssetsPath, serializedBytes);
+                result.Warnings.Add($"Raw assets file written: {rawAssetsPath} ({serializedBytes.Length / 1024 / 1024}MB)");
+
+                // Patch globalgamemanagers ResourceManager with new entries (clones + audio + textures)
+                if (ggmBytes != null && (clonedAssets.Count > 0 || audioAssets.Count > 0 || textureAssets.Count > 0 || spriteAssets.Count > 0))
+                {
+                    try
+                    {
+                        var patchedGgm = PatchResourceManager(
+                            ggmBytes,
+                            clonedAssets,
+                            cloneSourceMap,
+                            resourcePathLookup,
+                            audioAssets,
+                            audioResourcePaths,
+                            textureAssets,
+                            textureResourcePaths,
+                            spriteAssets,
+                            spriteResourcePaths);
+
+                        if (patchedGgm != null)
+                        {
+                            var ggmPatchedPath = Path.Combine(dir!, "globalgamemanagers.patched");
+                            File.WriteAllBytes(ggmPatchedPath, patchedGgm);
+                            var totalEntries = clonedAssets.Count + audioAssets.Count + textureAssets.Count + spriteAssets.Count;
+                            result.Warnings.Add($"GlobalGameManagers patched with {totalEntries} ResourceManager entries ({clonedAssets.Count} clones, {audioAssets.Count} audio, {textureAssets.Count} textures, {spriteAssets.Count} sprites): {ggmPatchedPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Failed to patch globalgamemanagers: {ex.Message}");
+                    }
+                }
+
+                // Also try to write UnityFS bundle (may fail to load due to IL2CPP issues)
                 bundleWritten = BundleWriter.WriteBundle(serializedBytes, outputPath, unityVersion);
             }
             catch (Exception ex)
             {
-                result.Warnings.Add($"UnityFS bundle writing failed: {ex.Message}");
+                result.Warnings.Add($"Asset writing failed: {ex.Message}");
             }
 
-            if (bundleWritten)
+            if (bundleWritten || serializedBytes != null)
             {
                 result.Success = true;
                 result.OutputPath = outputPath;
                 var parts = new List<string>();
                 if (result.ClonesCreated > 0) parts.Add($"{result.ClonesCreated} clone(s)");
                 if (result.PatchesApplied > 0) parts.Add($"{result.PatchesApplied} patch(es)");
-                result.Message = $"Compiled {string.Join(" and ", parts)} into UnityFS bundle";
+                if (result.AudioClipsCreated > 0) parts.Add($"{result.AudioClipsCreated} audio clip(s)");
+                if (result.TexturesCreated > 0) parts.Add($"{result.TexturesCreated} texture(s)");
+                if (result.SpritesCreated > 0) parts.Add($"{result.SpritesCreated} sprite(s)");
+                var format = bundleWritten ? "UnityFS bundle + raw assets" : "raw assets only";
+                result.Message = $"Compiled {string.Join(" and ", parts)} ({format})";
             }
             else
             {
                 // Fallback: write individual .asset files + JSON manifest
                 result.Warnings.Add("Falling back to JSON manifest + individual asset files");
-                WriteFallbackAssets(am, primaryFileInst, mergedPatches, assetsByName, dir!, outputPath);
+                WriteFallbackAssets(clonedAssets, assetsByName, dir!, outputPath);
                 result.Success = true;
                 result.OutputPath = outputPath;
                 result.Message = $"Compiled assets (JSON manifest fallback)";
@@ -248,54 +440,100 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Build a lookup dictionary of all MonoBehaviour assets by name and ID.
+    /// Build a lookup dictionary of all MonoBehaviour assets by their m_ID field.
+    /// Uses raw binary scanning since Unity 6 doesn't embed type trees.
+    /// Dynamically searches for template ID pattern (xxx.yyy format) to be robust
+    /// against game updates that might change field offsets.
     /// </summary>
-    private static Dictionary<string, (AssetFileInfo info, AssetTypeValueField field)> BuildAssetNameLookup(
-        AssetsManager am,
-        AssetsFileInstance afileInst)
+    private static Dictionary<string, (AssetFileInfo info, byte[] bytes, int idOffset)> BuildAssetNameLookup(
+        AssetsFile afile)
     {
-        var lookup = new Dictionary<string, (AssetFileInfo, AssetTypeValueField)>();
-        int readCount = 0;
-        int failCount = 0;
+        var lookup = new Dictionary<string, (AssetFileInfo, byte[], int)>();
+        var reader = afile.Reader;
 
-        foreach (var info in afileInst.file.GetAssetsOfType(AssetClassID.MonoBehaviour))
+        foreach (var info in afile.GetAssetsOfType(AssetClassID.MonoBehaviour))
         {
             try
             {
-                var baseField = am.GetBaseField(afileInst, info);
-                if (baseField == null)
+                var absOffset = info.GetAbsoluteByteOffset(afile);
+                reader.BaseStream.Position = absOffset;
+                var bytes = reader.ReadBytes((int)info.ByteSize);
+
+                // Search for template ID pattern in first 200 bytes
+                // Template IDs are length-prefixed strings with format "category.name"
+                var (id, idOffset) = FindTemplateId(bytes, maxSearchOffset: 200);
+                if (id != null && idOffset >= 0 && !lookup.ContainsKey(id))
                 {
-                    failCount++;
-                    continue;
-                }
-
-                readCount++;
-
-                // Try m_Name first
-                var nameField = baseField.Children.FirstOrDefault(f => f.FieldName == "m_Name");
-                var name = nameField?.Value?.AsString;
-
-                if (!string.IsNullOrEmpty(name) && !lookup.ContainsKey(name))
-                {
-                    lookup[name] = (info, baseField);
-                }
-
-                // Also index by m_ID if present (templates use this as identifier)
-                var idField = baseField.Children.FirstOrDefault(f => f.FieldName == "m_ID");
-                var id = idField?.Value?.AsString;
-
-                if (!string.IsNullOrEmpty(id) && !lookup.ContainsKey(id))
-                {
-                    lookup[id] = (info, baseField);
+                    lookup[id] = (info, bytes, idOffset);
                 }
             }
             catch
             {
-                failCount++;
+                // Skip assets that fail to read
             }
         }
 
         return lookup;
+    }
+
+    /// <summary>
+    /// Search for a template ID string in asset bytes.
+    /// Template IDs have format "category.name" (e.g., "weapon.laser_rifle").
+    /// Returns the ID and its offset, or (null, -1) if not found.
+    /// </summary>
+    private static (string? id, int offset) FindTemplateId(byte[] bytes, int maxSearchOffset)
+    {
+        // Common template prefixes to look for
+        var prefixes = new[] {
+            "weapon.", "specialweapon.", "armor.", "enemy.", "active.", "turret.",
+            "accessory.", "squad_leader.", "pilot.", "player_squad.", "army.",
+            "mod_weapon.", "construct.", "story_faction.", "tag."
+        };
+
+        for (int offset = 16; offset < Math.Min(maxSearchOffset, bytes.Length - 8); offset++)
+        {
+            // Read potential string length
+            if (offset + 4 > bytes.Length) break;
+            int len = BitConverter.ToInt32(bytes, offset);
+
+            // Validate length (template IDs are typically 10-60 chars)
+            if (len < 5 || len > 100 || offset + 4 + len > bytes.Length)
+                continue;
+
+            // Check if it's a valid ASCII string with a dot
+            bool valid = true;
+            bool hasDot = false;
+            int dotPos = -1;
+            for (int i = 0; i < len && valid; i++)
+            {
+                byte b = bytes[offset + 4 + i];
+                if (b < 32 || b > 126)
+                {
+                    valid = false;
+                }
+                else if (b == '.')
+                {
+                    hasDot = true;
+                    if (dotPos < 0) dotPos = i;
+                }
+            }
+
+            if (!valid || !hasDot || dotPos < 2)
+                continue;
+
+            var str = System.Text.Encoding.ASCII.GetString(bytes, offset + 4, len);
+
+            // Check if it starts with a known template prefix
+            foreach (var prefix in prefixes)
+            {
+                if (str.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return (str, offset);
+                }
+            }
+        }
+
+        return (null, -1);
     }
 
     /// <summary>
@@ -308,19 +546,17 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Process all clone definitions, creating new native assets.
+    /// Process all clone definitions, creating new native assets using raw byte cloning.
     /// </summary>
     private CloneProcessResult ProcessClones(
-        AssetsManager am,
-        AssetsFileInstance afileInst,
+        AssetsFile afile,
         MergedCloneSet mergedClones,
-        MergedPatchSet mergedPatches,
-        Dictionary<string, (AssetFileInfo info, AssetTypeValueField field)> assetsByName,
+        Dictionary<string, (AssetFileInfo info, byte[] bytes, int idOffset)> assetsByName,
         Dictionary<string, AssetFileInfo> clonedAssets,
+        Dictionary<string, string> cloneSourceMap,
         ref long nextPathId)
     {
         var result = new CloneProcessResult();
-        var afile = afileInst.file;
 
         foreach (var (templateType, cloneMap) in mergedClones.Clones)
         {
@@ -343,18 +579,13 @@ public class BundleCompiler
 
                 try
                 {
-                    // Deep copy the source field
-                    var cloneField = DeepCopyField(source.field);
-
-                    // Change identity fields
-                    SetFieldValue(cloneField, "m_Name", newName);
-                    SetFieldValue(cloneField, "m_ID", newName);
-
-                    // Apply any patches targeting this clone
-                    if (mergedPatches.Patches.TryGetValue(templateType, out var typePatches) &&
-                        typePatches.TryGetValue(newName, out var clonePatches))
+                    // Clone using raw byte patching at the dynamically found offset
+                    var cloneBytes = CloneWithNewId(source.bytes, newName, source.idOffset);
+                    if (cloneBytes == null)
                     {
-                        TemplatePatchSerializer.ApplyPatches(cloneField, clonePatches);
+                        result.Warnings.Add($"Clone '{newName}' failed: could not patch m_ID");
+                        result.Success = false;
+                        continue;
                     }
 
                     // Create new asset info with same type as source
@@ -367,12 +598,13 @@ public class BundleCompiler
                     );
 
                     // Register the clone in the assets file
-                    newInfo.SetNewData(cloneField);
+                    newInfo.SetNewData(cloneBytes);
                     afile.Metadata.AddAssetInfo(newInfo);
 
-                    // Track for later reference
+                    // Track for later reference (use same offset as source)
                     clonedAssets[newName] = newInfo;
-                    assetsByName[newName] = (newInfo, cloneField);
+                    cloneSourceMap[newName] = sourceName;
+                    assetsByName[newName] = (newInfo, cloneBytes, source.idOffset);
                 }
                 catch (Exception ex)
                 {
@@ -386,99 +618,289 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Create a deep copy of an AssetTypeValueField, preserving all type information.
+    /// Process audio files and create native AudioClip assets.
     /// </summary>
-    private static AssetTypeValueField DeepCopyField(AssetTypeValueField source)
+    private AudioProcessResult ProcessAudioAssets(
+        AssetsFile afile,
+        List<AudioBundler.AudioEntry> audioEntries,
+        Dictionary<string, AssetFileInfo> audioAssets,
+        Dictionary<string, string> audioResourcePaths,
+        ref long nextPathId)
     {
-        if (source == null) return null!;
+        var result = new AudioProcessResult();
 
-        var copy = new AssetTypeValueField
+        // Find an existing AudioClip to use as template
+        var template = AudioAssetCreator.FindAudioClipTemplate(afile);
+        if (template == null)
         {
-            TemplateField = source.TemplateField  // Preserve type definition (FieldName is derived from this)
-        };
-
-        // Copy value - create new AssetTypeValue with same data
-        if (source.Value != null)
-        {
-            // Get the raw object value and create a new AssetTypeValue
-            var valueType = source.Value.ValueType;
-            object? rawValue = valueType switch
-            {
-                AssetValueType.Bool => source.Value.AsBool,
-                AssetValueType.Int8 => source.Value.AsInt,
-                AssetValueType.UInt8 => source.Value.AsUInt,
-                AssetValueType.Int16 => source.Value.AsInt,
-                AssetValueType.UInt16 => source.Value.AsUInt,
-                AssetValueType.Int32 => source.Value.AsInt,
-                AssetValueType.UInt32 => source.Value.AsUInt,
-                AssetValueType.Int64 => source.Value.AsLong,
-                AssetValueType.UInt64 => source.Value.AsULong,
-                AssetValueType.Float => source.Value.AsFloat,
-                AssetValueType.Double => source.Value.AsDouble,
-                AssetValueType.String => source.Value.AsString,
-                AssetValueType.ByteArray => source.Value.AsByteArray?.ToArray(), // Copy array
-                _ => source.Value.AsObject
-            };
-            copy.Value = new AssetTypeValue(valueType, rawValue);
+            result.Warnings.Add("No existing AudioClip found to use as template - cannot create audio assets");
+            result.Success = false;
+            return result;
         }
 
-        // Recursively copy children
-        if (source.Children != null && source.Children.Count > 0)
+        var (templateBytes, templateInfo) = template.Value;
+
+        foreach (var entry in audioEntries)
         {
-            copy.Children = new List<AssetTypeValueField>(source.Children.Count);
-            foreach (var child in source.Children)
+            try
             {
-                copy.Children.Add(DeepCopyField(child));
+                var audioResult = AudioAssetCreator.CreateAudioClip(
+                    afile,
+                    entry.SourceFilePath,
+                    entry.AssetName,
+                    nextPathId++,
+                    templateBytes,
+                    templateInfo);
+
+                if (audioResult.Success)
+                {
+                    // Find the created asset info
+                    var newInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == audioResult.PathId);
+                    if (newInfo != null)
+                    {
+                        audioAssets[entry.AssetName] = newInfo;
+                        if (!string.IsNullOrEmpty(entry.ResourcePath))
+                        {
+                            audioResourcePaths[entry.AssetName] = entry.ResourcePath;
+                        }
+                    }
+                }
+                else
+                {
+                    result.Warnings.Add($"Audio '{entry.AssetName}' failed: {audioResult.ErrorMessage}");
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Audio '{entry.AssetName}' failed: {ex.Message}");
             }
         }
 
-        return copy;
+        result.Success = audioAssets.Count > 0;
+        return result;
     }
 
     /// <summary>
-    /// Set a string field value by name, searching the immediate children.
+    /// Result of audio processing.
     /// </summary>
-    private static void SetFieldValue(AssetTypeValueField root, string fieldName, string value)
+    private class AudioProcessResult
     {
-        var field = root.Children?.FirstOrDefault(f => f.FieldName == fieldName);
-        if (field != null)
+        public bool Success { get; set; } = true;
+        public List<string> Warnings { get; } = new();
+    }
+
+    /// <summary>
+    /// Result of texture processing.
+    /// </summary>
+    private class TextureProcessResult
+    {
+        public bool Success { get; set; } = true;
+        public List<string> Warnings { get; } = new();
+    }
+
+    /// <summary>
+    /// Process PNG files and create native Texture2D/Sprite assets.
+    /// </summary>
+    private TextureProcessResult ProcessTextureAssets(
+        AssetsFile afile,
+        List<TextureEntry> textureEntries,
+        Dictionary<string, AssetFileInfo> textureAssets,
+        Dictionary<string, AssetFileInfo> spriteAssets,
+        Dictionary<string, string> textureResourcePaths,
+        Dictionary<string, string> spriteResourcePaths,
+        ref long nextPathId)
+    {
+        var result = new TextureProcessResult();
+
+        // Find an existing Texture2D to use as template
+        var textureTemplate = NativeTextureCreator.FindTemplate(afile);
+        if (textureTemplate == null)
         {
-            field.Value = new AssetTypeValue(AssetValueType.String, value);
+            result.Warnings.Add("No existing Texture2D found to use as template - cannot create texture assets");
+            result.Success = false;
+            return result;
         }
+
+        // Find an existing Sprite to use as template (only needed if any entry wants sprites)
+        NativeSpriteCreator.SpriteTemplate? spriteTemplate = null;
+        if (textureEntries.Any(e => e.CreateSprite))
+        {
+            spriteTemplate = NativeSpriteCreator.FindTemplate(afile);
+            if (spriteTemplate == null)
+            {
+                result.Warnings.Add("No existing Sprite found to use as template - sprites will be skipped");
+            }
+        }
+
+        foreach (var entry in textureEntries)
+        {
+            try
+            {
+                // Verify the source file exists
+                if (!File.Exists(entry.SourceFilePath))
+                {
+                    result.Warnings.Add($"Texture '{entry.AssetName}' skipped: source file not found ({entry.SourceFilePath})");
+                    continue;
+                }
+
+                // Create Texture2D
+                var texturePathId = nextPathId++;
+                var texResult = NativeTextureCreator.CreateFromPng(
+                    afile,
+                    textureTemplate,
+                    entry.SourceFilePath,
+                    entry.AssetName,
+                    texturePathId);
+
+                if (texResult.Success)
+                {
+                    // Find the created asset info
+                    var texInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == texResult.PathId);
+                    if (texInfo != null)
+                    {
+                        textureAssets[entry.AssetName] = texInfo;
+                        if (!string.IsNullOrEmpty(entry.ResourcePath))
+                        {
+                            textureResourcePaths[entry.AssetName] = entry.ResourcePath;
+                        }
+                        else
+                        {
+                            // Default resource path based on asset name
+                            textureResourcePaths[entry.AssetName] = $"assets/textures/{entry.AssetName}";
+                        }
+                    }
+
+                    // Create Sprite if requested
+                    if (entry.CreateSprite && spriteTemplate != null)
+                    {
+                        var spritePathId = nextPathId++;
+                        var spriteName = entry.AssetName + "_sprite";
+                        var spriteResult = NativeSpriteCreator.CreateSprite(
+                            afile,
+                            spriteTemplate,
+                            spriteName,
+                            texturePathId,
+                            texResult.Width,
+                            texResult.Height,
+                            spritePathId,
+                            entry.PixelsPerUnit);
+
+                        if (spriteResult.Success)
+                        {
+                            var spriteInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == spriteResult.PathId);
+                            if (spriteInfo != null)
+                            {
+                                spriteAssets[spriteName] = spriteInfo;
+                                if (!string.IsNullOrEmpty(entry.ResourcePath))
+                                {
+                                    spriteResourcePaths[spriteName] = entry.ResourcePath + "_sprite";
+                                }
+                                else
+                                {
+                                    spriteResourcePaths[spriteName] = $"assets/sprites/{spriteName}";
+                                }
+                            }
+                        }
+                        else
+                        {
+                            result.Warnings.Add($"Sprite for '{entry.AssetName}' failed: {spriteResult.ErrorMessage}");
+                        }
+                    }
+                }
+                else
+                {
+                    result.Warnings.Add($"Texture '{entry.AssetName}' failed: {texResult.ErrorMessage}");
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Texture '{entry.AssetName}' failed: {ex.Message}");
+            }
+        }
+
+        result.Success = textureAssets.Count > 0;
+        return result;
+    }
+
+    /// <summary>
+    /// Create a clone of asset bytes with a new m_ID string.
+    /// Handles string length changes by resizing the buffer.
+    /// </summary>
+    private static byte[]? CloneWithNewId(byte[] sourceBytes, string newId, int idOffset)
+    {
+        if (sourceBytes.Length <= idOffset + 4) return null;
+
+        // Read original string length
+        int origLen = BitConverter.ToInt32(sourceBytes, idOffset);
+        if (origLen <= 0 || origLen > 200 || idOffset + 4 + origLen > sourceBytes.Length)
+            return null;
+
+        // Calculate padding (Unity aligns strings to 4-byte boundaries)
+        int origPadding = (4 - (origLen % 4)) % 4;
+        int origTotalLen = 4 + origLen + origPadding;
+
+        int newLen = newId.Length;
+        int newPadding = (4 - (newLen % 4)) % 4;
+        int newTotalLen = 4 + newLen + newPadding;
+
+        int sizeDiff = newTotalLen - origTotalLen;
+
+        // Create new buffer
+        var cloneBytes = new byte[sourceBytes.Length + sizeDiff];
+
+        // Copy header (before m_ID)
+        Array.Copy(sourceBytes, 0, cloneBytes, 0, idOffset);
+
+        // Write new string length
+        Array.Copy(BitConverter.GetBytes(newLen), 0, cloneBytes, idOffset, 4);
+
+        // Write new string content
+        var newIdBytes = System.Text.Encoding.ASCII.GetBytes(newId);
+        Array.Copy(newIdBytes, 0, cloneBytes, idOffset + 4, newLen);
+
+        // Write padding zeros
+        for (int i = 0; i < newPadding; i++)
+        {
+            cloneBytes[idOffset + 4 + newLen + i] = 0;
+        }
+
+        // Copy remaining data after the original string
+        int afterOrigString = idOffset + origTotalLen;
+        int afterNewString = idOffset + newTotalLen;
+        if (afterOrigString < sourceBytes.Length)
+        {
+            Array.Copy(sourceBytes, afterOrigString, cloneBytes, afterNewString, sourceBytes.Length - afterOrigString);
+        }
+
+        return cloneBytes;
     }
 
     /// <summary>
     /// Write fallback assets when bundle creation fails.
+    /// With raw byte cloning, we write the raw bytes directly.
     /// </summary>
     private static void WriteFallbackAssets(
-        AssetsManager am,
-        AssetsFileInstance afileInst,
-        MergedPatchSet mergedPatches,
-        Dictionary<string, (AssetFileInfo info, AssetTypeValueField field)> assetsByName,
+        Dictionary<string, AssetFileInfo> clonedAssets,
+        Dictionary<string, (AssetFileInfo info, byte[] bytes, int idOffset)> assetsByName,
         string dir,
         string outputPath)
     {
         var manifest = new Dictionary<string, string>();
 
-        foreach (var templateType in mergedPatches.GetTemplateTypes())
+        // Write cloned assets
+        foreach (var (assetName, info) in clonedAssets)
         {
-            var instances = mergedPatches.Patches[templateType];
-
-            foreach (var (assetName, _) in instances)
+            if (assetsByName.TryGetValue(assetName, out var asset))
             {
-                if (assetsByName.TryGetValue(assetName, out var asset))
+                try
                 {
-                    try
-                    {
-                        var patched = asset.field.WriteToByteArray();
-                        var assetPath = Path.Combine(dir, $"{assetName}.asset");
-                        File.WriteAllBytes(assetPath, patched);
-                        manifest[assetName] = Path.GetFileName(assetPath);
-                    }
-                    catch
-                    {
-                        // Skip assets that fail to serialize
-                    }
+                    var assetPath = Path.Combine(dir, $"{assetName}.asset");
+                    File.WriteAllBytes(assetPath, asset.bytes);
+                    manifest[assetName] = Path.GetFileName(assetPath);
+                }
+                catch
+                {
+                    // Skip assets that fail to write
                 }
             }
         }
@@ -522,5 +944,287 @@ public class BundleCompiler
         }
 
         return files;
+    }
+
+    /// <summary>
+    /// Parse ResourceManager bytes to build a lookup from template name to resource path.
+    /// The ResourceManager maps resource paths (e.g., "data/items/weapons/weapon.laser_rifle")
+    /// to asset references (FileID + PathID).
+    /// </summary>
+    private static Dictionary<string, string> ParseResourceManager(
+        byte[] rmBytes,
+        Dictionary<string, (AssetFileInfo info, byte[] bytes, int idOffset)> assetsByName)
+    {
+        var pathLookup = new Dictionary<string, string>();
+
+        // Build PathID -> name reverse lookup
+        var pathIdToName = new Dictionary<long, string>();
+        foreach (var (name, data) in assetsByName)
+        {
+            pathIdToName[data.info.PathId] = name;
+        }
+
+        // Parse ResourceManager entries
+        // Format: 4-byte count, then entries of (string, PPtr)
+        if (rmBytes.Length < 4) return pathLookup;
+
+        int entryCount = BitConverter.ToInt32(rmBytes, 0);
+        int offset = 4;
+
+        for (int i = 0; i < entryCount && offset < rmBytes.Length - 20; i++)
+        {
+            // Read string length
+            int strLen = BitConverter.ToInt32(rmBytes, offset);
+            offset += 4;
+
+            if (strLen <= 0 || strLen > 500 || offset + strLen > rmBytes.Length)
+                break;
+
+            // Read path string
+            string path = System.Text.Encoding.UTF8.GetString(rmBytes, offset, strLen);
+            offset += strLen;
+
+            // Align to 4 bytes
+            int padding = (4 - (strLen % 4)) % 4;
+            offset += padding;
+
+            // Read PPtr (FileID + PathID)
+            if (offset + 12 > rmBytes.Length) break;
+            int fileId = BitConverter.ToInt32(rmBytes, offset);
+            long pathId = BitConverter.ToInt64(rmBytes, offset + 4);
+            offset += 12;
+
+            // Map PathID to template name and store the path
+            if (pathIdToName.TryGetValue(pathId, out var templateName))
+            {
+                pathLookup[templateName] = path;
+            }
+        }
+
+        return pathLookup;
+    }
+
+    /// <summary>
+    /// Represents a ResourceManager entry (path -> asset reference).
+    /// </summary>
+    private class ResourceManagerEntry
+    {
+        public string Path { get; set; } = "";
+        public int FileId { get; set; }
+        public long PathId { get; set; }
+    }
+
+    /// <summary>
+    /// Patch the globalgamemanagers file to add new ResourceManager entries for clones, audio, and texture assets.
+    /// Entries must be inserted in sorted order (Unity uses binary search).
+    /// </summary>
+    private static byte[]? PatchResourceManager(
+        byte[] ggmBytes,
+        Dictionary<string, AssetFileInfo> clonedAssets,
+        Dictionary<string, string> cloneSourceMap,
+        Dictionary<string, string> resourcePathLookup,
+        Dictionary<string, AssetFileInfo>? audioAssets = null,
+        Dictionary<string, string>? audioResourcePaths = null,
+        Dictionary<string, AssetFileInfo>? textureAssets = null,
+        Dictionary<string, string>? textureResourcePaths = null,
+        Dictionary<string, AssetFileInfo>? spriteAssets = null,
+        Dictionary<string, string>? spriteResourcePaths = null)
+    {
+        if (clonedAssets.Count == 0 &&
+            (audioAssets?.Count ?? 0) == 0 &&
+            (textureAssets?.Count ?? 0) == 0 &&
+            (spriteAssets?.Count ?? 0) == 0) return null;
+
+        // Load globalgamemanagers using AssetsTools.NET for proper modification
+        using var ggmStream = new MemoryStream(ggmBytes);
+        var am = new AssetsManager();
+
+        try
+        {
+            var ggmInst = am.LoadAssetsFile(ggmStream, "globalgamemanagers", false);
+            var ggmFile = ggmInst.file;
+
+            // Find ResourceManager asset
+            AssetFileInfo? rmInfo = null;
+            foreach (var info in ggmFile.AssetInfos)
+            {
+                if (info.TypeId == 147) // ResourceManager
+                {
+                    rmInfo = info;
+                    break;
+                }
+            }
+
+            if (rmInfo == null) return null;
+
+            // Read current ResourceManager data
+            var reader = ggmFile.Reader;
+            reader.BaseStream.Position = rmInfo.GetAbsoluteByteOffset(ggmFile);
+            var rmBytes = reader.ReadBytes((int)rmInfo.ByteSize);
+
+            // Parse all existing entries (container map)
+            // ResourceManager has: container map + preload table + other data
+            // We only modify the container map but must preserve everything else
+            var entries = new List<ResourceManagerEntry>();
+            int entryCount = BitConverter.ToInt32(rmBytes, 0);
+            int offset = 4;
+
+            for (int i = 0; i < entryCount; i++)
+            {
+                if (offset + 4 > rmBytes.Length) break;
+                int strLen = BitConverter.ToInt32(rmBytes, offset);
+                offset += 4;
+
+                if (strLen <= 0 || strLen > 2000 || offset + strLen > rmBytes.Length)
+                    break;
+
+                string path = System.Text.Encoding.UTF8.GetString(rmBytes, offset, strLen);
+                offset += strLen;
+                offset += (4 - (strLen % 4)) % 4;
+
+                if (offset + 12 > rmBytes.Length) break;
+                int fileId = BitConverter.ToInt32(rmBytes, offset);
+                long pathId = BitConverter.ToInt64(rmBytes, offset + 4);
+                offset += 12;
+
+                entries.Add(new ResourceManagerEntry { Path = path, FileId = fileId, PathId = pathId });
+            }
+
+            // Track where container entries end - everything after this is preserved
+            int containerEndOffset = offset;
+
+            // Build new entries for each clone
+            int addedCount = 0;
+            foreach (var (cloneName, cloneInfo) in clonedAssets)
+            {
+                // Get source template's resource path
+                if (!cloneSourceMap.TryGetValue(cloneName, out var sourceName))
+                    continue;
+
+                if (!resourcePathLookup.TryGetValue(sourceName, out var sourcePath))
+                    continue;
+
+                // Derive clone's resource path
+                var lastSlash = sourcePath.LastIndexOf('/');
+                if (lastSlash < 0) continue;
+
+                var folder = sourcePath.Substring(0, lastSlash);
+                var clonePath = $"{folder}/{cloneName}";
+
+                entries.Add(new ResourceManagerEntry
+                {
+                    Path = clonePath,
+                    FileId = 4, // resources.assets
+                    PathId = cloneInfo.PathId
+                });
+                addedCount++;
+            }
+
+            // Build new entries for each audio asset
+            if (audioAssets != null && audioResourcePaths != null)
+            {
+                foreach (var (audioName, audioInfo) in audioAssets)
+                {
+                    if (!audioResourcePaths.TryGetValue(audioName, out var resourcePath))
+                        continue;
+
+                    entries.Add(new ResourceManagerEntry
+                    {
+                        Path = resourcePath,
+                        FileId = 4, // resources.assets
+                        PathId = audioInfo.PathId
+                    });
+                    addedCount++;
+                }
+            }
+
+            // Build new entries for each texture asset
+            if (textureAssets != null && textureResourcePaths != null)
+            {
+                foreach (var (textureName, textureInfo) in textureAssets)
+                {
+                    if (!textureResourcePaths.TryGetValue(textureName, out var resourcePath))
+                        continue;
+
+                    entries.Add(new ResourceManagerEntry
+                    {
+                        Path = resourcePath,
+                        FileId = 4, // resources.assets
+                        PathId = textureInfo.PathId
+                    });
+                    addedCount++;
+                }
+            }
+
+            // Build new entries for each sprite asset
+            if (spriteAssets != null && spriteResourcePaths != null)
+            {
+                foreach (var (spriteName, spriteInfo) in spriteAssets)
+                {
+                    if (!spriteResourcePaths.TryGetValue(spriteName, out var resourcePath))
+                        continue;
+
+                    entries.Add(new ResourceManagerEntry
+                    {
+                        Path = resourcePath,
+                        FileId = 4, // resources.assets
+                        PathId = spriteInfo.PathId
+                    });
+                    addedCount++;
+                }
+            }
+
+            if (addedCount == 0) return null;
+
+            // Sort all entries alphabetically (Unity uses binary search)
+            entries.Sort((a, b) => string.Compare(a.Path, b.Path, StringComparison.Ordinal));
+
+            // Serialize the new ResourceManager data
+            // Must preserve all data after container entries (preload table, etc.)
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+
+            // Write entry count
+            bw.Write(entries.Count);
+
+            // Write each entry
+            foreach (var entry in entries)
+            {
+                var pathBytes = System.Text.Encoding.UTF8.GetBytes(entry.Path);
+                int pathLen = pathBytes.Length;
+                int pathPadding = (4 - (pathLen % 4)) % 4;
+
+                bw.Write(pathLen);
+                bw.Write(pathBytes);
+                for (int i = 0; i < pathPadding; i++)
+                    bw.Write((byte)0);
+                bw.Write(entry.FileId);
+                bw.Write(entry.PathId);
+            }
+
+            // Append all remaining data (preload table, dependencies, etc.)
+            if (containerEndOffset < rmBytes.Length)
+            {
+                bw.Write(rmBytes, containerEndOffset, rmBytes.Length - containerEndOffset);
+            }
+
+            var newRmData = ms.ToArray();
+
+            // Update the asset with new data
+            rmInfo.SetNewData(newRmData);
+
+            // Write the modified file
+            using var outStream = new MemoryStream();
+            using (var writer = new AssetsFileWriter(outStream))
+            {
+                ggmFile.Write(writer);
+            }
+
+            return outStream.ToArray();
+        }
+        finally
+        {
+            am.UnloadAll();
+        }
     }
 }

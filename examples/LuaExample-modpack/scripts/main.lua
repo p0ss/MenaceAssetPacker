@@ -1,129 +1,179 @@
--- ============================================================================
--- Lua Scripting Example for Menace Modkit
--- ============================================================================
--- This script demonstrates the Lua scripting API. Place .lua files in your
--- modpack's scripts/ folder and they'll be loaded automatically.
---
--- Available API:
---   cmd("command args")     - Execute console command, returns {success, result, data}
---   log("message")          - Log to console
---   warn("message")         - Log warning
---   error("message")        - Log error
---   on("event", callback)   - Register event handler
---   off("event", callback)  - Unregister event handler
---   commands()              - Get list of all available commands
---   has_command("name")     - Check if command exists
---
--- Available events:
---   scene_loaded(sceneName)       - Fired when any scene loads
---   tactical_ready()              - Fired when tactical battle is ready
---   mission_start(info)           - Fired at mission start (info.name, info.biome, info.difficulty)
---   turn_start(info)              - Fired at turn start (info.faction, info.factionName)
---   turn_end(info)                - Fired at turn end (info.faction, info.factionName)
--- ============================================================================
+-- =============================================================================
+-- Main Lua Script for LuaExample Modpack
+-- =============================================================================
+-- Demonstrates core Lua scripting capabilities including:
+--   - Scene events
+--   - Turn/round tracking
+--   - Console commands
+--   - Utility functions
+-- =============================================================================
 
-log("LuaExample script loaded!")
-log("Mod ID: " .. (MOD_ID or "unknown"))
+log("[LuaExample] Loading main.lua...")
+log("[LuaExample] MOD_ID: " .. tostring(MOD_ID))
+log("[LuaExample] SCRIPT_PATH: " .. tostring(SCRIPT_PATH))
 
--- ============================================================================
--- Basic command execution
--- ============================================================================
+-- =============================================================================
+-- GLOBAL STATE
+-- =============================================================================
 
--- Execute a simple command
-local result = cmd("roster")
-if result.success then
-    log("Roster command succeeded: " .. result.result)
-else
-    warn("Roster command failed: " .. result.result)
-end
+-- Track current game state
+local currentRound = 0
+local currentTurn = 0
+local currentScene = ""
 
--- Check if we're in the right context for certain commands
-if has_command("operation") then
-    local op = cmd("operation hasactive")
-    if op.success and op.result == "true" then
-        log("Active operation detected!")
-    end
-end
+-- =============================================================================
+-- SCENE EVENTS
+-- =============================================================================
 
--- ============================================================================
--- Event handlers
--- ============================================================================
-
--- Called when any scene loads
 on("scene_loaded", function(sceneName)
-    log("Scene loaded: " .. sceneName)
+    currentScene = sceneName or ""
+    log("[LuaExample] Scene loaded: " .. currentScene)
+end)
 
-    -- Do something special for tactical scenes
-    if string.find(sceneName, "Tactical") then
-        log("Entering tactical battle!")
+-- =============================================================================
+-- TURN AND ROUND EVENTS
+-- =============================================================================
+
+on("round_start", function(data)
+    if data then
+        currentRound = data.round or 0
+        log("[LuaExample] === ROUND " .. currentRound .. " START ===")
     end
 end)
 
--- Called when tactical battle is fully ready
-on("tactical_ready", function()
-    log("Tactical battle ready - all systems go!")
-
-    -- Example: Log the current roster
-    local r = cmd("roster")
-    if r.success then
-        log("Current roster:\n" .. r.result)
+on("round_end", function(data)
+    if data then
+        log("[LuaExample] === ROUND " .. (data.round or currentRound) .. " END ===")
     end
 end)
 
--- Called at mission start
-on("mission_start", function(info)
-    log(string.format("Mission starting: %s in %s (difficulty %d)",
-        info.name or "unknown",
-        info.biome or "unknown",
-        info.difficulty or 0))
-end)
-
--- Called at turn start
-on("turn_start", function(info)
-    log(string.format("Turn start: faction %d (%s)",
-        info.faction or -1,
-        info.factionName or "unknown"))
-
-    -- Example: If it's the player's turn, show some info
-    if info.faction == 0 then
-        cmd("status")  -- Show tactical status
+on("turn_start", function(data)
+    if data then
+        currentTurn = data.turn or 0
+        local faction = data.faction or -1
+        local factionName = faction == 0 and "Player" or "Enemy " .. faction
+        log("[LuaExample] Turn " .. currentTurn .. " - " .. factionName .. "'s turn")
     end
 end)
 
--- ============================================================================
--- Utility functions you can define
--- ============================================================================
-
--- Helper to safely get a command result or default
-function safe_cmd(command, default)
-    local r = cmd(command)
-    if r.success then
-        return r.result
-    else
-        return default or ""
+on("turn_end", function(data)
+    if data then
+        log("[LuaExample] Turn ended (faction " .. tostring(data.faction) .. ")")
     end
+end)
+
+-- =============================================================================
+-- UTILITY FUNCTIONS
+-- =============================================================================
+
+-- Helper to format position coordinates
+function format_pos(x, y, z)
+    if x and y then
+        if z then
+            return string.format("(%.1f, %.1f, %.1f)", x, y, z)
+        else
+            return string.format("(%.1f, %.1f)", x, y)
+        end
+    end
+    return "(?, ?)"
 end
 
--- Helper to apply emotion to all leaders
-function buff_all_leaders(emotion)
-    local roster = cmd("roster")
-    if not roster.success then
-        warn("Could not get roster")
+-- Helper to safely convert value to string
+function safe_tostring(val)
+    if val == nil then return "nil" end
+    local ok, result = pcall(tostring, val)
+    if ok then return result else return "<error>" end
+end
+
+-- Helper to dump a table's contents for debugging
+function dump_table(t, indent)
+    indent = indent or ""
+    if type(t) ~= "table" then
+        log(indent .. safe_tostring(t))
         return
     end
-
-    -- Note: This is a simplified example. In practice, you'd parse the roster output.
-    log("Buffing all leaders with " .. emotion)
+    for k, v in pairs(t) do
+        if type(v) == "table" then
+            log(indent .. safe_tostring(k) .. ":")
+            dump_table(v, indent .. "  ")
+        else
+            log(indent .. safe_tostring(k) .. " = " .. safe_tostring(v))
+        end
+    end
 end
 
--- ============================================================================
--- Interactive console commands
--- ============================================================================
--- You can also type "lua <code>" in the console to execute Lua directly!
--- Examples:
---   lua log("Hello from console!")
---   lua cmd("roster")
---   lua for i, c in ipairs(commands()) do log(c) end
--- ============================================================================
+-- =============================================================================
+-- CONSOLE COMMANDS
+-- =============================================================================
 
-log("LuaExample initialization complete!")
+-- Test command to verify Lua is working
+cmd("lua_test", function(args)
+    log("=== LUA TEST COMMAND ===")
+    log("Arguments: " .. (args or "none"))
+    log("Current scene: " .. currentScene)
+    log("Current round: " .. currentRound)
+    log("Current turn: " .. currentTurn)
+
+    -- Check available API functions
+    log("Available APIs:")
+    log("  is_mission_running: " .. type(is_mission_running))
+    log("  get_player_actors: " .. type(get_player_actors))
+    log("  get_enemy_actors: " .. type(get_enemy_actors))
+    log("  get_selected_actor: " .. type(get_selected_actor))
+
+    return "Test complete - check log for details"
+end)
+
+-- Status command
+cmd("lua_status", function()
+    log("=== LUA MOD STATUS ===")
+    log("MOD_ID: " .. tostring(MOD_ID))
+    log("Scene: " .. currentScene)
+    log("Round: " .. currentRound)
+    log("Turn: " .. currentTurn)
+
+    if type(is_mission_running) == "function" then
+        log("Mission running: " .. tostring(is_mission_running()))
+    end
+
+    return "Status printed to log"
+end)
+
+-- List available events
+cmd("lua_events", function()
+    log("=== AVAILABLE EVENTS ===")
+    log("")
+    log("TACTICAL EVENTS:")
+    log("  tactical_ready     - Tactical mission initialized")
+    log("  turn_start         - Turn begins (data: faction, turn)")
+    log("  turn_end           - Turn ends (data: faction, turn)")
+    log("  round_start        - Round begins (data: round)")
+    log("  round_end          - Round ends (data: round)")
+    log("  actor_killed       - Unit killed (data: actor, killer)")
+    log("  actor_spawned      - Unit spawned (data: actor)")
+    log("  damage_received    - Damage dealt (data: actor, damage, source)")
+    log("  attack_missed      - Attack missed (data: actor, target)")
+    log("  move_start         - Movement begins (data: actor, from, to)")
+    log("  move_complete      - Movement ends (data: actor, position)")
+    log("  skill_used         - Skill activated (data: actor, skill)")
+    log("  morale_changed     - Morale changed (data: actor, old, new)")
+    log("  overwatch_triggered - Overwatch fires (data: actor, target)")
+    log("")
+    log("STRATEGY EVENTS:")
+    log("  campaign_start     - New campaign started")
+    log("  leader_hired       - Leader recruited (data: leader)")
+    log("  leader_dismissed   - Leader dismissed (data: leader)")
+    log("  leader_permadeath  - Leader died permanently (data: leader)")
+    log("  leader_levelup     - Leader gained a perk (data: leader)")
+    log("  faction_trust_changed - Trust changed (data: faction, delta)")
+    log("  mission_ended      - Mission completed (data: success)")
+    log("  squaddie_killed    - Squaddie died (data: id)")
+    log("  squaddie_added     - Squaddie recruited (data: id)")
+    log("")
+    log("GENERAL EVENTS:")
+    log("  scene_loaded       - Scene changed (data: sceneName)")
+
+    return "Event list printed to log"
+end)
+
+log("[LuaExample] main.lua loaded successfully!")

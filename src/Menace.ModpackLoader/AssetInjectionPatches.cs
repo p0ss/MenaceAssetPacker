@@ -26,6 +26,9 @@ namespace Menace.ModpackLoader;
 /// </summary>
 public static class AssetReplacer
 {
+    // Set to true to disable runtime asset replacement (relies on native assets only)
+    // This is used to verify that native asset creation is working correctly.
+    private const bool DISABLE_RUNTIME_REPLACEMENT = true;
     /// <summary>
     /// A registered disk-file replacement.
     /// </summary>
@@ -343,6 +346,12 @@ public static class AssetReplacer
     /// </summary>
     public static void ApplyAllReplacements()
     {
+        if (DISABLE_RUNTIME_REPLACEMENT)
+        {
+            SdkLogger.Msg("[AssetReplacer] Runtime replacement DISABLED - relying on native assets only");
+            return;
+        }
+
         int total = 0;
 
         // 1. Disk-file replacements grouped by kind

@@ -67,6 +67,14 @@ public partial class ModpackLoaderMod : MelonMod
         // This hooks game initialization to inject templates before pools are built
         EarlyTemplateInjection.Initialize(this, HarmonyInstance);
 
+        // Initialize tactical event hooks for C# and Lua event subscriptions
+        // Patches TacticalManager.InvokeOnX methods to fire SDK events
+        TacticalEventHooks.Initialize(HarmonyInstance);
+
+        // Initialize strategy event hooks for C# and Lua event subscriptions
+        // Patches Roster, StoryFaction, Squaddies, Operation, BlackMarket methods
+        StrategyEventHooks.Initialize(HarmonyInstance);
+
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
 
@@ -315,6 +323,14 @@ public partial class ModpackLoaderMod : MelonMod
         }
 
         SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
+
+        // Load compiled bundles from Mods/compiled/ (contains merged template clones)
+        var compiledDir = Path.Combine(modsPath, "compiled");
+        if (Directory.Exists(compiledDir))
+        {
+            SdkLogger.Msg($"Loading compiled bundles from: {compiledDir}");
+            BundleLoader.LoadBundles(compiledDir, "compiled");
+        }
     }
 
     /// <summary>
@@ -461,6 +477,10 @@ public partial class ModpackLoaderMod : MelonMod
             return true;
         }
 
+        // First, register any bundle-loaded clone templates with DataTemplateLoader
+        // This handles clones that were compiled into the templates.bundle
+        RegisterBundleClones();
+
         var allSucceeded = true;
 
         foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
@@ -476,13 +496,18 @@ public partial class ModpackLoaderMod : MelonMod
             SdkLogger.Msg($"Applying modpack: {modpack.Name}");
 
             // Apply clones BEFORE patches so cloned templates exist when patches run
+            // DISABLED: Testing native asset pipeline - runtime cloning should not be needed
+            // if (hasClones)
+            // {
+            //     if (!ApplyClones(modpack))
+            //         allSucceeded = false;
+            //
+            //     // Clear name lookup cache so patches can find the new clones
+            //     InvalidateNameLookupCache();
+            // }
             if (hasClones)
             {
-                if (!ApplyClones(modpack))
-                    allSucceeded = false;
-
-                // Clear name lookup cache so patches can find the new clones
-                InvalidateNameLookupCache();
+                SdkLogger.Msg($"  [NATIVE TEST] Skipping runtime cloning - native clones should exist");
             }
 
             bool success;
@@ -621,9 +646,11 @@ public partial class ModpackLoaderMod : MelonMod
         for (int i = 0; i < 15; i++)
             yield return null;
 
-        SdkLogger.Msg($"Applying asset replacements for scene: {sceneName}");
-        AssetReplacer.ApplyAllReplacements();
-        PlayerLog($"Asset replacements applied for scene: {sceneName}");
+        // DISABLED: Testing native asset pipeline - runtime replacement should not be needed
+        // SdkLogger.Msg($"Applying asset replacements for scene: {sceneName}");
+        // AssetReplacer.ApplyAllReplacements();
+        // PlayerLog($"Asset replacements applied for scene: {sceneName}");
+        SdkLogger.Msg($"[NATIVE TEST] Skipping runtime asset replacement - native assets should exist");
     }
 
     // ApplyTemplateModifications is implemented in TemplateInjection.cs (partial class)
