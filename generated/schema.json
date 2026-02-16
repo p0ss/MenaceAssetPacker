@@ -58094,6 +58094,129 @@
       ]
     }
   },
+  "effect_handlers": {
+    "InflictDamage": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.AI.Behaviors.Data.InflictDamage",
+      "aliases": ["Damage"],
+      "fields": [
+        {
+          "name": "BaseDamage",
+          "type": "float",
+          "offset": "0x64",
+          "category": "primitive"
+        },
+        {
+          "name": "DamagePctCurrentHitpoints",
+          "type": "float",
+          "offset": "0x68",
+          "category": "primitive"
+        },
+        {
+          "name": "DamagePctCurrentHitpointsMin",
+          "type": "float",
+          "offset": "0x6c",
+          "category": "primitive"
+        },
+        {
+          "name": "DamagePctMaxHitpoints",
+          "type": "float",
+          "offset": "0x70",
+          "category": "primitive"
+        },
+        {
+          "name": "DamagePctMaxHitpointsMin",
+          "type": "float",
+          "offset": "0x74",
+          "category": "primitive"
+        },
+        {
+          "name": "ArmorPenetration",
+          "type": "float",
+          "offset": "0x78",
+          "category": "primitive"
+        },
+        {
+          "name": "DamageToArmorDurability",
+          "type": "float",
+          "offset": "0x7c",
+          "category": "primitive"
+        }
+      ]
+    },
+    "ChangeProperty": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.ChangeProperty",
+      "fields": [
+        {
+          "name": "PropertyType",
+          "type": "PropertyType",
+          "offset": "0x58",
+          "category": "enum"
+        },
+        {
+          "name": "Value",
+          "type": "float",
+          "offset": "0x5c",
+          "category": "primitive"
+        },
+        {
+          "name": "ValueMult",
+          "type": "float",
+          "offset": "0x60",
+          "category": "primitive"
+        }
+      ]
+    },
+    "AddSkill": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.AddSkill",
+      "fields": [
+        {
+          "name": "Skill",
+          "type": "SkillTemplate",
+          "offset": "0x58",
+          "category": "reference"
+        },
+        {
+          "name": "Duration",
+          "type": "int",
+          "offset": "0x60",
+          "category": "primitive"
+        }
+      ]
+    },
+    "SpawnTileEffect": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.SpawnTileEffect",
+      "fields": [
+        {
+          "name": "TileEffect",
+          "type": "TileEffectTemplate",
+          "offset": "0x58",
+          "category": "reference"
+        },
+        {
+          "name": "Duration",
+          "type": "int",
+          "offset": "0x60",
+          "category": "primitive"
+        }
+      ]
+    },
+    "PlaySound": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.PlaySound",
+      "fields": [
+        {
+          "name": "SoundID",
+          "type": "string",
+          "offset": "0x58",
+          "category": "string"
+        }
+      ]
+    }
+  },
   "inheritance": {
     "AIWeightsTemplate": [
       "ScriptableObject",

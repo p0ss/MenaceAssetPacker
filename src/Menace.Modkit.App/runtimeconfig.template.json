@@ -1,0 +1,8 @@
+{
+  "configProperties": {
+    "System.Runtime.Loader.UseRidGraph": true
+  },
+  "additionalProbingPaths": [
+    "roslyn"
+  ]
+}

@@ -6,9 +6,32 @@
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Roslyn requires assemblies on disk, so no single-file -->
-    <PublishSingleFile>false</PublishSingleFile>
+    <!-- Single-file publish with Roslyn excluded (it needs to be on disk for runtime compilation) -->
+    <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
+
+  <!--
+    Roslyn assemblies must be on disk for runtime compilation.
+    This target removes them from the single-file bundle and copies them to a roslyn/ subdirectory.
+  -->
+  <Target Name="ExcludeRoslynFromBundle"
+          BeforeTargets="GenerateSingleFileBundle"
+          DependsOnTargets="PrepareForBundle">
+    <ItemGroup>
+      <RoslynToExclude Include="@(FilesToBundle)"
+        Condition="$([System.String]::new('%(Filename)').StartsWith('Microsoft.CodeAnalysis'))" />
+    </ItemGroup>
+    <ItemGroup>
+      <FilesToBundle Remove="@(RoslynToExclude)" />
+    </ItemGroup>
+    <Message Importance="high" Text="Excluding Roslyn from single-file bundle" />
+  </Target>
+
+  <Target Name="CopyRoslynToSubdir" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)roslyn" />
+    <Copy SourceFiles="@(RoslynToExclude)" DestinationFolder="$(PublishDir)roslyn" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copied Roslyn assemblies to roslyn/ subdirectory" />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />

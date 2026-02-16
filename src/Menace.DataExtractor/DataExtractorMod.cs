@@ -126,6 +126,7 @@ namespace Menace.DataExtractor
         private Dictionary<string, SchemaType> _schemaTypes = new();
         private Dictionary<string, SchemaType> _embeddedClasses = new();
         private Dictionary<string, SchemaType> _structTypes = new();  // Value type structs
+        private EventHandlerParser _effectHandlerParser = new();  // Polymorphic effect handler parsing
         private bool _schemaLoaded = false;
 
         private class SchemaType
@@ -373,8 +374,27 @@ namespace Menace.DataExtractor
                     }
                 }
 
+                // Parse effect handlers (polymorphic types for SkillEventHandlerTemplate)
+                int effectHandlerCount = 0;
+                if (root["effect_handlers"] is JObject effectHandlers)
+                {
+                    foreach (var kvp in effectHandlers)
+                    {
+                        var handlerName = kvp.Key;
+                        var handlerData = kvp.Value as JObject;
+                        if (handlerData == null) continue;
+
+                        var schema = ParseEffectHandlerSchema(handlerName, handlerData);
+                        if (schema != null)
+                        {
+                            _effectHandlerParser.RegisterSchema(schema);
+                            effectHandlerCount++;
+                        }
+                    }
+                }
+
                 _schemaLoaded = true;
-                LoggerInstance.Msg($"Schema loaded: {_schemaTypes.Count} template types, {_embeddedClasses.Count} embedded classes, {_structTypes.Count} struct types");
+                LoggerInstance.Msg($"Schema loaded: {_schemaTypes.Count} template types, {_embeddedClasses.Count} embedded classes, {_structTypes.Count} struct types, {effectHandlerCount} effect handlers");
             }
             catch (Exception ex)
             {
@@ -417,6 +437,54 @@ namespace Menace.DataExtractor
             }
 
             return schemaType;
+        }
+
+        private EventHandlerParser.EffectHandlerSchema ParseEffectHandlerSchema(string name, JObject data)
+        {
+            var schema = new EventHandlerParser.EffectHandlerSchema
+            {
+                Name = name,
+                TypeName = data["type_name"]?.ToString(),
+                BaseClass = data["base_class"]?.ToString()
+            };
+
+            // Parse aliases
+            if (data["aliases"] is JArray aliases)
+            {
+                foreach (var alias in aliases)
+                {
+                    var aliasStr = alias?.ToString();
+                    if (!string.IsNullOrEmpty(aliasStr))
+                        schema.Aliases.Add(aliasStr);
+                }
+            }
+
+            // Parse fields
+            if (data["fields"] is JArray fields)
+            {
+                foreach (var fieldToken in fields)
+                {
+                    var fieldData = fieldToken as JObject;
+                    if (fieldData == null) continue;
+
+                    var offsetStr = fieldData["offset"]?.ToString() ?? "0x0";
+                    uint offset = 0;
+                    if (offsetStr.StartsWith("0x"))
+                        uint.TryParse(offsetStr.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out offset);
+                    else
+                        uint.TryParse(offsetStr, out offset);
+
+                    schema.Fields.Add(new EventHandlerParser.EffectHandlerField
+                    {
+                        Name = fieldData["name"]?.ToString(),
+                        Type = fieldData["type"]?.ToString(),
+                        Offset = offset,
+                        Category = fieldData["category"]?.ToString()
+                    });
+                }
+            }
+
+            return schema;
         }
 
         private bool _manualExtractionInProgress = false;
@@ -2638,6 +2706,7 @@ namespace Menace.DataExtractor
             bool isEmbeddedClass = _embeddedClasses.TryGetValue(elementType, out var embeddedSchema);
             bool isTemplateRef = _schemaTypes.ContainsKey(elementType) || elementType.EndsWith("Template");
             bool isPrimitive = IsPrimitiveTypeName(elementType);
+            bool isEffectHandler = elementType == "SkillEventHandlerTemplate";
 
             for (int i = 0; i < count; i++)
             {
@@ -2650,7 +2719,13 @@ namespace Menace.DataExtractor
                         continue;
                     }
 
-                    if (isEmbeddedClass)
+                    if (isEffectHandler)
+                    {
+                        // Polymorphic effect handler - detect type and parse using schema
+                        var handlerData = ReadEffectHandler(elemPtr, depth + 1);
+                        result.Add(handlerData);
+                    }
+                    else if (isEmbeddedClass)
                     {
                         // Validate pointer looks reasonable before reading
                         if (elemPtr.ToInt64() < 0x10000)
@@ -2686,6 +2761,61 @@ namespace Menace.DataExtractor
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Read a polymorphic effect handler by detecting its type and parsing fields.
+        /// </summary>
+        private object ReadEffectHandler(IntPtr handlerPtr, int depth)
+        {
+            if (depth > 8) return "(SkillEventHandlerTemplate)";
+
+            try
+            {
+                // Validate pointer
+                if (handlerPtr.ToInt64() < 0x10000)
+                {
+                    DebugLog($"        effect handler: suspicious pointer {handlerPtr}");
+                    return "(SkillEventHandlerTemplate)";
+                }
+
+                // Detect handler type from IL2CPP class
+                string typeName = _effectHandlerParser.DetectHandlerType(handlerPtr);
+                if (string.IsNullOrEmpty(typeName))
+                {
+                    DebugLog($"        effect handler: failed to detect type at {handlerPtr}");
+                    return "(SkillEventHandlerTemplate)";
+                }
+
+                // Get schema for this handler type
+                var schema = _effectHandlerParser.GetSchema(typeName);
+                if (schema == null)
+                {
+                    // Unknown handler type - return basic info
+                    DebugLog($"        effect handler: no schema for type {typeName}");
+                    return new Dictionary<string, object>
+                    {
+                        ["_type"] = typeName,
+                        ["_name"] = ReadUnityAssetName(handlerPtr)
+                    };
+                }
+
+                // Parse handler fields using schema
+                var handlerData = _effectHandlerParser.ParseHandler(handlerPtr, schema, ReadUnityAssetName);
+
+                // Also include the asset name if available
+                string assetName = ReadUnityAssetName(handlerPtr);
+                if (!string.IsNullOrEmpty(assetName))
+                    handlerData["_name"] = assetName;
+
+                DebugLog($"        effect handler: parsed {typeName} with {handlerData.Count} fields");
+                return handlerData;
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"        effect handler error: {ex.Message}");
+                return "(SkillEventHandlerTemplate)";
+            }
         }
 
         private object ReadEmbeddedObject(IntPtr objPtr, SchemaType schema, int depth)

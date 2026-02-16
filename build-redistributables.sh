@@ -151,11 +151,13 @@ echo ""
 echo "📦 Building GUI App..."
 
 echo "  → Linux x64..."
+# Roslyn DLLs excluded from bundle via csproj (ExcludeFromSingleFile) - they need to be on disk
 $DOTNET publish src/Menace.Modkit.App -c Release -r linux-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/gui-linux-x64
 
 echo "  → Windows x64..."
+# Roslyn DLLs excluded from bundle via csproj (ExcludeFromSingleFile) - they need to be on disk
 $DOTNET publish src/Menace.Modkit.App -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
   -o dist/gui-win-x64
