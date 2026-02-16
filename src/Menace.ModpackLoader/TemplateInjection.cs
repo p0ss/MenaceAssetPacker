@@ -7,6 +7,7 @@ using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
 using MelonLoader;
 using Menace.SDK;
+using Menace.SDK.Internal;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -201,6 +202,68 @@ public partial class ModpackLoaderMod
         catch (Exception ex)
         {
             SdkLogger.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Write a localized string to a template's localization field by reading the field directly from memory.
+    /// This avoids property getters which can crash on certain objects.
+    /// </summary>
+    private bool WriteLocalizedFieldDirect(Il2CppObjectBase templateObj, string fieldName, string value)
+    {
+        try
+        {
+            var templatePtr = templateObj.Pointer;
+            if (templatePtr == IntPtr.Zero)
+                return false;
+
+            // Get the class pointer for the template
+            var klassPtr = IL2CPP.il2cpp_object_get_class(templatePtr);
+            if (klassPtr == IntPtr.Zero)
+                return false;
+
+            // Find the field offset for the localization property
+            var fieldOffset = OffsetCache.GetOrResolve(klassPtr, fieldName);
+            if (fieldOffset == 0)
+            {
+                SdkLogger.Warning($"    {fieldName}: could not find field offset");
+                return false;
+            }
+
+            // Read the localization object pointer directly from memory
+            var locPtr = Marshal.ReadIntPtr(templatePtr + (int)fieldOffset);
+            if (locPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning($"    {fieldName}: localization object is null");
+                return false;
+            }
+
+            // Validate the pointer looks reasonable (not a small integer masquerading as pointer)
+            if (locPtr.ToInt64() < 0x10000)
+            {
+                SdkLogger.Warning($"    {fieldName}: invalid localization pointer");
+                return false;
+            }
+
+            // m_DefaultTranslation is at offset +0x38 (56 bytes)
+            const int M_DEFAULT_TRANSLATION_OFFSET = 0x38;
+
+            // Convert managed string to IL2CPP string
+            IntPtr il2cppStr = IntPtr.Zero;
+            if (!string.IsNullOrEmpty(value))
+            {
+                il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
+            }
+
+            // Write the string pointer to the localization object's m_DefaultTranslation field
+            Marshal.WriteIntPtr(locPtr + M_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"    WriteLocalizedFieldDirect({fieldName}) failed: {ex.Message}");
             return false;
         }
     }
@@ -421,18 +484,35 @@ public partial class ModpackLoaderMod
                     }
 
                     // Localization types: write directly to m_DefaultTranslation
+                    // Use direct memory access if parentObj is an IL2CPP object to avoid crashes
                     if (IsLocalizationType(childType))
                     {
                         var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
-                        var existingLoc = childProp != null ? childProp.GetValue(parentObj) : childField.GetValue(parentObj);
-                        if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                        bool success = false;
+
+                        if (parentObj is Il2CppObjectBase il2cppParent)
                         {
-                            SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
-                            appliedCount++;
+                            // Use safe direct memory access
+                            success = WriteLocalizedFieldDirect(il2cppParent, childFieldName, stringValue);
                         }
                         else
                         {
-                            SdkLogger.Warning($"    {obj.name}.{fieldName}: localization object is null");
+                            // Fallback for managed value types - use property/field getter
+                            try
+                            {
+                                var existingLoc = childProp != null ? childProp.GetValue(parentObj) : childField?.GetValue(parentObj);
+                                success = existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue);
+                            }
+                            catch (Exception ex)
+                            {
+                                SdkLogger.Warning($"    {obj.name}.{fieldName}: getter failed: {ex.Message}");
+                            }
+                        }
+
+                        if (success)
+                        {
+                            SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
+                            appliedCount++;
                         }
                         continue;
                     }
@@ -502,18 +582,15 @@ public partial class ModpackLoaderMod
 
                 // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
                 // These are wrapper objects that can't be replaced with strings via normal property set
+                // Use direct memory access to avoid property getter crashes
                 if (IsLocalizationType(prop.PropertyType))
                 {
                     var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
-                    var existingLoc = prop.GetValue(castObj);
-                    if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                    if (castObj is Il2CppObjectBase il2cppCastObj &&
+                        WriteLocalizedFieldDirect(il2cppCastObj, fieldName, stringValue))
                     {
                         SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
                         appliedCount++;
-                    }
-                    else
-                    {
-                        SdkLogger.Warning($"    {obj.name}.{fieldName}: localization object is null, cannot set text");
                     }
                     continue;
                 }
@@ -1082,17 +1159,34 @@ public partial class ModpackLoaderMod
                 }
 
                 // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
+                // Use direct memory access if target is an IL2CPP object to avoid crashes
                 if (IsLocalizationType(prop.PropertyType))
                 {
                     var stringValue = value is JToken jt ? jt.Value<string>() : value?.ToString();
-                    var existingLoc = prop.GetValue(target);
-                    if (existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue))
+                    bool success = false;
+
+                    if (target is Il2CppObjectBase il2cppTarget)
                     {
-                        // Successfully wrote to existing localization object
+                        // Use safe direct memory access
+                        success = WriteLocalizedFieldDirect(il2cppTarget, fieldName, stringValue);
                     }
                     else
                     {
-                        SdkLogger.Warning($"    {targetType.Name}.{fieldName}: localization object is null");
+                        // Fallback for managed types - use property getter
+                        try
+                        {
+                            var existingLoc = prop.GetValue(target);
+                            success = existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue);
+                        }
+                        catch (Exception ex)
+                        {
+                            SdkLogger.Warning($"    {targetType.Name}.{fieldName}: getter failed: {ex.Message}");
+                        }
+                    }
+
+                    if (!success)
+                    {
+                        SdkLogger.Warning($"    {targetType.Name}.{fieldName}: could not set localized text");
                     }
                     continue;
                 }

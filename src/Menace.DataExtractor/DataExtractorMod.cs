@@ -2816,7 +2816,7 @@ namespace Menace.DataExtractor
         }
 
         /// <summary>
-        /// Read a polymorphic effect handler by detecting its type and parsing fields.
+        /// Read a polymorphic effect handler by detecting its type and parsing fields via IL2CPP reflection.
         /// </summary>
         private object ReadEffectHandler(IntPtr handlerPtr, int depth)
         {
@@ -2831,37 +2831,99 @@ namespace Menace.DataExtractor
                     return "(SkillEventHandlerTemplate)";
                 }
 
-                // Detect handler type from IL2CPP class
-                string typeName = _effectHandlerParser.DetectHandlerType(handlerPtr);
-                if (string.IsNullOrEmpty(typeName))
+                // Get IL2CPP class info
+                IntPtr klass = IL2CPP.il2cpp_object_get_class(handlerPtr);
+                if (klass == IntPtr.Zero)
                 {
-                    DebugLog($"        effect handler: failed to detect type at {handlerPtr}");
+                    DebugLog($"        effect handler: failed to get class at {handlerPtr}");
                     return "(SkillEventHandlerTemplate)";
                 }
 
-                // Get schema for this handler type
-                var schema = _effectHandlerParser.GetSchema(typeName);
-
-                // For now, just return type and name - field parsing can cause crashes with wrong offsets
-                // TODO: Once we verify correct offsets via Ghidra, re-enable field parsing
-                string assetName = null;
-                try
-                {
-                    assetName = ReadUnityAssetName(handlerPtr);
-                }
-                catch
-                {
-                    // Ignore errors reading asset name
-                }
+                IntPtr classNamePtr = IL2CPP.il2cpp_class_get_name(klass);
+                string typeName = classNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(classNamePtr) : "Unknown";
 
                 var result = new Dictionary<string, object>
                 {
                     ["_type"] = typeName
                 };
-                if (!string.IsNullOrEmpty(assetName))
-                    result["_name"] = assetName;
 
-                DebugLog($"        effect handler: detected {typeName}" + (schema != null ? " (schema available)" : ""));
+                // Fields to skip (inherited from base classes, internal Unity fields)
+                var skipFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "m_CachedPtr", "m_InstanceID", "m_UnityRuntimeErrorString",
+                    "m_ObjectHideFlags", "m_ID", "m_LocalizedStrings",
+                    "Pointer", "WasCollected", "ObjectClass"
+                };
+
+                // Walk class hierarchy and read fields
+                IntPtr walkKlass = klass;
+                while (walkKlass != IntPtr.Zero)
+                {
+                    IntPtr iter = IntPtr.Zero;
+                    IntPtr field;
+                    while ((field = IL2CPP.il2cpp_class_get_fields(walkKlass, ref iter)) != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            IntPtr fieldNamePtr = IL2CPP.il2cpp_field_get_name(field);
+                            if (fieldNamePtr == IntPtr.Zero) continue;
+                            string fieldName = Marshal.PtrToStringAnsi(fieldNamePtr);
+                            if (string.IsNullOrEmpty(fieldName)) continue;
+                            if (skipFields.Contains(fieldName)) continue;
+                            if (result.ContainsKey(fieldName)) continue;
+
+                            uint fieldOffset = IL2CPP.il2cpp_field_get_offset(field);
+                            IntPtr fieldType = IL2CPP.il2cpp_field_get_type(field);
+                            if (fieldType == IntPtr.Zero) continue;
+
+                            uint fieldAttrs = IL2CPP.il2cpp_type_get_attrs(fieldType);
+                            if ((fieldAttrs & 0x10) != 0) continue; // skip static
+
+                            int typeEnum = IL2CPP.il2cpp_type_get_type(fieldType);
+                            IntPtr fieldAddr = handlerPtr + (int)fieldOffset;
+
+                            object value = typeEnum switch
+                            {
+                                1 => Marshal.ReadByte(fieldAddr) != 0,           // BOOLEAN
+                                2 => (int)Marshal.ReadByte(fieldAddr),            // CHAR
+                                3 => (int)(sbyte)Marshal.ReadByte(fieldAddr),     // I1
+                                4 => (int)Marshal.ReadByte(fieldAddr),            // U1
+                                5 => (int)Marshal.ReadInt16(fieldAddr),           // I2
+                                6 => (int)(ushort)Marshal.ReadInt16(fieldAddr),   // U2
+                                7 => Marshal.ReadInt32(fieldAddr),                // I4
+                                8 => (int)(uint)Marshal.ReadInt32(fieldAddr),     // U4
+                                9 => Marshal.ReadInt64(fieldAddr),                // I8
+                                10 => (long)(ulong)Marshal.ReadInt64(fieldAddr),  // U8
+                                11 => ReadFloat(fieldAddr),                       // R4
+                                12 => ReadFloat(fieldAddr),                       // R8 (treat as float for safety)
+                                14 => ReadIl2CppStringAt(fieldAddr),              // STRING
+                                // Skip complex types (CLASS, VALUETYPE, ARRAY) for now to avoid crashes
+                                _ => null
+                            };
+
+                            if (value != null)
+                                result[fieldName] = value;
+                        }
+                        catch
+                        {
+                            // Skip fields that fail to read
+                        }
+                    }
+
+                    // Walk to parent class
+                    walkKlass = IL2CPP.il2cpp_class_get_parent(walkKlass);
+                    if (walkKlass != IntPtr.Zero)
+                    {
+                        IntPtr parentNamePtr = IL2CPP.il2cpp_class_get_name(walkKlass);
+                        string parentName = parentNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(parentNamePtr) : "";
+                        // Stop at base Unity/IL2CPP classes
+                        if (parentName == "Object" || parentName == "ScriptableObject" ||
+                            parentName == "MonoBehaviour" || parentName == "SkillEventHandlerTemplate")
+                            break;
+                    }
+                }
+
+                DebugLog($"        effect handler: {typeName} with {result.Count - 1} fields");
                 return result;
             }
             catch (Exception ex)
@@ -3197,6 +3259,10 @@ namespace Menace.DataExtractor
                     bool elemIsLocalization = IsLocalizationClass(elemClassName, elemClass);
                     bool elemIsList = IsIl2CppListClass(elemClassName, elemClass);
                     bool extractInline = elemIsUnityObject && ShouldExtractTemplateInline(elemClassName);
+                    bool elemIsEffectHandler = IsEffectHandlerClass(elemClassName, elemClass);
+
+                    if (elemIsEffectHandler)
+                        DebugLog($"        list is effect handler list: {elemClassName}");
 
                     for (int i = 0; i < size; i++)
                     {
@@ -3207,7 +3273,23 @@ namespace Menace.DataExtractor
                             continue;
                         }
 
-                        if (elemIsUnityObject)
+                        // Check for polymorphic effect handlers first (they are Unity objects too)
+                        if (elemIsEffectHandler)
+                        {
+                            DebugLog($"          effect handler elem[{i}] at {elemPtr}");
+                            if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
+                            {
+                                var handlerData = ReadEffectHandler(elemPtr, depth + 1);
+                                DebugLog($"          effect handler elem[{i}] result: {(handlerData is Dictionary<string, object> d ? d["_type"] : handlerData)}");
+                                result.Add(handlerData);
+                            }
+                            else
+                            {
+                                DebugLog($"          effect handler elem[{i}] not alive");
+                                result.Add(null);
+                            }
+                        }
+                        else if (elemIsUnityObject)
                         {
                             if (IsUnityObjectAliveWithClass(elemPtr, elemClass))
                             {
@@ -3637,6 +3719,39 @@ namespace Menace.DataExtractor
                             if (ns == "UnityEngine")
                                 return true;
                         }
+                    }
+                    check = IL2CPP.il2cpp_class_get_parent(check);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// Check if an IL2CPP class derives from SkillEventHandlerTemplate
+        /// by walking the parent chain and checking class names.
+        /// These are polymorphic effect handlers that need special field extraction.
+        /// </summary>
+        private bool IsEffectHandlerClass(string className, IntPtr klass)
+        {
+            // Direct check first
+            if (className == "SkillEventHandlerTemplate")
+                return true;
+
+            try
+            {
+                IntPtr check = IL2CPP.il2cpp_class_get_parent(klass);
+                while (check != IntPtr.Zero)
+                {
+                    IntPtr namePtr = IL2CPP.il2cpp_class_get_name(check);
+                    if (namePtr != IntPtr.Zero)
+                    {
+                        string name = Marshal.PtrToStringAnsi(namePtr);
+                        if (name == "SkillEventHandlerTemplate")
+                            return true;
+                        // Stop at base Unity classes
+                        if (name == "ScriptableObject" || name == "Object")
+                            break;
                     }
                     check = IL2CPP.il2cpp_class_get_parent(check);
                 }
