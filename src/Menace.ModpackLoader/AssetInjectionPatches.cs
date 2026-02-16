@@ -344,6 +344,7 @@ public static class AssetReplacer
     /// Apply all registered replacements and all bundle-sourced replacements.
     /// Call this after a scene loads (with a short delay for objects to initialize).
     /// </summary>
+#pragma warning disable CS0162 // Unreachable code (DISABLE_RUNTIME_REPLACEMENT is intentionally true)
     public static void ApplyAllReplacements()
     {
         if (DISABLE_RUNTIME_REPLACEMENT)
@@ -368,6 +369,7 @@ public static class AssetReplacer
             UnityEngine.Debug.Log($"[MODDED] Assets replaced in scene: {total}");
         }
     }
+#pragma warning restore CS0162
 
     // ------------------------------------------------------------------
     // Texture replacements (PNG, JPG, TGA, BMP → ImageConversion.LoadImage)

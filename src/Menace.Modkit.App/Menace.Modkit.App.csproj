@@ -11,20 +11,27 @@
   </PropertyGroup>
 
   <!--
-    Roslyn assemblies must be on disk for runtime compilation.
+    Roslyn assemblies and their dependencies must be on disk for runtime compilation.
     This target removes them from the single-file bundle and copies them to a roslyn/ subdirectory.
+    Including dependencies avoids assembly binding issues on Windows.
   -->
   <Target Name="ExcludeRoslynFromBundle"
           BeforeTargets="GenerateSingleFileBundle"
           DependsOnTargets="PrepareForBundle">
     <ItemGroup>
+      <!-- Roslyn core assemblies -->
       <RoslynToExclude Include="@(FilesToBundle)"
         Condition="$([System.String]::new('%(Filename)').StartsWith('Microsoft.CodeAnalysis'))" />
+      <!-- Roslyn's required dependencies (avoids binding issues when loaded from subfolder) -->
+      <RoslynToExclude Include="@(FilesToBundle)"
+        Condition="'%(Filename)' == 'System.Collections.Immutable'" />
+      <RoslynToExclude Include="@(FilesToBundle)"
+        Condition="'%(Filename)' == 'System.Reflection.Metadata'" />
     </ItemGroup>
     <ItemGroup>
       <FilesToBundle Remove="@(RoslynToExclude)" />
     </ItemGroup>
-    <Message Importance="high" Text="Excluding Roslyn from single-file bundle" />
+    <Message Importance="high" Text="Excluding Roslyn + dependencies from single-file bundle" />
   </Target>
 
   <Target Name="CopyRoslynToSubdir" AfterTargets="Publish">

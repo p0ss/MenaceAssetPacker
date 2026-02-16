@@ -27,6 +27,7 @@ public partial class ModpackLoaderMod
     /// <summary>
     /// Process all clone definitions in a modpack. Returns true if all types were found.
     /// </summary>
+#pragma warning disable CS0162 // Unreachable code (DISABLE_RUNTIME_CLONING is intentionally true)
     private bool ApplyClones(Modpack modpack)
     {
         if (DISABLE_RUNTIME_CLONING)
@@ -153,6 +154,7 @@ public partial class ModpackLoaderMod
 
         return allFound;
     }
+#pragma warning restore CS0162
 
     /// <summary>
     /// Call DataTemplateLoader.GetAll&lt;T&gt;() to ensure the type's templates are loaded

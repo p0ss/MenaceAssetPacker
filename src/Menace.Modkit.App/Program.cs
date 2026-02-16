@@ -29,7 +29,13 @@ internal static class Program
 
     AssemblyLoadContext.Default.Resolving += (context, assemblyName) =>
     {
-      if (assemblyName.Name?.StartsWith("Microsoft.CodeAnalysis") == true)
+      // Roslyn and its dependencies are in the roslyn/ subdirectory
+      // (excluded from single-file bundle because Roslyn needs assemblies on disk)
+      var isRoslynAssembly = assemblyName.Name?.StartsWith("Microsoft.CodeAnalysis") == true
+                          || assemblyName.Name == "System.Collections.Immutable"
+                          || assemblyName.Name == "System.Reflection.Metadata";
+
+      if (isRoslynAssembly)
       {
         var dllPath = Path.Combine(roslynDir, $"{assemblyName.Name}.dll");
         if (File.Exists(dllPath))
