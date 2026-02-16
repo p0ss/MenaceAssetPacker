@@ -620,32 +620,152 @@ public class ModpacksView : UserControl
     editableSection.Bind(StackPanel.IsVisibleProperty,
       new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
 
-    // Name field
-    editableSection.Children.Add(CreateLabel("Name"));
-    var nameBox = CreateTextBox();
-    nameBox.FontSize = 16;
+    // === COMPACT HEADER ===
+    // Title line: Name by Author (inline editing)
+    var titleRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Margin = new Thickness(0, 0, 0, 4)
+    };
+
+    var nameBox = new TextBox
+    {
+      FontSize = 18,
+      FontWeight = FontWeight.SemiBold,
+      Background = Brushes.Transparent,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(0),
+      MinWidth = 80,
+      MaxWidth = 300,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    nameBox.Classes.Add("inline-edit");
     nameBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Name") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    editableSection.Children.Add(nameBox);
+    titleRow.Children.Add(nameBox);
 
-    // Author field
-    editableSection.Children.Add(CreateLabel("Author"));
-    var authorBox = CreateTextBox();
+    var byLabel = new TextBlock
+    {
+      Text = "by",
+      FontSize = 14,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center,
+      Margin = new Thickness(8, 0, 8, 0)
+    };
+    titleRow.Children.Add(byLabel);
+
+    var authorBox = new TextBox
+    {
+      FontSize = 14,
+      Background = Brushes.Transparent,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(0),
+      MinWidth = 60,
+      MaxWidth = 200,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    authorBox.Classes.Add("inline-edit");
     authorBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Author") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    editableSection.Children.Add(authorBox);
+    titleRow.Children.Add(authorBox);
 
-    // Version field
-    editableSection.Children.Add(CreateLabel("Version"));
-    var versionBox = CreateTextBox();
+    editableSection.Children.Add(titleRow);
+
+    // Byline: Version | Load Order | Security Status
+    var bylineRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      Margin = new Thickness(0, 0, 0, 16),
+      VerticalAlignment = VerticalAlignment.Center
+    };
+
+    // Version
+    var versionPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 2,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    versionPanel.Children.Add(new TextBlock
+    {
+      Text = "v",
+      FontSize = 12,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center
+    });
+    var versionBox = new TextBox
+    {
+      FontSize = 12,
+      Background = Brushes.Transparent,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(2, 0),
+      MinWidth = 40,
+      MaxWidth = 80,
+      VerticalAlignment = VerticalAlignment.Center,
+      VerticalContentAlignment = VerticalAlignment.Center
+    };
+    versionBox.Classes.Add("inline-edit");
     versionBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Version") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    editableSection.Children.Add(versionBox);
+    versionPanel.Children.Add(versionBox);
+    bylineRow.Children.Add(versionPanel);
 
-    // Load Order field
-    editableSection.Children.Add(CreateLabel("Load Order"));
-    var loadOrderBox = CreateTextBox();
-    loadOrderBox.Watermark = "0-999";
+    bylineRow.Children.Add(new TextBlock
+    {
+      Text = "|",
+      FontSize = 12,
+      Foreground = new SolidColorBrush(Color.Parse("#555555")),
+      VerticalAlignment = VerticalAlignment.Center
+    });
+
+    // Load Order
+    var loadOrderPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 4,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    loadOrderPanel.Children.Add(new TextBlock
+    {
+      Text = "Order:",
+      FontSize = 12,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center
+    });
+    var loadOrderBox = new TextBox
+    {
+      FontSize = 12,
+      Background = Brushes.Transparent,
+      BorderThickness = new Thickness(0),
+      Padding = new Thickness(2, 0),
+      MinWidth = 30,
+      MaxWidth = 50,
+      VerticalAlignment = VerticalAlignment.Center,
+      VerticalContentAlignment = VerticalAlignment.Center
+    };
+    loadOrderBox.Classes.Add("inline-edit");
     ToolTip.SetTip(loadOrderBox, "Lower numbers load first. Use this to control mod priority.");
     loadOrderBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.LoadOrder") { Mode = Avalonia.Data.BindingMode.TwoWay });
-    editableSection.Children.Add(loadOrderBox);
+    loadOrderPanel.Children.Add(loadOrderBox);
+    bylineRow.Children.Add(loadOrderPanel);
+
+    bylineRow.Children.Add(new TextBlock
+    {
+      Text = "|",
+      FontSize = 12,
+      Foreground = new SolidColorBrush(Color.Parse("#555555")),
+      VerticalAlignment = VerticalAlignment.Center
+    });
+
+    // Security Status
+    var secText = new TextBlock
+    {
+      FontSize = 12,
+      Foreground = new SolidColorBrush(Color.Parse("#888888")),
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    secText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.SecurityStatusDisplay"));
+    bylineRow.Children.Add(secText);
+
+    editableSection.Children.Add(bylineRow);
 
     // Dependencies field
     editableSection.Children.Add(CreateLabel("Dependencies (comma-separated)"));
@@ -660,31 +780,51 @@ public class ModpacksView : UserControl
     var descBox = CreateTextBox();
     descBox.AcceptsReturn = true;
     descBox.TextWrapping = TextWrapping.Wrap;
-    descBox.MinHeight = 80;
+    descBox.MinHeight = 60;
     descBox.Bind(TextBox.TextProperty, new Avalonia.Data.Binding("SelectedModpack.Description") { Mode = Avalonia.Data.BindingMode.TwoWay });
     editableSection.Children.Add(descBox);
 
-    // Security Status display
-    editableSection.Children.Add(CreateLabel("Security Status"));
-    var secText = new TextBlock
-    {
-      Foreground = Brushes.White,
-      FontSize = 12,
-      Margin = new Thickness(0, 0, 0, 16)
-    };
-    secText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("SelectedModpack.SecurityStatusDisplay"));
-    editableSection.Children.Add(secText);
+    // === ACCORDIONS ===
 
-    // Stats Changes section
-    var statsLabel = CreateLabel("Stats Changes");
-    statsLabel.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasStatsPatches"));
-    editableSection.Children.Add(statsLabel);
-
-    var statsItemsControl = new ItemsControl
+    // Stats Changes Expander
+    var statsExpander = new Expander
     {
-      Margin = new Thickness(0, 0, 0, 16)
+      IsExpanded = false,
+      Margin = new Thickness(0, 0, 0, 8),
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      HorizontalContentAlignment = HorizontalAlignment.Stretch
     };
-    statsItemsControl.Bind(ItemsControl.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasStatsPatches"));
+
+    var statsHeaderPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    statsHeaderPanel.Children.Add(new TextBlock
+    {
+      Text = "Stats Changes",
+      VerticalAlignment = VerticalAlignment.Center
+    });
+    var statsCountBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#333333")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(6, 2),
+      VerticalAlignment = VerticalAlignment.Center,
+      Child = new TextBlock
+      {
+        FontSize = 10,
+        Foreground = new SolidColorBrush(Color.Parse("#4FC3F7")),
+        VerticalAlignment = VerticalAlignment.Center
+      }
+    };
+    ((TextBlock)statsCountBadge.Child).Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("SelectedModpack.StatsPatchCount"));
+    statsHeaderPanel.Children.Add(statsCountBadge);
+    statsExpander.Header = statsHeaderPanel;
+
+    var statsItemsControl = new ItemsControl { Margin = new Thickness(0, 8, 0, 0) };
     statsItemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.StatsPatches"));
     statsItemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<StatsPatchEntry>((entry, _) =>
     {
@@ -728,18 +868,48 @@ public class ModpacksView : UserControl
       };
       return btn;
     });
-    editableSection.Children.Add(statsItemsControl);
+    statsExpander.Content = statsItemsControl;
+    editableSection.Children.Add(statsExpander);
 
-    // Asset Changes section
-    var assetsLabel = CreateLabel("Asset Changes");
-    assetsLabel.Bind(TextBlock.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasAssetPatches"));
-    editableSection.Children.Add(assetsLabel);
-
-    var assetItemsControl = new ItemsControl
+    // Asset Changes Expander
+    var assetsExpander = new Expander
     {
-      Margin = new Thickness(0, 0, 0, 16)
+      IsExpanded = false,
+      Margin = new Thickness(0, 0, 0, 8),
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      HorizontalContentAlignment = HorizontalAlignment.Stretch
     };
-    assetItemsControl.Bind(ItemsControl.IsVisibleProperty, new Avalonia.Data.Binding("SelectedModpack.HasAssetPatches"));
+
+    var assetsHeaderPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    assetsHeaderPanel.Children.Add(new TextBlock
+    {
+      Text = "Asset Changes",
+      VerticalAlignment = VerticalAlignment.Center
+    });
+    var assetsCountBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#333333")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(6, 2),
+      VerticalAlignment = VerticalAlignment.Center,
+      Child = new TextBlock
+      {
+        FontSize = 10,
+        Foreground = new SolidColorBrush(Color.Parse("#81C784")),
+        VerticalAlignment = VerticalAlignment.Center
+      }
+    };
+    ((TextBlock)assetsCountBadge.Child).Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("SelectedModpack.AssetPatchCount"));
+    assetsHeaderPanel.Children.Add(assetsCountBadge);
+    assetsExpander.Header = assetsHeaderPanel;
+
+    var assetItemsControl = new ItemsControl { Margin = new Thickness(0, 8, 0, 0) };
     assetItemsControl.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.AssetPatches"));
     assetItemsControl.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<AssetPatchEntry>((entry, _) =>
     {
@@ -785,10 +955,47 @@ public class ModpacksView : UserControl
 
       return btn;
     });
-    editableSection.Children.Add(assetItemsControl);
+    assetsExpander.Content = assetItemsControl;
+    editableSection.Children.Add(assetsExpander);
 
-    // Files list
-    editableSection.Children.Add(CreateLabel("Files"));
+    // Files Expander
+    var filesExpander = new Expander
+    {
+      IsExpanded = false,
+      Margin = new Thickness(0, 0, 0, 8),
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      HorizontalContentAlignment = HorizontalAlignment.Stretch
+    };
+
+    var filesHeaderPanel = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 8,
+      VerticalAlignment = VerticalAlignment.Center
+    };
+    filesHeaderPanel.Children.Add(new TextBlock
+    {
+      Text = "Files",
+      VerticalAlignment = VerticalAlignment.Center
+    });
+    var filesCountBadge = new Border
+    {
+      Background = new SolidColorBrush(Color.Parse("#333333")),
+      CornerRadius = new CornerRadius(8),
+      Padding = new Thickness(6, 2),
+      VerticalAlignment = VerticalAlignment.Center,
+      Child = new TextBlock
+      {
+        FontSize = 10,
+        Foreground = new SolidColorBrush(Color.Parse("#AAAAAA")),
+        VerticalAlignment = VerticalAlignment.Center
+      }
+    };
+    ((TextBlock)filesCountBadge.Child).Bind(TextBlock.TextProperty,
+      new Avalonia.Data.Binding("SelectedModpack.FileCount"));
+    filesHeaderPanel.Children.Add(filesCountBadge);
+    filesExpander.Header = filesHeaderPanel;
+
     var filesListBox = new ListBox
     {
       Background = new SolidColorBrush(Color.Parse("#252525")),
@@ -798,10 +1005,11 @@ public class ModpacksView : UserControl
       FontFamily = new FontFamily("monospace"),
       FontSize = 11,
       MaxHeight = 200,
-      Margin = new Thickness(0, 0, 0, 16)
+      Margin = new Thickness(0, 8, 0, 0)
     };
     filesListBox.Bind(ListBox.ItemsSourceProperty, new Avalonia.Data.Binding("SelectedModpack.Files"));
-    editableSection.Children.Add(filesListBox);
+    filesExpander.Content = filesListBox;
+    editableSection.Children.Add(filesExpander);
 
     mainStack.Children.Add(editableSection);
 

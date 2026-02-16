@@ -15,20 +15,15 @@ namespace Menace.SDK;
 /// </summary>
 public class GameType
 {
+    // IL2CPP assembly names - use .dll extension (this is what IL2CPP expects)
     private static readonly string[] FallbackAssemblies =
     {
         "Assembly-CSharp.dll",
-        "Assembly-CSharp",
         "UnityEngine.CoreModule.dll",
-        "UnityEngine.CoreModule",
         "UnityEngine.UIModule.dll",
-        "UnityEngine.UIModule",
         "UnityEngine.UI.dll",
-        "UnityEngine.UI",
         "Unity.TextMeshPro.dll",
-        "Unity.TextMeshPro",
         "mscorlib.dll",
-        "Il2Cppmscorlib.dll"
     };
 
     private static readonly Dictionary<string, GameType> _nameCache = new();
@@ -459,12 +454,11 @@ public class GameType
         var probes = new List<string>(8);
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        AddProbe(probes, seen, assembly);
-
-        if (assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            AddProbe(probes, seen, assembly[..^4]);
-        else
+        // IL2CPP expects .dll extension - try that first to avoid warnings
+        if (!assembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             AddProbe(probes, seen, assembly + ".dll");
+
+        AddProbe(probes, seen, assembly);
 
         foreach (var fallback in FallbackAssemblies)
             AddProbe(probes, seen, fallback);

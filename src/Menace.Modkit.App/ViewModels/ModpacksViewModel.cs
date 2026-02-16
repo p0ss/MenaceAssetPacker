@@ -953,6 +953,10 @@ public sealed class ModpackItemViewModel : ViewModelBase
     public bool HasStatsPatches => _statsPatches.Count > 0;
     public bool HasAssetPatches => _assetPatches.Count > 0;
 
+    public int StatsPatchCount => _statsPatches.Count;
+    public int AssetPatchCount => _assetPatches.Count;
+    public int FileCount => _files.Count;
+
     private void LoadFiles()
     {
         _files.Clear();
@@ -1011,6 +1015,9 @@ public sealed class ModpackItemViewModel : ViewModelBase
 
         this.RaisePropertyChanged(nameof(HasStatsPatches));
         this.RaisePropertyChanged(nameof(HasAssetPatches));
+        this.RaisePropertyChanged(nameof(StatsPatchCount));
+        this.RaisePropertyChanged(nameof(AssetPatchCount));
+        this.RaisePropertyChanged(nameof(FileCount));
     }
 
     private void SaveMetadata()
