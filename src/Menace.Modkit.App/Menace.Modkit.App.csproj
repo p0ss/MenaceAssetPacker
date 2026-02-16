@@ -12,20 +12,32 @@
 
   <!--
     Roslyn assemblies must be on disk for runtime compilation (can't be bundled in single-file).
-    We copy them from NuGet cache after publish since single-file bundling excludes them.
+    We find and copy them from NuGet cache using wildcards to handle version differences.
+    Uses ** glob to find assemblies regardless of version/TFM, then dedupes by filename.
   -->
   <Target Name="CopyRoslynToDisk" AfterTargets="Publish">
     <ItemGroup>
-      <!-- Roslyn core assemblies from NuGet -->
-      <RoslynSource Include="$(NuGetPackageRoot)microsoft.codeanalysis.csharp/4.14.0/lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll" />
-      <RoslynSource Include="$(NuGetPackageRoot)microsoft.codeanalysis.common/4.14.0/lib/netstandard2.0/Microsoft.CodeAnalysis.dll" />
-      <!-- Required dependencies -->
-      <RoslynSource Include="$(NuGetPackageRoot)system.collections.immutable/8.0.0/lib/net8.0/System.Collections.Immutable.dll" />
-      <RoslynSource Include="$(NuGetPackageRoot)system.reflection.metadata/8.0.0/lib/net8.0/System.Reflection.Metadata.dll" />
+      <!-- Find all Roslyn assemblies using recursive wildcards (handles any version/TFM) -->
+      <_RoslynAll Include="$(NuGetPackageRoot)microsoft.codeanalysis.csharp/**/Microsoft.CodeAnalysis.CSharp.dll" />
+      <_RoslynAll Include="$(NuGetPackageRoot)microsoft.codeanalysis.common/**/Microsoft.CodeAnalysis.dll" />
+      <_RoslynAll Include="$(NuGetPackageRoot)system.collections.immutable/**/System.Collections.Immutable.dll" />
+      <_RoslynAll Include="$(NuGetPackageRoot)system.reflection.metadata/**/System.Reflection.Metadata.dll" />
+      <!-- Exclude ref assemblies and analyzers - we only want lib assemblies -->
+      <_RoslynAll Remove="@(_RoslynAll)" Condition="$([System.String]::Copy('%(Identity)').Contains('/ref/'))" />
+      <_RoslynAll Remove="@(_RoslynAll)" Condition="$([System.String]::Copy('%(Identity)').Contains('/analyzers/'))" />
+      <_RoslynAll Remove="@(_RoslynAll)" Condition="$([System.String]::Copy('%(Identity)').Contains('\ref\'))" />
+      <_RoslynAll Remove="@(_RoslynAll)" Condition="$([System.String]::Copy('%(Identity)').Contains('\analyzers\'))" />
     </ItemGroup>
+
     <MakeDir Directories="$(PublishDir)roslyn" />
-    <Copy SourceFiles="@(RoslynSource)" DestinationFolder="$(PublishDir)roslyn" SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Copied @(RoslynSource->Count()) Roslyn assemblies to roslyn/ subdirectory" />
+
+    <!-- Copy all matches - Copy task handles duplicates by overwriting (last wins) -->
+    <Copy SourceFiles="@(_RoslynAll)"
+          DestinationFolder="$(PublishDir)roslyn"
+          SkipUnchangedFiles="true" />
+
+    <!-- Report unique assemblies copied -->
+    <Message Importance="high" Text="Copied Roslyn assemblies to roslyn/: @(_RoslynAll->'%(Filename)'-&gt;Distinct())" />
   </Target>
 
   <ItemGroup>

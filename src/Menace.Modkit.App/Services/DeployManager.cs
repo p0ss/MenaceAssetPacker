@@ -623,6 +623,13 @@ public class DeployManager
 
     private List<string> DeployModpack(ModpackManifest modpack, string modsBasePath)
     {
+        // Guard against empty modpack names which would deploy to root Mods folder
+        if (string.IsNullOrWhiteSpace(modpack.Name))
+        {
+            ModkitLog.Error($"[DeployManager] Cannot deploy modpack with empty name (path: {modpack.Path})");
+            return new List<string>();
+        }
+
         var deployDir = Path.Combine(modsBasePath, modpack.Name);
         var files = new List<string>();
 

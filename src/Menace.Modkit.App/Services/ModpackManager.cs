@@ -734,6 +734,12 @@ public class ModpackManager
 
             manifest.Path = modpackDir;
 
+            // Warn about empty names which can cause deployment issues
+            if (string.IsNullOrWhiteSpace(manifest.Name))
+            {
+                ModkitLog.Warn($"[ModpackManager] Modpack at '{modpackDir}' has empty name - this may cause issues");
+            }
+
             // If loaded from manifest.json, save as modpack.json for consistency
             if (infoPath == manifestPath && File.Exists(manifestPath))
             {
