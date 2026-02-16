@@ -245,6 +245,18 @@ public class ModpacksView : UserControl
     // One-way binding - we control changes via click handler
     checkbox.Bind(CheckBox.IsCheckedProperty,
       new Avalonia.Data.Binding("IsDeployed") { Mode = Avalonia.Data.BindingMode.OneWay });
+
+    // Handle click directly on checkbox
+    checkbox.Click += async (sender, e) =>
+    {
+      e.Handled = true;
+      if (sender is CheckBox cb && cb.DataContext is ModpackItemViewModel item
+          && this.DataContext is ModpacksViewModel vm && !vm.IsDeploying)
+      {
+        vm.SelectedModpack = item;
+        await vm.ToggleDeploySelectedAsync();
+      }
+    };
     checkboxContainer.Child = checkbox;
 
     // Handle click on the container for larger hit area

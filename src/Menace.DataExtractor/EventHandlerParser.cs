@@ -165,6 +165,7 @@ namespace Menace.DataExtractor
                     return ReadString(fieldPtr);
 
                 case "reference":
+                case "unity_asset":
                     IntPtr refPtr = Marshal.ReadIntPtr(fieldPtr);
                     if (refPtr == IntPtr.Zero) return null;
                     return readAssetName?.Invoke(refPtr);

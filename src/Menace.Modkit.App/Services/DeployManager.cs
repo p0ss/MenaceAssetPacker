@@ -297,6 +297,12 @@ public class DeployManager
             var emptyState = new DeployState();
             emptyState.SaveTo(DeployStateFilePath);
 
+            // Force garbage collection to release any cached file handles or data
+            // This fixes an issue where undeploy+redeploy without app restart would fail
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
             progress?.Report("All mods undeployed");
             return new DeployResult { Success = true, Message = "All mods undeployed" };
         }

@@ -58095,64 +58095,141 @@
     }
   },
   "effect_handlers": {
-    "InflictDamage": {
+    "Attack": {
       "base_class": "SkillEventHandlerTemplate",
-      "type_name": "Menace.Tactical.AI.Behaviors.Data.InflictDamage",
-      "aliases": ["Damage"],
+      "type_name": "Menace.Tactical.Skills.Effects.Attack",
       "fields": [
         {
+          "name": "DamageType",
+          "type": "int",
+          "offset": "0x5c",
+          "category": "primitive"
+        },
+        {
           "name": "BaseDamage",
+          "type": "float",
+          "offset": "0x60",
+          "category": "primitive"
+        },
+        {
+          "name": "BonusDamage",
           "type": "float",
           "offset": "0x64",
           "category": "primitive"
         },
         {
-          "name": "DamagePctCurrentHitpoints",
+          "name": "DamageMult",
           "type": "float",
-          "offset": "0x68",
+          "offset": "0x88",
           "category": "primitive"
         },
         {
-          "name": "DamagePctCurrentHitpointsMin",
+          "name": "CritDamageMult",
           "type": "float",
-          "offset": "0x6c",
-          "category": "primitive"
-        },
-        {
-          "name": "DamagePctMaxHitpoints",
-          "type": "float",
-          "offset": "0x70",
-          "category": "primitive"
-        },
-        {
-          "name": "DamagePctMaxHitpointsMin",
-          "type": "float",
-          "offset": "0x74",
+          "offset": "0x90",
           "category": "primitive"
         },
         {
           "name": "ArmorPenetration",
           "type": "float",
-          "offset": "0x78",
+          "offset": "0xac",
           "category": "primitive"
         },
         {
-          "name": "DamageToArmorDurability",
+          "name": "ArmorPenetrationMult",
           "type": "float",
-          "offset": "0x7c",
+          "offset": "0xb4",
+          "category": "primitive"
+        },
+        {
+          "name": "AccuracyMult",
+          "type": "float",
+          "offset": "0xc0",
+          "category": "primitive"
+        },
+        {
+          "name": "CritChanceMult",
+          "type": "float",
+          "offset": "0xc8",
+          "category": "primitive"
+        }
+      ]
+    },
+    "AddSkill": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.Effects.AddSkill",
+      "fields": [
+        {
+          "name": "Skill",
+          "type": "SkillTemplate",
+          "offset": "0x58",
+          "category": "reference"
+        },
+        {
+          "name": "Duration",
+          "type": "int",
+          "offset": "0x68",
+          "category": "primitive"
+        },
+        {
+          "name": "ApplyToSelf",
+          "type": "bool",
+          "offset": "0x6c",
+          "category": "primitive"
+        },
+        {
+          "name": "ApplyToTarget",
+          "type": "bool",
+          "offset": "0x6d",
+          "category": "primitive"
+        }
+      ]
+    },
+    "Cooldown": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.Effects.Cooldown",
+      "fields": [
+        {
+          "name": "Turns",
+          "type": "int",
+          "offset": "0x58",
+          "category": "primitive"
+        }
+      ]
+    },
+    "AttachTemporaryPrefab": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.Effects.AttachTemporaryPrefab",
+      "fields": [
+        {
+          "name": "Prefab",
+          "type": "GameObject",
+          "offset": "0x58",
+          "category": "unity_asset"
+        },
+        {
+          "name": "AttachmentType",
+          "type": "int",
+          "offset": "0x60",
+          "category": "primitive"
+        },
+        {
+          "name": "Duration",
+          "type": "float",
+          "offset": "0x64",
           "category": "primitive"
         }
       ]
     },
     "ChangeProperty": {
       "base_class": "SkillEventHandlerTemplate",
-      "type_name": "Menace.Tactical.Skills.ChangeProperty",
+      "type_name": "Menace.Tactical.Skills.Effects.ChangeProperty",
       "fields": [
         {
           "name": "PropertyType",
-          "type": "PropertyType",
+          "type": "int",
           "offset": "0x58",
-          "category": "enum"
+          "category": "primitive"
         },
         {
           "name": "Value",
@@ -58168,27 +58245,9 @@
         }
       ]
     },
-    "AddSkill": {
-      "base_class": "SkillEventHandlerTemplate",
-      "type_name": "Menace.Tactical.Skills.AddSkill",
-      "fields": [
-        {
-          "name": "Skill",
-          "type": "SkillTemplate",
-          "offset": "0x58",
-          "category": "reference"
-        },
-        {
-          "name": "Duration",
-          "type": "int",
-          "offset": "0x60",
-          "category": "primitive"
-        }
-      ]
-    },
     "SpawnTileEffect": {
       "base_class": "SkillEventHandlerTemplate",
-      "type_name": "Menace.Tactical.Skills.SpawnTileEffect",
+      "type_name": "Menace.Tactical.Skills.Effects.SpawnTileEffect",
       "fields": [
         {
           "name": "TileEffect",
@@ -58201,18 +58260,42 @@
           "type": "int",
           "offset": "0x60",
           "category": "primitive"
+        },
+        {
+          "name": "Radius",
+          "type": "int",
+          "offset": "0x64",
+          "category": "primitive"
         }
       ]
     },
     "PlaySound": {
       "base_class": "SkillEventHandlerTemplate",
-      "type_name": "Menace.Tactical.Skills.PlaySound",
+      "type_name": "Menace.Tactical.Skills.Effects.PlaySound",
       "fields": [
         {
           "name": "SoundID",
           "type": "string",
           "offset": "0x58",
           "category": "string"
+        }
+      ]
+    },
+    "ApplySkillToSelf": {
+      "base_class": "SkillEventHandlerTemplate",
+      "type_name": "Menace.Tactical.Skills.Effects.ApplySkillToSelf",
+      "fields": [
+        {
+          "name": "Skill",
+          "type": "SkillTemplate",
+          "offset": "0x58",
+          "category": "reference"
+        },
+        {
+          "name": "Duration",
+          "type": "int",
+          "offset": "0x60",
+          "category": "primitive"
         }
       ]
     }

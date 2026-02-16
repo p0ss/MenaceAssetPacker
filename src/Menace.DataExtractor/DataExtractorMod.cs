@@ -389,6 +389,7 @@ namespace Menace.DataExtractor
                         {
                             _effectHandlerParser.RegisterSchema(schema);
                             effectHandlerCount++;
+                            DebugLog($"  Registered effect handler: {handlerName} with {schema.Fields.Count} fields");
                         }
                     }
                 }
@@ -485,6 +486,17 @@ namespace Menace.DataExtractor
             }
 
             return schema;
+        }
+
+        /// <summary>
+        /// Check if a type is marked as abstract in the schema.
+        /// Used to skip extracting types like SkillEventHandlerTemplate that are base classes.
+        /// </summary>
+        private bool IsSchemaAbstract(string typeName)
+        {
+            if (_schemaTypes.TryGetValue(typeName, out var schemaType))
+                return schemaType.IsAbstract;
+            return false;
         }
 
         private bool _manualExtractionInProgress = false;
@@ -732,8 +744,8 @@ namespace Menace.DataExtractor
 
         private System.Collections.IEnumerator RunExtractionCoroutine(string fingerprint = null)
         {
+            // Only log to MelonLogger during early wait - DevConsole not safe yet
             LoggerInstance.Msg("Waiting for stable game state...");
-            ShowExtractionProgress("Waiting for game to reach a stable screen...");
 
             // Wait for a stable scene before extraction to avoid GC during scene transitions
             // Scene transitions cause Unity's GC to be very active, which can collect
@@ -785,10 +797,10 @@ namespace Menace.DataExtractor
                     break;
                 }
 
-                // Log progress every 10 seconds
+                // Log progress every 10 seconds (only to MelonLogger - DevConsole not safe yet)
                 if ((int)waited % 10 == 0 && waited > 0 && Time.deltaTime > 0)
                 {
-                    ShowExtractionProgress($"Waiting for stable scene... (current: {currentScene}, {waited:F0}s)");
+                    LoggerInstance.Msg($"Waiting for stable scene... (current: {currentScene}, {waited:F0}s)");
                 }
             }
 
@@ -797,12 +809,13 @@ namespace Menace.DataExtractor
                 LoggerInstance.Warning($"Timeout waiting for stable scene after {maxWait}s, proceeding anyway");
             }
 
-            // Retry DevConsole lookup after game has loaded (ModpackLoader may have initialized by now)
+            // Now that game is stable, retry DevConsole lookup (ModpackLoader should be initialized)
             if (!_devConsoleAvailable)
             {
                 InitDevConsoleReflection();
             }
 
+            // From here on, ShowExtractionProgress is safe to use
             ShowExtractionProgress("Starting template extraction...");
 
             for (int attempt = 1; attempt <= 60; attempt++)
@@ -906,12 +919,20 @@ namespace Menace.DataExtractor
 
                             // Pre-flight check: skip objects that were garbage collected between phases
                             _totalInstancesProcessed++;
-                            if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                            try
                             {
-                                _gcSkippedInstances++;
-                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst.Name} - SKIPPED (garbage collected)");
-                                yieldCounter++;
-                                continue;
+                                if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                                {
+                                    _gcSkippedInstances++;
+                                    LoggerInstance.Msg($"    P2 [{instIdx}] {inst.Name} - SKIPPED (garbage collected)");
+                                    yieldCounter++;
+                                    continue;
+                                }
+                            }
+                            catch (Exception gcEx)
+                            {
+                                // Modded templates may have invalid CastObj references
+                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst.Name} - GC check failed: {gcEx.Message}, attempting anyway");
                             }
 
                             try
@@ -1066,12 +1087,20 @@ namespace Menace.DataExtractor
 
                             // Pre-flight check: skip objects that were garbage collected between phases
                             _totalInstancesProcessed++;
-                            if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                            try
                             {
-                                _gcSkippedInstances++;
-                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst?.Name ?? "NULL"} - SKIPPED (garbage collected)");
-                                yieldCounter++;
-                                continue;
+                                if (inst.CastObj is Il2CppObjectBase il2cppCheck && il2cppCheck.WasCollected)
+                                {
+                                    _gcSkippedInstances++;
+                                    LoggerInstance.Msg($"    P2 [{instIdx}] {inst?.Name ?? "NULL"} - SKIPPED (garbage collected)");
+                                    yieldCounter++;
+                                    continue;
+                                }
+                            }
+                            catch (Exception gcEx)
+                            {
+                                // Modded templates may have invalid CastObj references
+                                LoggerInstance.Msg($"    P2 [{instIdx}] {inst?.Name ?? "NULL"} - GC check failed: {gcEx.Message}, attempting anyway");
                             }
 
                             try
@@ -1376,6 +1405,7 @@ namespace Menace.DataExtractor
 
                 var templateTypes = gameAssembly.GetTypes()
                     .Where(t => t.Name.EndsWith("Template") && !t.IsAbstract)
+                    .Where(t => !IsSchemaAbstract(t.Name)) // Also skip types marked abstract in schema
                     .OrderBy(t => t.Name)
                     .ToList();
 
@@ -2205,21 +2235,36 @@ namespace Menace.DataExtractor
             _currentFillRefInstance = inst?.Name ?? "null";
             _currentFillRefProp = "entry";
 
-            if (inst.Pointer == IntPtr.Zero)
-                return false;
-
-            // Check if the Il2Cpp object was garbage collected between Phase 1 and Phase 2.
-            // Reading from a collected object's pointer causes AccessViolationException.
-            if (inst.CastObj is Il2CppObjectBase il2cppObj && il2cppObj.WasCollected)
+            try
             {
-                DebugLog($"    [{inst.Name}] object was garbage collected, skipping");
-                return false;
-            }
+                if (inst == null || inst.Pointer == IntPtr.Zero)
+                    return false;
 
-            // Use cached class pointer (no il2cpp_object_get_class on data pointer)
-            IntPtr klass = IntPtr.Zero;
-            _il2cppClassPtrCache.TryGetValue(templateType.Name, out klass);
-            if (klass == IntPtr.Zero) return false;
+                // Check if the Il2Cpp object was garbage collected between Phase 1 and Phase 2.
+                // Reading from a collected object's pointer causes AccessViolationException.
+                // Wrap in try-catch since modded objects may have invalid CastObj references
+                try
+                {
+                    if (inst.CastObj is Il2CppObjectBase il2cppObj && il2cppObj.WasCollected)
+                    {
+                        DebugLog($"    [{inst.Name}] object was garbage collected, skipping");
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog($"    [{inst.Name}] failed GC check (modded template?): {ex.Message}, attempting anyway");
+                    // Continue - modded templates may not have valid CastObj but pointer might still work
+                }
+
+                // Use cached class pointer (no il2cpp_object_get_class on data pointer)
+                IntPtr klass = IntPtr.Zero;
+                _il2cppClassPtrCache.TryGetValue(templateType.Name, out klass);
+                if (klass == IntPtr.Zero)
+                {
+                    DebugLog($"    [{inst.Name}] no cached class pointer for {templateType.Name}");
+                    return false;
+                }
 
             bool addedAny = false;
             var currentType = templateType;
@@ -2420,6 +2465,13 @@ namespace Menace.DataExtractor
 
             DebugLog($"    [{inst.Name}] FillReferenceProperties complete");
             return addedAny;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[FillReferenceProperties] Crash on {_currentFillRefInstance}.{_currentFillRefProp}: {ex.GetType().Name}: {ex.Message}");
+                DebugLog($"    [{_currentFillRefInstance}] CRASHED at {_currentFillRefProp}: {ex}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -2789,27 +2841,28 @@ namespace Menace.DataExtractor
 
                 // Get schema for this handler type
                 var schema = _effectHandlerParser.GetSchema(typeName);
-                if (schema == null)
+
+                // For now, just return type and name - field parsing can cause crashes with wrong offsets
+                // TODO: Once we verify correct offsets via Ghidra, re-enable field parsing
+                string assetName = null;
+                try
                 {
-                    // Unknown handler type - return basic info
-                    DebugLog($"        effect handler: no schema for type {typeName}");
-                    return new Dictionary<string, object>
-                    {
-                        ["_type"] = typeName,
-                        ["_name"] = ReadUnityAssetName(handlerPtr)
-                    };
+                    assetName = ReadUnityAssetName(handlerPtr);
+                }
+                catch
+                {
+                    // Ignore errors reading asset name
                 }
 
-                // Parse handler fields using schema
-                var handlerData = _effectHandlerParser.ParseHandler(handlerPtr, schema, ReadUnityAssetName);
-
-                // Also include the asset name if available
-                string assetName = ReadUnityAssetName(handlerPtr);
+                var result = new Dictionary<string, object>
+                {
+                    ["_type"] = typeName
+                };
                 if (!string.IsNullOrEmpty(assetName))
-                    handlerData["_name"] = assetName;
+                    result["_name"] = assetName;
 
-                DebugLog($"        effect handler: parsed {typeName} with {handlerData.Count} fields");
-                return handlerData;
+                DebugLog($"        effect handler: detected {typeName}" + (schema != null ? " (schema available)" : ""));
+                return result;
             }
             catch (Exception ex)
             {
