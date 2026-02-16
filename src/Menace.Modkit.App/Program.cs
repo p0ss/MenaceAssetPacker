@@ -12,11 +12,31 @@ internal static class Program
   [STAThread]
   public static void Main(string[] args)
   {
-    // Register assembly resolver for Roslyn DLLs in roslyn/ subdirectory
-    // (excluded from single-file bundle because Roslyn needs assemblies on disk)
-    RegisterRoslynAssemblyResolver();
+    try
+    {
+      // Register assembly resolver for Roslyn DLLs in roslyn/ subdirectory
+      // (excluded from single-file bundle because Roslyn needs assemblies on disk)
+      RegisterRoslynAssemblyResolver();
 
-    BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+      BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+    catch (Exception ex)
+    {
+      // Show error to user on crash - helps diagnose startup failures
+      var errorMsg = $"Menace Modkit failed to start:\n\n{ex.GetType().Name}: {ex.Message}\n\n{ex.StackTrace}";
+      Console.Error.WriteLine(errorMsg);
+
+      // Write to error log file next to the executable
+      try
+      {
+        var logPath = Path.Combine(AppContext.BaseDirectory, "modkit_crash.log");
+        File.WriteAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n{errorMsg}\n\nInner: {ex.InnerException}");
+      }
+      catch { /* ignore logging failures */ }
+
+      // Re-throw to show system error dialog on Windows
+      throw;
+    }
   }
 
   private static void RegisterRoslynAssemblyResolver()

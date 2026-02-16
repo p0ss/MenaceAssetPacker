@@ -132,7 +132,8 @@ public class LuaScriptEngine
     public int LoadedScriptCount => _loadedScripts.Count;
 
     private readonly Script _lua;
-    private readonly Dictionary<string, List<DynValue>> _eventHandlers = new();
+    // Store handlers with their owning script to avoid cross-script resource errors
+    private readonly Dictionary<string, List<(Script OwnerScript, DynValue Handler)>> _eventHandlers = new();
     private readonly List<(string ModId, string ScriptPath, Script Script)> _loadedScripts = new();
 
     // Supported events - see TacticalEventHooks.cs for event source
@@ -231,7 +232,7 @@ public class LuaScriptEngine
 
         // Initialize event handler lists
         foreach (var evt in ValidEvents)
-            _eventHandlers[evt] = new List<DynValue>();
+            _eventHandlers[evt] = new List<(Script, DynValue)>();
     }
 
     /// <summary>
@@ -457,7 +458,9 @@ public class LuaScriptEngine
             return;
         }
 
-        _eventHandlers[eventName].Add(callback);
+        // Store with owning script to call from correct context
+        var ownerScript = callback.Function?.OwnerScript ?? _lua;
+        _eventHandlers[eventName].Add((ownerScript, callback));
     }
 
     /// <summary>
@@ -467,7 +470,7 @@ public class LuaScriptEngine
     {
         if (_eventHandlers.TryGetValue(eventName, out var handlers))
         {
-            handlers.RemoveAll(h => h.Equals(callback));
+            handlers.RemoveAll(h => h.Handler.Equals(callback));
         }
     }
 
@@ -1403,19 +1406,33 @@ public class LuaScriptEngine
         if (!_eventHandlers.TryGetValue(eventName, out var handlers) || handlers.Count == 0)
             return;
 
-        foreach (var handler in handlers.ToList()) // ToList to allow modification during iteration
+        foreach (var (ownerScript, handler) in handlers.ToList()) // ToList to allow modification during iteration
         {
             try
             {
-                _lua.Call(handler, args);
+                if (handler == null || handler.IsNil())
+                {
+                    SdkLogger.Warning($"[LuaEngine] Skipping nil {eventName} handler");
+                    continue;
+                }
+                // Call handler from its owning script to avoid cross-script resource errors
+                ownerScript.Call(handler, args);
             }
             catch (ScriptRuntimeException ex)
             {
-                SdkLogger.Warning($"[LuaEngine] Error in {eventName} handler: {ex.DecoratedMessage}");
+                var msg = ex.DecoratedMessage;
+                if (string.IsNullOrWhiteSpace(msg))
+                    msg = ex.Message;
+                if (string.IsNullOrWhiteSpace(msg))
+                    msg = $"{ex.GetType().Name} (no message)";
+                SdkLogger.Warning($"[LuaEngine] Error in {eventName} handler: {msg}");
             }
             catch (Exception ex)
             {
-                SdkLogger.Warning($"[LuaEngine] Error in {eventName} handler: {ex.Message}");
+                var msg = ex.Message;
+                if (string.IsNullOrWhiteSpace(msg))
+                    msg = $"{ex.GetType().Name} (no message)";
+                SdkLogger.Warning($"[LuaEngine] Error in {eventName} handler: {msg}");
             }
         }
     }

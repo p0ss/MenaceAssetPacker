@@ -11,33 +11,21 @@
   </PropertyGroup>
 
   <!--
-    Roslyn assemblies and their dependencies must be on disk for runtime compilation.
-    This target removes them from the single-file bundle and copies them to a roslyn/ subdirectory.
-    Including dependencies avoids assembly binding issues on Windows.
+    Roslyn assemblies must be on disk for runtime compilation (can't be bundled in single-file).
+    We copy them from NuGet cache after publish since single-file bundling excludes them.
   -->
-  <Target Name="ExcludeRoslynFromBundle"
-          BeforeTargets="GenerateSingleFileBundle"
-          DependsOnTargets="PrepareForBundle">
+  <Target Name="CopyRoslynToDisk" AfterTargets="Publish">
     <ItemGroup>
-      <!-- Roslyn core assemblies -->
-      <RoslynToExclude Include="@(FilesToBundle)"
-        Condition="$([System.String]::new('%(Filename)').StartsWith('Microsoft.CodeAnalysis'))" />
-      <!-- Roslyn's required dependencies (avoids binding issues when loaded from subfolder) -->
-      <RoslynToExclude Include="@(FilesToBundle)"
-        Condition="'%(Filename)' == 'System.Collections.Immutable'" />
-      <RoslynToExclude Include="@(FilesToBundle)"
-        Condition="'%(Filename)' == 'System.Reflection.Metadata'" />
+      <!-- Roslyn core assemblies from NuGet -->
+      <RoslynSource Include="$(NuGetPackageRoot)microsoft.codeanalysis.csharp/4.14.0/lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll" />
+      <RoslynSource Include="$(NuGetPackageRoot)microsoft.codeanalysis.common/4.14.0/lib/netstandard2.0/Microsoft.CodeAnalysis.dll" />
+      <!-- Required dependencies -->
+      <RoslynSource Include="$(NuGetPackageRoot)system.collections.immutable/8.0.0/lib/net8.0/System.Collections.Immutable.dll" />
+      <RoslynSource Include="$(NuGetPackageRoot)system.reflection.metadata/8.0.0/lib/net8.0/System.Reflection.Metadata.dll" />
     </ItemGroup>
-    <ItemGroup>
-      <FilesToBundle Remove="@(RoslynToExclude)" />
-    </ItemGroup>
-    <Message Importance="high" Text="Excluding Roslyn + dependencies from single-file bundle" />
-  </Target>
-
-  <Target Name="CopyRoslynToSubdir" AfterTargets="Publish">
     <MakeDir Directories="$(PublishDir)roslyn" />
-    <Copy SourceFiles="@(RoslynToExclude)" DestinationFolder="$(PublishDir)roslyn" SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Copied Roslyn assemblies to roslyn/ subdirectory" />
+    <Copy SourceFiles="@(RoslynSource)" DestinationFolder="$(PublishDir)roslyn" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copied @(RoslynSource->Count()) Roslyn assemblies to roslyn/ subdirectory" />
   </Target>
 
   <ItemGroup>

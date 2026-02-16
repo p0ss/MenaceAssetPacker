@@ -55,19 +55,68 @@ public static class BundleLoader
 
         foreach (var bundlePath in bundleFiles)
         {
+            var bundleFileName = Path.GetFileName(bundlePath);
+            AssetBundle bundle = null;
+
             try
             {
-                var bundle = AssetBundle.LoadFromFile(bundlePath);
-                if (bundle != null)
-                {
-                    _loadedBundles.Add(bundle);
-                    SdkLogger.Msg($"  [{modpackName}] Loaded bundle: {Path.GetFileName(bundlePath)}");
+                SdkLogger.Msg($"  [{modpackName}] Loading bundle: {bundleFileName}");
+                bundle = AssetBundle.LoadFromFile(bundlePath);
+            }
+            catch (Exception loadEx)
+            {
+                SdkLogger.Error($"  [{modpackName}] LoadFromFile failed for {bundleFileName}: {loadEx.Message}");
+                continue;
+            }
 
+            if (bundle == null)
+            {
+                SdkLogger.Warning($"  [{modpackName}] Failed to load bundle: {bundleFileName}");
+                continue;
+            }
+
+            _loadedBundles.Add(bundle);
+            SdkLogger.Msg($"  [{modpackName}] Loaded bundle: {bundleFileName}");
+
+            // Try GetAllAssetNames first (may not work for all bundle types)
+            string[] assetNames = null;
+            try
+            {
+                assetNames = bundle.GetAllAssetNames();
+            }
+            catch (Exception namesEx)
+            {
+                SdkLogger.Warning($"    GetAllAssetNames failed: {namesEx.Message}");
+            }
+
+            if (assetNames != null && assetNames.Length > 0)
+            {
+                SdkLogger.Msg($"    Contains {assetNames.Length} asset(s)");
+
+                foreach (var assetPath in assetNames)
+                {
+                    try
+                    {
+                        var asset = bundle.LoadAsset(assetPath);
+                        if (asset != null)
+                            RegisterAsset(asset, modpackName);
+                    }
+                    catch (Exception assetEx)
+                    {
+                        SdkLogger.Warning($"    Failed to load asset '{assetPath}': {assetEx.Message}");
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: try LoadAllAssets for bundles without asset names
+                SdkLogger.Msg($"    No asset names, trying LoadAllAssets fallback...");
+                try
+                {
                     var allAssets = bundle.LoadAllAssets();
                     if (allAssets != null)
                     {
-                        SdkLogger.Msg($"    Contains {allAssets.Length} asset(s)");
-
+                        SdkLogger.Msg($"    Contains {allAssets.Length} asset(s) (fallback)");
                         foreach (var asset in allAssets)
                         {
                             if (asset == null) continue;
@@ -75,14 +124,10 @@ public static class BundleLoader
                         }
                     }
                 }
-                else
+                catch (Exception fallbackEx)
                 {
-                    SdkLogger.Warning($"  [{modpackName}] Failed to load bundle: {Path.GetFileName(bundlePath)}");
+                    SdkLogger.Warning($"    LoadAllAssets fallback failed: {fallbackEx.Message}");
                 }
-            }
-            catch (Exception ex)
-            {
-                SdkLogger.Error($"  [{modpackName}] Error loading bundle {Path.GetFileName(bundlePath)}: {ex.Message}");
             }
         }
     }

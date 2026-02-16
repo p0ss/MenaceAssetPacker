@@ -392,11 +392,8 @@ public partial class ModpackLoaderMod : MelonMod
                         AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
                         SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
 
-                        var sprite = AssetReplacer.LoadCustomSprite(fullPath, assetName);
-                        if (sprite != null)
-                            SdkLogger.Msg($"  Custom sprite ready: '{assetName}'");
-                        else
-                            SdkLogger.Warning($"  Failed to load custom sprite: '{assetName}'");
+                        // Queues sprite for deferred loading - returns null until LoadPendingSprites() is called
+                        AssetReplacer.LoadCustomSprite(fullPath, assetName);
                     }
                     // For GLB/GLTF files, load as custom 3D model
                     // Registers mesh, materials, textures, and prefab with BundleLoader
