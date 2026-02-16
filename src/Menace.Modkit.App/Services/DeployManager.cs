@@ -68,8 +68,18 @@ public class DeployManager
             progress?.Report($"Deploying {modpack.Name}...");
             await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
 
-            // Deploy patched game data if it exists (from previous full deployment)
-            // Note: For clones to work, a full "Deploy All" is needed to compile merged bundles
+            // Compile merged bundle with all staging modpacks (not just this one)
+            // This ensures clones, patches, and audio work correctly
+            progress?.Report("Compiling asset bundles...");
+            var allModpacks = _modpackManager.GetStagingModpacks()
+                .Where(m => !IsDevOnlyModpack(m.Name) || AppSettings.Instance.EnableDeveloperTools)
+                .OrderBy(m => m.LoadOrder)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            await TryCompileBundleAsync(allModpacks, modsBasePath, ct);
+
+            // Deploy patched game data
+            progress?.Report("Deploying patched game data...");
             await Task.Run(() => DeployPatchedGameData(modsBasePath), ct);
 
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
