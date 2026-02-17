@@ -1905,6 +1905,9 @@ public class StatsEditorView : UserControl
         var bodyPanel = new StackPanel { Spacing = 8, Margin = new Thickness(12, 8, 0, 8) };
         foreach (var kvp in element.ToList())
         {
+          // Skip _type field - it's already shown in the header
+          if (kvp.Key == "_type") continue;
+
           bodyPanel.Children.Add(CreateObjectFieldControl(
             kvp.Key, kvp.Value, element, elementTypeName, isEditable, SyncToViewModel));
         }
@@ -2514,8 +2517,17 @@ public class StatsEditorView : UserControl
   {
     var parts = new System.Collections.Generic.List<string>();
     var skipNames = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-      { "Guid", "Id", "Uid" };
+      { "Guid", "Id", "Uid", "_type" };
     var priorityNames = new[] { "Text", "Name", "Template", "Title", "Description" };
+
+    // Check for _type field (polymorphic event handlers)
+    // If present, use type name as primary identifier with key values after
+    string? typeName = null;
+    if (element.TryGetValue("_type", out var typeVal) && typeVal is System.Text.Json.JsonElement typeJe
+        && typeJe.ValueKind == System.Text.Json.JsonValueKind.String)
+    {
+      typeName = typeJe.GetString();
+    }
 
     // First pass: priority fields (Text, Name, etc.)
     foreach (var pn in priorityNames)
@@ -2532,7 +2544,7 @@ public class StatsEditorView : UserControl
       }
     }
 
-    // Second pass: other primitive fields, skipping Guid/Id
+    // Second pass: other primitive fields, skipping Guid/Id/_type
     foreach (var kvp in element)
     {
       if (parts.Count >= 3) break;
@@ -2574,11 +2586,19 @@ public class StatsEditorView : UserControl
       foreach (var kvp in element)
       {
         if (parts.Count >= 1) break;
+        if (skipNames.Contains(kvp.Key)) continue;
         if (kvp.Value is System.Text.Json.JsonElement je
             && je.ValueKind != System.Text.Json.JsonValueKind.Array
             && je.ValueKind != System.Text.Json.JsonValueKind.Object)
           parts.Add($"{kvp.Key}: {je}");
       }
+    }
+
+    // Build final summary - use type name as primary if present
+    if (!string.IsNullOrEmpty(typeName))
+    {
+      var details = parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
+      return $"[{index}] {typeName}{details}";
     }
 
     var summary = parts.Count > 0 ? string.Join(", ", parts) : "";

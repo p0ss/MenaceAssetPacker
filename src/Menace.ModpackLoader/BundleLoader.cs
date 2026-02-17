@@ -61,11 +61,15 @@ public static class BundleLoader
             try
             {
                 SdkLogger.Msg($"  [{modpackName}] Loading bundle: {bundleFileName}");
-                bundle = AssetBundle.LoadFromFile(bundlePath);
+
+                // Unity 6 has IL2CPP binding issues with LoadFromFile (ReadOnlySpan.GetPinnableReference)
+                // Use LoadFromMemory as a workaround
+                var bundleBytes = File.ReadAllBytes(bundlePath);
+                bundle = AssetBundle.LoadFromMemory(bundleBytes);
             }
             catch (Exception loadEx)
             {
-                SdkLogger.Error($"  [{modpackName}] LoadFromFile failed for {bundleFileName}: {loadEx.Message}");
+                SdkLogger.Error($"  [{modpackName}] LoadFromMemory failed for {bundleFileName}: {loadEx.Message}");
                 continue;
             }
 

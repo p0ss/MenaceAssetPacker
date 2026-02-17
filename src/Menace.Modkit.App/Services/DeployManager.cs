@@ -447,37 +447,87 @@ public class DeployManager
                 ModkitLog.Warn($"[DeployManager] Audio: {warn}");
         }
 
-        // Collect and deploy texture entries from all modpacks
+        // Collect texture and model entries from all modpacks for native asset creation
+        var allTextureEntries = new List<BundleCompiler.TextureEntry>();
+        var allModelEntries = new List<BundleCompiler.ModelEntry>();
         foreach (var modpack in modpacks)
         {
-            var assetsDir = Path.Combine(modpack.Path, "assets");
-            var textureEntries = TextureBundler.CollectTextureEntries(assetsDir);
-            if (textureEntries.Count > 0)
+            // Use the modpack's assets dictionary to get proper resource paths
+            if (modpack.Assets != null && modpack.Assets.Count > 0)
             {
-                var textureOutputDir = Path.Combine(modsBasePath, "compiled");
-                var textureOutputPath = Path.Combine(textureOutputDir, "textures.json");
-                var unityVer = DetectUnityVersion(_modpackManager.GetGameInstallPath() ?? "");
-                if (TextureBundler.CreateTextureBundle(textureEntries, textureOutputPath, unityVer))
+                var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
+
+                foreach (var (gameAssetPath, localPath) in modpack.Assets)
                 {
-                    foreach (var file in Directory.GetFiles(textureOutputDir, "*", SearchOption.AllDirectories))
+                    var ext = Path.GetExtension(gameAssetPath);
+                    if (!imageExtensions.Contains(ext))
+                        continue;
+
+                    var fullLocalPath = Path.Combine(modpack.Path, localPath);
+                    if (!File.Exists(fullLocalPath))
+                        continue;
+
+                    var assetName = Path.GetFileNameWithoutExtension(gameAssetPath);
+
+                    // Build resource path from game asset path (strip extension, lowercase)
+                    // e.g., "Assets/Resources/ui/textures/bg.png" -> "assets/resources/ui/textures/bg"
+                    var resourcePath = gameAssetPath;
+                    if (resourcePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                        resourcePath = resourcePath[..^ext.Length];
+                    resourcePath = resourcePath.ToLowerInvariant().Replace('\\', '/');
+
+                    allTextureEntries.Add(new BundleCompiler.TextureEntry
                     {
-                        var rel = Path.GetRelativePath(modsBasePath, file);
-                        if (!files.Contains(rel))
-                            files.Add(rel);
-                    }
+                        AssetName = assetName,
+                        SourceFilePath = fullLocalPath,
+                        ResourcePath = resourcePath,
+                        CreateSprite = true // Create sprites by default for UI textures
+                    });
                 }
             }
 
-            // Process GLB/GLTF model files
-            var glbFiles = ProcessGlbFiles(modpack, modsBasePath);
-            files.AddRange(glbFiles);
+            // Collect GLB/GLTF model entries for native asset creation
+            var assetsDir = Path.Combine(modpack.Path, "assets");
+            if (Directory.Exists(assetsDir))
+            {
+                var glbFiles = Directory.GetFiles(assetsDir, "*.glb", SearchOption.AllDirectories)
+                    .Concat(Directory.GetFiles(assetsDir, "*.gltf", SearchOption.AllDirectories));
+
+                foreach (var glbPath in glbFiles)
+                {
+                    var assetName = Path.GetFileNameWithoutExtension(glbPath);
+
+                    // Build resource path based on modpack assets mapping or default
+                    var relativePath = Path.GetRelativePath(assetsDir, glbPath).Replace('\\', '/');
+                    var resourcePath = $"assets/models/{modpack.Name}/{assetName}".ToLowerInvariant();
+
+                    allModelEntries.Add(new BundleCompiler.ModelEntry
+                    {
+                        AssetName = assetName,
+                        SourceFilePath = glbPath,
+                        ResourcePath = resourcePath
+                    });
+                }
+            }
+        }
+
+        if (allTextureEntries.Count > 0)
+        {
+            ModkitLog.Info($"[DeployManager] Collected {allTextureEntries.Count} texture(s) for native asset creation");
+        }
+        if (allModelEntries.Count > 0)
+        {
+            ModkitLog.Info($"[DeployManager] Collected {allModelEntries.Count} model(s) for native asset creation");
         }
 
         var merged = MergedPatchSet.MergePatchSets(orderedPatchSets);
 
-        // Only skip compilation if there are no patches, no clones, AND no audio
+        // Only skip compilation if there are no patches, no clones, no audio, no textures, AND no models
         bool hasAudio = audioEntries.Count > 0;
-        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio)
+        bool hasTextures = allTextureEntries.Count > 0;
+        bool hasModels = allModelEntries.Count > 0;
+        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio && !hasTextures && !hasModels)
             return files;
 
         // Determine game data path and Unity version
@@ -491,14 +541,25 @@ public class DeployManager
 
         try
         {
-            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s)");
+            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s), {allTextureEntries.Count} texture(s), {allModelEntries.Count} model(s)");
             var compiler = new BundleCompiler();
             var result = await compiler.CompileDataPatchBundleAsync(
-                merged, mergedClones, audioEntries.Count > 0 ? audioEntries : null, gameInstallPath, unityVersion, outputPath, ct);
+                merged,
+                mergedClones,
+                audioEntries.Count > 0 ? audioEntries : null,
+                allTextureEntries.Count > 0 ? allTextureEntries : null,
+                allModelEntries.Count > 0 ? allModelEntries : null,
+                gameInstallPath,
+                unityVersion,
+                outputPath,
+                ct);
 
             if (result.Success && result.OutputPath != null)
             {
                 ModkitLog.Info($"[DeployManager] Bundle compiled: {result.Message}");
+                // Log any warnings even on success
+                foreach (var warn in result.Warnings)
+                    ModkitLog.Info($"[DeployManager]   - {warn}");
                 // Track all files in the compiled directory
                 foreach (var file in Directory.GetFiles(compiledDir, "*", SearchOption.AllDirectories))
                 {
@@ -515,71 +576,6 @@ public class DeployManager
         catch (Exception ex)
         {
             ModkitLog.Error($"[DeployManager] Bundle compilation exception: {ex.Message}");
-        }
-
-        return files;
-    }
-
-    /// <summary>
-    /// Process GLB/GLTF 3D model files in a modpack's assets directory.
-    /// Converts them to a format the runtime loader can use (manifest + textures).
-    /// Returns list of deployed files (relative to modsBasePath).
-    /// </summary>
-    private List<string> ProcessGlbFiles(ModpackManifest modpack, string modsBasePath)
-    {
-        var files = new List<string>();
-        var assetsDir = Path.Combine(modpack.Path, "assets");
-        if (!Directory.Exists(assetsDir))
-            return files;
-
-        var gameInstallPath = _modpackManager.GetGameInstallPath() ?? "";
-        var unityVersion = DetectUnityVersion(gameInstallPath);
-
-        // Find all GLB and GLTF files
-        var glbFiles = Directory.GetFiles(assetsDir, "*.glb", SearchOption.AllDirectories)
-            .Concat(Directory.GetFiles(assetsDir, "*.gltf", SearchOption.AllDirectories))
-            .ToList();
-
-        if (glbFiles.Count == 0)
-            return files;
-
-        var modelsDir = Path.Combine(modsBasePath, modpack.Name, "models");
-        Directory.CreateDirectory(modelsDir);
-
-        foreach (var glbPath in glbFiles)
-        {
-            try
-            {
-                var baseName = Path.GetFileNameWithoutExtension(glbPath);
-
-                // Copy the original GLB file to models/ for runtime loading via GlbLoader
-                // (GlbBundler currently only creates manifests, not actual AssetBundles)
-                var glbOutputPath = Path.Combine(modelsDir, baseName + ".glb");
-                File.Copy(glbPath, glbOutputPath, overwrite: true);
-                var glbRel = Path.GetRelativePath(modsBasePath, glbOutputPath);
-                files.Add(glbRel);
-                ModkitLog.Info($"[DeployManager] Copied GLB: {Path.GetFileName(glbPath)} → models/");
-
-                // Also run GlbBundler for manifest/texture extraction (future use)
-                var outputPath = Path.Combine(modelsDir, baseName + ".bundle");
-                var result = GlbBundler.ConvertToBundleAsync(glbPath, outputPath, unityVersion).Result;
-                if (result.Success)
-                {
-                    foreach (var convertedFile in result.ConvertedAssets)
-                    {
-                        var rel = Path.GetRelativePath(modsBasePath, convertedFile);
-                        files.Add(rel);
-                    }
-                }
-                else
-                {
-                    ModkitLog.Warn($"[DeployManager] GLB manifest warning for {Path.GetFileName(glbPath)}: {result.Message}");
-                }
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Error($"[DeployManager] Failed to process GLB {Path.GetFileName(glbPath)}: {ex.Message}");
-            }
         }
 
         return files;

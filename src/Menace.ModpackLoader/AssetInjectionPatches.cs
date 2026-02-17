@@ -28,7 +28,7 @@ public static class AssetReplacer
 {
     // Set to true to disable runtime asset replacement (relies on native assets only)
     // This is used to verify that native asset creation is working correctly.
-    private const bool DISABLE_RUNTIME_REPLACEMENT = true;
+    private const bool DISABLE_RUNTIME_REPLACEMENT = false;
     /// <summary>
     /// A registered disk-file replacement.
     /// </summary>

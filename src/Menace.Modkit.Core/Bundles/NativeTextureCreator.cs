@@ -54,13 +54,30 @@ public static class NativeTextureCreator
 
     /// <summary>
     /// Find a Texture2D asset to use as a template and extract field offsets.
+    /// Returns diagnostic info via out parameter.
     /// </summary>
-    public static Texture2DTemplate? FindTemplate(AssetsFile afile)
+    public static Texture2DTemplate? FindTemplate(AssetsFile afile, out string diagnostics)
     {
         var reader = afile.Reader;
+        var diag = new System.Text.StringBuilder();
 
-        foreach (var info in afile.GetAssetsOfType(AssetClassID.Texture2D))
+        // Count assets by TypeId 28 (Texture2D)
+        var texture2dAssets = afile.AssetInfos.Where(i => i.TypeId == 28).ToList();
+        diag.AppendLine($"TypeId 28 (Texture2D) assets: {texture2dAssets.Count}");
+
+        // Also try GetAssetsOfType
+        var byClassId = afile.GetAssetsOfType(AssetClassID.Texture2D).ToList();
+        diag.AppendLine($"GetAssetsOfType(Texture2D): {byClassId.Count}");
+
+        // Use whichever found assets
+        var assetsToCheck = texture2dAssets.Count > 0 ? texture2dAssets : byClassId;
+
+        int checked_count = 0;
+        int parse_failures = 0;
+
+        foreach (var info in assetsToCheck)
         {
+            checked_count++;
             try
             {
                 var absOffset = info.GetAbsoluteByteOffset(afile);
@@ -68,17 +85,38 @@ public static class NativeTextureCreator
                 var bytes = reader.ReadBytes((int)info.ByteSize);
 
                 // Try to parse the Texture2D structure
-                var template = TryParseTexture2D(bytes, info);
+                var template = TryParseTexture2D(bytes, info, out var parseLog);
+                diag.AppendLine($"PathId={info.PathId}, Size={info.ByteSize}:");
+                diag.AppendLine(parseLog);
+
                 if (template != null)
+                {
+                    diag.AppendLine($"SUCCESS: Found template {template.OriginalWidth}x{template.OriginalHeight}");
+                    diagnostics = diag.ToString();
                     return template;
+                }
+                parse_failures++;
             }
-            catch
+            catch (Exception ex)
             {
-                // Try next texture
+                diag.AppendLine($"Exception on PathId {info.PathId}: {ex.Message}");
             }
+
+            // Only check first 5 to get detailed logs
+            if (checked_count >= 5) break;
         }
 
+        diag.AppendLine($"Checked {checked_count} assets, {parse_failures} parse failures");
+        diagnostics = diag.ToString();
         return null;
+    }
+
+    /// <summary>
+    /// Find a Texture2D asset to use as a template (convenience overload).
+    /// </summary>
+    public static Texture2DTemplate? FindTemplate(AssetsFile afile)
+    {
+        return FindTemplate(afile, out _);
     }
 
     /// <summary>
@@ -99,7 +137,19 @@ public static class NativeTextureCreator
     /// </summary>
     private static Texture2DTemplate? TryParseTexture2D(byte[] bytes, AssetFileInfo info)
     {
-        if (bytes.Length < 100) return null;
+        return TryParseTexture2D(bytes, info, out _);
+    }
+
+    private static Texture2DTemplate? TryParseTexture2D(byte[] bytes, AssetFileInfo info, out string parseLog)
+    {
+        var log = new System.Text.StringBuilder();
+        log.AppendLine($"Parsing {bytes.Length} bytes for PathId {info.PathId}");
+
+        if (bytes.Length < 100)
+        {
+            parseLog = log.Append("Too small (<100 bytes)").ToString();
+            return null;
+        }
 
         try
         {
@@ -107,51 +157,67 @@ public static class NativeTextureCreator
 
             // m_Name (string)
             int nameLen = BitConverter.ToInt32(bytes, offset);
-            if (nameLen < 0 || nameLen > 500) return null;
+            log.AppendLine($"  nameLen={nameLen} at offset {offset}");
+            if (nameLen < 0 || nameLen > 500)
+            {
+                parseLog = log.Append($"  FAIL: nameLen out of range").ToString();
+                return null;
+            }
+
             int nameOffset = offset;
+            string name = nameLen > 0 ? System.Text.Encoding.UTF8.GetString(bytes, offset + 4, Math.Min(nameLen, 50)) : "";
+            log.AppendLine($"  name='{name}'");
             offset += 4 + nameLen;
             offset = Align4(offset);
 
+            // Unity 6 layout: NO booleans between ForcedFallbackFormat and Width
+            // Layout: Name -> ForcedFallbackFormat(4) -> Width(4) -> Height(4) -> CompleteImageSize(4) -> ...
+
             // m_ForcedFallbackFormat (int32)
+            int forcedFallback = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  @{offset}: m_ForcedFallbackFormat={forcedFallback}");
             offset += 4;
 
-            // m_DownscaleFallback (bool, 1 byte + align)
-            offset += 1;
-            offset = Align4(offset);
-
-            // m_IsAlphaChannelOptional (bool, 1 byte + align)
-            offset += 1;
-            offset = Align4(offset);
-
-            // m_Width (int32)
+            // m_Width (int32) - immediately follows ForcedFallbackFormat in Unity 6
             int widthOffset = offset;
             int width = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  @{offset}: m_Width={width}");
             offset += 4;
 
             // m_Height (int32)
             int heightOffset = offset;
             int height = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  @{offset}: m_Height={height}");
             offset += 4;
 
             // Validate dimensions
             if (width <= 0 || width > 16384 || height <= 0 || height > 16384)
+            {
+                parseLog = log.Append($"  FAIL: dimensions invalid ({width}x{height})").ToString();
                 return null;
+            }
 
             // m_CompleteImageSize (int32)
             int completeImageSizeOffset = offset;
             int completeImageSize = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  m_CompleteImageSize={completeImageSize} at offset {offset}");
             offset += 4;
 
             // m_MipsStripped (int32)
+            int mipsStripped = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  m_MipsStripped={mipsStripped} at offset {offset}");
             offset += 4;
 
             // m_TextureFormat (int32)
             int formatOffset = offset;
             int format = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  m_TextureFormat={format} at offset {offset}");
             offset += 4;
 
             // m_MipCount (int32)
             int mipCountOffset = offset;
+            int mipCount = BitConverter.ToInt32(bytes, offset);
+            log.AppendLine($"  m_MipCount={mipCount} at offset {offset}");
             offset += 4;
 
             // Skip remaining fixed fields until we find image data
@@ -163,6 +229,7 @@ public static class NativeTextureCreator
             // Search backwards from end for a size that matches expected pixel data
             // RGBA32 = width * height * 4 bytes
             int expectedSize = width * height * 4;
+            log.AppendLine($"  Searching for image data (expected ~{expectedSize} bytes for RGBA32)...");
 
             // Scan for the image data size field
             for (int searchOffset = offset; searchOffset < bytes.Length - 8; searchOffset += 4)
@@ -183,6 +250,7 @@ public static class NativeTextureCreator
                         imageDataSizeOffset = searchOffset;
                         imageDataSize = potentialSize;
                         imageDataOffset = searchOffset + 4;
+                        log.AppendLine($"  Found image data: size={potentialSize} at offset {searchOffset}");
                         break;
                     }
                 }
@@ -192,6 +260,7 @@ public static class NativeTextureCreator
             {
                 // Try alternative: look for streaming texture (image data size = 0)
                 // These have m_StreamData with external reference
+                log.AppendLine($"  No embedded data found, checking for streaming texture...");
                 for (int searchOffset = offset; searchOffset < bytes.Length - 20; searchOffset += 4)
                 {
                     int potentialSize = BitConverter.ToInt32(bytes, searchOffset);
@@ -202,10 +271,14 @@ public static class NativeTextureCreator
                         imageDataSizeOffset = searchOffset;
                         imageDataSize = 0;
                         imageDataOffset = searchOffset + 4;
+                        log.AppendLine($"  Found streaming texture marker at offset {searchOffset}");
                         break;
                     }
                 }
             }
+
+            log.AppendLine($"  SUCCESS: {width}x{height}, format={format}, imageDataSize={imageDataSize}");
+            parseLog = log.ToString();
 
             return new Texture2DTemplate
             {
@@ -224,8 +297,9 @@ public static class NativeTextureCreator
                 OriginalImageDataSize = imageDataSize
             };
         }
-        catch
+        catch (Exception ex)
         {
+            parseLog = log.Append($"  EXCEPTION: {ex.Message}").ToString();
             return null;
         }
     }
@@ -248,54 +322,125 @@ public static class NativeTextureCreator
 
         try
         {
-            // Load and decode the PNG
-            using var image = Image.Load<Rgba32>(pngPath);
-            result.Width = image.Width;
-            result.Height = image.Height;
-
-            // Convert to raw RGBA32 bytes (Unity expects bottom-to-top)
-            var pixelData = new byte[image.Width * image.Height * 4];
-            image.ProcessPixelRows(accessor =>
+            // Validate template
+            if (template == null)
             {
-                for (int y = 0; y < accessor.Height; y++)
-                {
-                    // Flip Y coordinate for Unity's bottom-to-top texture coordinate system
-                    int destY = accessor.Height - 1 - y;
-                    var row = accessor.GetRowSpan(y);
-                    for (int x = 0; x < accessor.Width; x++)
-                    {
-                        int destIndex = (destY * accessor.Width + x) * 4;
-                        pixelData[destIndex + 0] = row[x].R;
-                        pixelData[destIndex + 1] = row[x].G;
-                        pixelData[destIndex + 2] = row[x].B;
-                        pixelData[destIndex + 3] = row[x].A;
-                    }
-                }
-            });
-
-            // Build the new Texture2D bytes
-            var textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData);
-            if (textureBytes == null)
+                result.ErrorMessage = "Template is null";
+                return result;
+            }
+            if (template.Bytes == null || template.Bytes.Length == 0)
             {
-                result.ErrorMessage = "Failed to build Texture2D bytes";
+                result.ErrorMessage = "Template bytes are null or empty";
                 return result;
             }
 
-            // Create and register the asset
-            var newInfo = AssetFileInfo.Create(
-                afile,
-                pathId,
-                (int)AssetClassID.Texture2D,
-                0
-            );
-            newInfo.SetNewData(textureBytes);
-            afile.Metadata.AddAssetInfo(newInfo);
+            // Load and decode the PNG
+            if (!File.Exists(pngPath))
+            {
+                result.ErrorMessage = $"PNG file not found: {pngPath}";
+                return result;
+            }
 
-            result.Success = true;
+            Image<Rgba32> image;
+            try
+            {
+                image = Image.Load<Rgba32>(pngPath);
+            }
+            catch (Exception imgEx)
+            {
+                result.ErrorMessage = $"Failed to load image: {imgEx.Message}";
+                return result;
+            }
+
+            using (image)
+            {
+                result.Width = image.Width;
+                result.Height = image.Height;
+
+                // Convert to raw RGBA32 bytes (Unity expects bottom-to-top)
+                var pixelData = new byte[image.Width * image.Height * 4];
+                try
+                {
+                    image.ProcessPixelRows(accessor =>
+                    {
+                        for (int y = 0; y < accessor.Height; y++)
+                        {
+                            int destY = accessor.Height - 1 - y;
+                            var row = accessor.GetRowSpan(y);
+                            for (int x = 0; x < accessor.Width; x++)
+                            {
+                                int destIndex = (destY * accessor.Width + x) * 4;
+                                pixelData[destIndex + 0] = row[x].R;
+                                pixelData[destIndex + 1] = row[x].G;
+                                pixelData[destIndex + 2] = row[x].B;
+                                pixelData[destIndex + 3] = row[x].A;
+                            }
+                        }
+                    });
+                }
+                catch (Exception pixEx)
+                {
+                    result.ErrorMessage = $"Failed to process pixels: {pixEx.Message}";
+                    return result;
+                }
+
+                // Build the new Texture2D bytes
+                byte[] textureBytes;
+                try
+                {
+                    textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData);
+                }
+                catch (Exception buildEx)
+                {
+                    result.ErrorMessage = $"Failed to build texture bytes: {buildEx.Message}";
+                    return result;
+                }
+
+                if (textureBytes == null)
+                {
+                    result.ErrorMessage = "Failed to build Texture2D bytes (returned null)";
+                    return result;
+                }
+
+                // Create and register the asset
+                if (afile == null)
+                {
+                    result.ErrorMessage = "AssetsFile is null";
+                    return result;
+                }
+                if (afile.Metadata == null)
+                {
+                    result.ErrorMessage = "AssetsFile.Metadata is null";
+                    return result;
+                }
+
+                try
+                {
+                    // Unity 6 doesn't have embedded type trees, so AssetFileInfo.Create returns null.
+                    // Instead, create the info manually based on the template's info.
+                    var newInfo = new AssetFileInfo
+                    {
+                        PathId = pathId,
+                        TypeIdOrIndex = template.Info.TypeIdOrIndex,
+                        TypeId = template.Info.TypeId,
+                        ScriptTypeIndex = template.Info.ScriptTypeIndex,
+                        Stripped = template.Info.Stripped
+                    };
+                    newInfo.SetNewData(textureBytes);
+                    afile.Metadata.AddAssetInfo(newInfo);
+                }
+                catch (Exception assetEx)
+                {
+                    result.ErrorMessage = $"Failed to create asset info: {assetEx.Message}";
+                    return result;
+                }
+
+                result.Success = true;
+            }
         }
         catch (Exception ex)
         {
-            result.ErrorMessage = $"Failed to create texture: {ex.Message}";
+            result.ErrorMessage = $"Failed to create texture (outer): {ex.Message}\nStack: {ex.StackTrace}";
         }
 
         return result;
@@ -311,27 +456,35 @@ public static class NativeTextureCreator
         int height,
         byte[] pixelData)
     {
-        // Calculate size changes
-        int nameLen = name.Length;
-        int namePadding = (4 - (nameLen % 4)) % 4;
-        int newNameTotalLen = 4 + nameLen + namePadding;
+        try
+        {
+            // Validate inputs
+            if (template.ImageDataSizeOffset < 0 || template.ImageDataOffset < 0)
+            {
+                throw new InvalidOperationException($"Invalid template offsets: ImageDataSizeOffset={template.ImageDataSizeOffset}, ImageDataOffset={template.ImageDataOffset}");
+            }
 
-        int origNameLen = BitConverter.ToInt32(template.Bytes, template.NameOffset);
-        int origNamePadding = (4 - (origNameLen % 4)) % 4;
-        int origNameTotalLen = 4 + origNameLen + origNamePadding;
+            // Calculate size changes
+            int nameLen = name.Length;
+            int namePadding = (4 - (nameLen % 4)) % 4;
+            int newNameTotalLen = 4 + nameLen + namePadding;
 
-        int nameSizeDiff = newNameTotalLen - origNameTotalLen;
+            int origNameLen = BitConverter.ToInt32(template.Bytes, template.NameOffset);
+            int origNamePadding = (4 - (origNameLen % 4)) % 4;
+            int origNameTotalLen = 4 + origNameLen + origNamePadding;
 
-        // Original image data size
-        int origImageDataTotalLen = 4 + template.OriginalImageDataSize;
-        int origImageDataPadding = (4 - (template.OriginalImageDataSize % 4)) % 4;
-        origImageDataTotalLen += origImageDataPadding;
+            int nameSizeDiff = newNameTotalLen - origNameTotalLen;
 
-        int newImageDataTotalLen = 4 + pixelData.Length;
-        int newImageDataPadding = (4 - (pixelData.Length % 4)) % 4;
-        newImageDataTotalLen += newImageDataPadding;
+            // Original image data size
+            int origImageDataTotalLen = 4 + template.OriginalImageDataSize;
+            int origImageDataPadding = (4 - (template.OriginalImageDataSize % 4)) % 4;
+            origImageDataTotalLen += origImageDataPadding;
 
-        int imageSizeDiff = newImageDataTotalLen - origImageDataTotalLen;
+            int newImageDataTotalLen = 4 + pixelData.Length;
+            int newImageDataPadding = (4 - (pixelData.Length % 4)) % 4;
+            newImageDataTotalLen += newImageDataPadding;
+
+            int imageSizeDiff = newImageDataTotalLen - origImageDataTotalLen;
 
         // Calculate new buffer size
         int newSize = template.Bytes.Length + nameSizeDiff + imageSizeDiff;
@@ -437,6 +590,11 @@ public static class NativeTextureCreator
         }
 
         return newBytes;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"BuildTexture2DBytes failed: {ex.Message} (NameOffset={template.NameOffset}, WidthOffset={template.WidthOffset}, ImageDataSizeOffset={template.ImageDataSizeOffset})", ex);
+        }
     }
 
     private static int Align4(int offset) => (offset + 3) & ~3;

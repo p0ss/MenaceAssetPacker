@@ -31,6 +31,8 @@ public class BundleCompiler
         public int AudioClipsCreated { get; set; }
         public int TexturesCreated { get; set; }
         public int SpritesCreated { get; set; }
+        public int ModelsCreated { get; set; }
+        public int PrefabsCreated { get; set; }
     }
 
     /// <summary>
@@ -48,6 +50,19 @@ public class BundleCompiler
         public bool CreateSprite { get; set; } = true;
         /// <summary>Pixels per unit for the sprite (default 100).</summary>
         public float PixelsPerUnit { get; set; } = 100f;
+    }
+
+    /// <summary>
+    /// Model entry for native Mesh/Prefab creation from GLB/GLTF files.
+    /// </summary>
+    public class ModelEntry
+    {
+        /// <summary>Name of the model asset (without extension).</summary>
+        public string AssetName { get; set; } = string.Empty;
+        /// <summary>Full path to the source GLB/GLTF file.</summary>
+        public string SourceFilePath { get; set; } = string.Empty;
+        /// <summary>Resource path for ResourceManager (e.g., "assets/models/my_model").</summary>
+        public string ResourcePath { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -106,17 +121,18 @@ public class BundleCompiler
         CancellationToken ct = default)
     {
         return await CompileDataPatchBundleAsync(
-            mergedPatches, mergedClones, audioEntries, null, gameDataPath, unityVersion, outputPath, ct);
+            mergedPatches, mergedClones, audioEntries, null, null, gameDataPath, unityVersion, outputPath, ct);
     }
 
     /// <summary>
-    /// Compile merged patches, clones, audio assets, and textures into an asset bundle.
+    /// Compile merged patches, clones, audio assets, textures, and models into an asset bundle.
     /// This is the main compilation entry point that handles all asset types.
     /// </summary>
     /// <param name="mergedPatches">The merged patches from all active modpacks.</param>
     /// <param name="mergedClones">The merged clone definitions from all active modpacks.</param>
     /// <param name="audioEntries">Audio files to convert to native AudioClip assets.</param>
     /// <param name="textureEntries">PNG files to convert to native Texture2D/Sprite assets.</param>
+    /// <param name="modelEntries">GLB/GLTF files to convert to native Mesh/Prefab assets.</param>
     /// <param name="gameDataPath">Path to the game's data directory (contains level files, resources.assets, etc.)</param>
     /// <param name="unityVersion">The Unity version string (e.g. "2020.3.18f1").</param>
     /// <param name="outputPath">Path to write the output .bundle file.</param>
@@ -126,6 +142,7 @@ public class BundleCompiler
         MergedCloneSet? mergedClones,
         List<AudioBundler.AudioEntry>? audioEntries,
         List<TextureEntry>? textureEntries,
+        List<ModelEntry>? modelEntries,
         string gameDataPath,
         string unityVersion,
         string outputPath,
@@ -135,7 +152,7 @@ public class BundleCompiler
         {
             try
             {
-                return CompileDataPatchBundleCore(mergedPatches, mergedClones, audioEntries, textureEntries, gameDataPath, unityVersion, outputPath);
+                return CompileDataPatchBundleCore(mergedPatches, mergedClones, audioEntries, textureEntries, modelEntries, gameDataPath, unityVersion, outputPath);
             }
             catch (Exception ex)
             {
@@ -153,6 +170,7 @@ public class BundleCompiler
         MergedCloneSet? mergedClones,
         List<AudioBundler.AudioEntry>? audioEntries,
         List<TextureEntry>? textureEntries,
+        List<ModelEntry>? modelEntries,
         string gameDataPath,
         string unityVersion,
         string outputPath)
@@ -163,11 +181,12 @@ public class BundleCompiler
         bool hasClones = mergedClones?.HasClones == true;
         bool hasAudio = audioEntries?.Count > 0;
         bool hasTextures = textureEntries?.Count > 0;
+        bool hasModels = modelEntries?.Count > 0;
 
-        if (!hasPatches && !hasClones && !hasAudio && !hasTextures)
+        if (!hasPatches && !hasClones && !hasAudio && !hasTextures && !hasModels)
         {
             result.Success = false;
-            result.Message = "No patches, clones, audio, or texture assets to compile";
+            result.Message = "No patches, clones, audio, texture, or model assets to compile";
             return result;
         }
 
@@ -204,7 +223,7 @@ public class BundleCompiler
             var resourcePathLookup = new Dictionary<string, string>(); // templateName -> resourcePath
             byte[]? ggmBytes = null;
 
-            if (File.Exists(ggmPath) && (hasClones || hasAudio || hasTextures))
+            if (File.Exists(ggmPath) && (hasClones || hasAudio || hasTextures || hasModels))
             {
                 try
                 {
@@ -320,7 +339,7 @@ public class BundleCompiler
             if (hasTextures)
             {
                 var textureResult = ProcessTextureAssets(
-                    afile, textureEntries!, textureAssets, spriteAssets,
+                    afile, am, gameDataPath, textureEntries!, textureAssets, spriteAssets,
                     textureResourcePaths, spriteResourcePaths, ref nextPathId);
 
                 result.TexturesCreated = textureAssets.Count;
@@ -337,8 +356,78 @@ public class BundleCompiler
                 }
             }
 
+            // ===== PHASE 2.7: PROCESS MODEL ASSETS =====
+            var modelAssets = new Dictionary<string, AssetFileInfo>(); // meshName -> AssetFileInfo
+            var prefabAssets = new Dictionary<string, AssetFileInfo>(); // prefabName -> AssetFileInfo
+            var modelResourcePaths = new Dictionary<string, string>(); // assetName -> resourcePath
+            var prefabResourcePaths = new Dictionary<string, string>(); // prefabName -> resourcePath
+
+            if (hasModels)
+            {
+                foreach (var entry in modelEntries!)
+                {
+                    try
+                    {
+                        var glbResult = GlbBundler.ConvertToNativeAssets(
+                            entry.SourceFilePath, am, primaryFileInst, ref nextPathId, unityVersion);
+
+                        if (glbResult.Success)
+                        {
+                            // Track created meshes
+                            foreach (var meshInfo in glbResult.CreatedMeshes)
+                            {
+                                var meshAssetInfo = afile.AssetInfos.FirstOrDefault(a => a.PathId == meshInfo.PathId);
+                                if (meshAssetInfo != null)
+                                {
+                                    modelAssets[meshInfo.Name] = meshAssetInfo;
+                                    modelResourcePaths[meshInfo.Name] = !string.IsNullOrEmpty(entry.ResourcePath)
+                                        ? $"{entry.ResourcePath}/{meshInfo.Name}".ToLowerInvariant()
+                                        : $"assets/models/{entry.AssetName}/{meshInfo.Name}".ToLowerInvariant();
+                                }
+                            }
+
+                            // Track created prefabs
+                            foreach (var prefabInfo in glbResult.CreatedPrefabs)
+                            {
+                                var prefabAssetInfo = afile.AssetInfos.FirstOrDefault(a => a.PathId == prefabInfo.GameObjectPathId);
+                                if (prefabAssetInfo != null)
+                                {
+                                    prefabAssets[prefabInfo.Name] = prefabAssetInfo;
+                                    prefabResourcePaths[prefabInfo.Name] = !string.IsNullOrEmpty(prefabInfo.ResourcePath)
+                                        ? prefabInfo.ResourcePath
+                                        : $"assets/prefabs/{entry.AssetName}/{prefabInfo.Name}".ToLowerInvariant();
+                                }
+                            }
+
+                            result.Warnings.AddRange(glbResult.Warnings);
+                            result.Warnings.Add($"Model '{entry.AssetName}': {glbResult.Message}");
+                        }
+                        else
+                        {
+                            result.Warnings.Add($"Model '{entry.AssetName}' failed: {glbResult.ErrorMessage}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Model '{entry.AssetName}' exception: {ex.Message}");
+                    }
+                }
+
+                result.ModelsCreated = modelAssets.Count;
+                result.PrefabsCreated = prefabAssets.Count;
+
+                if (modelAssets.Count > 0)
+                {
+                    result.Warnings.Add($"Created {modelAssets.Count} native Mesh asset(s)");
+                }
+                if (prefabAssets.Count > 0)
+                {
+                    result.Warnings.Add($"Created {prefabAssets.Count} native Prefab asset(s)");
+                }
+            }
+
             // Check if we have any work to write
-            if (result.ClonesCreated == 0 && totalPatched == 0 && result.AudioClipsCreated == 0 && result.TexturesCreated == 0)
+            if (result.ClonesCreated == 0 && totalPatched == 0 && result.AudioClipsCreated == 0 && result.TexturesCreated == 0 && result.ModelsCreated == 0)
             {
                 result.Success = false;
                 result.Message = "No assets were modified. Check warnings for details.";
@@ -369,8 +458,8 @@ public class BundleCompiler
                 File.WriteAllBytes(rawAssetsPath, serializedBytes);
                 result.Warnings.Add($"Raw assets file written: {rawAssetsPath} ({serializedBytes.Length / 1024 / 1024}MB)");
 
-                // Patch globalgamemanagers ResourceManager with new entries (clones + audio + textures)
-                if (ggmBytes != null && (clonedAssets.Count > 0 || audioAssets.Count > 0 || textureAssets.Count > 0 || spriteAssets.Count > 0))
+                // Patch globalgamemanagers ResourceManager with new entries (clones + audio + textures + models)
+                if (ggmBytes != null && (clonedAssets.Count > 0 || audioAssets.Count > 0 || textureAssets.Count > 0 || spriteAssets.Count > 0 || modelAssets.Count > 0 || prefabAssets.Count > 0))
                 {
                     try
                     {
@@ -384,14 +473,18 @@ public class BundleCompiler
                             textureAssets,
                             textureResourcePaths,
                             spriteAssets,
-                            spriteResourcePaths);
+                            spriteResourcePaths,
+                            modelAssets,
+                            modelResourcePaths,
+                            prefabAssets,
+                            prefabResourcePaths);
 
                         if (patchedGgm != null)
                         {
                             var ggmPatchedPath = Path.Combine(dir!, "globalgamemanagers.patched");
                             File.WriteAllBytes(ggmPatchedPath, patchedGgm);
-                            var totalEntries = clonedAssets.Count + audioAssets.Count + textureAssets.Count + spriteAssets.Count;
-                            result.Warnings.Add($"GlobalGameManagers patched with {totalEntries} ResourceManager entries ({clonedAssets.Count} clones, {audioAssets.Count} audio, {textureAssets.Count} textures, {spriteAssets.Count} sprites): {ggmPatchedPath}");
+                            var totalEntries = clonedAssets.Count + audioAssets.Count + textureAssets.Count + spriteAssets.Count + modelAssets.Count + prefabAssets.Count;
+                            result.Warnings.Add($"GlobalGameManagers patched with {totalEntries} ResourceManager entries ({clonedAssets.Count} clones, {audioAssets.Count} audio, {textureAssets.Count} textures, {spriteAssets.Count} sprites, {modelAssets.Count} models, {prefabAssets.Count} prefabs): {ggmPatchedPath}");
                         }
                     }
                     catch (Exception ex)
@@ -418,6 +511,8 @@ public class BundleCompiler
                 if (result.AudioClipsCreated > 0) parts.Add($"{result.AudioClipsCreated} audio clip(s)");
                 if (result.TexturesCreated > 0) parts.Add($"{result.TexturesCreated} texture(s)");
                 if (result.SpritesCreated > 0) parts.Add($"{result.SpritesCreated} sprite(s)");
+                if (result.ModelsCreated > 0) parts.Add($"{result.ModelsCreated} model(s)");
+                if (result.PrefabsCreated > 0) parts.Add($"{result.PrefabsCreated} prefab(s)");
                 var format = bundleWritten ? "UnityFS bundle + raw assets" : "raw assets only";
                 result.Message = $"Compiled {string.Join(" and ", parts)} ({format})";
             }
@@ -597,6 +692,20 @@ public class BundleCompiler
                         source.info.ScriptTypeIndex
                     );
 
+                    // Unity 6 files without type trees return null from Create
+                    // In that case, manually create the AssetFileInfo from the source template
+                    if (newInfo == null)
+                    {
+                        newInfo = new AssetFileInfo
+                        {
+                            PathId = pathId,
+                            TypeIdOrIndex = source.info.TypeIdOrIndex,
+                            TypeId = source.info.TypeId,
+                            ScriptTypeIndex = source.info.ScriptTypeIndex,
+                            Stripped = source.info.Stripped
+                        };
+                    }
+
                     // Register the clone in the assets file
                     newInfo.SetNewData(cloneBytes);
                     afile.Metadata.AddAssetInfo(newInfo);
@@ -703,6 +812,8 @@ public class BundleCompiler
     /// </summary>
     private TextureProcessResult ProcessTextureAssets(
         AssetsFile afile,
+        AssetsManager am,
+        string gameDataPath,
         List<TextureEntry> textureEntries,
         Dictionary<string, AssetFileInfo> textureAssets,
         Dictionary<string, AssetFileInfo> spriteAssets,
@@ -713,10 +824,44 @@ public class BundleCompiler
         var result = new TextureProcessResult();
 
         // Find an existing Texture2D to use as template
-        var textureTemplate = NativeTextureCreator.FindTemplate(afile);
+        // First try resources.assets, then search sharedassets files
+        var textureTemplate = NativeTextureCreator.FindTemplate(afile, out var resDiag);
+        result.Warnings.Add($"[resources.assets] {resDiag.Replace("\n", " | ").Trim()}");
+
         if (textureTemplate == null)
         {
-            result.Warnings.Add("No existing Texture2D found to use as template - cannot create texture assets");
+            result.Warnings.Add("No Texture2D in resources.assets, searching sharedassets files...");
+
+            // Search sharedassets files for a texture template
+            var dataDir = Path.GetDirectoryName(gameDataPath) ?? gameDataPath;
+            var sharedAssetsFiles = Directory.GetFiles(dataDir, "sharedassets*.assets")
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var sharedFile in sharedAssetsFiles)
+            {
+                try
+                {
+                    var sharedInst = am.LoadAssetsFile(sharedFile, false);
+                    textureTemplate = NativeTextureCreator.FindTemplate(sharedInst.file, out var sharedDiag);
+                    result.Warnings.Add($"[{Path.GetFileName(sharedFile)}] {sharedDiag.Replace("\n", " | ").Trim()}");
+
+                    if (textureTemplate != null)
+                    {
+                        result.Warnings.Add($"Found Texture2D template in {Path.GetFileName(sharedFile)}");
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"Failed to search {Path.GetFileName(sharedFile)}: {ex.Message}");
+                }
+            }
+        }
+
+        if (textureTemplate == null)
+        {
+            result.Warnings.Add("No existing Texture2D found in any asset file - cannot create texture assets");
             result.Success = false;
             return result;
         }
@@ -726,6 +871,33 @@ public class BundleCompiler
         if (textureEntries.Any(e => e.CreateSprite))
         {
             spriteTemplate = NativeSpriteCreator.FindTemplate(afile);
+            if (spriteTemplate == null)
+            {
+                // Also search sharedassets for Sprite template
+                var dataDir = Path.GetDirectoryName(gameDataPath) ?? gameDataPath;
+                var sharedAssetsFiles = Directory.GetFiles(dataDir, "sharedassets*.assets")
+                    .OrderBy(f => f)
+                    .ToList();
+
+                foreach (var sharedFile in sharedAssetsFiles)
+                {
+                    try
+                    {
+                        var sharedInst = am.LoadAssetsFile(sharedFile, false);
+                        spriteTemplate = NativeSpriteCreator.FindTemplate(sharedInst.file);
+                        if (spriteTemplate != null)
+                        {
+                            result.Warnings.Add($"Found Sprite template in {Path.GetFileName(sharedFile)}");
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Continue searching
+                    }
+                }
+            }
+
             if (spriteTemplate == null)
             {
                 result.Warnings.Add("No existing Sprite found to use as template - sprites will be skipped");
@@ -1015,7 +1187,7 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Patch the globalgamemanagers file to add new ResourceManager entries for clones, audio, and texture assets.
+    /// Patch the globalgamemanagers file to add new ResourceManager entries for clones, audio, texture, and model assets.
     /// Entries must be inserted in sorted order (Unity uses binary search).
     /// </summary>
     private static byte[]? PatchResourceManager(
@@ -1028,12 +1200,18 @@ public class BundleCompiler
         Dictionary<string, AssetFileInfo>? textureAssets = null,
         Dictionary<string, string>? textureResourcePaths = null,
         Dictionary<string, AssetFileInfo>? spriteAssets = null,
-        Dictionary<string, string>? spriteResourcePaths = null)
+        Dictionary<string, string>? spriteResourcePaths = null,
+        Dictionary<string, AssetFileInfo>? modelAssets = null,
+        Dictionary<string, string>? modelResourcePaths = null,
+        Dictionary<string, AssetFileInfo>? prefabAssets = null,
+        Dictionary<string, string>? prefabResourcePaths = null)
     {
         if (clonedAssets.Count == 0 &&
             (audioAssets?.Count ?? 0) == 0 &&
             (textureAssets?.Count ?? 0) == 0 &&
-            (spriteAssets?.Count ?? 0) == 0) return null;
+            (spriteAssets?.Count ?? 0) == 0 &&
+            (modelAssets?.Count ?? 0) == 0 &&
+            (prefabAssets?.Count ?? 0) == 0) return null;
 
         // Load globalgamemanagers using AssetsTools.NET for proper modification
         using var ggmStream = new MemoryStream(ggmBytes);
@@ -1169,6 +1347,42 @@ public class BundleCompiler
                         Path = resourcePath,
                         FileId = 4, // resources.assets
                         PathId = spriteInfo.PathId
+                    });
+                    addedCount++;
+                }
+            }
+
+            // Build new entries for each model (mesh) asset
+            if (modelAssets != null && modelResourcePaths != null)
+            {
+                foreach (var (modelName, modelInfo) in modelAssets)
+                {
+                    if (!modelResourcePaths.TryGetValue(modelName, out var resourcePath))
+                        continue;
+
+                    entries.Add(new ResourceManagerEntry
+                    {
+                        Path = resourcePath,
+                        FileId = 4, // resources.assets
+                        PathId = modelInfo.PathId
+                    });
+                    addedCount++;
+                }
+            }
+
+            // Build new entries for each prefab asset
+            if (prefabAssets != null && prefabResourcePaths != null)
+            {
+                foreach (var (prefabName, prefabInfo) in prefabAssets)
+                {
+                    if (!prefabResourcePaths.TryGetValue(prefabName, out var resourcePath))
+                        continue;
+
+                    entries.Add(new ResourceManagerEntry
+                    {
+                        Path = resourcePath,
+                        FileId = 4, // resources.assets
+                        PathId = prefabInfo.PathId
                     });
                     addedCount++;
                 }

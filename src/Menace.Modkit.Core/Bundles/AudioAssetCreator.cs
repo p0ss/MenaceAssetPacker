@@ -100,6 +100,19 @@ public class AudioAssetCreator
                 templateInfo.TypeId,
                 templateInfo.ScriptTypeIndex);
 
+            // Unity 6 files without type trees return null from Create
+            if (info == null)
+            {
+                info = new AssetFileInfo
+                {
+                    PathId = pathId,
+                    TypeIdOrIndex = templateInfo.TypeIdOrIndex,
+                    TypeId = templateInfo.TypeId,
+                    ScriptTypeIndex = templateInfo.ScriptTypeIndex,
+                    Stripped = templateInfo.Stripped
+                };
+            }
+
             info.SetNewData(clonedBytes);
             afile.Metadata.AddAssetInfo(info);
 

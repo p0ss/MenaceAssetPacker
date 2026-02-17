@@ -493,18 +493,13 @@ public partial class ModpackLoaderMod : MelonMod
             SdkLogger.Msg($"Applying modpack: {modpack.Name}");
 
             // Apply clones BEFORE patches so cloned templates exist when patches run
-            // DISABLED: Testing native asset pipeline - runtime cloning should not be needed
-            // if (hasClones)
-            // {
-            //     if (!ApplyClones(modpack))
-            //         allSucceeded = false;
-            //
-            //     // Clear name lookup cache so patches can find the new clones
-            //     InvalidateNameLookupCache();
-            // }
             if (hasClones)
             {
-                SdkLogger.Msg($"  [NATIVE TEST] Skipping runtime cloning - native clones should exist");
+                if (!ApplyClones(modpack))
+                    allSucceeded = false;
+
+                // Clear name lookup cache so patches can find the new clones
+                InvalidateNameLookupCache();
             }
 
             bool success;
@@ -643,11 +638,9 @@ public partial class ModpackLoaderMod : MelonMod
         for (int i = 0; i < 15; i++)
             yield return null;
 
-        // DISABLED: Testing native asset pipeline - runtime replacement should not be needed
-        // SdkLogger.Msg($"Applying asset replacements for scene: {sceneName}");
-        // AssetReplacer.ApplyAllReplacements();
-        // PlayerLog($"Asset replacements applied for scene: {sceneName}");
-        SdkLogger.Msg($"[NATIVE TEST] Skipping runtime asset replacement - native assets should exist");
+        SdkLogger.Msg($"Applying asset replacements for scene: {sceneName}");
+        AssetReplacer.ApplyAllReplacements();
+        PlayerLog($"Asset replacements applied for scene: {sceneName}");
     }
 
     // ApplyTemplateModifications is implemented in TemplateInjection.cs (partial class)
