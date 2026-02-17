@@ -452,12 +452,13 @@ public class DeployManager
         var allModelEntries = new List<BundleCompiler.ModelEntry>();
         foreach (var modpack in modpacks)
         {
-            // Use the modpack's assets dictionary to get proper resource paths
+            var assetsDir = Path.Combine(modpack.Path, "assets");
+            var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
+
+            // First try modpack.Assets dictionary for proper game path mappings
             if (modpack.Assets != null && modpack.Assets.Count > 0)
             {
-                var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                    { ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
-
                 foreach (var (gameAssetPath, localPath) in modpack.Assets)
                 {
                     var ext = Path.GetExtension(gameAssetPath);
@@ -471,11 +472,20 @@ public class DeployManager
                     var assetName = Path.GetFileNameWithoutExtension(gameAssetPath);
 
                     // Build resource path from game asset path (strip extension, lowercase)
-                    // e.g., "Assets/Resources/ui/textures/bg.png" -> "assets/resources/ui/textures/bg"
+                    // Unity ResourceManager uses paths RELATIVE to Resources folder
+                    // e.g., "Assets/Resources/ui/textures/bg.png" -> "ui/textures/bg"
                     var resourcePath = gameAssetPath;
                     if (resourcePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
                         resourcePath = resourcePath[..^ext.Length];
-                    resourcePath = resourcePath.ToLowerInvariant().Replace('\\', '/');
+                    resourcePath = resourcePath.Replace('\\', '/');
+
+                    // Strip "Assets/Resources/" prefix if present (Unity uses relative paths)
+                    if (resourcePath.StartsWith("Assets/Resources/", StringComparison.OrdinalIgnoreCase))
+                        resourcePath = resourcePath.Substring("Assets/Resources/".Length);
+                    else if (resourcePath.StartsWith("assets/resources/", StringComparison.OrdinalIgnoreCase))
+                        resourcePath = resourcePath.Substring("assets/resources/".Length);
+
+                    resourcePath = resourcePath.ToLowerInvariant();
 
                     allTextureEntries.Add(new BundleCompiler.TextureEntry
                     {
@@ -486,9 +496,32 @@ public class DeployManager
                     });
                 }
             }
+            // Fallback: scan assets folder directly if Assets dictionary is empty
+            else if (Directory.Exists(assetsDir))
+            {
+                var imageFiles = imageExtensions
+                    .SelectMany(ext => Directory.GetFiles(assetsDir, $"*{ext}", SearchOption.AllDirectories))
+                    .ToList();
+
+                foreach (var imagePath in imageFiles)
+                {
+                    var assetName = Path.GetFileNameWithoutExtension(imagePath);
+                    var relativePath = Path.GetRelativePath(assetsDir, imagePath).Replace('\\', '/');
+
+                    // Build a resource path based on the modpack name and relative path
+                    var resourcePath = $"assets/textures/{modpack.Name}/{Path.GetFileNameWithoutExtension(relativePath)}".ToLowerInvariant();
+
+                    allTextureEntries.Add(new BundleCompiler.TextureEntry
+                    {
+                        AssetName = assetName,
+                        SourceFilePath = imagePath,
+                        ResourcePath = resourcePath,
+                        CreateSprite = true
+                    });
+                }
+            }
 
             // Collect GLB/GLTF model entries for native asset creation
-            var assetsDir = Path.Combine(modpack.Path, "assets");
             if (Directory.Exists(assetsDir))
             {
                 var glbFiles = Directory.GetFiles(assetsDir, "*.glb", SearchOption.AllDirectories)

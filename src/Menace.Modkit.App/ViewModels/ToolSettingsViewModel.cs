@@ -52,6 +52,24 @@ public class RecoveryDialogRequestEventArgs : EventArgs
 }
 
 /// <summary>
+/// Event args for requesting the update/setup flow.
+/// </summary>
+public class UpdateFlowRequestEventArgs : EventArgs
+{
+    /// <summary>
+    /// If true, clean cached data and force re-extraction after updates.
+    /// </summary>
+    public bool CleanInstall { get; }
+
+    public TaskCompletionSource<bool> Result { get; } = new();
+
+    public UpdateFlowRequestEventArgs(bool cleanInstall = false)
+    {
+        CleanInstall = cleanInstall;
+    }
+}
+
+/// <summary>
 /// Settings for modders - extraction, assets, caching, validation.
 /// </summary>
 public sealed class ToolSettingsViewModel : ViewModelBase
@@ -85,6 +103,11 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     /// </summary>
     public event EventHandler<RecoveryDialogRequestEventArgs>? RecoveryDialogRequested;
 
+    /// <summary>
+    /// Event raised when the user requests to run the update/setup flow.
+    /// </summary>
+    public event EventHandler<UpdateFlowRequestEventArgs>? UpdateFlowRequested;
+
     public ToolSettingsViewModel(IServiceProvider serviceProvider)
     {
         // Initialize schema and validator
@@ -114,7 +137,7 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         ForceExtractAssetsCommand = ReactiveCommand.CreateFromTask(ForceExtractAssetsAsync);
         ValidateExtractionCommand = ReactiveCommand.Create(ValidateExtractedData);
         CheckForAppUpdateCommand = ReactiveCommand.CreateFromTask(CheckForAppUpdateAsync);
-        OpenDownloadPageCommand = ReactiveCommand.Create(OpenDownloadPage);
+        StartUpdateCommand = ReactiveCommand.CreateFromTask(StartUpdateFlowAsync);
 
         // Check for app updates on load
         _ = CheckForAppUpdateAsync();
@@ -314,7 +337,7 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ForceExtractAssetsCommand { get; }
     public ReactiveCommand<Unit, Unit> ValidateExtractionCommand { get; }
     public ReactiveCommand<Unit, Unit> CheckForAppUpdateCommand { get; }
-    public ReactiveCommand<Unit, Unit> OpenDownloadPageCommand { get; }
+    public ReactiveCommand<Unit, Unit> StartUpdateCommand { get; }
 
     private string GameInstallPath => AppSettings.Instance.GameInstallPath;
 
@@ -754,24 +777,144 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         }
     }
 
-    private void OpenDownloadPage()
+    /// <summary>
+    /// Start the update flow by showing the setup screen.
+    /// This allows updating components and optionally cleaning cached data.
+    /// </summary>
+    private async Task StartUpdateFlowAsync()
     {
-        if (string.IsNullOrEmpty(AppDownloadUrl))
-            return;
+        // Check if mods are deployed - undeploy them first
+        var deployState = _deployManager.GetDeployState();
+        var deployedModpacks = deployState.DeployedModpacks
+            .Select(m => m.Name)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToList();
+
+        if (deployedModpacks.Count > 0)
+        {
+            AppUpdateStatus = $"Undeploying {deployedModpacks.Count} mod(s) before update...";
+            ModkitLog.Info($"[ToolSettingsViewModel] Undeploying mods before update: {string.Join(", ", deployedModpacks)}");
+
+            try
+            {
+                var undeployResult = await _deployManager.UndeployAllAsync(
+                    new Progress<string>(msg => AppUpdateStatus = msg));
+
+                if (!undeployResult.Success)
+                {
+                    AppUpdateStatus = $"Failed to undeploy mods: {undeployResult.Message}";
+                    ModkitLog.Error($"[ToolSettingsViewModel] Undeploy failed: {undeployResult.Message}");
+                    return;
+                }
+
+                ModkitLog.Info("[ToolSettingsViewModel] Mods undeployed successfully");
+            }
+            catch (Exception ex)
+            {
+                AppUpdateStatus = $"Failed to undeploy mods: {ex.Message}";
+                ModkitLog.Error($"[ToolSettingsViewModel] Undeploy error: {ex}");
+                return;
+            }
+        }
+
+        AppUpdateStatus = "Opening update wizard...";
+
+        var args = new UpdateFlowRequestEventArgs(cleanInstall: false);
+        UpdateFlowRequested?.Invoke(this, args);
 
         try
         {
-            // Cross-platform way to open URL
-            var psi = new System.Diagnostics.ProcessStartInfo
+            var success = await args.Result.Task;
+            if (success)
             {
-                FileName = AppDownloadUrl,
-                UseShellExecute = true
-            };
-            System.Diagnostics.Process.Start(psi);
+                // Clean up version-specific cached data after successful update
+                await CleanupAfterUpdateAsync();
+
+                if (deployedModpacks.Count > 0)
+                {
+                    AppUpdateStatus = $"Update complete - redeploy your {deployedModpacks.Count} mod(s) when ready";
+                }
+                else
+                {
+                    AppUpdateStatus = "Update complete";
+                }
+                HasAppUpdate = false;
+
+                // Refresh component versions and validation
+                LoadDependencyVersions();
+                ValidateExtractedData();
+                UpdateCacheStatus();
+            }
+            else
+            {
+                if (deployedModpacks.Count > 0)
+                {
+                    AppUpdateStatus = $"Update cancelled - redeploy your {deployedModpacks.Count} mod(s) to restore";
+                }
+                else
+                {
+                    AppUpdateStatus = "Update cancelled";
+                }
+            }
         }
         catch (Exception ex)
         {
-            ModkitLog.Error($"[ToolSettingsViewModel] Failed to open download page: {ex}");
+            AppUpdateStatus = $"Update failed: {ex.Message}";
+            ModkitLog.Error($"[ToolSettingsViewModel] Update flow failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Clean up cached data that may be incompatible between versions.
+    /// Mirrors the "Clean Redeploy" functionality in LoaderSettingsViewModel.
+    /// </summary>
+    private async Task CleanupAfterUpdateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
+            return;
+
+        ModkitLog.Info("[ToolSettingsViewModel] Cleaning up after update...");
+
+        try
+        {
+            var installer = new ModLoaderInstaller(GameInstallPath);
+
+            // Clean Mods and UserLibs directories (same as Clean Redeploy)
+            AppUpdateStatus = "Cleaning mod directories...";
+            await installer.CleanModsDirectoryAsync(s => AppUpdateStatus = s);
+
+            // Clear extraction cache (the data format may have changed)
+            AppUpdateStatus = "Clearing extraction cache...";
+            var cachePath = Path.Combine(GameInstallPath, "UserData", "ExtractionCache");
+            if (Directory.Exists(cachePath))
+            {
+                Directory.Delete(cachePath, true);
+                ModkitLog.Info("[ToolSettingsViewModel] Cleared extraction cache");
+            }
+
+            // Remove extraction fingerprint to force re-extraction
+            var fingerprintPath = Path.Combine(GameInstallPath, "UserData", "ExtractedData", "_extraction_fingerprint.txt");
+            if (File.Exists(fingerprintPath))
+            {
+                File.Delete(fingerprintPath);
+                ModkitLog.Info("[ToolSettingsViewModel] Removed extraction fingerprint");
+            }
+
+            // Reinstall all required components (MelonLoader, DataExtractor, ModpackLoader)
+            AppUpdateStatus = "Reinstalling mod loader components...";
+            if (!await installer.InstallAllRequiredAsync(s => AppUpdateStatus = s))
+            {
+                ModkitLog.Warn("[ToolSettingsViewModel] Some components failed to install");
+            }
+
+            // Set the force extraction flag so next game launch extracts fresh data
+            installer.WriteForceExtractionFlag();
+            ModkitLog.Info("[ToolSettingsViewModel] Set force extraction flag");
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[ToolSettingsViewModel] Cleanup after update had errors: {ex.Message}");
+            // Don't fail the update if cleanup fails - just warn
         }
     }
 

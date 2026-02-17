@@ -2,9 +2,9 @@
 
 Data patches and asset replacements can do a lot, but sometimes you need code. The Menace SDK provides a safe, high-level API for interacting with the game.
 
-> [!WARNING]
-> This guide is legacy and includes older SDK snippets (for example `OnLoad`, `GameObj.Get<T>()`, and `GameObj.Set()`).
-> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md) and [What Is the SDK?](../coding-sdk/what-is-sdk.md) for current lifecycle and API signatures.
+> [!NOTE]
+> This guide provides conceptual overview and examples. For the canonical setup instructions, see
+> [Getting Started: Your First Plugin](../coding-sdk/getting-started.md) and [What Is the SDK?](../coding-sdk/what-is-sdk.md).
 
 ## Why Code Mods?
 
@@ -60,24 +60,30 @@ Create `src/HelloWorld.cs`:
 
 ```csharp
 using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
 
 namespace MyMod;
 
 public class HelloWorld : IModpackPlugin
 {
-    public void OnLoad(string modpackName)
+    private MelonLogger.Instance _log;
+
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
-        MelonLogger.Msg($"[{modpackName}] Hello from code!");
+        _log = logger;
+        _log.Msg("Hello from code!");
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName)
     {
-        MelonLogger.Msg($"Scene loaded: {sceneName}");
+        _log.Msg($"Scene loaded: {sceneName}");
     }
 
     public void OnUpdate() { }
     public void OnGUI() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -115,42 +121,53 @@ var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle
 ### GameObj - Working with Objects
 
 ```csharp
-// GameObj wraps Unity objects with a convenient API
+// GameObj wraps IL2CPP objects with a safe API
 var rifle = GameQuery.FindByName("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
+if (rifle.IsNull) return;
 
-// Read fields
+// Read fields by name
 float damage = rifle.ReadFloat("Damage");
 int maxRange = rifle.ReadInt("MaxRange");
+string name = rifle.GetName();
 
-// Write fields
-rifle.WriteFloat("Damage", 15.0f);
+// Write fields - returns false on failure
+bool ok = rifle.WriteFloat("Damage", 15.0f);
 ```
 
-### GameState - Game Events
+### GameState - Scene Events and Deferred Execution
 
 ```csharp
 using Menace.SDK;
 
 public class MyPlugin : IModpackPlugin
 {
-    public void OnLoad(string modpackName)
+    private MelonLogger.Instance _log;
+
+    public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
     {
-        // Subscribe to events
-        GameState.OnMissionStart += OnMissionStarted;
-        GameState.OnUnitDeath += OnUnitDied;
+        _log = logger;
+
+        // Subscribe to scene events
+        GameState.SceneLoaded += OnSceneLoaded;
+        GameState.TacticalReady += OnTacticalReady;
     }
 
-    private void OnMissionStarted()
+    private void OnSceneLoaded(string sceneName)
     {
-        MelonLogger.Msg("Mission started!");
+        _log.Msg($"Scene loaded: {sceneName}");
     }
 
-    private void OnUnitDied(GameObj unit)
+    private void OnTacticalReady()
     {
-        string name = unit.Get<string>("displayName");
-        MelonLogger.Msg($"{name} died!");
+        // Fires 30 frames after tactical scene loads - safe to query game objects
+        _log.Msg("Tactical battle ready!");
+        var enemies = GameQuery.FindAll("Actor");
+        _log.Msg($"Found {enemies.Length} actors");
     }
 }
+```
+
+> **Note:** For combat events like unit deaths or damage, use the Lua scripting system (which exposes `actor_killed`, `damage_received`, etc.) or implement Harmony patches on the relevant game methods.
 ```
 
 ### Templates - Modifying Game Data
@@ -180,46 +197,55 @@ DevConsole.LogWarning("This might be a problem");
 DevConsole.LogError("Something went wrong!");
 ```
 
-## Example: Heal on Kill
+## Example: Weapon Damage Buff on Tactical Start
 
-Let's make a mod where units heal when they get a kill:
+Let's make a mod that buffs all player weapons when entering tactical combat:
 
 ```csharp
 using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
 
-namespace HealOnKill;
+namespace WeaponBuff;
 
-public class HealOnKillPlugin : IModpackPlugin
+public class WeaponBuffPlugin : IModpackPlugin
 {
-    private const int HEAL_AMOUNT = 20;
+    private const float DAMAGE_MULTIPLIER = 1.25f;
+    private MelonLogger.Instance _log;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
-        GameState.OnUnitKill += OnUnitGotKill;
-        DevConsole.Log($"[{modpackName}] Heal on Kill active! +{HEAL_AMOUNT} HP per kill");
+        _log = logger;
+        GameState.TacticalReady += OnTacticalReady;
+        DevConsole.Log($"Weapon Buff active! +{(DAMAGE_MULTIPLIER - 1) * 100}% damage");
     }
 
-    private void OnUnitGotKill(GameObj killer, GameObj victim)
+    private void OnTacticalReady()
     {
-        if (killer.IsNull) return;
+        var weapons = GameQuery.FindAll("WeaponTemplate");
+        int buffed = 0;
 
-        // Only heal player units
-        if (!killer.Get<bool>("isPlayerControlled")) return;
+        foreach (var weapon in weapons)
+        {
+            if (weapon.IsNull) continue;
 
-        int currentHealth = killer.Get<int>("currentHealth");
-        int maxHealth = killer.Get<int>("maxHealth");
+            float baseDamage = weapon.ReadFloat("Damage");
+            float newDamage = baseDamage * DAMAGE_MULTIPLIER;
 
-        int newHealth = Math.Min(currentHealth + HEAL_AMOUNT, maxHealth);
-        killer.Set("currentHealth", newHealth);
+            if (weapon.WriteFloat("Damage", newDamage))
+            {
+                buffed++;
+            }
+        }
 
-        string name = killer.Get<string>("displayName");
-        DevConsole.Log($"{name} healed for {HEAL_AMOUNT}!");
+        _log.Msg($"Buffed {buffed} weapons");
     }
 
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
     public void OnGUI() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -230,27 +256,29 @@ All plugins implement this interface:
 ```csharp
 public interface IModpackPlugin
 {
-    void OnLoad(string modpackName);           // Called once when mod loads
-    void OnSceneLoaded(int index, string name); // Called on scene transitions
-    void OnUpdate();                            // Called every frame
-    void OnGUI();                               // Called for IMGUI drawing
+    void OnInitialize(MelonLogger.Instance logger, Harmony harmony);
+    void OnSceneLoaded(int buildIndex, string sceneName);
+    void OnUpdate();    // Optional - per-frame logic
+    void OnGUI();       // Optional - IMGUI drawing
+    void OnUnload();    // Optional - cleanup on shutdown/hot-reload
 }
 ```
 
-- **OnLoad** - Initialize your mod, subscribe to events
-- **OnSceneLoaded** - React to scene changes, reinitialize if needed
+- **OnInitialize** - Store the logger and harmony instance, subscribe to events. Do not query game objects here — the game assembly may not be fully initialized.
+- **OnSceneLoaded** - React to scene changes. Safe to query objects, apply patches, modify templates.
 - **OnUpdate** - Per-frame logic (be careful with performance!)
 - **OnGUI** - Draw debug UI using Unity's IMGUI system
+- **OnUnload** - Clean up resources, unpatch Harmony, remove watches
 
 ## Next Steps
 
 Explore the SDK API documentation:
-- `GameQuery` - Finding game objects
-- `GameObj` - Object wrapper with Get/Set
-- `GameState` - Events and state tracking
-- `Templates` - Template reading/writing/cloning
-- `DevConsole` - Debug output
-- `ModSettings` - Persistent mod configuration
+- [GameQuery](../coding-sdk/api/game-query.md) - Finding game objects
+- [GameObj](../coding-sdk/api/game-obj.md) - Object wrapper with ReadInt/WriteFloat/etc.
+- [GameState](../coding-sdk/api/game-state.md) - Scene events and deferred execution
+- [Templates](../coding-sdk/api/templates.md) - Template reading/writing/cloning
+- [DevConsole](../coding-sdk/api/dev-console.md) - Debug output and panels
+- [ModSettings](../coding-sdk/api/mod-settings.md) - Persistent mod configuration
 
 ---
 

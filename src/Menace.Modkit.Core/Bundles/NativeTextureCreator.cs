@@ -486,8 +486,16 @@ public static class NativeTextureCreator
 
             int imageSizeDiff = newImageDataTotalLen - origImageDataTotalLen;
 
+            // Calculate original StreamData size (everything after image data in template)
+            int origStreamDataStart = template.ImageDataOffset + template.OriginalImageDataSize + origImageDataPadding;
+            int origStreamDataSize = template.Bytes.Length - origStreamDataStart;
+
+            // New StreamData is fixed: empty path (4 bytes) + offset (8 bytes) + size (8 bytes) = 20 bytes
+            int newStreamDataSize = 20;
+            int streamDataSizeDiff = newStreamDataSize - origStreamDataSize;
+
         // Calculate new buffer size
-        int newSize = template.Bytes.Length + nameSizeDiff + imageSizeDiff;
+        int newSize = template.Bytes.Length + nameSizeDiff + imageSizeDiff + streamDataSizeDiff;
         var newBytes = new byte[newSize];
 
         int srcOffset = 0;
@@ -570,18 +578,20 @@ public static class NativeTextureCreator
             newBytes[dstOffset++] = 0;
         srcOffset += origImageDataPadding;
 
-        // Copy remaining bytes (StreamData)
-        int remaining = template.Bytes.Length - srcOffset;
-        if (remaining > 0)
-        {
-            Array.Copy(template.Bytes, srcOffset, newBytes, dstOffset, remaining);
-            dstOffset += remaining;
-        }
+        // Write empty StreamData (so Unity uses inline data, not external .resS)
+        // StreamData format: path (aligned string), offset (uint64), size (uint64)
 
-        // Zero out StreamData path if present (we're embedding the texture)
-        // The StreamData is typically: path (string), offset (uint64), size (uint32)
-        // We need to set path to empty string and size to 0
-        // This is at the very end of the texture data
+        // Empty path string (length = 0, no padding needed since 0 % 4 == 0)
+        Array.Copy(BitConverter.GetBytes(0), 0, newBytes, dstOffset, 4);
+        dstOffset += 4;
+
+        // Offset = 0
+        Array.Copy(BitConverter.GetBytes(0UL), 0, newBytes, dstOffset, 8);
+        dstOffset += 8;
+
+        // Size = 0 (tells Unity to use inline data instead of streaming)
+        Array.Copy(BitConverter.GetBytes(0UL), 0, newBytes, dstOffset, 8);
+        dstOffset += 8;
 
         // Trim to actual size used
         if (dstOffset < newBytes.Length)

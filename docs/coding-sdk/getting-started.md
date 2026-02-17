@@ -331,9 +331,10 @@ public class MyModPlugin : IModpackPlugin
         __result *= 2;
     }
 
-    private static bool Patch_TakeDamage_Prefix()
+    private static bool Patch_ApplyDamage_Prefix()
     {
-        // Returning false skips the original method (god mode)
+        // Return false to skip the original method (god mode).
+        // Currently returning true, so damage is applied normally.
         return true;
     }
 

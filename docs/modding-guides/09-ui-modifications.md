@@ -2,9 +2,10 @@
 
 Custom UI lets you display debug info, create configuration menus, and add in-game overlays. The Menace SDK provides several approaches depending on your needs.
 
-> [!WARNING]
-> This guide is legacy and may include outdated plugin lifecycle snippets.
-> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md), [DevConsole API](../coding-sdk/api/dev-console.md), and [ModSettings API](../coding-sdk/api/mod-settings.md) for current patterns.
+> [!NOTE]
+> This guide provides in-depth IMGUI patterns for custom UI. For initial setup, see
+> [Getting Started: Your First Plugin](../coding-sdk/getting-started.md). For API reference, see
+> [DevConsole API](../coding-sdk/api/dev-console.md) and [ModSettings API](../coding-sdk/api/mod-settings.md).
 
 ## UI Options Overview
 
@@ -26,11 +27,15 @@ The developer console (toggle with `~` key) supports custom panels. This is the 
 ### Registering a Panel
 
 ```csharp
+using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
+using UnityEngine;
 
 public class MyPlugin : IModpackPlugin
 {
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
         DevConsole.RegisterPanel("My Debug", DrawMyPanel);
     }
@@ -49,7 +54,10 @@ public class MyPlugin : IModpackPlugin
         }
     }
 
-    // ... other interface methods
+    public void OnSceneLoaded(int buildIndex, string sceneName) { }
+    public void OnUpdate() { }
+    public void OnGUI() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -151,6 +159,8 @@ Here's a complete example of a debug panel that displays unit information:
 
 ```csharp
 using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
 using UnityEngine;
 
@@ -158,14 +168,13 @@ namespace DebugTools;
 
 public class UnitDebugPanel : IModpackPlugin
 {
-    private Vector2 _scroll;
     private GUIStyle _labelStyle;
     private GUIStyle _headerStyle;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
         DevConsole.RegisterPanel("Units", DrawUnitsPanel);
-        DevConsole.Log($"[{modpackName}] Unit debug panel registered");
+        DevConsole.Log("Unit debug panel registered");
     }
 
     private void DrawUnitsPanel(Rect area)
@@ -193,15 +202,8 @@ public class UnitDebugPanel : IModpackPlugin
             if (y > area.yMax) break; // Stop if we've run out of space
 
             string name = unit.GetName() ?? "<unnamed>";
-            int hp = 0;
-            int maxHp = 0;
-
-            try
-            {
-                hp = unit.Get<int>("currentHealth");
-                maxHp = unit.Get<int>("maxHealth");
-            }
-            catch { }
+            int hp = unit.ReadInt("currentHealth");
+            int maxHp = unit.ReadInt("maxHealth");
 
             string line = $"  {name}: {hp}/{maxHp} HP";
             GUI.Label(new Rect(area.x, y, area.width, lineHeight), line, _labelStyle);
@@ -226,6 +228,7 @@ public class UnitDebugPanel : IModpackPlugin
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
     public void OnGUI() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -235,15 +238,16 @@ For quick live monitoring without building a full panel, use watch expressions:
 
 ```csharp
 using Menace.SDK;
+using UnityEngine;
 
-public void OnLoad(string modpackName)
+public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
 {
     // Add watches - they appear in the Watch panel
     DevConsole.Watch("Player HP", () =>
     {
         var player = GameQuery.FindByName("Actor", "PlayerSquaddie");
         if (player.IsNull) return "N/A";
-        return $"{player.Get<int>("currentHealth")}/{player.Get<int>("maxHealth")}";
+        return $"{player.ReadInt("currentHealth")}/{player.ReadInt("maxHealth")}";
     });
 
     DevConsole.Watch("Enemy Count", () =>
@@ -252,7 +256,7 @@ public void OnLoad(string modpackName)
         int count = 0;
         foreach (var e in enemies)
         {
-            if (e.Get<int>("factionIndex") == 1) count++;
+            if (e.ReadInt("factionIndex") == 1) count++;
         }
         return count.ToString();
     });
@@ -260,8 +264,8 @@ public void OnLoad(string modpackName)
     DevConsole.Watch("Game Time", () => Time.time.ToString("F1") + "s");
 }
 
-// Remove a watch when no longer needed
-public void Cleanup()
+// Remove a watch when no longer needed (e.g., in OnUnload)
+public void OnUnload()
 {
     DevConsole.Unwatch("Player HP");
 }
@@ -276,7 +280,7 @@ For user-configurable options, use `ModSettings`. It automatically generates UI 
 ```csharp
 using Menace.SDK;
 
-public void OnLoad(string modpackName)
+public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
 {
     ModSettings.Register("My Mod", settings =>
     {
@@ -336,12 +340,18 @@ ModSettings.OnSettingChanged += (modName, key, value) =>
 For in-game overlays that display outside the DevConsole, use `OnGUI()`:
 
 ```csharp
+using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
+using Menace.SDK;
+using UnityEngine;
+
 public class HealthOverlay : IModpackPlugin
 {
     private bool _showOverlay = true;
     private GUIStyle _overlayStyle;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
         ModSettings.Register("Health Overlay", settings =>
         {
@@ -364,11 +374,11 @@ public class HealthOverlay : IModpackPlugin
         var units = GameQuery.FindAll("Actor");
         foreach (var unit in units)
         {
-            if (!unit.Get<bool>("isPlayerControlled")) continue;
+            if (!unit.ReadBool("isPlayerControlled")) continue;
 
             string name = unit.GetName() ?? "Unknown";
-            int hp = unit.Get<int>("currentHealth");
-            int maxHp = unit.Get<int>("maxHealth");
+            int hp = unit.ReadInt("currentHealth");
+            int maxHp = unit.ReadInt("maxHealth");
             float pct = maxHp > 0 ? (float)hp / maxHp : 0;
 
             // Color based on health
@@ -398,6 +408,7 @@ public class HealthOverlay : IModpackPlugin
 
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -407,6 +418,8 @@ A complete example showing health bars above units in the game world:
 
 ```csharp
 using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
 using UnityEngine;
 
@@ -422,7 +435,7 @@ public class UnitHealthBars : IModpackPlugin
     private Texture2D _redTex;
     private Texture2D _bgTex;
 
-    public void OnLoad(string modpackName)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
         ModSettings.Register("Health Bars", settings =>
         {
@@ -451,11 +464,11 @@ public class UnitHealthBars : IModpackPlugin
         {
             if (actor.IsNull) continue;
 
-            bool isPlayer = actor.Get<bool>("isPlayerControlled");
+            bool isPlayer = actor.ReadBool("isPlayerControlled");
             if (!isPlayer && !showEnemies) continue;
 
-            int hp = actor.Get<int>("currentHealth");
-            int maxHp = actor.Get<int>("maxHealth");
+            int hp = actor.ReadInt("currentHealth");
+            int maxHp = actor.ReadInt("maxHealth");
             if (hp <= 0 || maxHp <= 0) continue;
 
             // Get world position and convert to screen
@@ -493,16 +506,14 @@ public class UnitHealthBars : IModpackPlugin
 
     private Vector3 GetActorPosition(GameObj actor)
     {
-        try
-        {
-            // Try to get Transform position
-            var transform = actor.Get<Transform>("transform");
-            if (transform != null)
-                return transform.position;
-        }
-        catch { }
+        // Read the transform pointer and get position
+        // Note: This requires the actor to have a Transform component
+        var transformPtr = actor.ReadPtr("transform");
+        if (transformPtr == System.IntPtr.Zero) return Vector3.zero;
 
-        return Vector3.zero;
+        // For world position, you may need to use the EntityMovement SDK
+        // or read from the actor's tile position
+        return Vector3.zero; // Placeholder - implement based on your needs
     }
 
     private GUIStyle GetFillStyle(float pct)
@@ -554,6 +565,7 @@ public class UnitHealthBars : IModpackPlugin
 
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -635,7 +647,7 @@ private void EnsureStyles()
 Always provide a way to hide your UI:
 
 ```csharp
-public void OnLoad(string modpackName)
+public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
 {
     ModSettings.Register("My Overlay", settings =>
     {

@@ -33,6 +33,7 @@ public class ToolSettingsView : UserControl
         {
             _viewModel.ExtractionDialogRequested -= OnExtractionDialogRequested;
             _viewModel.RecoveryDialogRequested -= OnRecoveryDialogRequested;
+            _viewModel.UpdateFlowRequested -= OnUpdateFlowRequested;
         }
 
         // Subscribe to new ViewModel
@@ -41,6 +42,7 @@ public class ToolSettingsView : UserControl
         {
             _viewModel.ExtractionDialogRequested += OnExtractionDialogRequested;
             _viewModel.RecoveryDialogRequested += OnRecoveryDialogRequested;
+            _viewModel.UpdateFlowRequested += OnUpdateFlowRequested;
         }
     }
 
@@ -125,6 +127,70 @@ public class ToolSettingsView : UserControl
         catch (Exception ex)
         {
             ModkitLog.Error($"[ToolSettingsView] Recovery dialog error: {ex}");
+            e.Result.TrySetException(ex);
+        }
+    }
+
+    private async void OnUpdateFlowRequested(object? sender, UpdateFlowRequestEventArgs e)
+    {
+        try
+        {
+            var parentWindow = TopLevel.GetTopLevel(this) as Window;
+            if (parentWindow == null)
+            {
+                e.Result.TrySetResult(false);
+                return;
+            }
+
+            // Create and show the setup window as a dialog
+            var setupWindow = new Window
+            {
+                Title = "Menace Modkit Update",
+                Width = 800,
+                Height = 650,
+                Background = new SolidColorBrush(Color.Parse("#0D0D0D")),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+
+            // Set app icon
+            try
+            {
+                var iconUri = new Uri("avares://Menace.Modkit.App/Assets/icon.jpg");
+                setupWindow.Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(iconUri));
+            }
+            catch { /* Icon loading failed */ }
+
+            var setupViewModel = new SetupViewModel();
+            var completionSource = new TaskCompletionSource<bool>();
+
+            setupViewModel.SetupComplete += () =>
+            {
+                completionSource.TrySetResult(true);
+                setupWindow.Close();
+            };
+            setupViewModel.SetupSkipped += () =>
+            {
+                completionSource.TrySetResult(false);
+                setupWindow.Close();
+            };
+
+            var setupView = new SetupView
+            {
+                DataContext = setupViewModel
+            };
+
+            setupWindow.Content = setupView;
+            setupWindow.Closed += (_, _) => completionSource.TrySetResult(false);
+
+            // Show as dialog (blocks until closed)
+            await setupWindow.ShowDialog(parentWindow);
+
+            var success = await completionSource.Task;
+            e.Result.TrySetResult(success);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsView] Update flow error: {ex}");
             e.Result.TrySetException(ex);
         }
     }
@@ -232,16 +298,16 @@ public class ToolSettingsView : UserControl
         updateStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("AppUpdateStatus"));
         updateRow.Children.Add(updateStatusText);
 
-        // Download button (only visible when update available)
-        var downloadButton = new Button
+        // Update button (only visible when update available)
+        var updateButton = new Button
         {
-            Content = "Download Update",
+            Content = "Run Update",
             Margin = new Thickness(8, 0, 0, 0)
         };
-        downloadButton.Classes.Add("primary");
-        downloadButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("OpenDownloadPageCommand"));
-        downloadButton.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("HasAppUpdate"));
-        updateRow.Children.Add(downloadButton);
+        updateButton.Classes.Add("primary");
+        updateButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("StartUpdateCommand"));
+        updateButton.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("HasAppUpdate"));
+        updateRow.Children.Add(updateButton);
 
         // Check for updates button
         var checkButton = new Button

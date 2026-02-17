@@ -13,7 +13,7 @@ The SDK is exposed through the `Menace.SDK` namespace and is hosted by `Menace.M
 ## Where It Runs
 
 - In-game runtime: .NET 6 via MelonLoader (`Menace.ModpackLoader`)
-- Modkit desktop app: .NET 10 (`Menace.Modkit.App`)
+- Modkit desktop app: .NET 9 (`Menace.Modkit.App`)
 
 Important distinction:
 - Your mod plugin code targets the in-game runtime (net6.0), not the Modkit app runtime.

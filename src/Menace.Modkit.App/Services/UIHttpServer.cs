@@ -102,6 +102,8 @@ public sealed class UIHttpServer : IDisposable
                 "/ui/set-field" when request.HttpMethod == "POST" => await HandleSetField(request),
                 "/ui/click" when request.HttpMethod == "POST" => await HandleClick(request),
                 "/ui/actions" => GetAvailableActions(),
+                "/deploy" when request.HttpMethod == "POST" => await HandleDeploy(request),
+                "/undeploy" when request.HttpMethod == "POST" => await HandleUndeploy(),
                 _ => new { error = "Not found", path }
             };
 
@@ -504,6 +506,81 @@ public sealed class UIHttpServer : IDisposable
                 }
             };
         });
+    }
+
+    private async Task<object> HandleDeploy(HttpListenerRequest request)
+    {
+        var body = await ReadBody(request);
+        var modpackName = body.GetValueOrDefault("modpack")?.ToString();
+
+        var modpackManager = new ModpackManager();
+        var deployManager = new DeployManager(modpackManager);
+
+        var progress = new List<string>();
+        var progressHandler = new Progress<string>(msg => progress.Add(msg));
+
+        try
+        {
+            if (!string.IsNullOrEmpty(modpackName))
+            {
+                // Deploy single modpack
+                var modpacks = modpackManager.GetStagingModpacks();
+                var manifest = modpacks.FirstOrDefault(m =>
+                    m.Name.Equals(modpackName, StringComparison.OrdinalIgnoreCase));
+
+                if (manifest == null)
+                    return new { error = $"Modpack '{modpackName}' not found" };
+
+                var result = await deployManager.DeploySingleAsync(manifest, progressHandler);
+                return new
+                {
+                    success = result.Success,
+                    message = result.Message,
+                    deployedCount = result.DeployedCount,
+                    progressLog = progress
+                };
+            }
+            else
+            {
+                // Deploy all
+                var result = await deployManager.DeployAllAsync(progressHandler);
+                return new
+                {
+                    success = result.Success,
+                    message = result.Message,
+                    deployedCount = result.DeployedCount,
+                    progressLog = progress
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message, progressLog = progress };
+        }
+    }
+
+    private async Task<object> HandleUndeploy()
+    {
+        var modpackManager = new ModpackManager();
+        var deployManager = new DeployManager(modpackManager);
+
+        var progress = new List<string>();
+        var progressHandler = new Progress<string>(msg => progress.Add(msg));
+
+        try
+        {
+            var result = await deployManager.UndeployAllAsync(progressHandler);
+            return new
+            {
+                success = result.Success,
+                message = result.Message,
+                progressLog = progress
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message, progressLog = progress };
+        }
     }
 
     private static async Task<Dictionary<string, object?>> ReadBody(HttpListenerRequest request)

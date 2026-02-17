@@ -1317,6 +1317,9 @@ public class BundleCompiler
             }
 
             // Build new entries for each texture asset
+            // If a texture path matches an existing entry, UPDATE it (replacement) instead of adding duplicate
+            int textureReplacements = 0;
+            int textureAdditions = 0;
             if (textureAssets != null && textureResourcePaths != null)
             {
                 foreach (var (textureName, textureInfo) in textureAssets)
@@ -1324,17 +1327,41 @@ public class BundleCompiler
                     if (!textureResourcePaths.TryGetValue(textureName, out var resourcePath))
                         continue;
 
-                    entries.Add(new ResourceManagerEntry
+                    // Check if this path already exists in the ResourceManager
+                    var existingEntry = entries.FirstOrDefault(e =>
+                        string.Equals(e.Path, resourcePath, StringComparison.OrdinalIgnoreCase));
+
+                    if (existingEntry != null)
                     {
-                        Path = resourcePath,
-                        FileId = 4, // resources.assets
-                        PathId = textureInfo.PathId
-                    });
-                    addedCount++;
+                        // UPDATE existing entry to point to our new texture (replacement)
+                        Console.WriteLine($"[BundleCompiler] REPLACING texture at path '{resourcePath}' (old PathId={existingEntry.PathId}, new PathId={textureInfo.PathId})");
+                        existingEntry.FileId = 4; // resources.assets
+                        existingEntry.PathId = textureInfo.PathId;
+                        addedCount++;
+                        textureReplacements++;
+                    }
+                    else
+                    {
+                        // ADD new entry (new texture asset)
+                        Console.WriteLine($"[BundleCompiler] Adding new texture at path '{resourcePath}' (PathId={textureInfo.PathId})");
+                        entries.Add(new ResourceManagerEntry
+                        {
+                            Path = resourcePath,
+                            FileId = 4, // resources.assets
+                            PathId = textureInfo.PathId
+                        });
+                        addedCount++;
+                        textureAdditions++;
+                    }
                 }
+            }
+            if (textureReplacements > 0 || textureAdditions > 0)
+            {
+                Console.WriteLine($"[BundleCompiler] Texture summary: {textureReplacements} replacements, {textureAdditions} additions");
             }
 
             // Build new entries for each sprite asset
+            // If a sprite path matches an existing entry, UPDATE it (replacement) instead of adding duplicate
             if (spriteAssets != null && spriteResourcePaths != null)
             {
                 foreach (var (spriteName, spriteInfo) in spriteAssets)
@@ -1342,13 +1369,28 @@ public class BundleCompiler
                     if (!spriteResourcePaths.TryGetValue(spriteName, out var resourcePath))
                         continue;
 
-                    entries.Add(new ResourceManagerEntry
+                    // Check if this path already exists in the ResourceManager
+                    var existingEntry = entries.FirstOrDefault(e =>
+                        string.Equals(e.Path, resourcePath, StringComparison.OrdinalIgnoreCase));
+
+                    if (existingEntry != null)
                     {
-                        Path = resourcePath,
-                        FileId = 4, // resources.assets
-                        PathId = spriteInfo.PathId
-                    });
-                    addedCount++;
+                        // UPDATE existing entry to point to our new sprite (replacement)
+                        existingEntry.FileId = 4; // resources.assets
+                        existingEntry.PathId = spriteInfo.PathId;
+                        addedCount++;
+                    }
+                    else
+                    {
+                        // ADD new entry (new sprite asset)
+                        entries.Add(new ResourceManagerEntry
+                        {
+                            Path = resourcePath,
+                            FileId = 4, // resources.assets
+                            PathId = spriteInfo.PathId
+                        });
+                        addedCount++;
+                    }
                 }
             }
 

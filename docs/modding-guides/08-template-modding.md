@@ -2,9 +2,9 @@
 
 Data patches are great for static changes, but sometimes you need dynamic control. The Templates API lets you read, write, and clone game templates programmatically at runtime.
 
-> [!WARNING]
-> This guide is legacy and may include outdated lifecycle/API examples.
-> Use [Getting Started: Your First Plugin](../coding-sdk/getting-started.md), [Template Modding Guide](../coding-sdk/guides/template-modding.md), and [Templates API](../coding-sdk/api/templates.md) for current behavior.
+> [!NOTE]
+> This guide provides in-depth template modification patterns. For initial setup, see
+> [Getting Started: Your First Plugin](../coding-sdk/getting-started.md). For API reference, see [Templates API](../coding-sdk/api/templates.md).
 
 ## Why Use Code for Templates?
 
@@ -208,29 +208,30 @@ This example scales weapon damage based on mission progress:
 
 ```csharp
 using MelonLoader;
+using HarmonyLib;
+using Menace.ModpackLoader;
 using Menace.SDK;
 
 namespace DynamicDifficulty;
 
 public class DifficultyScaler : IModpackPlugin
 {
+    private MelonLogger.Instance _log;
     private int _missionsCompleted = 0;
 
-    public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
+    public void OnInitialize(MelonLogger.Instance logger, Harmony harmony)
     {
-        GameState.SceneLoaded += OnSceneLoaded;
+        _log = logger;
+        GameState.TacticalReady += OnTacticalReady;
         DevConsole.Log("Dynamic difficulty active");
     }
 
-    private void OnSceneLoaded(string sceneName)
+    private void OnTacticalReady()
     {
-        if (sceneName == "Tactical")
-        {
-            // Scale weapons based on missions completed
-            float scaleFactor = 1.0f + (_missionsCompleted * 0.05f); // +5% per mission
-            ScaleWeaponTemplates(scaleFactor);
-            DevConsole.Log($"Difficulty scale: {scaleFactor:F2}x (Mission #{_missionsCompleted + 1})");
-        }
+        // Scale weapons based on missions completed
+        float scaleFactor = 1.0f + (_missionsCompleted * 0.05f); // +5% per mission
+        ScaleWeaponTemplates(scaleFactor);
+        DevConsole.Log($"Difficulty scale: {scaleFactor:F2}x (Mission #{_missionsCompleted + 1})");
     }
 
     private void ScaleWeaponTemplates(float scale)
@@ -250,6 +251,8 @@ public class DifficultyScaler : IModpackPlugin
 
     public void OnSceneLoaded(int buildIndex, string sceneName) { }
     public void OnUpdate() { }
+    public void OnGUI() { }
+    public void OnUnload() { }
 }
 ```
 
@@ -267,7 +270,7 @@ Avoid modifying templates in `OnUpdate()` - it runs every frame and will tank pe
 
 ### Caching Templates
 
-For frequently accessed templates, cache the `GameObj` reference:
+For frequently accessed templates, cache the `GameObj` reference after the game is ready:
 
 ```csharp
 public class CachingExample : IModpackPlugin
@@ -277,6 +280,12 @@ public class CachingExample : IModpackPlugin
     private GameObj _shotgunTemplate;
 
     public void OnInitialize(MelonLogger.Instance logger, HarmonyLib.Harmony harmony)
+    {
+        // Templates aren't available yet - wait for TacticalReady or SceneLoaded
+        GameState.TacticalReady += CacheTemplates;
+    }
+
+    private void CacheTemplates()
     {
         // Look up once, use many times
         _rifleTemplate = Templates.Find("WeaponTemplate", "weapon.generic_assault_rifle_tier1_ARC_762");
