@@ -12,14 +12,14 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "6.0.4", "MenaceModkit")]
+[assembly: MelonInfo(typeof(Menace.DataExtractor.DataExtractorMod), "Menace Data Extractor", "9.0.0", "MenaceModkit")]
 [assembly: MelonGame(null, null)]
 
 namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "6.0.4"; // GC-skip tracking + fingerprint protection
+        private const string ExtractorVersion = "9.0.0"; // User-controlled extraction dialog + EventHandler parsing
 
         // Singleton instance for static method access from DevConsole
         private static DataExtractorMod _instance;
@@ -174,6 +174,9 @@ namespace Menace.DataExtractor
             var currentFingerprint = ComputeGameFingerprint(rootDir);
             _cachedFingerprint = currentFingerprint;
 
+            // Path for "don't ask again" preference
+            _dontAskAgainPath = Path.Combine(_outputPath, "_dont_ask_extraction.flag");
+
             // Check for force extraction flag from modkit
             var forceExtractionFlagPath = Path.Combine(_outputPath, "_force_extraction.flag");
             _forceExtractionPending = File.Exists(forceExtractionFlagPath);
@@ -192,11 +195,23 @@ namespace Menace.DataExtractor
             }
             else
             {
-                var reason = _forceExtractionPending ? "force extraction requested" : "game data changed";
-                LoggerInstance.Msg($"Extraction needed ({reason}) - will auto-trigger when game is ready");
-                PlayerLog($"Data Extractor: {reason}. Extraction will start automatically.");
-                // Auto-trigger extraction when force flag is set
-                _autoExtractionPending = true;
+                // Determine why extraction is needed
+                _extractionReason = DetermineExtractionReason(currentFingerprint);
+                var reasonText = GetExtractionReasonText(_extractionReason);
+                LoggerInstance.Msg($"Extraction needed ({reasonText})");
+
+                // Check if user has disabled extraction prompts
+                if (File.Exists(_dontAskAgainPath) && _extractionReason != ExtractionReason.ForceRequested)
+                {
+                    LoggerInstance.Msg("User has disabled extraction prompts. Use 'extract' command or Settings to extract.");
+                    PlayerLog("Data Extractor: Extraction available via 'extract' command.");
+                }
+                else
+                {
+                    LoggerInstance.Msg("Will show extraction dialog when game is ready");
+                    PlayerLog($"Data Extractor: {reasonText}. A dialog will appear shortly.");
+                    _autoExtractionPending = true;
+                }
             }
 
             // Register the extract command when DevConsole becomes available
@@ -211,6 +226,25 @@ namespace Menace.DataExtractor
         private string _cachedFingerprint;
         private bool _commandRegistrationPending = false;
         private bool _commandRegistered = false;
+
+        // Extraction dialog UI
+        private bool _showExtractionDialog = false;
+        private bool _dialogDismissedThisSession = false;
+        private ExtractionReason _extractionReason = ExtractionReason.FirstRun;
+        private GUIStyle _dialogBoxStyle;
+        private GUIStyle _dialogHeaderStyle;
+        private GUIStyle _dialogTextStyle;
+        private GUIStyle _dialogButtonStyle;
+        private bool _dialogStylesInitialized = false;
+        private string _dontAskAgainPath = "";
+
+        private enum ExtractionReason
+        {
+            FirstRun,       // No previous extraction exists
+            GameUpdated,    // Game fingerprint changed
+            ExtractorUpdated, // Extractor version changed
+            ForceRequested  // Modkit requested force extraction
+        }
 
         /// <summary>
         /// Try to register the 'extract' command with DevConsole.
@@ -521,24 +555,15 @@ namespace Menace.DataExtractor
                 TryRegisterExtractCommand();
             }
 
-            // Auto-extraction when force flag was set by modkit
-            // Wait for game to stabilize (a few seconds after loading)
-            if (_autoExtractionPending && !_extractionInProgress && !_manualExtractionInProgress)
+            // Show extraction dialog when extraction is needed
+            // Wait for game to stabilize before showing (a few seconds after loading)
+            if (_autoExtractionPending && !_extractionInProgress && !_manualExtractionInProgress && !_dialogDismissedThisSession)
             {
                 if (_frameCount >= AutoExtractionDelayFrames)
                 {
                     _autoExtractionPending = false;
-                    _extractionInProgress = true;
-                    _isManualExtraction = false;
-
-                    var reason = _forceExtractionPending ? "force extraction from modkit" : "extraction needed";
-                    LoggerInstance.Msg($"=== AUTO-EXTRACTION TRIGGERED ({reason}) ===");
-
-                    // Try to find and open DevConsole to show progress
-                    InitDevConsoleReflection();
-                    ShowExtractionProgress($"Auto-extraction starting ({reason})...");
-
-                    MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
+                    _showExtractionDialog = true;
+                    LoggerInstance.Msg($"=== SHOWING EXTRACTION DIALOG ({_extractionReason}) ===");
                 }
             }
 
@@ -554,6 +579,219 @@ namespace Menace.DataExtractor
 
                 MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
             }
+        }
+
+        /// <summary>
+        /// Draw the extraction dialog UI.
+        /// </summary>
+        public override void OnGUI()
+        {
+            if (!_showExtractionDialog) return;
+
+            InitializeDialogStyles();
+
+            // Center the dialog on screen
+            float dialogWidth = 520f;
+            float dialogHeight = 220f;
+            float x = (Screen.width - dialogWidth) / 2f;
+            float y = (Screen.height - dialogHeight) / 2f;
+
+            var dialogRect = new Rect(x, y, dialogWidth, dialogHeight);
+
+            // Draw background
+            GUI.Box(dialogRect, "", _dialogBoxStyle);
+
+            float padding = 20f;
+            float cx = dialogRect.x + padding;
+            float cy = dialogRect.y + padding;
+            float cw = dialogRect.width - padding * 2;
+
+            // Contextual title based on extraction reason
+            string title = GetExtractionDialogTitle(_extractionReason);
+            GUI.Label(new Rect(cx, cy, cw, 28), title, _dialogHeaderStyle);
+            cy += 36;
+
+            // Description text (same for all reasons)
+            string description = "This is not needed to play mods, but will populate the Data tab if you want to make mods.\n\nYou'll need to stay on one screen - the game will freeze for a minute or two while it extracts, then the Data tab in the modkit will be populated.";
+            GUI.Label(new Rect(cx, cy, cw, 80), description, _dialogTextStyle);
+            cy += 90;
+
+            // Buttons
+            float buttonWidth = 150f;
+            float buttonHeight = 32f;
+            float buttonSpacing = 12f;
+            float totalButtonWidth = buttonWidth * 3 + buttonSpacing * 2;
+            float buttonX = cx + (cw - totalButtonWidth) / 2f;
+
+            // "Extract Now" button
+            if (GUI.Button(new Rect(buttonX, cy, buttonWidth, buttonHeight), "Extract Now", _dialogButtonStyle))
+            {
+                _showExtractionDialog = false;
+                _extractionInProgress = true;
+                _isManualExtraction = false;
+                LoggerInstance.Msg("=== USER TRIGGERED EXTRACTION FROM DIALOG ===");
+                ShowExtractionProgress("Extraction starting...");
+                MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
+            }
+            buttonX += buttonWidth + buttonSpacing;
+
+            // "Remind Me Next Time" button - dismisses for session but shows again next launch
+            if (GUI.Button(new Rect(buttonX, cy, buttonWidth, buttonHeight), "Remind Next Time", _dialogButtonStyle))
+            {
+                _showExtractionDialog = false;
+                _dialogDismissedThisSession = true;
+                LoggerInstance.Msg("User chose to be reminded next time");
+                PlayerLog("Extraction skipped. Will ask again next time you launch the game.");
+            }
+            buttonX += buttonWidth + buttonSpacing;
+
+            // "No, Don't Ask Again" button - disables prompts until re-enabled
+            if (GUI.Button(new Rect(buttonX, cy, buttonWidth, buttonHeight), "Don't Ask Again", _dialogButtonStyle))
+            {
+                _showExtractionDialog = false;
+                _dialogDismissedThisSession = true;
+                // Save preference to disk
+                try
+                {
+                    File.WriteAllText(_dontAskAgainPath, DateTime.UtcNow.ToString("o"));
+                    LoggerInstance.Msg("User disabled extraction prompts. Use 'extract' command or delete _dont_ask_extraction.flag to re-enable.");
+                    PlayerLog("Extraction prompts disabled. Use 'extract' command when you're ready.");
+                }
+                catch (Exception ex)
+                {
+                    LoggerInstance.Warning($"Failed to save preference: {ex.Message}");
+                }
+            }
+
+            // Consume mouse events to prevent game interaction
+            var ev = Event.current;
+            if (ev != null && dialogRect.Contains(ev.mousePosition))
+            {
+                if (ev.type == EventType.MouseDown || ev.type == EventType.MouseUp)
+                    ev.Use();
+            }
+        }
+
+        /// <summary>
+        /// Initialize GUI styles for the extraction dialog.
+        /// </summary>
+        private void InitializeDialogStyles()
+        {
+            // Check if styles need re-initialization (textures can be destroyed on scene change)
+            if (_dialogStylesInitialized)
+            {
+                try
+                {
+                    if (_dialogBoxStyle?.normal?.background == null)
+                        _dialogStylesInitialized = false;
+                }
+                catch { _dialogStylesInitialized = false; }
+            }
+
+            if (_dialogStylesInitialized) return;
+            _dialogStylesInitialized = true;
+
+            // Dark semi-transparent background
+            var bgTex = new Texture2D(1, 1);
+            bgTex.hideFlags = HideFlags.HideAndDontSave;
+            bgTex.SetPixel(0, 0, new Color(0.12f, 0.12f, 0.15f, 0.95f));
+            bgTex.Apply();
+
+            _dialogBoxStyle = new GUIStyle(GUI.skin.box);
+            _dialogBoxStyle.normal.background = bgTex;
+
+            // Header style
+            _dialogHeaderStyle = new GUIStyle(GUI.skin.label);
+            _dialogHeaderStyle.fontSize = 18;
+            _dialogHeaderStyle.fontStyle = FontStyle.Bold;
+            _dialogHeaderStyle.normal.textColor = new Color(0.9f, 0.85f, 0.7f);
+            _dialogHeaderStyle.alignment = TextAnchor.UpperCenter;
+
+            // Text style
+            _dialogTextStyle = new GUIStyle(GUI.skin.label);
+            _dialogTextStyle.fontSize = 13;
+            _dialogTextStyle.wordWrap = true;
+            _dialogTextStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+
+            // Button style
+            var buttonBg = new Texture2D(1, 1);
+            buttonBg.hideFlags = HideFlags.HideAndDontSave;
+            buttonBg.SetPixel(0, 0, new Color(0.25f, 0.25f, 0.3f, 1f));
+            buttonBg.Apply();
+
+            var buttonHover = new Texture2D(1, 1);
+            buttonHover.hideFlags = HideFlags.HideAndDontSave;
+            buttonHover.SetPixel(0, 0, new Color(0.35f, 0.35f, 0.4f, 1f));
+            buttonHover.Apply();
+
+            _dialogButtonStyle = new GUIStyle(GUI.skin.button);
+            _dialogButtonStyle.normal.background = buttonBg;
+            _dialogButtonStyle.hover.background = buttonHover;
+            _dialogButtonStyle.normal.textColor = Color.white;
+            _dialogButtonStyle.fontSize = 13;
+        }
+
+        /// <summary>
+        /// Determine why extraction is needed based on current state.
+        /// </summary>
+        private ExtractionReason DetermineExtractionReason(string currentFingerprint)
+        {
+            if (_forceExtractionPending)
+                return ExtractionReason.ForceRequested;
+
+            // Check if any extraction exists
+            var fingerprintFile = Path.Combine(_outputPath, "_fingerprint.json");
+            if (!File.Exists(fingerprintFile))
+                return ExtractionReason.FirstRun;
+
+            // Check if extractor version changed
+            try
+            {
+                var json = File.ReadAllText(fingerprintFile);
+                var fp = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
+                if (fp != null)
+                {
+                    if (fp.TryGetValue("extractorVersion", out var savedVersion) && savedVersion != ExtractorVersion)
+                        return ExtractionReason.ExtractorUpdated;
+
+                    if (fp.TryGetValue("gameFingerprint", out var savedFingerprint) && savedFingerprint != currentFingerprint)
+                        return ExtractionReason.GameUpdated;
+                }
+            }
+            catch { }
+
+            // Default to game updated if we can't determine
+            return ExtractionReason.GameUpdated;
+        }
+
+        /// <summary>
+        /// Get human-readable text for the extraction reason.
+        /// </summary>
+        private string GetExtractionReasonText(ExtractionReason reason)
+        {
+            return reason switch
+            {
+                ExtractionReason.FirstRun => "first run",
+                ExtractionReason.GameUpdated => "game has been updated",
+                ExtractionReason.ExtractorUpdated => "modkit extractor has been updated",
+                ExtractionReason.ForceRequested => "extraction requested by modkit",
+                _ => "extraction needed"
+            };
+        }
+
+        /// <summary>
+        /// Get the dialog title for the extraction reason.
+        /// </summary>
+        private string GetExtractionDialogTitle(ExtractionReason reason)
+        {
+            return reason switch
+            {
+                ExtractionReason.FirstRun => "Would you like to extract game data?",
+                ExtractionReason.GameUpdated => "Menace has updated, would you like to extract the data?",
+                ExtractionReason.ExtractorUpdated => "Modkit extractor has updated, would you like to extract the game data?",
+                ExtractionReason.ForceRequested => "Would you like to extract game data?",
+                _ => "Would you like to extract game data?"
+            };
         }
 
         /// <summary>

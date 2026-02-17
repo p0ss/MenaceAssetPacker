@@ -1,5 +1,6 @@
 using ReactiveUI;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -12,6 +13,43 @@ using Menace.Modkit.App.Services;
 using Menace.Modkit.Core.Models;
 
 namespace Menace.Modkit.App.ViewModels;
+
+/// <summary>
+/// Event args for requesting the extraction dialog.
+/// </summary>
+public class ExtractionDialogRequestEventArgs : EventArgs
+{
+    public List<string> DeployedModpackNames { get; }
+    public DeployManager DeployManager { get; }
+    public ModpackManager ModpackManager { get; }
+    public TaskCompletionSource<bool> Result { get; } = new();
+
+    public ExtractionDialogRequestEventArgs(
+        List<string> deployedModpackNames,
+        DeployManager deployManager,
+        ModpackManager modpackManager)
+    {
+        DeployedModpackNames = deployedModpackNames;
+        DeployManager = deployManager;
+        ModpackManager = modpackManager;
+    }
+}
+
+/// <summary>
+/// Event args for requesting a recovery dialog after app restart.
+/// </summary>
+public class RecoveryDialogRequestEventArgs : EventArgs
+{
+    public PendingRedeployState PendingState { get; }
+    public DeployManager DeployManager { get; }
+    public TaskCompletionSource<bool> Result { get; } = new();
+
+    public RecoveryDialogRequestEventArgs(PendingRedeployState pendingState, DeployManager deployManager)
+    {
+        PendingState = pendingState;
+        DeployManager = deployManager;
+    }
+}
 
 /// <summary>
 /// Settings for modders - extraction, assets, caching, validation.
@@ -29,16 +67,33 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     private string _appDownloadUrl = string.Empty;
     private readonly SchemaService _schemaService;
     private readonly ExtractionValidator _validator;
+    private readonly ModpackManager _modpackManager;
+    private readonly DeployManager _deployManager;
 
     // GitHub repo for app update checks
     private const string AppGitHubOwner = "p0ss";
     private const string AppGitHubRepo = "MenaceAssetPacker";
+
+    /// <summary>
+    /// Event raised when the extraction dialog should be shown.
+    /// The View subscribes to this and shows the ExtractionDialog.
+    /// </summary>
+    public event EventHandler<ExtractionDialogRequestEventArgs>? ExtractionDialogRequested;
+
+    /// <summary>
+    /// Event raised when a recovery dialog should be shown after app restart.
+    /// </summary>
+    public event EventHandler<RecoveryDialogRequestEventArgs>? RecoveryDialogRequested;
 
     public ToolSettingsViewModel(IServiceProvider serviceProvider)
     {
         // Initialize schema and validator
         _schemaService = new SchemaService();
         _validator = new ExtractionValidator(_schemaService);
+
+        // Initialize modpack and deploy managers
+        _modpackManager = new ModpackManager();
+        _deployManager = new DeployManager(_modpackManager);
 
         // Load schema
         var schemaPath = Path.Combine(AppContext.BaseDirectory, "schema.json");
@@ -63,6 +118,9 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
         // Check for app updates on load
         _ = CheckForAppUpdateAsync();
+
+        // Check for pending redeploy from previous session
+        _ = CheckPendingRedeployAsync();
     }
 
     public string ExtractedAssetsPath
@@ -458,6 +516,61 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             return;
         }
 
+        // Check if mods are deployed - if so, we need to undeploy them first
+        var deployState = _deployManager.GetDeployState();
+        if (deployState.DeployedModpacks.Count > 0)
+        {
+            var deployedNames = deployState.DeployedModpacks
+                .Select(m => m.Name)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .ToList();
+
+            if (deployedNames.Count > 0)
+            {
+                ExtractionStatus = "Mods detected - showing extraction dialog...";
+
+                // Request the dialog from the View
+                var args = new ExtractionDialogRequestEventArgs(
+                    deployedNames,
+                    _deployManager,
+                    _modpackManager);
+
+                ExtractionDialogRequested?.Invoke(this, args);
+
+                // Wait for the dialog to complete
+                try
+                {
+                    var success = await args.Result.Task;
+                    if (success)
+                    {
+                        ExtractionStatus = "✓ Extraction complete, mods redeployed";
+                        ValidateExtractedData();
+                        UpdateCacheStatus();
+                    }
+                    else
+                    {
+                        ExtractionStatus = "Extraction cancelled or failed";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ExtractionStatus = $"❌ Error: {ex.Message}";
+                }
+
+                this.RaisePropertyChanged(nameof(IsExtractionPending));
+                return;
+            }
+        }
+
+        // No mods deployed - proceed with simple extraction flow
+        await ForceExtractDataSimpleAsync();
+    }
+
+    /// <summary>
+    /// Simple extraction flow when no mods are deployed.
+    /// </summary>
+    private async Task ForceExtractDataSimpleAsync()
+    {
         var installer = new ModLoaderInstaller(GameInstallPath);
 
         // Ensure DataExtractor mod is deployed (force extraction since user explicitly requested it)
@@ -490,6 +603,52 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
         ExtractionStatus = "⏳ Extraction pending - will run on next game launch";
         this.RaisePropertyChanged(nameof(IsExtractionPending));
+    }
+
+    /// <summary>
+    /// Check for pending redeploy state from a previous session.
+    /// If extraction was interrupted, offer to complete the redeploy.
+    /// </summary>
+    private async Task CheckPendingRedeployAsync()
+    {
+        if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
+            return;
+
+        var pendingState = PendingRedeployState.LoadFrom(GameInstallPath);
+        if (pendingState == null || !pendingState.RedeployPending)
+            return;
+
+        // Check if extraction completed while we were away
+        if (pendingState.IsExtractionComplete(GameInstallPath))
+        {
+            ExtractionStatus = "Previous extraction complete - ready to redeploy mods";
+
+            // Request recovery dialog from the View
+            var args = new RecoveryDialogRequestEventArgs(pendingState, _deployManager);
+            RecoveryDialogRequested?.Invoke(this, args);
+
+            try
+            {
+                var success = await args.Result.Task;
+                if (success)
+                {
+                    ExtractionStatus = "✓ Mods redeployed successfully";
+                }
+                else
+                {
+                    ExtractionStatus = "Redeploy was cancelled";
+                }
+            }
+            catch (Exception ex)
+            {
+                ExtractionStatus = $"❌ Redeploy error: {ex.Message}";
+            }
+        }
+        else
+        {
+            // Extraction didn't complete - the pending state exists but fingerprint is old
+            ExtractionStatus = "⚠ Previous extraction was interrupted. Click 'Force Extract Data' to retry.";
+        }
     }
 
     private async Task ForceExtractAssetsAsync()

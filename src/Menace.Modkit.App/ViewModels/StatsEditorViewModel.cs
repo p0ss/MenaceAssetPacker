@@ -640,6 +640,22 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         this.RaisePropertyChanged(nameof(HasModifications));
     }
 
+    /// <summary>
+    /// Marks an asset field (Sprite, Texture2D, etc.) as edited.
+    /// The AssetPropertyValue object is modified in-place by the View,
+    /// so this just registers the field in _userEditedFields for change tracking.
+    /// </summary>
+    public void MarkAssetFieldEdited(string fieldName)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(fieldName))
+            return;
+
+        _userEditedFields.Add(fieldName);
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
     public void UpdateModifiedProperty(string fieldName, string text)
     {
         if (_suppressPropertyUpdates)

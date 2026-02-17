@@ -134,8 +134,41 @@ public class ReferenceResolver
         if (Directory.Exists(bundledDir))
         {
             ModkitLog.Info($"Step 2: Bundled third_party ({bundledDir})");
-            foreach (var dll in Directory.GetFiles(bundledDir, "*.dll", SearchOption.AllDirectories))
-                AddNonSystemRef(dll);
+
+            // Scan non-MelonLoader bundled directories recursively
+            foreach (var subDir in Directory.GetDirectories(bundledDir))
+            {
+                var subDirName = Path.GetFileName(subDir);
+                if (subDirName.Equals("MelonLoader", StringComparison.OrdinalIgnoreCase))
+                    continue; // Handle MelonLoader separately below
+
+                foreach (var dll in Directory.GetFiles(subDir, "*.dll", SearchOption.AllDirectories))
+                    AddNonSystemRef(dll);
+            }
+
+            // For MelonLoader, ONLY scan net6 directory (not net35).
+            // net35 contains MonoMod.Backports which has backported types like ConcurrentQueue<T>
+            // that conflict with System.Collections.Concurrent on .NET 6.
+            var melonNet6Dir = Path.Combine(bundledDir, "MelonLoader", "net6");
+            if (Directory.Exists(melonNet6Dir))
+            {
+                ModkitLog.Info($"  Scanning MelonLoader/net6: {melonNet6Dir}");
+                foreach (var dll in Directory.GetFiles(melonNet6Dir, "*.dll"))
+                    AddNonSystemRef(dll);
+            }
+            else
+            {
+                ReportIssue($"MelonLoader/net6 directory not found at {melonNet6Dir}. Bundled MelonLoader may be incomplete.");
+            }
+
+            // Also scan MelonLoader/Dependencies for Il2CppAssemblyGenerator, etc.
+            var melonDepsDir = Path.Combine(bundledDir, "MelonLoader", "Dependencies");
+            if (Directory.Exists(melonDepsDir))
+            {
+                ModkitLog.Info($"  Scanning MelonLoader/Dependencies: {melonDepsDir}");
+                foreach (var dll in Directory.GetFiles(melonDepsDir, "*.dll", SearchOption.AllDirectories))
+                    AddNonSystemRef(dll);
+            }
         }
 
         // 3. Game directories (skip any framework assemblies)

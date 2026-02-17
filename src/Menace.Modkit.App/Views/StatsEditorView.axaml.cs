@@ -1449,6 +1449,9 @@ public class StatsEditorView : UserControl
                 nameText.Text = assetValue.DisplayText;
                 nameText.Foreground = Brushes.White;
                 nameText.FontStyle = FontStyle.Normal;
+
+                // Mark this field as edited for change tracking
+                vm.MarkAssetFieldEdited(assetValue.FieldName);
               }
             }
           }
@@ -1475,6 +1478,10 @@ public class StatsEditorView : UserControl
         nameText.Text = "null";
         nameText.Foreground = new SolidColorBrush(Color.Parse("#888888"));
         nameText.FontStyle = FontStyle.Italic;
+
+        // Mark this field as edited for change tracking
+        if (DataContext is StatsEditorViewModel vm)
+          vm.MarkAssetFieldEdited(assetValue.FieldName);
       };
       buttonRow.Children.Add(clearButton);
 

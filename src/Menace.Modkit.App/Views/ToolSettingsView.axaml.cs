@@ -1,7 +1,13 @@
+using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
+using Menace.Modkit.App.Models;
+using Menace.Modkit.App.Services;
+using Menace.Modkit.App.ViewModels;
 
 namespace Menace.Modkit.App.Views;
 
@@ -10,9 +16,117 @@ namespace Menace.Modkit.App.Views;
 /// </summary>
 public class ToolSettingsView : UserControl
 {
+    private ToolSettingsViewModel? _viewModel;
+
     public ToolSettingsView()
     {
         Content = BuildUI();
+
+        // Subscribe to DataContext changes to hook up ViewModel events
+        DataContextChanged += OnDataContextChanged;
+    }
+
+    private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        // Unsubscribe from old ViewModel
+        if (_viewModel != null)
+        {
+            _viewModel.ExtractionDialogRequested -= OnExtractionDialogRequested;
+            _viewModel.RecoveryDialogRequested -= OnRecoveryDialogRequested;
+        }
+
+        // Subscribe to new ViewModel
+        _viewModel = DataContext as ToolSettingsViewModel;
+        if (_viewModel != null)
+        {
+            _viewModel.ExtractionDialogRequested += OnExtractionDialogRequested;
+            _viewModel.RecoveryDialogRequested += OnRecoveryDialogRequested;
+        }
+    }
+
+    private async void OnExtractionDialogRequested(object? sender, ExtractionDialogRequestEventArgs e)
+    {
+        try
+        {
+            var parentWindow = TopLevel.GetTopLevel(this) as Window;
+            if (parentWindow == null)
+            {
+                e.Result.TrySetResult(false);
+                return;
+            }
+
+            var result = await ExtractionDialog.ShowAsync(
+                parentWindow,
+                AppSettings.Instance.GameInstallPath,
+                e.DeployManager,
+                e.ModpackManager,
+                e.DeployedModpackNames);
+
+            e.Result.TrySetResult(result?.Success ?? false);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsView] Extraction dialog error: {ex}");
+            e.Result.TrySetException(ex);
+        }
+    }
+
+    private async void OnRecoveryDialogRequested(object? sender, RecoveryDialogRequestEventArgs e)
+    {
+        try
+        {
+            var parentWindow = TopLevel.GetTopLevel(this) as Window;
+            if (parentWindow == null)
+            {
+                e.Result.TrySetResult(false);
+                return;
+            }
+
+            // Show a simple confirmation dialog for recovery
+            var confirmed = await Controls.ConfirmationDialog.ShowAsync(
+                parentWindow,
+                "Complete Mod Redeploy",
+                $"A previous extraction completed while the app was closed.\n\n" +
+                $"The following mods were undeployed and need to be redeployed:\n" +
+                $"- {string.Join("\n- ", e.PendingState.DeployedModpacks)}\n\n" +
+                $"Would you like to redeploy them now?",
+                "Redeploy Mods",
+                isDestructive: false);
+
+            if (confirmed)
+            {
+                // Perform the redeploy
+                var progress = new Progress<string>(msg =>
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_viewModel != null)
+                        {
+                            // Update status through ViewModel (reflection to access private setter)
+                            var prop = typeof(ToolSettingsViewModel).GetProperty("ExtractionStatus");
+                            // Can't use private setter, so we'll just log
+                            ModkitLog.Info($"[Recovery] {msg}");
+                        }
+                    }));
+
+                var result = await e.DeployManager.DeployAllAsync(progress);
+
+                // Clear pending state
+                PendingRedeployState.Delete(AppSettings.Instance.GameInstallPath);
+
+                e.Result.TrySetResult(result.Success);
+            }
+            else
+            {
+                // User declined - clear the pending state
+                PendingRedeployState.Delete(AppSettings.Instance.GameInstallPath);
+                e.Result.TrySetResult(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsView] Recovery dialog error: {ex}");
+            e.Result.TrySetException(ex);
+        }
     }
 
     private Control BuildUI()
