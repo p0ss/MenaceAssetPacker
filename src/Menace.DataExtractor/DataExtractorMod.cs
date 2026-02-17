@@ -3135,11 +3135,15 @@ namespace Menace.DataExtractor
                                 11 => ReadFloat(fieldAddr),                       // R4
                                 12 => ReadFloat(fieldAddr),                       // R8 (treat as float for safety)
                                 14 => ReadIl2CppStringAt(fieldAddr),              // STRING
-                                // Skip complex types (CLASS, VALUETYPE, ARRAY) for now to avoid crashes
+                                17 => ReadValueTypeField(fieldAddr, fieldType, depth + 1),      // VALUETYPE (structs/enums)
+                                18 or 21 => ReadNestedRefField(fieldAddr, fieldType, depth + 1), // CLASS or GENERICINST
+                                29 => ReadNestedArrayField(fieldAddr, fieldType, depth + 1),    // SZARRAY
                                 _ => null
                             };
 
-                            if (value != null)
+                            // Reference types (CLASS/GENERICINST) can legitimately be null
+                            bool isReferenceType = typeEnum == 18 || typeEnum == 21;
+                            if (value != null || isReferenceType)
                                 result[fieldName] = value;
                         }
                         catch
