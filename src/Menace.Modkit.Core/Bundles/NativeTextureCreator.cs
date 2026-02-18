@@ -502,6 +502,7 @@ public static class NativeTextureCreator
     /// <summary>
     /// Replace an existing Texture2D asset's data in-place.
     /// This modifies the existing asset at its current PathId rather than creating a new one.
+    /// Preserves the original texture's ColorSpace to maintain correct rendering.
     /// </summary>
     public static TextureCreationResult ReplaceTextureInPlace(
         AssetsFile afile,
@@ -529,6 +530,27 @@ public static class NativeTextureCreator
             {
                 result.ErrorMessage = $"PNG file not found: {pngPath}";
                 return result;
+            }
+
+            // Read the original texture's bytes to preserve its ColorSpace
+            int originalColorSpace = -1;
+            try
+            {
+                var reader = afile.Reader;
+                var absOffset = existingAsset.GetAbsoluteByteOffset(afile);
+                reader.BaseStream.Position = absOffset;
+                var originalBytes = reader.ReadBytes((int)existingAsset.ByteSize);
+
+                // Parse the original texture to get its ColorSpace
+                var originalTemplate = TryParseTexture2D(originalBytes, existingAsset);
+                if (originalTemplate != null && originalTemplate.OriginalColorSpace >= 0)
+                {
+                    originalColorSpace = originalTemplate.OriginalColorSpace;
+                }
+            }
+            catch
+            {
+                // If we can't read the original, we'll use the template's ColorSpace
             }
 
             // Load and decode the PNG
@@ -567,8 +589,8 @@ public static class NativeTextureCreator
                     }
                 });
 
-                // Build the new Texture2D bytes
-                var textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData);
+                // Build the new Texture2D bytes, preserving original ColorSpace if available
+                var textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData, originalColorSpace);
                 if (textureBytes == null)
                 {
                     result.ErrorMessage = "Failed to build texture bytes";
@@ -591,12 +613,14 @@ public static class NativeTextureCreator
     /// <summary>
     /// Build Texture2D bytes by patching the template.
     /// </summary>
+    /// <param name="overrideColorSpace">If >= 0, patch the ColorSpace to this value instead of using template's value.</param>
     private static byte[]? BuildTexture2DBytes(
         Texture2DTemplate template,
         string name,
         int width,
         int height,
-        byte[] pixelData)
+        byte[] pixelData,
+        int overrideColorSpace = -1)
     {
         try
         {
@@ -698,9 +722,26 @@ public static class NativeTextureCreator
         // This includes IsReadable, ColorSpace, TextureSettings, etc.
         int srcImageSizeOffset = template.ImageDataSizeOffset;
         int bytesUntilImageSize = srcImageSizeOffset - srcOffset;
+        int dstBeforeCopy = dstOffset; // Remember position before copy for ColorSpace patching
         Array.Copy(template.Bytes, srcOffset, newBytes, dstOffset, bytesUntilImageSize);
         srcOffset += bytesUntilImageSize;
         dstOffset += bytesUntilImageSize;
+
+        // Patch ColorSpace if override is specified
+        // ColorSpace is at a fixed offset from MipCount in the template
+        if (overrideColorSpace >= 0 && template.ColorSpaceOffset >= 0)
+        {
+            // Calculate the ColorSpace offset in the new bytes
+            // template.ColorSpaceOffset is the absolute offset in template bytes
+            // template.MipCountOffset + 4 is where srcOffset was when we started copying
+            int templateMipCountEnd = template.MipCountOffset + 4;
+            int colorSpaceRelativeOffset = template.ColorSpaceOffset - templateMipCountEnd;
+            if (colorSpaceRelativeOffset >= 0 && colorSpaceRelativeOffset + 4 <= bytesUntilImageSize)
+            {
+                int colorSpaceInNewBytes = dstBeforeCopy + colorSpaceRelativeOffset;
+                Array.Copy(BitConverter.GetBytes(overrideColorSpace), 0, newBytes, colorSpaceInNewBytes, 4);
+            }
+        }
 
         // Write new image data size
         Array.Copy(BitConverter.GetBytes(pixelData.Length), 0, newBytes, dstOffset, 4);
