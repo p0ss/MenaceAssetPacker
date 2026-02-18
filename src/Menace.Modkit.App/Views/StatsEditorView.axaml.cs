@@ -663,6 +663,152 @@ public class StatsEditorView : UserControl
     outerGrid.Children.Add(toolbar);
     Grid.SetRow(toolbar, 0);
 
+    // Content row: container for either bulk editor or vanilla/modified panels
+    var contentContainer = new Panel();
+
+    // Build the bulk editor panel (shown when category selected)
+    // Wrap in a container so visibility binding doesn't break when BulkEditorPanel's DataContext changes
+    var bulkEditorWrapper = new Border();
+    bulkEditorWrapper.Bind(Control.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedNode")
+      {
+        Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
+          obj is TreeNodeViewModel node && node.IsCategory && node.Children.Count > 0)
+      });
+    var bulkEditorPanel = BuildBulkEditorPanelForCategory();
+    bulkEditorWrapper.Child = bulkEditorPanel;
+    contentContainer.Children.Add(bulkEditorWrapper);
+
+    // Build the regular property panels (shown when template selected)
+    var propertyPanels = BuildPropertyPanels();
+    propertyPanels.Bind(Control.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedNode")
+      {
+        Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
+          obj is TreeNodeViewModel node && !node.IsCategory)
+      });
+    contentContainer.Children.Add(propertyPanels);
+
+    // Empty state (when no selection)
+    var emptyState = BuildEmptyState();
+    emptyState.Bind(Control.IsVisibleProperty,
+      new Avalonia.Data.Binding("SelectedNode")
+      {
+        Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj => obj == null)
+      });
+    contentContainer.Children.Add(emptyState);
+
+    outerGrid.Children.Add(contentContainer);
+    Grid.SetRow(contentContainer, 1);
+
+    // Horizontal splitter between content and backlinks
+    var backlinksSplitter = new GridSplitter
+    {
+      Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
+      ResizeDirection = GridResizeDirection.Rows
+    };
+    outerGrid.Children.Add(backlinksSplitter);
+    Grid.SetRow(backlinksSplitter, 2);
+
+    // What Links Here panel at the bottom
+    var backlinksPanel = BuildBacklinksPanel();
+    outerGrid.Children.Add(backlinksPanel);
+    Grid.SetRow(backlinksPanel, 3);
+
+    border.Child = outerGrid;
+    return border;
+  }
+
+  private Control BuildEmptyState()
+  {
+    return new StackPanel
+    {
+      VerticalAlignment = VerticalAlignment.Center,
+      HorizontalAlignment = HorizontalAlignment.Center,
+      Children =
+      {
+        new TextBlock
+        {
+          Text = "Select a template or category to begin editing",
+          FontSize = 14,
+          Foreground = Brushes.White,
+          Opacity = 0.6
+        }
+      }
+    };
+  }
+
+  private Control BuildBulkEditorPanelForCategory()
+  {
+    var panel = new BulkEditorPanel();
+    IDisposable? currentSubscription = null;
+    TreeNodeViewModel? lastLoadedNode = null;
+
+    // Helper to load category data
+    void LoadCategoryData(StatsEditorViewModel vm, TreeNodeViewModel node)
+    {
+      // Avoid reloading the same node
+      if (ReferenceEquals(node, lastLoadedNode))
+        return;
+
+      lastLoadedNode = node;
+
+      try
+      {
+        var templateType = vm.GetCategoryTemplateType(node);
+        if (string.IsNullOrEmpty(templateType))
+          return;
+
+        // Materialize the children list to avoid multiple enumeration issues
+        var children = vm.GetCategoryChildren(node).ToList();
+        if (children.Count == 0)
+          return;
+
+        var bulkVm = new BulkEditorViewModel(
+          vm.SchemaService,
+          (compositeKey, fieldName, value) => vm.SetBulkEditChange(compositeKey, fieldName, value));
+
+        panel.LoadCategory(
+          bulkVm,
+          node.Name,
+          templateType,
+          children,
+          vm.ConvertTemplateToPropertiesPublic,
+          vm.GetStagingOverridesForKey,
+          vm.GetPendingChangesForKey);
+      }
+      catch (Exception ex)
+      {
+        Services.ModkitLog.Error($"Failed to load bulk editor: {ex.Message}");
+      }
+    }
+
+    // Subscribe to DataContext changes
+    this.GetObservable(DataContextProperty).Subscribe(dc =>
+    {
+      // Dispose previous subscription
+      currentSubscription?.Dispose();
+      currentSubscription = null;
+      lastLoadedNode = null;
+
+      if (dc is StatsEditorViewModel vm)
+      {
+        // Subscribe to SelectedNode changes
+        currentSubscription = vm.WhenAnyValue(x => x.SelectedNode).Subscribe(node =>
+        {
+          if (node is TreeNodeViewModel treeNode && treeNode.IsCategory && treeNode.Children.Count > 0)
+          {
+            LoadCategoryData(vm, treeNode);
+          }
+        });
+      }
+    });
+
+    return panel;
+  }
+
+  private Control BuildPropertyPanels()
+  {
     // Content row: two-column vanilla/modified grid
     var mainGrid = new Grid
     {
@@ -766,25 +912,7 @@ public class StatsEditorView : UserControl
     mainGrid.Children.Add(modifiedPanel);
     Grid.SetColumn(modifiedPanel, 1);
 
-    outerGrid.Children.Add(mainGrid);
-    Grid.SetRow(mainGrid, 1);
-
-    // Horizontal splitter between content and backlinks
-    var backlinksSplitter = new GridSplitter
-    {
-      Background = new SolidColorBrush(Color.Parse("#2D2D2D")),
-      ResizeDirection = GridResizeDirection.Rows
-    };
-    outerGrid.Children.Add(backlinksSplitter);
-    Grid.SetRow(backlinksSplitter, 2);
-
-    // What Links Here panel at the bottom
-    var backlinksPanel = BuildBacklinksPanel();
-    outerGrid.Children.Add(backlinksPanel);
-    Grid.SetRow(backlinksPanel, 3);
-
-    border.Child = outerGrid;
-    return border;
+    return mainGrid;
   }
 
   private Control BuildBacklinksPanel()

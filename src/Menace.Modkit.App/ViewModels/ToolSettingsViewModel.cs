@@ -108,6 +108,11 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     /// </summary>
     public event EventHandler<UpdateFlowRequestEventArgs>? UpdateFlowRequested;
 
+    /// <summary>
+    /// Event raised when the modpack list needs to be refreshed (e.g., after update/undeploy).
+    /// </summary>
+    public event EventHandler? ModpacksNeedRefresh;
+
     public ToolSettingsViewModel(IServiceProvider serviceProvider)
     {
         // Initialize schema and validator
@@ -856,11 +861,23 @@ public sealed class ToolSettingsViewModel : ViewModelBase
                     AppUpdateStatus = "Update cancelled";
                 }
             }
+
+            // Notify that modpacks need to be refreshed (mods were undeployed)
+            if (deployedModpacks.Count > 0)
+            {
+                ModpacksNeedRefresh?.Invoke(this, EventArgs.Empty);
+            }
         }
         catch (Exception ex)
         {
             AppUpdateStatus = $"Update failed: {ex.Message}";
             ModkitLog.Error($"[ToolSettingsViewModel] Update flow failed: {ex}");
+
+            // Still refresh modpacks if we undeployed them
+            if (deployedModpacks.Count > 0)
+            {
+                ModpacksNeedRefresh?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 

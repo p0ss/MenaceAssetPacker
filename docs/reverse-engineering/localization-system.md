@@ -176,9 +176,21 @@ To properly set localized text, mods need to either:
 
 ## Recommendations for ModpackLoader
 
-### Option 1: Direct Field Write (Simplest)
+### IMPORTANT: Shared Localization Objects
 
-When loading mod data, detect `LocalizedLine`/`LocalizedMultiLine` fields and write the string value directly to `m_DefaultTranslation` at offset +0x38:
+**Localization objects are SHARED across templates.** When multiple templates have the same localization key (e.g., both Tank A and Tank B use the same description key), they reference the **same** `LocalizedLine` instance. Modifying the shared instance corrupts ALL templates that reference it.
+
+This caused a bug where modifying one tank's description would corrupt unrelated text (conversations, other descriptions) with random content that changed each launch.
+
+### Option 1: Direct Field Write (DEPRECATED - DO NOT USE)
+
+~~When loading mod data, write the string value directly to `m_DefaultTranslation` at offset +0x38.~~
+
+**WARNING:** This approach modifies shared localization objects and causes random text corruption across unrelated game content. Do not use this pattern.
+
+### Option 2: Create New Objects (IMPLEMENTED)
+
+The ModpackLoader now creates **new** `LocalizedLine`/`LocalizedMultiLine` objects for each modification:
 
 ```csharp
 // Pseudo-code for ModpackLoader
@@ -187,28 +199,18 @@ if (IsLocalizationField(fieldType))
     IntPtr existingLoc = ReadFieldPtr(obj, fieldOffset);
     if (existingLoc != IntPtr.Zero)
     {
-        // Write to m_DefaultTranslation (+0x38)
-        IntPtr newStr = IL2CPP.ManagedStringToIl2cpp(stringValue);
-        Marshal.WriteIntPtr(existingLoc + 0x38, newStr);
+        // Create a NEW localization object
+        IntPtr newLoc = CreateLocalizedObject(existingLoc, stringValue);
+
+        // Replace the template's field reference with the new object
+        Marshal.WriteIntPtr(obj + fieldOffset, newLoc);
     }
 }
 ```
 
-### Option 2: Create New Objects
+This ensures each modified template has its own unique localization object, preventing corruption of shared instances.
 
-Create new `LocalizedLine`/`LocalizedMultiLine` objects:
-
-```csharp
-// Need to call constructor with:
-// - LocaCategory (int) - use same as original or a mod-specific category
-// - Identifier (string) - unique identifier for this entry
-// - HasPlaceholders (bool) - false for simple text
-
-var newLine = CreateLocalizedLine(category, identifier, hasPlaceholders: false);
-// Then set m_DefaultTranslation
-```
-
-### Option 3: Custom Category
+### Option 3: Custom Category (Alternative)
 
 Register a mod-specific localization category and use proper keys:
 1. Add entries to `LocaCategoryData` for the mod's category

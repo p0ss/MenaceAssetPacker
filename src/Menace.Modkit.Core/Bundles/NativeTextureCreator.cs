@@ -42,6 +42,7 @@ public static class NativeTextureCreator
         public int HeightOffset { get; set; }
         public int FormatOffset { get; set; }
         public int MipCountOffset { get; set; }
+        public int ColorSpaceOffset { get; set; } = -1; // -1 if not found
         public int ImageDataOffset { get; set; }
         public int ImageDataSizeOffset { get; set; }
         public int CompleteImageSizeOffset { get; set; }
@@ -50,6 +51,7 @@ public static class NativeTextureCreator
         public int OriginalWidth { get; set; }
         public int OriginalHeight { get; set; }
         public int OriginalImageDataSize { get; set; }
+        public int OriginalColorSpace { get; set; } = -1;
     }
 
     /// <summary>
@@ -277,6 +279,55 @@ public static class NativeTextureCreator
                 }
             }
 
+            // Search for ColorSpace field between MipCount and ImageData
+            // ColorSpace is a 4-byte int: 0 = Gamma/sRGB, 1 = Linear
+            // It's typically 20-60 bytes after MipCount, before image data
+            int colorSpaceOffset = -1;
+            int colorSpaceValue = -1;
+
+            // In Unity 6, after MipCount we have several bool fields (aligned), then ColorSpace
+            // Scan for a value of 0 or 1 at 4-byte aligned offsets
+            // The ColorSpace is usually followed by LightmapFormat (typically 0-6)
+            int scanStart = mipCountOffset + 4;
+            int scanEnd = imageDataSizeOffset > 0 ? imageDataSizeOffset : bytes.Length - 50;
+
+            for (int scanOffset = scanStart; scanOffset < scanEnd - 8; scanOffset += 4)
+            {
+                int val = BitConverter.ToInt32(bytes, scanOffset);
+                int nextVal = BitConverter.ToInt32(bytes, scanOffset + 4);
+
+                // ColorSpace is 0 or 1, followed by LightmapFormat (0-6 typically)
+                if ((val == 0 || val == 1) && nextVal >= 0 && nextVal <= 10)
+                {
+                    // Additional check: this shouldn't be at the very start (there are bool fields first)
+                    if (scanOffset >= scanStart + 16) // Skip at least 16 bytes of bool fields
+                    {
+                        colorSpaceOffset = scanOffset;
+                        colorSpaceValue = val;
+                        log.AppendLine($"  Found ColorSpace={val} at offset {scanOffset} (LightmapFormat={nextVal})");
+                        break;
+                    }
+                }
+            }
+
+            if (colorSpaceOffset < 0)
+            {
+                log.AppendLine($"  Warning: Could not find ColorSpace field");
+            }
+
+            // Debug: dump bytes between MipCount and ImageData to understand structure
+            log.AppendLine($"  MipCountOffset={mipCountOffset}, ImageDataSizeOffset={imageDataSizeOffset}");
+            log.AppendLine($"  ColorSpaceOffset={colorSpaceOffset} (detected value={colorSpaceValue})");
+            int dumpStart = mipCountOffset + 4;
+            int dumpEnd = Math.Min(dumpStart + 60, imageDataSizeOffset > 0 ? imageDataSizeOffset : bytes.Length);
+            var dumpBytes = new System.Text.StringBuilder("  Bytes after MipCount: ");
+            for (int i = dumpStart; i < dumpEnd; i += 4)
+            {
+                int val = BitConverter.ToInt32(bytes, i);
+                dumpBytes.Append($"[{i}]={val} ");
+            }
+            log.AppendLine(dumpBytes.ToString());
+
             log.AppendLine($"  SUCCESS: {width}x{height}, format={format}, imageDataSize={imageDataSize}");
             parseLog = log.ToString();
 
@@ -289,12 +340,14 @@ public static class NativeTextureCreator
                 HeightOffset = heightOffset,
                 FormatOffset = formatOffset,
                 MipCountOffset = mipCountOffset,
+                ColorSpaceOffset = colorSpaceOffset,
                 ImageDataOffset = imageDataOffset,
                 ImageDataSizeOffset = imageDataSizeOffset,
                 CompleteImageSizeOffset = completeImageSizeOffset,
                 OriginalWidth = width,
                 OriginalHeight = height,
-                OriginalImageDataSize = imageDataSize
+                OriginalImageDataSize = imageDataSize,
+                OriginalColorSpace = colorSpaceValue
             };
         }
         catch (Exception ex)
@@ -447,6 +500,95 @@ public static class NativeTextureCreator
     }
 
     /// <summary>
+    /// Replace an existing Texture2D asset's data in-place.
+    /// This modifies the existing asset at its current PathId rather than creating a new one.
+    /// </summary>
+    public static TextureCreationResult ReplaceTextureInPlace(
+        AssetsFile afile,
+        Texture2DTemplate template,
+        string pngPath,
+        string assetName,
+        AssetFileInfo existingAsset)
+    {
+        var result = new TextureCreationResult
+        {
+            PathId = existingAsset.PathId,
+            AssetName = assetName
+        };
+
+        try
+        {
+            // Validate inputs
+            if (template == null || template.Bytes == null || template.Bytes.Length == 0)
+            {
+                result.ErrorMessage = "Template is null or empty";
+                return result;
+            }
+
+            if (!File.Exists(pngPath))
+            {
+                result.ErrorMessage = $"PNG file not found: {pngPath}";
+                return result;
+            }
+
+            // Load and decode the PNG
+            Image<Rgba32> image;
+            try
+            {
+                image = Image.Load<Rgba32>(pngPath);
+            }
+            catch (Exception imgEx)
+            {
+                result.ErrorMessage = $"Failed to load image: {imgEx.Message}";
+                return result;
+            }
+
+            using (image)
+            {
+                result.Width = image.Width;
+                result.Height = image.Height;
+
+                // Convert to raw RGBA32 bytes (Unity expects bottom-to-top)
+                var pixelData = new byte[image.Width * image.Height * 4];
+                image.ProcessPixelRows(accessor =>
+                {
+                    for (int y = 0; y < accessor.Height; y++)
+                    {
+                        int destY = accessor.Height - 1 - y;
+                        var row = accessor.GetRowSpan(y);
+                        for (int x = 0; x < accessor.Width; x++)
+                        {
+                            int destIndex = (destY * accessor.Width + x) * 4;
+                            pixelData[destIndex + 0] = row[x].R;
+                            pixelData[destIndex + 1] = row[x].G;
+                            pixelData[destIndex + 2] = row[x].B;
+                            pixelData[destIndex + 3] = row[x].A;
+                        }
+                    }
+                });
+
+                // Build the new Texture2D bytes
+                var textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData);
+                if (textureBytes == null)
+                {
+                    result.ErrorMessage = "Failed to build texture bytes";
+                    return result;
+                }
+
+                // Replace the existing asset's data in-place
+                existingAsset.SetNewData(textureBytes);
+                result.Success = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.ErrorMessage = $"Failed to replace texture: {ex.Message}";
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Build Texture2D bytes by patching the template.
     /// </summary>
     private static byte[]? BuildTexture2DBytes(
@@ -553,10 +695,7 @@ public static class NativeTextureCreator
         dstOffset += 4;
 
         // Copy bytes between mip count and image data size
-        int adjustedImageDataSizeOffset = template.ImageDataSizeOffset + nameSizeDiff;
-        int bytesToImageData = template.ImageDataSizeOffset - srcOffset + (template.NameOffset + origNameTotalLen) - (template.NameOffset + origNameTotalLen);
-
-        // Actually, let's simplify: copy everything from current position to image data size offset
+        // This includes IsReadable, ColorSpace, TextureSettings, etc.
         int srcImageSizeOffset = template.ImageDataSizeOffset;
         int bytesUntilImageSize = srcImageSizeOffset - srcOffset;
         Array.Copy(template.Bytes, srcOffset, newBytes, dstOffset, bytesUntilImageSize);

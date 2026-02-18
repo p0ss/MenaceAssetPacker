@@ -369,6 +369,47 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         set => this.RaiseAndSetIfChanged(ref _hasModifiedReplacement, value);
     }
 
+    /// <summary>
+    /// Checks if a specific asset path has a modpack replacement.
+    /// Used by the bulk editor to show modified status.
+    /// </summary>
+    /// <param name="fullPath">The full path to the asset file.</param>
+    /// <returns>True if this asset has a staging replacement.</returns>
+    public bool HasModpackReplacement(string fullPath)
+    {
+        if (string.IsNullOrEmpty(_currentModpackName) || string.IsNullOrEmpty(fullPath))
+            return false;
+
+        // Get the relative path from full path
+        var assetRoot = AppSettings.GetEffectiveAssetsPath();
+        if (string.IsNullOrEmpty(assetRoot))
+            return false;
+
+        var relativePath = GetRelativeAssetPath(fullPath);
+        if (string.IsNullOrEmpty(relativePath))
+            return false;
+
+        return _modpackAssetPaths.Contains(relativePath);
+    }
+
+    private string? GetRelativeAssetPath(string fullPath)
+    {
+        var assetRoot = AppSettings.GetEffectiveAssetsPath();
+        if (string.IsNullOrEmpty(assetRoot))
+            return null;
+
+        // Normalize paths for comparison
+        var normalizedRoot = assetRoot.Replace('\\', '/').TrimEnd('/') + "/";
+        var normalizedPath = fullPath.Replace('\\', '/');
+
+        if (normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return normalizedPath.Substring(normalizedRoot.Length);
+        }
+
+        return null;
+    }
+
     private int _modifiedImageWidth;
     public int ModifiedImageWidth
     {

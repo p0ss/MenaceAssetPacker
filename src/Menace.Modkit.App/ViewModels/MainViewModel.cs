@@ -65,6 +65,12 @@ public sealed class MainViewModel : ViewModelBase
             NavigateTo(Docs, "Docs");
             Docs.NavigateToDocByName("lua-scripting");
         };
+
+        // Wire up modpack refresh when tool settings changes deploy state
+        ToolSettings.ModpacksNeedRefresh += (_, _) =>
+        {
+            Modpacks.RefreshModpacks();
+        };
     }
 
     // Home

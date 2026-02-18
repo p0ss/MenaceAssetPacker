@@ -372,5 +372,112 @@ public static class NativeSpriteCreator
         return newBytes;
     }
 
+    /// <summary>
+    /// Update an existing Sprite's texture reference to point to a new texture PathId.
+    /// Uses pattern matching to find and replace PPtr references.
+    /// </summary>
+    public static bool UpdateSpriteTextureReference(
+        AssetsFile afile,
+        AssetFileInfo spriteAsset,
+        long oldTexturePathId,
+        long newTexturePathId,
+        int newWidth,
+        int newHeight)
+    {
+        try
+        {
+            // Read existing sprite bytes
+            var reader = afile.Reader;
+            reader.BaseStream.Position = spriteAsset.GetAbsoluteByteOffset(afile);
+            var bytes = reader.ReadBytes((int)spriteAsset.ByteSize);
+
+            // Create a copy of the bytes to modify
+            var newBytes = (byte[])bytes.Clone();
+            bool foundAndPatched = false;
+
+            // Search for and patch all occurrences of the old texture PathId
+            // PPtr format: FileId (4 bytes) + PathId (8 bytes)
+            for (int i = 0; i < newBytes.Length - 12; i += 4) // 4-byte aligned
+            {
+                int fileId = BitConverter.ToInt32(newBytes, i);
+                long pathId = BitConverter.ToInt64(newBytes, i + 4);
+
+                // Match: FileId=0 (same file) and PathId matches old texture
+                if (fileId == 0 && pathId == oldTexturePathId)
+                {
+                    // Patch to new PathId
+                    Array.Copy(BitConverter.GetBytes(newTexturePathId), 0, newBytes, i + 4, 8);
+                    foundAndPatched = true;
+                    // Continue searching in case there are multiple references
+                }
+            }
+
+            if (!foundAndPatched)
+                return false;
+
+            // Try to update rect dimensions if we can parse the sprite
+            var template = TryParseSprite(bytes, spriteAsset);
+            if (template != null)
+            {
+                // Rect is at template.RectOffset: x(4), y(4), width(4), height(4)
+                Array.Copy(BitConverter.GetBytes(0f), 0, newBytes, template.RectOffset, 4);      // x = 0
+                Array.Copy(BitConverter.GetBytes(0f), 0, newBytes, template.RectOffset + 4, 4);  // y = 0
+                Array.Copy(BitConverter.GetBytes((float)newWidth), 0, newBytes, template.RectOffset + 8, 4);
+                Array.Copy(BitConverter.GetBytes((float)newHeight), 0, newBytes, template.RectOffset + 12, 4);
+            }
+
+            // Apply the changes
+            spriteAsset.SetNewData(newBytes);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Find all Sprites that reference a given texture PathId.
+    /// Uses pattern matching to find PPtr references rather than full parsing.
+    /// </summary>
+    public static List<AssetFileInfo> FindSpritesReferencingTexture(AssetsFile afile, long texturePathId)
+    {
+        var result = new List<AssetFileInfo>();
+        var reader = afile.Reader;
+
+        // PPtr pattern: FileId (4 bytes, typically 0 for same file) + PathId (8 bytes)
+        var pathIdBytes = BitConverter.GetBytes(texturePathId);
+
+        foreach (var info in afile.GetAssetsOfType(AssetClassID.Sprite))
+        {
+            try
+            {
+                reader.BaseStream.Position = info.GetAbsoluteByteOffset(afile);
+                var bytes = reader.ReadBytes((int)info.ByteSize);
+
+                // Search for the PathId pattern in the sprite bytes
+                // The texture PPtr is FileId(4) + PathId(8), FileId is typically 0 for same-file refs
+                for (int i = 0; i < bytes.Length - 12; i += 4) // 4-byte aligned
+                {
+                    int fileId = BitConverter.ToInt32(bytes, i);
+                    long pathId = BitConverter.ToInt64(bytes, i + 4);
+
+                    // Match: FileId=0 (same file) and PathId matches target
+                    if (fileId == 0 && pathId == texturePathId)
+                    {
+                        result.Add(info);
+                        break; // Found a match, no need to continue searching this sprite
+                    }
+                }
+            }
+            catch
+            {
+                // Skip problematic sprites
+            }
+        }
+
+        return result;
+    }
+
     private static int Align4(int offset) => (offset + 3) & ~3;
 }

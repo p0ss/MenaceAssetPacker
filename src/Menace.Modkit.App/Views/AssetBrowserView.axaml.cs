@@ -1,9 +1,12 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -12,6 +15,7 @@ using Menace.Modkit.App.Converters;
 using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
+using ReactiveUI;
 
 namespace Menace.Modkit.App.Views;
 
@@ -433,20 +437,44 @@ public class AssetBrowserView : UserControl
         outerGrid.Children.Add(toolbar);
         Grid.SetRow(toolbar, 0);
 
-        // Row 1: Two-column Vanilla | Modified
-        var contentGrid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,*")
-        };
+        // Row 1: Content container for either bulk editor or file preview panels
+        var contentContainer = new Panel();
 
-        contentGrid.Children.Add(BuildVanillaPanel());
-        Grid.SetColumn((Control)contentGrid.Children[0], 0);
+        // Build the bulk editor panel (shown when folder selected)
+        // Wrap in a container so visibility binding doesn't break when BulkEditorPanel's DataContext changes
+        var bulkEditorWrapper = new Border();
+        bulkEditorWrapper.Bind(Control.IsVisibleProperty,
+            new Avalonia.Data.Binding("SelectedNode")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
+                    obj is AssetTreeNode node && !node.IsFile && node.Children.Count > 0)
+            });
+        var thumbnailGrid = BuildAssetThumbnailGrid();
+        bulkEditorWrapper.Child = thumbnailGrid;
+        contentContainer.Children.Add(bulkEditorWrapper);
 
-        contentGrid.Children.Add(BuildModifiedPanel());
-        Grid.SetColumn((Control)contentGrid.Children[1], 1);
+        // Build the file preview panels (shown when file selected)
+        var previewPanels = BuildFilePreviewPanels();
+        previewPanels.Bind(Control.IsVisibleProperty,
+            new Avalonia.Data.Binding("SelectedNode")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
+                    obj is AssetTreeNode node && node.IsFile)
+            });
+        contentContainer.Children.Add(previewPanels);
 
-        outerGrid.Children.Add(contentGrid);
-        Grid.SetRow(contentGrid, 1);
+        // Empty state (when no selection or empty folder)
+        var emptyState = BuildAssetEmptyState();
+        emptyState.Bind(Control.IsVisibleProperty,
+            new Avalonia.Data.Binding("SelectedNode")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<object?, bool>(obj =>
+                    obj == null || (obj is AssetTreeNode node && !node.IsFile && node.Children.Count == 0))
+            });
+        contentContainer.Children.Add(emptyState);
+
+        outerGrid.Children.Add(contentContainer);
+        Grid.SetRow(contentContainer, 1);
 
         // Row 2: Referenced By panel
         var backlinksPanel = BuildAssetBacklinksPanel();
@@ -573,6 +601,306 @@ public class AssetBrowserView : UserControl
             });
 
         return panel;
+    }
+
+    private Control BuildAssetEmptyState()
+    {
+        return new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "Select an asset file or folder to view details",
+                    FontSize = 14,
+                    Foreground = Brushes.White,
+                    Opacity = 0.6
+                }
+            }
+        };
+    }
+
+    private Control BuildAssetThumbnailGrid()
+    {
+        var outerPanel = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*")
+        };
+
+        // Header showing folder path and count
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 12),
+            Spacing = 12
+        };
+
+        var folderNameText = new TextBlock
+        {
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        };
+        header.Children.Add(folderNameText);
+
+        var countText = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        header.Children.Add(countText);
+
+        // Legend for highlighting
+        var legendPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Margin = new Thickness(24, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        legendPanel.Children.Add(new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            Width = 12,
+            Height = 12,
+            CornerRadius = new CornerRadius(2)
+        });
+        legendPanel.Children.Add(new TextBlock
+        {
+            Text = "= Has replacement",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.Parse("#888888")),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        header.Children.Add(legendPanel);
+
+        outerPanel.Children.Add(header);
+        Grid.SetRow(header, 0);
+
+        // Thumbnail grid using ItemsControl with WrapPanel
+        var itemsControl = new ItemsControl();
+        var scrollViewer = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = itemsControl
+        };
+
+        // Use WrapPanel for layout
+        itemsControl.ItemsPanel = new Avalonia.Controls.Templates.FuncTemplate<Panel?>(() =>
+            new WrapPanel { Orientation = Orientation.Horizontal });
+
+        outerPanel.Children.Add(scrollViewer);
+        Grid.SetRow(scrollViewer, 1);
+
+        IDisposable? currentSubscription = null;
+        AssetTreeNode? lastLoadedNode = null;
+
+        // Subscribe to selection changes
+        this.GetObservable(DataContextProperty).Subscribe(dc =>
+        {
+            currentSubscription?.Dispose();
+            currentSubscription = null;
+            lastLoadedNode = null;
+
+            if (dc is AssetBrowserViewModel vm)
+            {
+                currentSubscription = vm.WhenAnyValue(x => x.SelectedNode).Subscribe(node =>
+                {
+                    if (node is AssetTreeNode treeNode && !treeNode.IsFile && treeNode.Children.Count > 0)
+                    {
+                        if (ReferenceEquals(treeNode, lastLoadedNode))
+                            return;
+                        lastLoadedNode = treeNode;
+
+                        // Update header
+                        folderNameText.Text = treeNode.FullPath;
+                        var files = GetAllFilesInFolder(treeNode).ToList();
+                        countText.Text = $"({files.Count} files)";
+
+                        // Build thumbnail items
+                        var items = new List<Control>();
+                        foreach (var file in files)
+                        {
+                            var hasReplacement = vm.HasModpackReplacement(file.FullPath);
+                            items.Add(CreateAssetThumbnail(file, hasReplacement, vm));
+                        }
+                        itemsControl.ItemsSource = items;
+                    }
+                });
+            }
+        });
+
+        return outerPanel;
+    }
+
+    private Control CreateAssetThumbnail(AssetTreeNode file, bool hasReplacement, AssetBrowserViewModel vm)
+    {
+        var card = new Border
+        {
+            Width = 100,
+            Height = 120,
+            Margin = new Thickness(4),
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.Parse("#252525")),
+            BorderThickness = new Thickness(2),
+            BorderBrush = hasReplacement
+                ? new SolidColorBrush(Color.Parse("#8ECDC8"))  // Teal for replaced
+                : new SolidColorBrush(Color.Parse("#3E3E3E")), // Grey for normal
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var stack = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        // Check if this is an image file we can show a thumbnail for
+        var ext = System.IO.Path.GetExtension(file.Name).ToLowerInvariant();
+        var isImage = ext is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif";
+
+        if (isImage && System.IO.File.Exists(file.FullPath))
+        {
+            try
+            {
+                // Load image thumbnail
+                var image = new Avalonia.Controls.Image
+                {
+                    Width = 80,
+                    Height = 80,
+                    Stretch = Stretch.Uniform,
+                    Margin = new Thickness(4)
+                };
+
+                // Load asynchronously to avoid blocking UI
+                _ = LoadImageThumbnailAsync(image, file.FullPath);
+
+                stack.Children.Add(image);
+            }
+            catch
+            {
+                // Fall back to icon if image load fails
+                AddIconToStack(stack, file.Name, hasReplacement);
+            }
+        }
+        else
+        {
+            // Use icon for non-image files
+            AddIconToStack(stack, file.Name, hasReplacement);
+        }
+
+        // File name
+        var nameText = new TextBlock
+        {
+            Text = file.Name,
+            FontSize = 10,
+            Foreground = Brushes.White,
+            TextAlignment = TextAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 90,
+            Margin = new Thickness(4, 4, 4, 4),
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        stack.Children.Add(nameText);
+
+        card.Child = stack;
+
+        // Click to select this file
+        card.PointerPressed += (s, e) =>
+        {
+            vm.SelectedNode = file;
+        };
+
+        // Tooltip with full path
+        ToolTip.SetTip(card, file.FullPath + (hasReplacement ? "\n(Has modpack replacement)" : ""));
+
+        return card;
+    }
+
+    private static void AddIconToStack(StackPanel stack, string fileName, bool hasReplacement)
+    {
+        var icon = new TextBlock
+        {
+            Text = GetFileTypeIcon(fileName),
+            FontSize = 32,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 8),
+            Foreground = hasReplacement
+                ? new SolidColorBrush(Color.Parse("#8ECDC8"))
+                : new SolidColorBrush(Color.Parse("#888888"))
+        };
+        stack.Children.Add(icon);
+    }
+
+    private static async System.Threading.Tasks.Task LoadImageThumbnailAsync(Avalonia.Controls.Image imageControl, string filePath)
+    {
+        try
+        {
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                using var stream = System.IO.File.OpenRead(filePath);
+                var bitmap = new Avalonia.Media.Imaging.Bitmap(stream);
+
+                // Dispatch to UI thread
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    imageControl.Source = bitmap;
+                });
+            });
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Warn($"Failed to load thumbnail for {filePath}: {ex.Message}");
+        }
+    }
+
+    private static string GetFileTypeIcon(string fileName)
+    {
+        var ext = System.IO.Path.GetExtension(fileName).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga" or ".dds" => "🖼",
+            ".wav" or ".ogg" or ".mp3" or ".aiff" => "🔊",
+            ".glb" or ".gltf" or ".fbx" or ".obj" or ".mesh" => "🎲",
+            ".json" or ".xml" or ".txt" or ".cfg" => "📄",
+            ".mat" or ".shader" => "🎨",
+            ".prefab" => "📦",
+            ".anim" or ".controller" => "🎬",
+            ".asset" => "⚙️",
+            _ => "📁"
+        };
+    }
+
+    private IEnumerable<AssetTreeNode> GetAllFilesInFolder(AssetTreeNode folder)
+    {
+        foreach (var child in folder.Children)
+        {
+            if (child.IsFile)
+            {
+                yield return child;
+            }
+        }
+    }
+
+    private Control BuildFilePreviewPanels()
+    {
+        // Two-column Vanilla | Modified
+        var contentGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,*")
+        };
+
+        contentGrid.Children.Add(BuildVanillaPanel());
+        Grid.SetColumn((Control)contentGrid.Children[0], 0);
+
+        contentGrid.Children.Add(BuildModifiedPanel());
+        Grid.SetColumn((Control)contentGrid.Children[1], 1);
+
+        return contentGrid;
     }
 
     private Control BuildVanillaPanel()

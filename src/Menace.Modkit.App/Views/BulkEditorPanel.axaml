@@ -1,0 +1,7 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Menace.Modkit.App.ViewModels"
+             x:Class="Menace.Modkit.App.Views.BulkEditorPanel"
+             x:DataType="vm:BulkEditorViewModel">
+  <!-- UI constructed in code-behind for dynamic column generation -->
+</UserControl>

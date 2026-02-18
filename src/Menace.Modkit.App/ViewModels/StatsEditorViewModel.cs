@@ -952,6 +952,100 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
+    #region Bulk Editing Support
+
+    /// <summary>
+    /// Sets a field value for bulk editing operations.
+    /// Updates the pending changes dictionary directly without requiring UI selection.
+    /// </summary>
+    /// <param name="compositeKey">The template key in format "TemplateType/instanceName".</param>
+    /// <param name="fieldName">The field name to update.</param>
+    /// <param name="value">The new value.</param>
+    /// <returns>True if the change was recorded successfully.</returns>
+    public bool SetBulkEditChange(string compositeKey, string fieldName, object? value)
+    {
+        if (string.IsNullOrEmpty(_currentModpackName))
+            return false;
+
+        if (!_pendingChanges.TryGetValue(compositeKey, out var fields))
+        {
+            fields = new Dictionary<string, object?>();
+            _pendingChanges[compositeKey] = fields;
+        }
+
+        fields[fieldName] = value;
+        this.RaisePropertyChanged(nameof(HasModifications));
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the staging overrides for a specific template key.
+    /// Used by bulk editor to determine initial modified state.
+    /// </summary>
+    public Dictionary<string, object?>? GetStagingOverridesForKey(string compositeKey)
+    {
+        return _stagingOverrides.TryGetValue(compositeKey, out var overrides) ? overrides : null;
+    }
+
+    /// <summary>
+    /// Gets the pending changes for a specific template key.
+    /// Used by bulk editor to determine unsaved changes.
+    /// </summary>
+    public Dictionary<string, object?>? GetPendingChangesForKey(string compositeKey)
+    {
+        return _pendingChanges.TryGetValue(compositeKey, out var changes) ? changes : null;
+    }
+
+    /// <summary>
+    /// Converts a template to a property dictionary.
+    /// Exposed for use by the bulk editor.
+    /// </summary>
+    public Dictionary<string, object?> ConvertTemplateToPropertiesPublic(DataTemplate template)
+    {
+        return ConvertTemplateToProperties(template);
+    }
+
+    /// <summary>
+    /// Gets all children of a category node for bulk editing.
+    /// </summary>
+    public IEnumerable<TreeNodeViewModel> GetCategoryChildren(TreeNodeViewModel categoryNode)
+    {
+        if (!categoryNode.IsCategory)
+            yield break;
+
+        foreach (var child in categoryNode.Children)
+        {
+            if (!child.IsCategory && child.Template != null)
+                yield return child;
+        }
+    }
+
+    /// <summary>
+    /// Gets the template type name for a category node.
+    /// </summary>
+    public string? GetCategoryTemplateType(TreeNodeViewModel categoryNode)
+    {
+        if (!categoryNode.IsCategory)
+            return null;
+
+        // Find the first child with a template to get the type
+        foreach (var child in categoryNode.Children)
+        {
+            if (child.Template is DynamicDataTemplate dyn && !string.IsNullOrEmpty(dyn.TemplateTypeName))
+                return dyn.TemplateTypeName;
+        }
+
+        // If no children with templates, the category name is usually the template type
+        return categoryNode.Name;
+    }
+
+    /// <summary>
+    /// Gets the SchemaService for bulk editor column type detection.
+    /// </summary>
+    public SchemaService SchemaService => _schemaService;
+
+    #endregion
+
     public void SaveToStaging()
     {
         if (string.IsNullOrEmpty(_currentModpackName))

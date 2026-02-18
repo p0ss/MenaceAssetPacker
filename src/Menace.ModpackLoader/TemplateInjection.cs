@@ -168,47 +168,142 @@ public partial class ModpackLoaderMod
         return false;
     }
 
-    /// <summary>
-    /// Write a string value directly to a LocalizedLine/LocalizedMultiLine object's m_DefaultTranslation field.
-    /// This bypasses the type system since we can't construct these wrappers from strings.
-    /// Based on reverse engineering: m_DefaultTranslation is at offset +0x38.
-    /// </summary>
-    private bool WriteLocalizedStringValue(object locObject, string value)
-    {
-        if (locObject == null || !(locObject is Il2CppObjectBase il2cppObj))
-            return false;
+    // Memory layout offsets for BaseLocalizedString (from reverse engineering)
+    private const int LOC_CATEGORY_OFFSET = 0x10;           // int LocaCategory
+    private const int LOC_KEY_PART1_OFFSET = 0x18;          // string m_KeyPart1
+    private const int LOC_KEY_PART2_OFFSET = 0x20;          // string m_KeyPart2
+    private const int LOC_CATEGORY_NAME_OFFSET = 0x28;      // string m_CategoryName
+    private const int LOC_IDENTIFIER_OFFSET = 0x30;         // string m_Identifier
+    private const int LOC_DEFAULT_TRANSLATION_OFFSET = 0x38; // string m_DefaultTranslation
+    private const int LOC_HAS_PLACEHOLDERS_OFFSET = 0x40;   // bool hasPlaceholders
 
+    // Cache for LocalizedLine/LocalizedMultiLine class pointers
+    private static IntPtr _localizedLineClass = IntPtr.Zero;
+    private static IntPtr _localizedMultiLineClass = IntPtr.Zero;
+
+    /// <summary>
+    /// Get the IL2CPP class pointer for LocalizedLine.
+    /// </summary>
+    private static IntPtr GetLocalizedLineClass()
+    {
+        if (_localizedLineClass != IntPtr.Zero)
+            return _localizedLineClass;
+
+        _localizedLineClass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "Menace.Tools", "LocalizedLine");
+        return _localizedLineClass;
+    }
+
+    /// <summary>
+    /// Get the IL2CPP class pointer for LocalizedMultiLine.
+    /// </summary>
+    private static IntPtr GetLocalizedMultiLineClass()
+    {
+        if (_localizedMultiLineClass != IntPtr.Zero)
+            return _localizedMultiLineClass;
+
+        _localizedMultiLineClass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "Menace.Tools", "LocalizedMultiLine");
+        return _localizedMultiLineClass;
+    }
+
+    /// <summary>
+    /// Create a new LocalizedLine or LocalizedMultiLine object with the given text.
+    /// Creates a FRESH instance to avoid corrupting shared localization objects.
+    /// </summary>
+    private IntPtr CreateLocalizedObject(IntPtr existingLocPtr, string value)
+    {
         try
         {
-            var ptr = il2cppObj.Pointer;
-            if (ptr == IntPtr.Zero)
-                return false;
+            // Get the class of the existing object to create the same type
+            var existingClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
+            if (existingClass == IntPtr.Zero)
+            {
+                SdkLogger.Warning("    CreateLocalizedObject: could not get class of existing object");
+                return IntPtr.Zero;
+            }
 
-            // m_DefaultTranslation is at offset +0x38 (0x38 = 56 bytes)
-            const int M_DEFAULT_TRANSLATION_OFFSET = 0x38;
+            // Get the class name to determine if it's LocalizedLine or LocalizedMultiLine
+            var classNamePtr = IL2CPP.il2cpp_class_get_name(existingClass);
+            var className = classNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(classNamePtr) : "";
 
-            // Convert managed string to IL2CPP string
+            // Get the appropriate class pointer
+            IntPtr newClass;
+            if (className == "LocalizedMultiLine")
+            {
+                newClass = GetLocalizedMultiLineClass();
+            }
+            else
+            {
+                // Default to LocalizedLine for LocalizedLine or BaseLocalizedString
+                newClass = GetLocalizedLineClass();
+            }
+
+            if (newClass == IntPtr.Zero)
+            {
+                SdkLogger.Warning($"    CreateLocalizedObject: could not find class for {className}");
+                return IntPtr.Zero;
+            }
+
+            // Allocate a new instance
+            var newObj = IL2CPP.il2cpp_object_new(newClass);
+            if (newObj == IntPtr.Zero)
+            {
+                SdkLogger.Warning("    CreateLocalizedObject: il2cpp_object_new returned null");
+                return IntPtr.Zero;
+            }
+
+            // Copy key fields from the existing object to maintain localization key structure
+            // This ensures the object has valid category/identifier for the localization system
+            // but with our custom m_DefaultTranslation that will be used as fallback
+
+            // Copy LocaCategory (int at +0x10)
+            int category = Marshal.ReadInt32(existingLocPtr + LOC_CATEGORY_OFFSET);
+            Marshal.WriteInt32(newObj + LOC_CATEGORY_OFFSET, category);
+
+            // Copy m_KeyPart1 (string at +0x18)
+            IntPtr keyPart1 = Marshal.ReadIntPtr(existingLocPtr + LOC_KEY_PART1_OFFSET);
+            Marshal.WriteIntPtr(newObj + LOC_KEY_PART1_OFFSET, keyPart1);
+
+            // Copy m_KeyPart2 (string at +0x20)
+            IntPtr keyPart2 = Marshal.ReadIntPtr(existingLocPtr + LOC_KEY_PART2_OFFSET);
+            Marshal.WriteIntPtr(newObj + LOC_KEY_PART2_OFFSET, keyPart2);
+
+            // Copy m_CategoryName (string at +0x28)
+            IntPtr categoryName = Marshal.ReadIntPtr(existingLocPtr + LOC_CATEGORY_NAME_OFFSET);
+            Marshal.WriteIntPtr(newObj + LOC_CATEGORY_NAME_OFFSET, categoryName);
+
+            // Copy m_Identifier (string at +0x30)
+            IntPtr identifier = Marshal.ReadIntPtr(existingLocPtr + LOC_IDENTIFIER_OFFSET);
+            Marshal.WriteIntPtr(newObj + LOC_IDENTIFIER_OFFSET, identifier);
+
+            // Set m_DefaultTranslation to our new value (string at +0x38)
             IntPtr il2cppStr = IntPtr.Zero;
             if (!string.IsNullOrEmpty(value))
             {
                 il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
             }
+            Marshal.WriteIntPtr(newObj + LOC_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
 
-            // Write the string pointer to the field
-            Marshal.WriteIntPtr(ptr + M_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+            // Copy hasPlaceholders (bool at +0x40)
+            byte hasPlaceholders = Marshal.ReadByte(existingLocPtr + LOC_HAS_PLACEHOLDERS_OFFSET);
+            Marshal.WriteByte(newObj + LOC_HAS_PLACEHOLDERS_OFFSET, hasPlaceholders);
 
-            return true;
+            return newObj;
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
-            return false;
+            SdkLogger.Warning($"    CreateLocalizedObject failed: {ex.Message}");
+            return IntPtr.Zero;
         }
     }
 
     /// <summary>
-    /// Write a localized string to a template's localization field by reading the field directly from memory.
-    /// This avoids property getters which can crash on certain objects.
+    /// Write a localized string to a template's localization field.
+    /// Creates a NEW localization object to avoid corrupting shared instances.
+    ///
+    /// IMPORTANT: The old approach modified the shared LocalizedLine/LocalizedMultiLine
+    /// instances directly, which caused random text corruption across unrelated templates
+    /// that shared the same localization key. This new approach creates a fresh object
+    /// for each modified field.
     /// </summary>
     private bool WriteLocalizedFieldDirect(Il2CppObjectBase templateObj, string fieldName, string value)
     {
@@ -231,23 +326,57 @@ public partial class ModpackLoaderMod
                 return false;
             }
 
-            // Read the localization object pointer directly from memory
-            var locPtr = Marshal.ReadIntPtr(templatePtr + (int)fieldOffset);
-            if (locPtr == IntPtr.Zero)
+            // Read the existing localization object pointer
+            var existingLocPtr = Marshal.ReadIntPtr(templatePtr + (int)fieldOffset);
+            if (existingLocPtr == IntPtr.Zero)
             {
                 SdkLogger.Warning($"    {fieldName}: localization object is null");
                 return false;
             }
 
-            // Validate the pointer looks reasonable (not a small integer masquerading as pointer)
-            if (locPtr.ToInt64() < 0x10000)
+            // Validate the pointer looks reasonable
+            if (existingLocPtr.ToInt64() < 0x10000)
             {
                 SdkLogger.Warning($"    {fieldName}: invalid localization pointer");
                 return false;
             }
 
-            // m_DefaultTranslation is at offset +0x38 (56 bytes)
-            const int M_DEFAULT_TRANSLATION_OFFSET = 0x38;
+            // Create a NEW localization object with our text
+            // This avoids corrupting shared localization instances
+            var newLocPtr = CreateLocalizedObject(existingLocPtr, value);
+            if (newLocPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning($"    {fieldName}: failed to create new localization object");
+                return false;
+            }
+
+            // Write the NEW object pointer to the template's field
+            Marshal.WriteIntPtr(templatePtr + (int)fieldOffset, newLocPtr);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"    WriteLocalizedFieldDirect({fieldName}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Write a string value to an existing localization object.
+    /// DEPRECATED: This method modifies shared instances and can cause corruption.
+    /// Kept for cases where we already have a newly-created object.
+    /// </summary>
+    private bool WriteLocalizedStringValue(object locObject, string value)
+    {
+        if (locObject == null || !(locObject is Il2CppObjectBase il2cppObj))
+            return false;
+
+        try
+        {
+            var ptr = il2cppObj.Pointer;
+            if (ptr == IntPtr.Zero)
+                return false;
 
             // Convert managed string to IL2CPP string
             IntPtr il2cppStr = IntPtr.Zero;
@@ -256,14 +385,14 @@ public partial class ModpackLoaderMod
                 il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
             }
 
-            // Write the string pointer to the localization object's m_DefaultTranslation field
-            Marshal.WriteIntPtr(locPtr + M_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+            // Write the string pointer to the field
+            Marshal.WriteIntPtr(ptr + LOC_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
 
             return true;
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"    WriteLocalizedFieldDirect({fieldName}) failed: {ex.Message}");
+            SdkLogger.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
             return false;
         }
     }

@@ -221,6 +221,7 @@ public class BundleCompiler
             // Load globalgamemanagers to get ResourceManager path mappings
             var ggmPath = Path.Combine(Path.GetDirectoryName(primaryDataFile)!, "globalgamemanagers");
             var resourcePathLookup = new Dictionary<string, string>(); // templateName -> resourcePath
+            var originalResourceRefs = new Dictionary<string, (int FileId, long PathId)>(StringComparer.OrdinalIgnoreCase); // resourcePath -> original (FileId, PathId)
             byte[]? ggmBytes = null;
 
             if (File.Exists(ggmPath) && (hasClones || hasAudio || hasTextures || hasModels))
@@ -230,7 +231,7 @@ public class BundleCompiler
                     var ggmInst = am.LoadAssetsFile(ggmPath, false);
                     var ggmFile = ggmInst.file;
 
-                    // Parse ResourceManager to build path lookup
+                    // Parse ResourceManager to build path lookups
                     foreach (var info in ggmFile.AssetInfos)
                     {
                         if (info.TypeId == 147) // ResourceManager
@@ -239,7 +240,7 @@ public class BundleCompiler
                             ggmFile.Reader.BaseStream.Position = absOffset;
                             var rmBytes = ggmFile.Reader.ReadBytes((int)info.ByteSize);
 
-                            resourcePathLookup = ParseResourceManager(rmBytes, assetsByName);
+                            (resourcePathLookup, originalResourceRefs) = ParseResourceManager(rmBytes, assetsByName);
                             result.Warnings.Add($"ResourceManager indexed {resourcePathLookup.Count} template paths");
                             break;
                         }
@@ -340,7 +341,7 @@ public class BundleCompiler
             {
                 var textureResult = ProcessTextureAssets(
                     afile, am, gameDataPath, textureEntries!, textureAssets, spriteAssets,
-                    textureResourcePaths, spriteResourcePaths, ref nextPathId);
+                    textureResourcePaths, spriteResourcePaths, originalResourceRefs, ref nextPathId);
 
                 result.TexturesCreated = textureAssets.Count;
                 result.SpritesCreated = spriteAssets.Count;
@@ -463,7 +464,7 @@ public class BundleCompiler
                 {
                     try
                     {
-                        var patchedGgm = PatchResourceManager(
+                        var (patchedGgm, rmDebugInfo) = PatchResourceManager(
                             ggmBytes,
                             clonedAssets,
                             cloneSourceMap,
@@ -478,6 +479,11 @@ public class BundleCompiler
                             modelResourcePaths,
                             prefabAssets,
                             prefabResourcePaths);
+
+                        if (!string.IsNullOrEmpty(rmDebugInfo))
+                        {
+                            result.Warnings.Add($"[ResourceManager Debug] {rmDebugInfo}");
+                        }
 
                         if (patchedGgm != null)
                         {
@@ -809,6 +815,8 @@ public class BundleCompiler
 
     /// <summary>
     /// Process PNG files and create native Texture2D/Sprite assets.
+    /// For textures that exist in originalResourceRefs, replace in-place.
+    /// For new textures, create with new PathId.
     /// </summary>
     private TextureProcessResult ProcessTextureAssets(
         AssetsFile afile,
@@ -819,6 +827,7 @@ public class BundleCompiler
         Dictionary<string, AssetFileInfo> spriteAssets,
         Dictionary<string, string> textureResourcePaths,
         Dictionary<string, string> spriteResourcePaths,
+        Dictionary<string, (int FileId, long PathId)> originalResourceRefs,
         ref long nextPathId)
     {
         var result = new TextureProcessResult();
@@ -915,73 +924,94 @@ public class BundleCompiler
                     continue;
                 }
 
-                // Create Texture2D
-                var texturePathId = nextPathId++;
-                var texResult = NativeTextureCreator.CreateFromPng(
-                    afile,
-                    textureTemplate,
-                    entry.SourceFilePath,
-                    entry.AssetName,
-                    texturePathId);
+                // Check if this is a replacement (existing resource path in original ResourceManager)
+                var resourcePath = !string.IsNullOrEmpty(entry.ResourcePath) ? entry.ResourcePath : $"assets/textures/{entry.AssetName}";
+                bool isReplacement = originalResourceRefs.TryGetValue(resourcePath, out var originalRef);
 
-                if (texResult.Success)
+                if (isReplacement)
                 {
-                    // Find the created asset info
-                    var texInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == texResult.PathId);
-                    if (texInfo != null)
+                    // IN-PLACE REPLACEMENT: Replace existing asset bytes at original PathId
+                    // This preserves all existing references (Sprites, Materials, etc.)
+                    var existingAsset = afile.AssetInfos.FirstOrDefault(i => i.PathId == originalRef.PathId);
+                    if (existingAsset != null)
                     {
-                        textureAssets[entry.AssetName] = texInfo;
-                        if (!string.IsNullOrEmpty(entry.ResourcePath))
+                        var texResult = NativeTextureCreator.ReplaceTextureInPlace(
+                            afile,
+                            textureTemplate,
+                            entry.SourceFilePath,
+                            entry.AssetName,
+                            existingAsset);
+
+                        if (texResult.Success)
                         {
-                            textureResourcePaths[entry.AssetName] = entry.ResourcePath;
+                            textureAssets[entry.AssetName] = existingAsset;
+                            result.Warnings.Add($"Texture '{entry.AssetName}' REPLACED in-place at PathId={originalRef.PathId}");
                         }
                         else
                         {
-                            // Default resource path based on asset name
-                            textureResourcePaths[entry.AssetName] = $"assets/textures/{entry.AssetName}";
+                            result.Warnings.Add($"Texture '{entry.AssetName}' in-place replace failed: {texResult.ErrorMessage}");
                         }
                     }
-
-                    // Create Sprite if requested
-                    if (entry.CreateSprite && spriteTemplate != null)
+                    else
                     {
-                        var spritePathId = nextPathId++;
-                        var spriteName = entry.AssetName + "_sprite";
-                        var spriteResult = NativeSpriteCreator.CreateSprite(
-                            afile,
-                            spriteTemplate,
-                            spriteName,
-                            texturePathId,
-                            texResult.Width,
-                            texResult.Height,
-                            spritePathId,
-                            entry.PixelsPerUnit);
-
-                        if (spriteResult.Success)
-                        {
-                            var spriteInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == spriteResult.PathId);
-                            if (spriteInfo != null)
-                            {
-                                spriteAssets[spriteName] = spriteInfo;
-                                if (!string.IsNullOrEmpty(entry.ResourcePath))
-                                {
-                                    spriteResourcePaths[spriteName] = entry.ResourcePath + "_sprite";
-                                }
-                                else
-                                {
-                                    spriteResourcePaths[spriteName] = $"assets/sprites/{spriteName}";
-                                }
-                            }
-                        }
-                        else
-                        {
-                            result.Warnings.Add($"Sprite for '{entry.AssetName}' failed: {spriteResult.ErrorMessage}");
-                        }
+                        result.Warnings.Add($"Texture '{entry.AssetName}' replacement failed: original asset PathId={originalRef.PathId} not found");
                     }
                 }
                 else
                 {
-                    result.Warnings.Add($"Texture '{entry.AssetName}' failed: {texResult.ErrorMessage}");
+                    // NEW TEXTURE: Create with new PathId
+                    var texturePathId = nextPathId++;
+                    var texResult = NativeTextureCreator.CreateFromPng(
+                        afile,
+                        textureTemplate,
+                        entry.SourceFilePath,
+                        entry.AssetName,
+                        texturePathId);
+
+                    if (texResult.Success)
+                    {
+                        // Find the created asset info
+                        var texInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == texResult.PathId);
+                        if (texInfo != null)
+                        {
+                            textureAssets[entry.AssetName] = texInfo;
+                            textureResourcePaths[entry.AssetName] = resourcePath;
+                        }
+
+                        // Create Sprite if requested (only for new textures, not replacements)
+                        if (entry.CreateSprite && spriteTemplate != null)
+                        {
+                            var spritePathId = nextPathId++;
+                            var spriteName = entry.AssetName + "_sprite";
+                            var spriteResult = NativeSpriteCreator.CreateSprite(
+                                afile,
+                                spriteTemplate,
+                                spriteName,
+                                texturePathId,
+                                texResult.Width,
+                                texResult.Height,
+                                spritePathId,
+                                entry.PixelsPerUnit);
+
+                            if (spriteResult.Success)
+                            {
+                                var spriteInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == spriteResult.PathId);
+                                if (spriteInfo != null)
+                                {
+                                    spriteAssets[spriteName] = spriteInfo;
+                                    spriteResourcePaths[spriteName] = resourcePath + "_sprite";
+                                }
+                            }
+                            else
+                            {
+                                result.Warnings.Add($"Sprite for '{entry.AssetName}' failed: {spriteResult.ErrorMessage}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"Texture '{entry.AssetName}' failed: {texResult.ErrorMessage}");
+                    }
                 }
             }
             catch (Exception ex)
@@ -1119,15 +1149,16 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Parse ResourceManager bytes to build a lookup from template name to resource path.
-    /// The ResourceManager maps resource paths (e.g., "data/items/weapons/weapon.laser_rifle")
-    /// to asset references (FileID + PathID).
+    /// Parse ResourceManager bytes to build lookups:
+    /// - templateName -> resourcePath (for cloning)
+    /// - resourcePath -> (FileId, PathId) (for in-place replacement)
     /// </summary>
-    private static Dictionary<string, string> ParseResourceManager(
+    private static (Dictionary<string, string> nameToPath, Dictionary<string, (int FileId, long PathId)> pathToRef) ParseResourceManager(
         byte[] rmBytes,
         Dictionary<string, (AssetFileInfo info, byte[] bytes, int idOffset)> assetsByName)
     {
-        var pathLookup = new Dictionary<string, string>();
+        var nameToPath = new Dictionary<string, string>();
+        var pathToRef = new Dictionary<string, (int FileId, long PathId)>(StringComparer.OrdinalIgnoreCase);
 
         // Build PathID -> name reverse lookup
         var pathIdToName = new Dictionary<long, string>();
@@ -1138,7 +1169,7 @@ public class BundleCompiler
 
         // Parse ResourceManager entries
         // Format: 4-byte count, then entries of (string, PPtr)
-        if (rmBytes.Length < 4) return pathLookup;
+        if (rmBytes.Length < 4) return (nameToPath, pathToRef);
 
         int entryCount = BitConverter.ToInt32(rmBytes, 0);
         int offset = 4;
@@ -1149,7 +1180,7 @@ public class BundleCompiler
             int strLen = BitConverter.ToInt32(rmBytes, offset);
             offset += 4;
 
-            if (strLen <= 0 || strLen > 500 || offset + strLen > rmBytes.Length)
+            if (strLen <= 0 || strLen > 2000 || offset + strLen > rmBytes.Length)
                 break;
 
             // Read path string
@@ -1166,14 +1197,17 @@ public class BundleCompiler
             long pathId = BitConverter.ToInt64(rmBytes, offset + 4);
             offset += 12;
 
-            // Map PathID to template name and store the path
+            // Store resourcePath -> (FileId, PathId) for all entries (for in-place replacement)
+            pathToRef[path] = (fileId, pathId);
+
+            // Map PathID to template name and store the path (for cloning)
             if (pathIdToName.TryGetValue(pathId, out var templateName))
             {
-                pathLookup[templateName] = path;
+                nameToPath[templateName] = path;
             }
         }
 
-        return pathLookup;
+        return (nameToPath, pathToRef);
     }
 
     /// <summary>
@@ -1189,8 +1223,9 @@ public class BundleCompiler
     /// <summary>
     /// Patch the globalgamemanagers file to add new ResourceManager entries for clones, audio, texture, and model assets.
     /// Entries must be inserted in sorted order (Unity uses binary search).
+    /// Returns (patchedBytes, debugInfo).
     /// </summary>
-    private static byte[]? PatchResourceManager(
+    private static (byte[]?, string) PatchResourceManager(
         byte[] ggmBytes,
         Dictionary<string, AssetFileInfo> clonedAssets,
         Dictionary<string, string> cloneSourceMap,
@@ -1206,12 +1241,14 @@ public class BundleCompiler
         Dictionary<string, AssetFileInfo>? prefabAssets = null,
         Dictionary<string, string>? prefabResourcePaths = null)
     {
+        var debugLog = new System.Text.StringBuilder();
+
         if (clonedAssets.Count == 0 &&
             (audioAssets?.Count ?? 0) == 0 &&
             (textureAssets?.Count ?? 0) == 0 &&
             (spriteAssets?.Count ?? 0) == 0 &&
             (modelAssets?.Count ?? 0) == 0 &&
-            (prefabAssets?.Count ?? 0) == 0) return null;
+            (prefabAssets?.Count ?? 0) == 0) return (null, "No assets to patch");
 
         // Load globalgamemanagers using AssetsTools.NET for proper modification
         using var ggmStream = new MemoryStream(ggmBytes);
@@ -1233,7 +1270,7 @@ public class BundleCompiler
                 }
             }
 
-            if (rmInfo == null) return null;
+            if (rmInfo == null) return (null, "ResourceManager not found");
 
             // Read current ResourceManager data
             var reader = ggmFile.Reader;
@@ -1267,6 +1304,19 @@ public class BundleCompiler
 
                 entries.Add(new ResourceManagerEntry { Path = path, FileId = fileId, PathId = pathId });
             }
+
+            // Log ResourceManager stats and sample paths for debugging
+            var fileIdGroups = entries.GroupBy(e => e.FileId).OrderByDescending(g => g.Count()).Take(5);
+            debugLog.AppendLine($"ResourceManager has {entries.Count} entries. FileId distribution:");
+            foreach (var g in fileIdGroups)
+            {
+                debugLog.AppendLine($"  FileId={g.Key}: {g.Count()} entries");
+            }
+            // Show sample paths containing "texture" or "ui"
+            var samplePaths = entries.Where(e => e.Path.Contains("texture") || e.Path.Contains("ui/"))
+                .Take(10).Select(e => $"  '{e.Path}' -> FileId={e.FileId}");
+            debugLog.AppendLine("Sample texture/ui paths in ResourceManager:");
+            foreach (var p in samplePaths) debugLog.AppendLine(p);
 
             // Track where container entries end - everything after this is preserved
             int containerEndOffset = offset;
@@ -1322,10 +1372,14 @@ public class BundleCompiler
             int textureAdditions = 0;
             if (textureAssets != null && textureResourcePaths != null)
             {
+                debugLog.AppendLine($"Processing {textureAssets.Count} textures, {textureResourcePaths.Count} resource paths");
                 foreach (var (textureName, textureInfo) in textureAssets)
                 {
                     if (!textureResourcePaths.TryGetValue(textureName, out var resourcePath))
+                    {
+                        debugLog.AppendLine($"  Texture '{textureName}' has no resource path mapping, skipping");
                         continue;
+                    }
 
                     // Check if this path already exists in the ResourceManager
                     var existingEntry = entries.FirstOrDefault(e =>
@@ -1334,7 +1388,7 @@ public class BundleCompiler
                     if (existingEntry != null)
                     {
                         // UPDATE existing entry to point to our new texture (replacement)
-                        Console.WriteLine($"[BundleCompiler] REPLACING texture at path '{resourcePath}' (old PathId={existingEntry.PathId}, new PathId={textureInfo.PathId})");
+                        debugLog.AppendLine($"  FOUND '{resourcePath}' - REPLACING (old FileId={existingEntry.FileId}, PathId={existingEntry.PathId} -> new FileId=4, PathId={textureInfo.PathId})");
                         existingEntry.FileId = 4; // resources.assets
                         existingEntry.PathId = textureInfo.PathId;
                         addedCount++;
@@ -1343,7 +1397,7 @@ public class BundleCompiler
                     else
                     {
                         // ADD new entry (new texture asset)
-                        Console.WriteLine($"[BundleCompiler] Adding new texture at path '{resourcePath}' (PathId={textureInfo.PathId})");
+                        debugLog.AppendLine($"  NOT FOUND '{resourcePath}' - Adding as NEW (PathId={textureInfo.PathId})");
                         entries.Add(new ResourceManagerEntry
                         {
                             Path = resourcePath,
@@ -1355,10 +1409,7 @@ public class BundleCompiler
                     }
                 }
             }
-            if (textureReplacements > 0 || textureAdditions > 0)
-            {
-                Console.WriteLine($"[BundleCompiler] Texture summary: {textureReplacements} replacements, {textureAdditions} additions");
-            }
+            debugLog.AppendLine($"Texture summary: {textureReplacements} REPLACEMENTS, {textureAdditions} ADDITIONS");
 
             // Build new entries for each sprite asset
             // If a sprite path matches an existing entry, UPDATE it (replacement) instead of adding duplicate
@@ -1430,7 +1481,7 @@ public class BundleCompiler
                 }
             }
 
-            if (addedCount == 0) return null;
+            if (addedCount == 0) return (null, debugLog.ToString());
 
             // Sort all entries alphabetically (Unity uses binary search)
             entries.Sort((a, b) => string.Compare(a.Path, b.Path, StringComparison.Ordinal));
@@ -1476,7 +1527,7 @@ public class BundleCompiler
                 ggmFile.Write(writer);
             }
 
-            return outStream.ToArray();
+            return (outStream.ToArray(), debugLog.ToString());
         }
         finally
         {
