@@ -28,6 +28,8 @@ public class ModLoaderInstaller
     {
         try
         {
+            ModkitLog.Info($"[MelonLoader] InstallMelonLoaderAsync started, gameInstallPath={_gameInstallPath}");
+
             if (IsMelonLoaderInstalled() &&
                 !IsInstalledMelonLoaderVersionCompatible(out var installedVersion, out var expectedVersion, out var reason))
             {
@@ -40,6 +42,7 @@ public class ModLoaderInstaller
             // Check if MelonLoader is already fully installed (DLL + version.dll)
             if (IsMelonLoaderFullyInstalled())
             {
+                ModkitLog.Info("[MelonLoader] Already fully installed, skipping");
                 progressCallback?.Invoke("✓ MelonLoader already installed");
                 return Task.FromResult(true);
             }
@@ -48,10 +51,28 @@ public class ModLoaderInstaller
 
             // MelonLoader is a required component (cached or bundled)
             var melonLoaderPath = ComponentManager.Instance.GetMelonLoaderPath();
+            ModkitLog.Info($"[MelonLoader] Component path: {melonLoaderPath ?? "(null)"}");
 
             if (melonLoaderPath == null)
             {
+                ModkitLog.Error("[MelonLoader] Component path is null - MelonLoader not found in cache or bundled");
                 progressCallback?.Invoke("❌ MelonLoader component not found. Go to Setup tab to download required components.");
+                return Task.FromResult(false);
+            }
+
+            // Verify the source directory exists and has expected files
+            if (!Directory.Exists(melonLoaderPath))
+            {
+                ModkitLog.Error($"[MelonLoader] Source directory does not exist: {melonLoaderPath}");
+                progressCallback?.Invoke("❌ MelonLoader source directory not found");
+                return Task.FromResult(false);
+            }
+
+            var sourceVersionDll = Path.Combine(melonLoaderPath, "version.dll");
+            if (!File.Exists(sourceVersionDll))
+            {
+                ModkitLog.Error($"[MelonLoader] version.dll not found in source: {sourceVersionDll}");
+                progressCallback?.Invoke("❌ MelonLoader package is incomplete (missing version.dll)");
                 return Task.FromResult(false);
             }
 
@@ -61,9 +82,32 @@ public class ModLoaderInstaller
             progressCallback?.Invoke("✓ MelonLoader installed successfully");
             return Task.FromResult(true);
         }
+        catch (InvalidOperationException ex)
+        {
+            // Specific error already logged with user-friendly message
+            progressCallback?.Invoke($"❌ {ex.Message}");
+            return Task.FromResult(false);
+        }
+        catch (FileNotFoundException ex)
+        {
+            progressCallback?.Invoke($"❌ {ex.Message}");
+            ModkitLog.Error($"[MelonLoader] File not found: {ex.FileName}");
+            return Task.FromResult(false);
+        }
         catch (Exception ex)
         {
             progressCallback?.Invoke($"❌ Error installing MelonLoader: {ex.Message}");
+            ModkitLog.Error($"[MelonLoader] Unexpected error during installation: {ex}");
+
+            // Provide additional guidance for common Windows issues
+            if (OperatingSystem.IsWindows())
+            {
+                progressCallback?.Invoke("  Common fixes:");
+                progressCallback?.Invoke("  • Close the game if it's running");
+                progressCallback?.Invoke("  • Temporarily disable antivirus");
+                progressCallback?.Invoke("  • Run the modkit as administrator");
+            }
+
             return Task.FromResult(false);
         }
     }
@@ -86,11 +130,43 @@ public class ModLoaderInstaller
 
     private void CopyDirectory(string sourceDir, string destDir, Action<string>? progressCallback = null)
     {
-        // Copy version.dll to root
+        ModkitLog.Info($"[MelonLoader] CopyDirectory: source={sourceDir}, dest={destDir}");
+
+        // Copy version.dll to root - this is CRITICAL for MelonLoader to work
         var versionDll = Path.Combine(sourceDir, "version.dll");
+        var destVersionDll = Path.Combine(destDir, "version.dll");
+
         if (File.Exists(versionDll))
         {
-            File.Copy(versionDll, Path.Combine(destDir, "version.dll"), overwrite: true);
+            try
+            {
+                File.Copy(versionDll, destVersionDll, overwrite: true);
+                ModkitLog.Info($"[MelonLoader] Copied version.dll to {destVersionDll}");
+            }
+            catch (IOException ex) when (ex.HResult == -2147024864) // 0x80070020 - file in use
+            {
+                progressCallback?.Invoke("❌ version.dll is locked - please close the game and any antivirus that may be scanning it");
+                ModkitLog.Error($"[MelonLoader] version.dll is locked by another process: {ex.Message}");
+                throw new InvalidOperationException("version.dll is locked by another process. Please close the game and try again.", ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                progressCallback?.Invoke("❌ Access denied copying version.dll - try running as administrator");
+                ModkitLog.Error($"[MelonLoader] Access denied copying version.dll: {ex.Message}");
+                throw new InvalidOperationException("Access denied when copying version.dll. Try running as administrator.", ex);
+            }
+            catch (Exception ex)
+            {
+                progressCallback?.Invoke($"❌ Failed to copy version.dll: {ex.Message}");
+                ModkitLog.Error($"[MelonLoader] Failed to copy version.dll: {ex}");
+                throw;
+            }
+        }
+        else
+        {
+            progressCallback?.Invoke("❌ version.dll not found in MelonLoader package - installation may be corrupted");
+            ModkitLog.Error($"[MelonLoader] version.dll not found in source: {versionDll}");
+            throw new FileNotFoundException("version.dll not found in MelonLoader package. Try re-downloading components.", versionDll);
         }
 
         // Copy all subfolders (net6, net35, Dependencies, Documentation) into MelonLoader folder
@@ -98,28 +174,76 @@ public class ModLoaderInstaller
         var destMelonLoaderDir = Path.Combine(destDir, "MelonLoader");
         Directory.CreateDirectory(destMelonLoaderDir);
 
-        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        var subDirs = Directory.GetDirectories(sourceDir);
+        ModkitLog.Info($"[MelonLoader] Found {subDirs.Length} subdirectories to copy");
+
+        foreach (var subDir in subDirs)
         {
             var dirName = Path.GetFileName(subDir);
             var destSubDir = Path.Combine(destMelonLoaderDir, dirName);
-            CopyDirectoryRecursive(subDir, destSubDir);
+            progressCallback?.Invoke($"  Copying {dirName}...");
+            CopyDirectoryRecursive(subDir, destSubDir, progressCallback);
+        }
+
+        // Verify critical files were copied
+        if (!File.Exists(destVersionDll))
+        {
+            progressCallback?.Invoke("❌ version.dll was not copied successfully");
+            ModkitLog.Error("[MelonLoader] version.dll verification failed - file does not exist after copy");
+            throw new InvalidOperationException("version.dll was not copied successfully. Installation failed.");
+        }
+
+        var melonLoaderDll = Path.Combine(destMelonLoaderDir, "net6", "MelonLoader.dll");
+        if (!File.Exists(melonLoaderDll))
+        {
+            // Try alternate location
+            melonLoaderDll = Path.Combine(destMelonLoaderDir, "MelonLoader.dll");
+        }
+        if (!File.Exists(melonLoaderDll))
+        {
+            progressCallback?.Invoke("⚠ MelonLoader.dll not found after copy - installation may be incomplete");
+            ModkitLog.Warn("[MelonLoader] MelonLoader.dll not found after copy");
+        }
+        else
+        {
+            ModkitLog.Info($"[MelonLoader] Installation verified: {melonLoaderDll}");
         }
     }
 
-    private void CopyDirectoryRecursive(string sourceDir, string destDir)
+    private void CopyDirectoryRecursive(string sourceDir, string destDir, Action<string>? progressCallback = null)
     {
         Directory.CreateDirectory(destDir);
 
         foreach (var file in Directory.GetFiles(sourceDir))
         {
-            var destFile = Path.Combine(destDir, Path.GetFileName(file));
-            File.Copy(file, destFile, overwrite: true);
+            var fileName = Path.GetFileName(file);
+            var destFile = Path.Combine(destDir, fileName);
+            try
+            {
+                File.Copy(file, destFile, overwrite: true);
+            }
+            catch (IOException ex) when (ex.HResult == -2147024864) // 0x80070020 - file in use
+            {
+                ModkitLog.Warn($"[MelonLoader] File locked, skipping: {fileName} - {ex.Message}");
+                progressCallback?.Invoke($"  ⚠ Skipped locked file: {fileName}");
+                // Continue with other files - some locked files may not be critical
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                ModkitLog.Warn($"[MelonLoader] Access denied, skipping: {fileName} - {ex.Message}");
+                progressCallback?.Invoke($"  ⚠ Access denied: {fileName}");
+            }
+            catch (Exception ex)
+            {
+                ModkitLog.Error($"[MelonLoader] Failed to copy {fileName}: {ex.Message}");
+                throw; // Re-throw unexpected errors
+            }
         }
 
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
             var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
-            CopyDirectoryRecursive(dir, destSubDir);
+            CopyDirectoryRecursive(dir, destSubDir, progressCallback);
         }
     }
 
