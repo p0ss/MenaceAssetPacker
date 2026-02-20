@@ -1301,20 +1301,37 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         };
 
         // Find the source node's parent in the tree and add the clone there
-        if (InsertCloneInTree(_allTreeNodes, _selectedNode, cloneLeaf))
+        var insertedInTree = InsertCloneInTree(_allTreeNodes, _selectedNode, cloneLeaf);
+        ModkitLog.Info($"[CloneTemplate] InsertCloneInTree returned {insertedInTree} for '{newName}'");
+
+        if (insertedInTree)
         {
             // Rebuild search index for new node
             _searchEntries.Remove(cloneLeaf); // clear if stale
             BuildSearchIndex(new[] { cloneLeaf });
+            ModkitLog.Info($"[CloneTemplate] Added clone to search index");
+        }
+        else
+        {
+            ModkitLog.Warn($"[CloneTemplate] Failed to insert clone '{newName}' into tree - source node not found in any category");
         }
 
         // Refresh the filtered view
         ApplySearchFilter();
+        ModkitLog.Info($"[CloneTemplate] TreeNodes count after filter: {TreeNodes.Count}");
 
         // Select the new clone
         var found = FindNode(TreeNodes.ToList(), templateTypeName, newName);
+        ModkitLog.Info($"[CloneTemplate] FindNode in TreeNodes returned {(found != null ? "found" : "null")}");
+
+        // Also try finding in _allTreeNodes for debugging
+        var foundInAll = FindNode(_allTreeNodes, templateTypeName, newName);
+        ModkitLog.Info($"[CloneTemplate] FindNode in _allTreeNodes returned {(foundInAll != null ? "found" : "null")}");
+
         if (found != null)
             SelectedNode = found;
+        else
+            ModkitLog.Warn($"[CloneTemplate] Could not find clone '{newName}' in TreeNodes to select it");
 
         StatusMessage = $"Created template '{newName}'";
         return true;
@@ -2037,6 +2054,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         SearchResults.Clear();
         if (string.IsNullOrWhiteSpace(_searchText)) return;
 
+        try
+        {
         var results = new List<SearchResultItem>();
         var sectionFilter = _selectedSectionFilter;
         var filterBySection = !string.IsNullOrEmpty(sectionFilter) && sectionFilter != "All Sections";
@@ -2082,6 +2101,11 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             SearchNode(root, "", root.Name);
 
         ApplySearchResultsSort(results);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[GenerateSearchResults] Exception during search: {ex.Message}");
+        }
     }
 
     private string GetTemplateSnippet(TreeNodeViewModel node)
@@ -2242,7 +2266,12 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             if (_showModpackOnly)
             {
                 var key = node.Template != null ? GetTemplateKey(node.Template) : null;
-                if (key == null || (!_stagingOverrides.ContainsKey(key) && !_pendingChanges.ContainsKey(key)))
+                if (key == null)
+                    return null;
+                // Include items that have: staging overrides, pending changes, OR are clones
+                bool hasChanges = _stagingOverrides.ContainsKey(key) || _pendingChanges.ContainsKey(key);
+                bool isClone = _cloneDefinitions.ContainsKey(key);
+                if (!hasChanges && !isClone)
                     return null;
             }
 

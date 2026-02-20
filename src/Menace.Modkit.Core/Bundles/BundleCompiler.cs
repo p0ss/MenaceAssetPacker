@@ -1025,56 +1025,40 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Create a clone of asset bytes with a new m_ID string.
-    /// Handles string length changes by resizing the buffer.
+    /// Create a clone of asset bytes with new m_Name and m_ID strings.
+    /// For MonoBehaviour/ScriptableObject, m_Name is at offset 12 (after the m_Script PPtr),
+    /// and m_ID is at a later offset found by FindTemplateId.
+    /// Both must be patched for Unity to correctly identify the clone by name.
     /// </summary>
     private static byte[]? CloneWithNewId(byte[] sourceBytes, string newId, int idOffset)
     {
         if (sourceBytes.Length <= idOffset + 4) return null;
+        if (sourceBytes.Length <= UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET + 4) return null;
 
-        // Read original string length
-        int origLen = BitConverter.ToInt32(sourceBytes, idOffset);
-        if (origLen <= 0 || origLen > 200 || idOffset + 4 + origLen > sourceBytes.Length)
-            return null;
+        // Step 1: Patch m_Name at offset 12
+        var afterNamePatch = UnityBinaryPatcher.PatchStringAtOffset(
+            sourceBytes, UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET, newId);
 
-        // Calculate padding (Unity aligns strings to 4-byte boundaries)
-        int origPadding = (4 - (origLen % 4)) % 4;
-        int origTotalLen = 4 + origLen + origPadding;
-
-        int newLen = newId.Length;
-        int newPadding = (4 - (newLen % 4)) % 4;
-        int newTotalLen = 4 + newLen + newPadding;
-
-        int sizeDiff = newTotalLen - origTotalLen;
-
-        // Create new buffer
-        var cloneBytes = new byte[sourceBytes.Length + sizeDiff];
-
-        // Copy header (before m_ID)
-        Array.Copy(sourceBytes, 0, cloneBytes, 0, idOffset);
-
-        // Write new string length
-        Array.Copy(BitConverter.GetBytes(newLen), 0, cloneBytes, idOffset, 4);
-
-        // Write new string content
-        var newIdBytes = System.Text.Encoding.ASCII.GetBytes(newId);
-        Array.Copy(newIdBytes, 0, cloneBytes, idOffset + 4, newLen);
-
-        // Write padding zeros
-        for (int i = 0; i < newPadding; i++)
+        if (afterNamePatch == null)
         {
-            cloneBytes[idOffset + 4 + newLen + i] = 0;
+            // m_Name patch failed, fall back to just patching m_ID
+            return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
         }
 
-        // Copy remaining data after the original string
-        int afterOrigString = idOffset + origTotalLen;
-        int afterNewString = idOffset + newTotalLen;
-        if (afterOrigString < sourceBytes.Length)
+        // Step 2: Calculate the new m_ID offset after m_Name patch shifted the data
+        int nameSizeDiff = afterNamePatch.Length - sourceBytes.Length;
+        int newIdOffset = idOffset + nameSizeDiff;
+
+        // Sanity check: m_ID offset should still be valid
+        if (newIdOffset < UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET || newIdOffset + 4 > afterNamePatch.Length)
         {
-            Array.Copy(sourceBytes, afterOrigString, cloneBytes, afterNewString, sourceBytes.Length - afterOrigString);
+            // Something went wrong, fall back to original behavior
+            return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
         }
 
-        return cloneBytes;
+        // Step 3: Patch m_ID at the adjusted offset
+        var result = UnityBinaryPatcher.PatchStringAtOffset(afterNamePatch, newIdOffset, newId);
+        return result ?? afterNamePatch; // If m_ID patch fails, at least m_Name is patched
     }
 
     /// <summary>

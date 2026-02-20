@@ -1333,7 +1333,17 @@ public class StatsEditorView : UserControl
           return fieldStack;
 
         case System.Text.Json.JsonValueKind.Array:
-          // Check if this is a template reference collection
+          // Check if array elements are objects — render as expandable groups
+          // Must check this BEFORE template ref check, because abstract element types
+          // (e.g. ItemTemplate) may be extracted as inline objects in the JSON data
+          // even though schema says they're template references.
+          if (ArrayContainsObjects(jsonElement))
+          {
+            fieldStack.Children.Add(CreateObjectArrayControl(name, jsonElement, isEditable));
+            return fieldStack;
+          }
+
+          // Check if this is a template reference collection (array of strings referencing other templates)
           if (DataContext is StatsEditorViewModel arrVm)
           {
             var elementType = arrVm.GetTemplateRefElementType(name);
@@ -1342,13 +1352,6 @@ public class StatsEditorView : UserControl
               fieldStack.Children.Add(CreateTemplateRefListControl(name, jsonElement, elementType, isEditable));
               return fieldStack;
             }
-          }
-
-          // Check if array elements are objects — render as expandable groups
-          if (ArrayContainsObjects(jsonElement))
-          {
-            fieldStack.Children.Add(CreateObjectArrayControl(name, jsonElement, isEditable));
-            return fieldStack;
           }
 
           // Non-template array — render as individual rows with serialized node detection

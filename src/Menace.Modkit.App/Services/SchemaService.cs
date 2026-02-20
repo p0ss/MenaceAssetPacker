@@ -173,6 +173,42 @@ public class SchemaService
                 ModkitLog.Info($"[SchemaService] Loaded {_enumsByType.Count} enum types");
             }
 
+            // Parse effect_handlers (polymorphic skill event handlers)
+            // These are stored as embedded classes keyed by their _type discriminator value
+            if (doc.RootElement.TryGetProperty("effect_handlers", out var effectHandlers))
+            {
+                foreach (var handlerProp in effectHandlers.EnumerateObject())
+                {
+                    var handlerName = handlerProp.Name;
+                    var fieldDict = new Dictionary<string, FieldMeta>(StringComparer.Ordinal);
+
+                    if (handlerProp.Value.TryGetProperty("fields", out var fields))
+                    {
+                        foreach (var field in fields.EnumerateArray())
+                        {
+                            var name = field.GetProperty("name").GetString() ?? "";
+                            var type = field.GetProperty("type").GetString() ?? "";
+                            var offset = field.TryGetProperty("offset", out var o) ? o.GetString() ?? "" : "";
+                            var category = field.TryGetProperty("category", out var c) ? c.GetString() ?? "" : "";
+                            var elementType = field.TryGetProperty("element_type", out var et) ? et.GetString() ?? "" : "";
+
+                            fieldDict[name] = new FieldMeta
+                            {
+                                Name = name,
+                                Type = type,
+                                Category = category,
+                                Offset = offset,
+                                ElementType = elementType
+                            };
+                        }
+                    }
+
+                    // Store with handler name as key (matches _type field value in JSON data)
+                    _fieldsByEmbeddedClass[handlerName] = fieldDict;
+                }
+                ModkitLog.Info($"[SchemaService] Loaded {effectHandlers.EnumerateObject().Count()} effect handlers");
+            }
+
             _isLoaded = true;
             ModkitLog.Info($"[SchemaService] Loaded {_fieldsByTemplate.Count} template types");
         }
