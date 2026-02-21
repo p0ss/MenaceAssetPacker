@@ -36,14 +36,36 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
         get => AppSettings.Instance.GameInstallPath;
         set
         {
-            if (AppSettings.Instance.GameInstallPath != value)
+            // Normalize the path: trim whitespace, remove trailing slashes
+            var normalizedPath = NormalizePath(value);
+            if (AppSettings.Instance.GameInstallPath != normalizedPath)
             {
-                AppSettings.Instance.SetGameInstallPath(value);
+                AppSettings.Instance.SetGameInstallPath(normalizedPath);
                 this.RaisePropertyChanged();
                 ValidateInstallPath();
                 this.RaisePropertyChanged(nameof(MelonLoaderLogPath));
             }
         }
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        // Trim whitespace and quotes (users sometimes paste paths with quotes)
+        path = path.Trim().Trim('"', '\'');
+
+        // Remove trailing directory separators
+        path = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        // Normalize path separators for the current platform
+        if (OperatingSystem.IsWindows())
+            path = path.Replace('/', '\\');
+        else
+            path = path.Replace('\\', '/');
+
+        return path;
     }
 
     public string InstallPathStatus
@@ -92,14 +114,46 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
             return;
         }
 
-        var menaceDataPath = Path.Combine(GameInstallPath, "Menace_Data");
-        if (!Directory.Exists(menaceDataPath))
+        // Check for Menace_Data folder (case-insensitive on Linux)
+        if (!HasGameDataFolder(GameInstallPath))
         {
             InstallPathStatus = "❌ Not a valid Menace installation (Menace_Data folder not found)";
             return;
         }
 
         InstallPathStatus = "✓ Game installation found";
+    }
+
+    /// <summary>
+    /// Checks if a directory contains a Unity game data folder (case-insensitive).
+    /// </summary>
+    private static bool HasGameDataFolder(string gamePath)
+    {
+        // Direct check (works on case-insensitive filesystems like Windows/macOS)
+        var expectedPath = Path.Combine(gamePath, "Menace_Data");
+        if (Directory.Exists(expectedPath))
+            return true;
+
+        // On case-sensitive filesystems (Linux), search for the folder
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                var dirs = Directory.GetDirectories(gamePath);
+                foreach (var dir in dirs)
+                {
+                    var dirName = Path.GetFileName(dir);
+                    if (dirName != null && dirName.Equals("Menace_Data", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch
+            {
+                // Directory access issues
+            }
+        }
+
+        return false;
     }
 
     private async Task CleanRedeployAsync()

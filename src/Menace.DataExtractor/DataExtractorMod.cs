@@ -320,7 +320,7 @@ namespace Menace.DataExtractor
 
                         lines.Add("");
                         lines.Add("Commands: 'extract' (normal), 'extract force' (re-extract)");
-                        lines.Add("Hotkey: F11 (additive extraction for combat templates)");
+                        lines.Add($"Hotkey: {_extractionKey} (additive extraction, configurable in Settings)");
 
                         return string.Join("\n", lines);
                     };
@@ -540,14 +540,60 @@ namespace Menace.DataExtractor
         private int _frameCount = 0;
         private const int AutoExtractionDelayFrames = 300; // ~5 seconds at 60fps
 
+        // Configurable keybinding (loaded from ModSettings.json)
+        private UnityEngine.KeyCode _extractionKey = UnityEngine.KeyCode.F11;
+        private bool _keybindingLoaded = false;
+
         /// <summary>
-        /// Allow manual extraction trigger via F11 key (additive mode) and command registration.
-        /// F11 is ADDITIVE - it merges new templates with existing extracted data.
+        /// Load the configurable extraction keybinding from ModSettings.json.
+        /// Falls back to F11 if not configured.
+        /// </summary>
+        private void LoadExtractionKeybinding()
+        {
+            if (_keybindingLoaded) return;
+            _keybindingLoaded = true;
+
+            try
+            {
+                var settingsPath = Path.Combine(Directory.GetCurrentDirectory(), "UserData", "ModSettings.json");
+                if (!File.Exists(settingsPath)) return;
+
+                var json = File.ReadAllText(settingsPath);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty("Keybindings", out var keybindings))
+                {
+                    if (keybindings.TryGetProperty("AdditiveExtraction", out var keyProp))
+                    {
+                        var keyName = keyProp.GetString();
+                        if (!string.IsNullOrEmpty(keyName) && Enum.TryParse<UnityEngine.KeyCode>(keyName, true, out var keyCode))
+                        {
+                            _extractionKey = keyCode;
+                            LoggerInstance.Msg($"[DataExtractor] Extraction keybinding loaded: {keyName}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[DataExtractor] Failed to load keybinding: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Allow manual extraction trigger via configurable key (default F11, additive mode) and command registration.
+        /// Additive mode merges new templates with existing extracted data.
         /// Use 'extract' command for full extraction.
         /// </summary>
         public override void OnUpdate()
         {
             _frameCount++;
+
+            // Load keybinding on first update (after ModSettings has had time to initialize)
+            if (!_keybindingLoaded && _frameCount > 60)
+            {
+                LoadExtractionKeybinding();
+            }
 
             // Try to register command if pending
             if (_commandRegistrationPending && !_commandRegistered)
@@ -567,13 +613,13 @@ namespace Menace.DataExtractor
                 }
             }
 
-            // F11 = trigger ADDITIVE manual extraction (captures templates currently in memory)
+            // Configurable key = trigger ADDITIVE manual extraction (captures templates currently in memory)
             // Can be used to extract combat templates while in battle
-            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11) && !_manualExtractionInProgress && !_extractionInProgress)
+            if (UnityEngine.Input.GetKeyDown(_extractionKey) && !_manualExtractionInProgress && !_extractionInProgress)
             {
                 _manualExtractionInProgress = true;
                 _isManualExtraction = true;
-                LoggerInstance.Msg("=== ADDITIVE EXTRACTION TRIGGERED (F11) ===");
+                LoggerInstance.Msg($"=== ADDITIVE EXTRACTION TRIGGERED ({_extractionKey}) ===");
                 LoggerInstance.Msg("Additive mode: will merge with existing extracted data");
                 ShowExtractionProgress("Additive extraction triggered - merging with existing data...");
 

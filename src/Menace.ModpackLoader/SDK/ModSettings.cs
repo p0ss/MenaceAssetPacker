@@ -277,7 +277,7 @@ public static class ModSettings
             SettingType.Toggle => element.GetBoolean(),
             SettingType.Slider => element.GetSingle(),
             SettingType.Number => element.GetInt32(),
-            SettingType.Text or SettingType.Dropdown => element.GetString(),
+            SettingType.Text or SettingType.Dropdown or SettingType.Keybinding => element.GetString(),
             _ => null
         };
     }
@@ -509,6 +509,37 @@ public static class ModSettings
                 GUI.Label(new Rect(rect.x + labelWidth, rect.y, rect.width - labelWidth, rect.height),
                     infoVal, GetInfoStyle());
                 break;
+
+            case SettingType.Keybinding:
+                GUI.Label(new Rect(rect.x, rect.y, labelWidth, rect.height), setting.Label, GetLabelStyle());
+                string keyVal = setting.Value as string ?? setting.DefaultValue as string ?? "";
+                int keyIdx = Array.IndexOf(setting.Options, keyVal);
+                if (keyIdx < 0) keyIdx = 0;
+
+                // Prev key button
+                if (GUI.Button(new Rect(rect.x + labelWidth, rect.y, 24, rect.height), "<"))
+                {
+                    int newIdx = (keyIdx - 1 + setting.Options.Length) % setting.Options.Length;
+                    setting.Value = setting.Options[newIdx];
+                    _dirty = true;
+                    OnSettingChanged?.Invoke(modName, setting.Key, setting.Options[newIdx]);
+                }
+
+                // Display key name (user-friendly)
+                float keyDisplayWidth = rect.width - labelWidth - 52;
+                string displayName = KeybindingHelper.GetDisplayName(keyVal);
+                GUI.Label(new Rect(rect.x + labelWidth + 28, rect.y, keyDisplayWidth, rect.height),
+                    displayName, GetLabelStyle());
+
+                // Next key button
+                if (GUI.Button(new Rect(rect.x + rect.width - 24, rect.y, 24, rect.height), ">"))
+                {
+                    int newIdx = (keyIdx + 1) % setting.Options.Length;
+                    setting.Value = setting.Options[newIdx];
+                    _dirty = true;
+                    OnSettingChanged?.Invoke(modName, setting.Key, setting.Options[newIdx]);
+                }
+                break;
         }
     }
 
@@ -739,6 +770,23 @@ public class SettingsBuilder
         return this;
     }
 
+    /// <summary>
+    /// Add a keybinding selector. Uses Unity KeyCode names.
+    /// </summary>
+    public SettingsBuilder AddKeybinding(string key, string label, string defaultKeyName)
+    {
+        _settings.Add(new SettingDefinition
+        {
+            Key = key,
+            Label = label,
+            Type = SettingType.Keybinding,
+            Options = KeybindingHelper.CommonKeyNames,
+            DefaultValue = defaultKeyName,
+            Value = defaultKeyName
+        });
+        return this;
+    }
+
     internal ModSettingsGroup Build()
     {
         return new ModSettingsGroup
@@ -760,7 +808,8 @@ public enum SettingType
     Number,
     Dropdown,
     Text,
-    Info
+    Info,
+    Keybinding
 }
 
 /// <summary>
@@ -788,4 +837,84 @@ internal class ModSettingsGroup
 {
     public string ModName { get; set; }
     public List<SettingDefinition> Settings { get; set; } = new();
+}
+
+/// <summary>
+/// Helper for keybinding settings - provides common key names and conversion utilities.
+/// </summary>
+public static class KeybindingHelper
+{
+    /// <summary>
+    /// Common keys available for keybindings, using Unity KeyCode names.
+    /// </summary>
+    public static readonly string[] CommonKeyNames = new[]
+    {
+        // Function keys
+        "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+        // Special keys
+        "BackQuote", "Tab", "CapsLock", "LeftShift", "RightShift", "LeftControl", "RightControl",
+        "LeftAlt", "RightAlt", "Space", "Return", "Backspace", "Delete", "Insert", "Home", "End",
+        "PageUp", "PageDown", "Escape",
+        // Arrow keys
+        "UpArrow", "DownArrow", "LeftArrow", "RightArrow",
+        // Number keys
+        "Alpha0", "Alpha1", "Alpha2", "Alpha3", "Alpha4", "Alpha5", "Alpha6", "Alpha7", "Alpha8", "Alpha9",
+        // Letter keys
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+        // Numpad
+        "Keypad0", "Keypad1", "Keypad2", "Keypad3", "Keypad4", "Keypad5",
+        "Keypad6", "Keypad7", "Keypad8", "Keypad9", "KeypadPlus", "KeypadMinus",
+        // Mouse (for reference, though GetKeyDown works differently)
+        "Mouse0", "Mouse1", "Mouse2", "Mouse3", "Mouse4"
+    };
+
+    /// <summary>
+    /// Convert a key name string to Unity KeyCode.
+    /// Returns KeyCode.None if not found.
+    /// </summary>
+    public static KeyCode GetKeyCode(string keyName)
+    {
+        if (string.IsNullOrEmpty(keyName))
+            return KeyCode.None;
+
+        if (Enum.TryParse<KeyCode>(keyName, ignoreCase: true, out var keyCode))
+            return keyCode;
+
+        return KeyCode.None;
+    }
+
+    /// <summary>
+    /// Get a user-friendly display name for a key.
+    /// </summary>
+    public static string GetDisplayName(string keyName)
+    {
+        if (string.IsNullOrEmpty(keyName))
+            return "(None)";
+
+        return keyName switch
+        {
+            "BackQuote" => "` (Backtick)",
+            "Alpha0" => "0",
+            "Alpha1" => "1",
+            "Alpha2" => "2",
+            "Alpha3" => "3",
+            "Alpha4" => "4",
+            "Alpha5" => "5",
+            "Alpha6" => "6",
+            "Alpha7" => "7",
+            "Alpha8" => "8",
+            "Alpha9" => "9",
+            "Return" => "Enter",
+            "LeftShift" => "L-Shift",
+            "RightShift" => "R-Shift",
+            "LeftControl" => "L-Ctrl",
+            "RightControl" => "R-Ctrl",
+            "LeftAlt" => "L-Alt",
+            "RightAlt" => "R-Alt",
+            "KeypadPlus" => "Num +",
+            "KeypadMinus" => "Num -",
+            _ => keyName
+        };
+    }
 }

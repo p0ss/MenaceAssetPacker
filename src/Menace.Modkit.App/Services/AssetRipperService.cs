@@ -79,6 +79,41 @@ public class AssetRipperService
     }
 
     /// <summary>
+    /// Finds the game data folder (Menace_Data) using case-insensitive search on Linux.
+    /// Returns the full path to the data folder, or null if not found.
+    /// </summary>
+    private static string? FindGameDataPath(string gameInstallPath)
+    {
+        if (!Directory.Exists(gameInstallPath))
+            return null;
+
+        // Direct check (works on case-insensitive filesystems like Windows/macOS)
+        var expectedPath = Path.Combine(gameInstallPath, "Menace_Data");
+        if (Directory.Exists(expectedPath))
+            return expectedPath;
+
+        // On case-sensitive filesystems (Linux), search for the folder
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                foreach (var dir in Directory.GetDirectories(gameInstallPath))
+                {
+                    var dirName = Path.GetFileName(dir);
+                    if (dirName != null && dirName.Equals("Menace_Data", StringComparison.OrdinalIgnoreCase))
+                        return dir;
+                }
+            }
+            catch
+            {
+                // Directory access issues
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Resolved output path — uses configured or default path.
     /// </summary>
     private string OutputPath => AppSettings.GetAssetExtractionOutputPath();
@@ -132,11 +167,11 @@ public class AssetRipperService
             // Kill any stale AssetRipper on our port from a previous run
             KillExistingOnPort();
 
-            // Get game data path
-            var dataPath = Path.Combine(gameInstallPath, "Menace_Data");
-            if (!Directory.Exists(dataPath))
+            // Get game data path (case-insensitive for Linux)
+            var dataPath = FindGameDataPath(gameInstallPath);
+            if (dataPath == null)
             {
-                progressCallback?.Invoke($"Game data not found at {dataPath}");
+                progressCallback?.Invoke($"Game data folder not found in {gameInstallPath}");
                 return false;
             }
 

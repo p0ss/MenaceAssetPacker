@@ -18,6 +18,11 @@ public static class DevConsole
 {
     public static bool IsVisible { get; set; }
 
+    // Keybinding settings
+    private const string KEYBINDINGS_GROUP = "Keybindings";
+    private const string KEY_TOGGLE_CONSOLE = "ToggleConsole";
+    private static KeyCode _toggleConsoleKey = KeyCode.BackQuote;
+
     /// <summary>
     /// True when the console is visible and the mouse cursor is over it.
     /// Game input handlers should skip world clicks when this is true.
@@ -317,9 +322,41 @@ public static class DevConsole
         _panels.Add(new PanelEntry { Name = "Settings", DrawCallback = DrawSettingsPanel });
 
         RegisterCoreCommands();
+        RegisterKeybindingSettings();
 
         // Add startup message to verify log is working
         Log("DevConsole initialized - press ~ to toggle");
+    }
+
+    private static void RegisterKeybindingSettings()
+    {
+        ModSettings.Register(KEYBINDINGS_GROUP, settings =>
+        {
+            settings.AddHeader("Console");
+            settings.AddKeybinding(KEY_TOGGLE_CONSOLE, "Toggle Console", "BackQuote");
+
+            settings.AddHeader("Data Extraction");
+            settings.AddKeybinding("AdditiveExtraction", "Additive Extraction", "F11");
+        });
+
+        // Subscribe to changes
+        ModSettings.OnSettingChanged += (modName, key, value) =>
+        {
+            if (modName != KEYBINDINGS_GROUP) return;
+
+            if (key == KEY_TOGGLE_CONSOLE && value is string keyName)
+            {
+                _toggleConsoleKey = KeybindingHelper.GetKeyCode(keyName);
+                Log($"Console toggle key changed to: {keyName}");
+            }
+        };
+
+        // Load initial value
+        var savedKey = ModSettings.Get<string>(KEYBINDINGS_GROUP, KEY_TOGGLE_CONSOLE);
+        if (!string.IsNullOrEmpty(savedKey))
+        {
+            _toggleConsoleKey = KeybindingHelper.GetKeyCode(savedKey);
+        }
     }
 
     private static void RegisterCoreCommands()
@@ -930,7 +967,7 @@ public static class DevConsole
     {
         try
         {
-            if (UnityEngine.Input.GetKeyDown(KeyCode.BackQuote))
+            if (UnityEngine.Input.GetKeyDown(_toggleConsoleKey))
                 IsVisible = !IsVisible;
 
             // Update mouse-over state using Input.mousePosition (screen coords,
@@ -1498,9 +1535,10 @@ public static class DevConsole
         y += 36;
 
         // Help text for extraction
+        var extractKey = ModSettings.Get<string>(KEYBINDINGS_GROUP, "AdditiveExtraction") ?? "F11";
         GUI.Label(new Rect(area.x, y, area.width, LineHeight * 2),
             "TIP: Run extraction from a stable screen (OCI, Barracks, StrategicMap).\n" +
-            "F11 = additive extraction (merges with existing data).",
+            $"{extractKey} = additive extraction (configurable in Settings).",
             _helpStyle);
         y += LineHeight * 2 + 16;
 

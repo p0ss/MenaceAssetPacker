@@ -167,7 +167,43 @@ public class ExtractionOrchestrator
 
     private string GetMetadataPath()
     {
-        return Path.Combine(_gameInstallPath, "Menace_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        var dataFolder = FindGameDataFolder(_gameInstallPath) ?? "Menace_Data";
+        return Path.Combine(_gameInstallPath, dataFolder, "il2cpp_data", "Metadata", "global-metadata.dat");
+    }
+
+    /// <summary>
+    /// Finds the game data folder name using case-insensitive search on Linux.
+    /// Returns the actual folder name found, or null if not found.
+    /// </summary>
+    private static string? FindGameDataFolder(string gameInstallPath)
+    {
+        if (!Directory.Exists(gameInstallPath))
+            return null;
+
+        // Direct check (works on case-insensitive filesystems like Windows/macOS)
+        var expectedPath = Path.Combine(gameInstallPath, "Menace_Data");
+        if (Directory.Exists(expectedPath))
+            return "Menace_Data";
+
+        // On case-sensitive filesystems (Linux), search for the folder
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                foreach (var dir in Directory.GetDirectories(gameInstallPath))
+                {
+                    var dirName = Path.GetFileName(dir);
+                    if (dirName != null && dirName.Equals("Menace_Data", StringComparison.OrdinalIgnoreCase))
+                        return dirName;
+                }
+            }
+            catch
+            {
+                // Directory access issues
+            }
+        }
+
+        return null;
     }
 }
 

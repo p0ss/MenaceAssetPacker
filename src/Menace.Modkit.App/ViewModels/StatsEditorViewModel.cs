@@ -323,7 +323,16 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         var properties = ConvertTemplateToProperties(node.Template);
 
         // Build modified properties: vanilla → staging overrides → pending changes
-        var modified = new Dictionary<string, object?>(properties);
+        // Deep-clone AssetPropertyValue objects to avoid shared references between
+        // vanilla and modified dictionaries (prevents in-place edits from affecting both)
+        var modified = new Dictionary<string, object?>(properties.Count);
+        foreach (var kvp in properties)
+        {
+            if (kvp.Value is AssetPropertyValue assetVal)
+                modified[kvp.Key] = assetVal.Clone();
+            else
+                modified[kvp.Key] = kvp.Value;
+        }
         var key = GetTemplateKey(node.Template);
         if (key != null)
         {

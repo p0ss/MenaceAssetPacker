@@ -152,6 +152,28 @@ public class AppSettings
             }
         }
 
+        // Check Xbox Game Pass / Microsoft Store (Windows only)
+        foreach (var xboxPath in GetXboxGamePassPaths())
+        {
+            foreach (var gameName in gameNames)
+            {
+                // Game Pass uses "Content" subdirectory for actual game files
+                var gamePath = Path.Combine(xboxPath, gameName, "Content");
+                if (Directory.Exists(gamePath) && HasGameDataFolder(gamePath))
+                {
+                    ModkitLog.Info($"Detected game install (Xbox/Game Pass): {gamePath}");
+                    return gamePath;
+                }
+                // Also check without Content subfolder
+                gamePath = Path.Combine(xboxPath, gameName);
+                if (Directory.Exists(gamePath) && HasGameDataFolder(gamePath))
+                {
+                    ModkitLog.Info($"Detected game install (Xbox/Game Pass): {gamePath}");
+                    return gamePath;
+                }
+            }
+        }
+
         ModkitLog.Warn("Game install path not auto-detected. Set it manually in Settings.");
         return string.Empty;
     }
@@ -189,12 +211,98 @@ public class AppSettings
         {
             paths.Add(Path.Combine(home, "GOG Games"));
             paths.Add(Path.Combine(home, "Games", "GOG"));
-            // Heroic Games Launcher
+            // Heroic Games Launcher (default and common locations)
+            paths.Add(Path.Combine(home, "Games", "Heroic"));
+            paths.Add(Path.Combine(home, "Games", "Heroic", "GOG"));
             paths.Add(Path.Combine(home, ".config", "heroic", "GOG"));
+            // Lutris
+            paths.Add(Path.Combine(home, "Games"));
+            paths.Add(Path.Combine(home, ".local", "share", "lutris", "runners", "wine", "prefix", "drive_c", "GOG Games"));
+            // Bottles
+            paths.Add(Path.Combine(home, ".var", "app", "com.usebottles.bottles", "data", "bottles"));
         }
 
         // Filter to existing directories
         return paths.Where(Directory.Exists).Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Discovers Xbox Game Pass / Microsoft Store game installation folders.
+    /// </summary>
+    private static List<string> GetXboxGamePassPaths()
+    {
+        var paths = new List<string>();
+
+        if (!OperatingSystem.IsWindows())
+            return paths;
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // Default Xbox app install location
+        paths.Add(@"C:\XboxGames");
+
+        // Check common alternate drive locations
+        foreach (var drive in new[] { "C:", "D:", "E:", "F:", "G:" })
+        {
+            paths.Add(Path.Combine(drive, "XboxGames"));
+            paths.Add(Path.Combine(drive, "Xbox Games"));
+            paths.Add(Path.Combine(drive, "Games", "Xbox"));
+        }
+
+        // WindowsApps is usually restricted, but some setups allow access
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        paths.Add(Path.Combine(programFiles, "WindowsApps"));
+
+        // Also check ModifiableWindowsApps (less restricted)
+        paths.Add(Path.Combine(programFiles, "ModifiableWindowsApps"));
+
+        return paths.Where(Directory.Exists).Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Checks if a directory contains a Unity game data folder (case-insensitive).
+    /// Looks for Menace_Data or similar patterns.
+    /// </summary>
+    private static bool HasGameDataFolder(string gamePath)
+    {
+        return FindGameDataFolder(gamePath) != null;
+    }
+
+    /// <summary>
+    /// Finds the game data folder within an installation directory.
+    /// Handles case sensitivity on Linux by searching for Menace_Data case-insensitively.
+    /// Returns the actual folder name found, or null if not found.
+    /// </summary>
+    private static string? FindGameDataFolder(string gamePath)
+    {
+        if (!Directory.Exists(gamePath))
+            return null;
+
+        try
+        {
+            // On Windows/macOS, filesystem is case-insensitive, so direct check works
+            var expectedPath = Path.Combine(gamePath, "Menace_Data");
+            if (Directory.Exists(expectedPath))
+                return "Menace_Data";
+
+            // On Linux (case-sensitive), search for the folder
+            if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+            {
+                var dirs = Directory.GetDirectories(gamePath);
+                foreach (var dir in dirs)
+                {
+                    var dirName = Path.GetFileName(dir);
+                    if (dirName.Equals("Menace_Data", StringComparison.OrdinalIgnoreCase))
+                        return dirName;
+                }
+            }
+        }
+        catch
+        {
+            // Directory access issues - return null
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -225,6 +333,10 @@ public class AppSettings
             steamRoots.Add(Path.Combine(home, ".steam", "debian-installation"));
             steamRoots.Add(Path.Combine(home, ".steam", "steam"));
             steamRoots.Add(Path.Combine(home, ".local", "share", "Steam"));
+            // Flatpak Steam
+            steamRoots.Add(Path.Combine(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam"));
+            // Snap Steam
+            steamRoots.Add(Path.Combine(home, "snap", "steam", "common", ".steam", "steam"));
         }
 
         // Try to parse libraryfolders.vdf for additional library paths

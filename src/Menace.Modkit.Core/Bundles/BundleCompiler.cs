@@ -584,13 +584,6 @@ public class BundleCompiler
     /// </summary>
     private static (string? id, int offset) FindTemplateId(byte[] bytes, int maxSearchOffset)
     {
-        // Common template prefixes to look for
-        var prefixes = new[] {
-            "weapon.", "specialweapon.", "armor.", "enemy.", "active.", "turret.",
-            "accessory.", "squad_leader.", "pilot.", "player_squad.", "army.",
-            "mod_weapon.", "construct.", "story_faction.", "tag."
-        };
-
         for (int offset = 16; offset < Math.Min(maxSearchOffset, bytes.Length - 8); offset++)
         {
             // Read potential string length
@@ -601,37 +594,53 @@ public class BundleCompiler
             if (len < 5 || len > 100 || offset + 4 + len > bytes.Length)
                 continue;
 
-            // Check if it's a valid ASCII string with a dot
-            bool valid = true;
-            bool hasDot = false;
+            // Check if it matches template ID pattern: prefix.name
+            // - prefix: 2-20 lowercase letters/underscores (e.g., "weapon", "squad_leader")
+            // - separator: exactly one dot
+            // - name: lowercase letters, numbers, underscores (can contain more dots)
             int dotPos = -1;
-            for (int i = 0; i < len && valid; i++)
+            bool validPrefix = true;
+            bool validName = true;
+
+            // Find first dot and validate prefix (characters before it)
+            for (int i = 0; i < len; i++)
             {
                 byte b = bytes[offset + 4 + i];
-                if (b < 32 || b > 126)
+                if (b == '.')
                 {
-                    valid = false;
+                    dotPos = i;
+                    break;
                 }
-                else if (b == '.')
+                // Prefix must be lowercase letters or underscore
+                if (!((b >= 'a' && b <= 'z') || b == '_'))
                 {
-                    hasDot = true;
-                    if (dotPos < 0) dotPos = i;
+                    validPrefix = false;
+                    break;
                 }
             }
 
-            if (!valid || !hasDot || dotPos < 2)
+            // Prefix must be 2-20 chars and valid
+            if (!validPrefix || dotPos < 2 || dotPos > 20)
+                continue;
+
+            // Validate name portion (after first dot)
+            for (int i = dotPos + 1; i < len; i++)
+            {
+                byte b = bytes[offset + 4 + i];
+                // Name can have lowercase letters, numbers, underscores, and dots
+                if (!((b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_' || b == '.'))
+                {
+                    validName = false;
+                    break;
+                }
+            }
+
+            // Name must have at least 1 char after the dot
+            if (!validName || len - dotPos - 1 < 1)
                 continue;
 
             var str = System.Text.Encoding.ASCII.GetString(bytes, offset + 4, len);
-
-            // Check if it starts with a known template prefix
-            foreach (var prefix in prefixes)
-            {
-                if (str.StartsWith(prefix, StringComparison.Ordinal))
-                {
-                    return (str, offset);
-                }
-            }
+            return (str, offset);
         }
 
         return (null, -1);
@@ -1036,12 +1045,16 @@ public class BundleCompiler
         if (sourceBytes.Length <= UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET + 4) return null;
 
         // Step 1: Patch m_Name at offset 12
+        // CRITICAL: m_Name MUST be patched for runtime patch lookup to work.
+        // The runtime uses obj.name (which is m_Name) to find patches by template name.
         var afterNamePatch = UnityBinaryPatcher.PatchStringAtOffset(
             sourceBytes, UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET, newId);
 
         if (afterNamePatch == null)
         {
-            // m_Name patch failed, fall back to just patching m_ID
+            // m_Name patch failed - this is a critical error since runtime lookup won't work
+            Console.WriteLine($"[BundleCompiler] WARNING: m_Name patch failed for clone '{newId}' - runtime patches may not apply");
+            // Still try to patch m_ID on original bytes, but clone will likely have issues
             return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
         }
 
@@ -1052,8 +1065,11 @@ public class BundleCompiler
         // Sanity check: m_ID offset should still be valid
         if (newIdOffset < UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET || newIdOffset + 4 > afterNamePatch.Length)
         {
-            // Something went wrong, fall back to original behavior
-            return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
+            // m_ID offset calculation failed, but m_Name IS patched in afterNamePatch.
+            // Return the name-patched version so runtime lookup will work.
+            // m_ID won't match m_Name, but at least patches can be found and applied.
+            Console.WriteLine($"[BundleCompiler] WARNING: m_ID offset invalid after m_Name patch for '{newId}' - returning name-only patch");
+            return afterNamePatch;
         }
 
         // Step 3: Patch m_ID at the adjusted offset

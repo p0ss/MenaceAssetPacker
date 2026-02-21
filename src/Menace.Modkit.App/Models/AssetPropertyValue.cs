@@ -48,4 +48,20 @@ public class AssetPropertyValue
         // Matches patterns like "(Sprite)", "(Texture2D)", "(Material)", etc.
         return value.StartsWith("(") && value.EndsWith(")");
     }
+
+    /// <summary>
+    /// Create a deep copy of this AssetPropertyValue.
+    /// </summary>
+    public AssetPropertyValue Clone()
+    {
+        return new AssetPropertyValue
+        {
+            FieldName = FieldName,
+            AssetType = AssetType,
+            AssetName = AssetName,
+            RawValue = RawValue,
+            AssetFilePath = AssetFilePath,
+            ThumbnailPath = ThumbnailPath
+        };
+    }
 }
