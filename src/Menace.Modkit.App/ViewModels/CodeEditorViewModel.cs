@@ -35,7 +35,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
         SearchResults = new ObservableCollection<SearchResultItem>();
         ScriptTemplates = new ObservableCollection<string>();
 
-        FileContent = "-- Select a .lua file from the Scripts panel to edit\n-- Or double-click an API item to insert code";
+        FileContent = "-- Select a script file (.lua or .cs) from the Scripts panel to edit\n-- Or double-click an API item to insert code";
         IsReadOnly = true;
 
         LoadModpacks();
@@ -258,7 +258,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
                         Snippet = snippet,
                         Score = nameLower.StartsWith(searchLower) ? 100 : 50,
                         SourceNode = node,
-                        TypeIndicator = ".lua"
+                        TypeIndicator = Path.GetExtension(node.FullPath)
                     });
                 }
             }
@@ -454,7 +454,12 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
 
         if (Directory.Exists(scriptsDir))
         {
-            foreach (var file in Directory.GetFiles(scriptsDir, "*.lua", SearchOption.AllDirectories).OrderBy(f => f))
+            // Include both Lua and C# files
+            var luaFiles = Directory.GetFiles(scriptsDir, "*.lua", SearchOption.AllDirectories);
+            var csFiles = Directory.GetFiles(scriptsDir, "*.cs", SearchOption.AllDirectories);
+            var allFiles = luaFiles.Concat(csFiles).OrderBy(f => f);
+
+            foreach (var file in allFiles)
             {
                 var relativePath = Path.GetRelativePath(scriptsDir, file);
                 var parts = relativePath.Split(Path.DirectorySeparatorChar);
@@ -495,7 +500,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
     {
         if (_selectedFile == null || !_selectedFile.IsFile)
         {
-            FileContent = "-- Select a .lua file from the Scripts panel to edit\n-- Or double-click an API item to insert code";
+            FileContent = "-- Select a script file (.lua or .cs) from the Scripts panel to edit\n-- Or double-click an API item to insert code";
             IsReadOnly = true;
             CurrentFilePath = string.Empty;
             return;
@@ -608,7 +613,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             if (File.Exists(_selectedFile.FullPath))
                 File.Delete(_selectedFile.FullPath);
 
-            FileContent = "-- Select a .lua file from the Scripts panel to edit";
+            FileContent = "-- Select a script file (.lua or .cs) from the Scripts panel to edit";
             SelectedFile = null;
             LoadScriptsTree();
             BuildStatus = "File removed";

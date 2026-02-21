@@ -16,7 +16,9 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
 {
     private string _installPathStatus = string.Empty;
     private string _cleanRedeployStatus = string.Empty;
+    private string _uninstallStatus = string.Empty;
     private bool _isCleanRedeploying;
+    private bool _isUninstalling;
 
     public LoaderSettingsViewModel()
     {
@@ -24,6 +26,7 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
 
         // Commands
         CleanRedeployCommand = ReactiveCommand.CreateFromTask(CleanRedeployAsync);
+        UninstallFromGameCommand = ReactiveCommand.CreateFromTask(UninstallFromGameAsync);
         OpenModkitLogCommand = ReactiveCommand.Create(OpenModkitLog);
         OpenMelonLoaderLogCommand = ReactiveCommand.Create(OpenMelonLoaderLog);
         OpenModkitLogFolderCommand = ReactiveCommand.Create(OpenModkitLogFolder);
@@ -86,6 +89,18 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _isCleanRedeploying, value);
     }
 
+    public string UninstallStatus
+    {
+        get => _uninstallStatus;
+        private set => this.RaiseAndSetIfChanged(ref _uninstallStatus, value);
+    }
+
+    public bool IsUninstalling
+    {
+        get => _isUninstalling;
+        private set => this.RaiseAndSetIfChanged(ref _isUninstalling, value);
+    }
+
     // Log paths
     public string ModkitLogPath => ModkitLog.LogPath;
     public string MelonLoaderLogPath => string.IsNullOrEmpty(GameInstallPath)
@@ -94,6 +109,7 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
 
     // Commands
     public ReactiveCommand<Unit, Unit> CleanRedeployCommand { get; }
+    public ReactiveCommand<Unit, Unit> UninstallFromGameCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenModkitLogCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenMelonLoaderLogCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenModkitLogFolderCommand { get; }
@@ -185,6 +201,98 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
         finally
         {
             IsCleanRedeploying = false;
+        }
+    }
+
+    /// <summary>
+    /// Removes all mod loader files from the game directory.
+    /// This uninstalls MelonLoader, mods, and related files but preserves saves.
+    /// </summary>
+    private async Task UninstallFromGameAsync()
+    {
+        if (IsUninstalling) return;
+
+        IsUninstalling = true;
+        UninstallStatus = "Starting uninstall...";
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(GameInstallPath) || !Directory.Exists(GameInstallPath))
+            {
+                UninstallStatus = "❌ Set a valid game installation path first";
+                return;
+            }
+
+            var dirsToRemove = new[] { "MelonLoader", "Mods", "UserLibs", "dotnet" };
+            var filesToRemove = new[] { "version.dll", "dobby.dll", "bootstrap.dll" };
+
+            // Count what we'll remove
+            int removedDirs = 0, removedFiles = 0;
+
+            // Remove directories
+            foreach (var dirName in dirsToRemove)
+            {
+                var dirPath = Path.Combine(GameInstallPath, dirName);
+                if (Directory.Exists(dirPath))
+                {
+                    UninstallStatus = $"Removing {dirName}/...";
+                    await Task.Run(() =>
+                    {
+                        try
+                        {
+                            Directory.Delete(dirPath, recursive: true);
+                            removedDirs++;
+                        }
+                        catch (Exception ex)
+                        {
+                            ModkitLog.Warn($"[Uninstall] Failed to remove {dirPath}: {ex.Message}");
+                        }
+                    });
+                }
+            }
+
+            // Remove files
+            foreach (var fileName in filesToRemove)
+            {
+                var filePath = Path.Combine(GameInstallPath, fileName);
+                if (File.Exists(filePath))
+                {
+                    UninstallStatus = $"Removing {fileName}...";
+                    try
+                    {
+                        File.Delete(filePath);
+                        removedFiles++;
+                    }
+                    catch (Exception ex)
+                    {
+                        ModkitLog.Warn($"[Uninstall] Failed to remove {filePath}: {ex.Message}");
+                    }
+                }
+            }
+
+            // Note about what's preserved
+            var userDataPath = Path.Combine(GameInstallPath, "UserData");
+            var hasUserData = Directory.Exists(userDataPath);
+
+            if (removedDirs == 0 && removedFiles == 0)
+            {
+                UninstallStatus = "Nothing to uninstall - mod loader not found in game directory";
+            }
+            else
+            {
+                var preserved = hasUserData ? " (UserData/Saves preserved)" : "";
+                UninstallStatus = $"✓ Uninstalled: {removedDirs} folders, {removedFiles} files{preserved}";
+                ModkitLog.Info($"[Uninstall] Removed {removedDirs} directories, {removedFiles} files from {GameInstallPath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            UninstallStatus = $"❌ Uninstall failed: {ex.Message}";
+            ModkitLog.Error($"[Uninstall] Error: {ex}");
+        }
+        finally
+        {
+            IsUninstalling = false;
         }
     }
 

@@ -26,6 +26,7 @@ public class CodeEditorView : UserControl
     private bool _isUpdatingText;
     private bool _textMateReady;
     private TextMate.Installation? _textMateInstallation;
+    private RegistryOptions? _registryOptions;
 
     public CodeEditorView()
     {
@@ -126,6 +127,11 @@ public class CodeEditorView : UserControl
         {
             _textEditor.IsReadOnly = _boundViewModel.IsReadOnly;
         }
+        else if (e.PropertyName == nameof(CodeEditorViewModel.SelectedFile))
+        {
+            // Switch syntax highlighting based on file extension
+            UpdateGrammarForCurrentFile();
+        }
     }
 
     private async System.Threading.Tasks.Task SetupTextMateAsync()
@@ -137,16 +143,46 @@ public class CodeEditorView : UserControl
         {
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
-                var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
-                _textMateInstallation = _textEditor.InstallTextMate(registryOptions);
-                // Default to Lua syntax highlighting
-                _textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId("lua"));
+                _registryOptions = new RegistryOptions(ThemeName.DarkPlus);
+                _textMateInstallation = _textEditor.InstallTextMate(_registryOptions);
+                // Set initial grammar based on current file, default to Lua
+                UpdateGrammarForCurrentFile();
             });
             _textMateReady = true;
         }
         catch (Exception ex)
         {
             Services.ModkitLog.Warn($"[CodeEditorView] TextMate setup failed: {ex.Message}");
+        }
+    }
+
+    private void UpdateGrammarForCurrentFile()
+    {
+        if (_textMateInstallation == null || _registryOptions == null)
+            return;
+
+        var filePath = _boundViewModel?.SelectedFile?.FullPath;
+        var languageId = "lua"; // Default to Lua
+
+        if (!string.IsNullOrEmpty(filePath))
+        {
+            var extension = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
+            languageId = extension switch
+            {
+                ".cs" => "csharp",
+                ".lua" => "lua",
+                _ => "lua"
+            };
+        }
+
+        try
+        {
+            var scope = _registryOptions.GetScopeByLanguageId(languageId);
+            _textMateInstallation.SetGrammar(scope);
+        }
+        catch (Exception ex)
+        {
+            Services.ModkitLog.Warn($"[CodeEditorView] Failed to set grammar for {languageId}: {ex.Message}");
         }
     }
 

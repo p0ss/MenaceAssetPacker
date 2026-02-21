@@ -52,21 +52,12 @@ public class RecoveryDialogRequestEventArgs : EventArgs
 }
 
 /// <summary>
+/// <summary>
 /// Event args for requesting the update/setup flow.
 /// </summary>
 public class UpdateFlowRequestEventArgs : EventArgs
 {
-    /// <summary>
-    /// If true, clean cached data and force re-extraction after updates.
-    /// </summary>
-    public bool CleanInstall { get; }
-
     public TaskCompletionSource<bool> Result { get; } = new();
-
-    public UpdateFlowRequestEventArgs(bool cleanInstall = false)
-    {
-        CleanInstall = cleanInstall;
-    }
 }
 
 /// <summary>
@@ -729,46 +720,24 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
         try
         {
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.UserAgent.Add(
-                new ProductInfoHeaderValue("MenaceModkit", ModkitVersion.Short));
-            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            // Use the component system to check for updates (same source as Setup screen)
+            var statuses = await ComponentManager.Instance.GetComponentStatusAsync(forceRemoteFetch: true);
+            var modkitStatus = statuses.FirstOrDefault(s => s.Name == "Modkit");
 
-            var apiUrl = $"https://api.github.com/repos/{AppGitHubOwner}/{AppGitHubRepo}/releases/latest";
-            var response = await httpClient.GetAsync(apiUrl);
-
-            if (!response.IsSuccessStatusCode)
+            if (modkitStatus == null)
             {
-                AppUpdateStatus = response.StatusCode switch
-                {
-                    System.Net.HttpStatusCode.NotFound => "No releases found",
-                    System.Net.HttpStatusCode.Forbidden => "Rate limited - try again later",
-                    _ => $"Could not check for updates ({response.StatusCode})"
-                };
+                AppUpdateStatus = "You're up to date";
                 return;
             }
 
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var tagName = root.GetProperty("tag_name").GetString() ?? "";
-            var htmlUrl = root.TryGetProperty("html_url", out var urlProp) ? urlProp.GetString() : null;
-
-            // Normalize versions for comparison (remove 'v' prefix)
-            var latestVersion = tagName.TrimStart('v', 'V');
-            var currentVersion = ModkitVersion.MelonVersion;
-
-            // Compare versions
-            var hasUpdate = CompareVersions(latestVersion, currentVersion) > 0;
-
-            LatestAppVersion = tagName;
+            var hasUpdate = modkitStatus.State == ComponentState.Outdated;
+            LatestAppVersion = modkitStatus.LatestVersion;
             HasAppUpdate = hasUpdate;
-            AppDownloadUrl = htmlUrl ?? $"https://github.com/{AppGitHubOwner}/{AppGitHubRepo}/releases/latest";
+            AppDownloadUrl = $"https://github.com/{AppGitHubOwner}/{AppGitHubRepo}/releases/latest";
 
             if (hasUpdate)
             {
-                AppUpdateStatus = $"Update available: {tagName}";
+                AppUpdateStatus = $"Update available: v{modkitStatus.LatestVersion}";
             }
             else
             {
@@ -784,7 +753,7 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
     /// <summary>
     /// Start the update flow by showing the setup screen.
-    /// This allows updating components and optionally cleaning cached data.
+    /// This allows updating the app and components.
     /// </summary>
     private async Task StartUpdateFlowAsync()
     {
@@ -824,7 +793,7 @@ public sealed class ToolSettingsViewModel : ViewModelBase
 
         AppUpdateStatus = "Opening update wizard...";
 
-        var args = new UpdateFlowRequestEventArgs(cleanInstall: false);
+        var args = new UpdateFlowRequestEventArgs();
         UpdateFlowRequested?.Invoke(this, args);
 
         try
@@ -933,40 +902,6 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             ModkitLog.Warn($"[ToolSettingsViewModel] Cleanup after update had errors: {ex.Message}");
             // Don't fail the update if cleanup fails - just warn
         }
-    }
-
-    /// <summary>
-    /// Compare two semver-ish version strings.
-    /// Returns: positive if a > b, negative if a < b, 0 if equal.
-    /// </summary>
-    private static int CompareVersions(string a, string b)
-    {
-        var partsA = a.Split('.', '-', '+');
-        var partsB = b.Split('.', '-', '+');
-
-        var maxParts = Math.Max(partsA.Length, partsB.Length);
-
-        for (int i = 0; i < maxParts; i++)
-        {
-            var partA = i < partsA.Length ? partsA[i] : "0";
-            var partB = i < partsB.Length ? partsB[i] : "0";
-
-            // Try numeric comparison first
-            if (int.TryParse(partA, out var numA) && int.TryParse(partB, out var numB))
-            {
-                if (numA != numB)
-                    return numA.CompareTo(numB);
-            }
-            else
-            {
-                // Fall back to string comparison
-                var cmp = string.Compare(partA, partB, StringComparison.OrdinalIgnoreCase);
-                if (cmp != 0)
-                    return cmp;
-            }
-        }
-
-        return 0;
     }
 
     private static long GetDirectorySize(string path)

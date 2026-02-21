@@ -981,6 +981,24 @@ public class SetupView : UserControl
         };
         buttonStack.Children.Add(downloadButton);
 
+        // Restart to Update button (shown when self-update is staged)
+        var restartButton = new Button
+        {
+            Content = "Restart to Update",
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            Padding = new Thickness(24, 12),
+            Background = new SolidColorBrush(Color.Parse("#22C55E")),
+            Foreground = Brushes.White
+        };
+        restartButton.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("NeedsSelfUpdateRestart"));
+        restartButton.Click += (_, _) =>
+        {
+            if (DataContext is SetupViewModel vm)
+                vm.RestartToApplyUpdate();
+        };
+        buttonStack.Children.Add(restartButton);
+
         // Cancel button (shown during download)
         var cancelButton = new Button
         {

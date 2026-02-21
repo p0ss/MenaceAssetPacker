@@ -452,6 +452,9 @@ public sealed class DocsViewModel : ViewModelBase, ISearchableViewModel
             }
 
             PopulateSectionFilters();
+
+            // Auto-select the index page if present
+            SelectIndexPage();
         }
         catch (Exception ex)
         {
@@ -669,6 +672,22 @@ public sealed class DocsViewModel : ViewModelBase, ISearchableViewModel
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Selects the index.md file if present in the docs root.
+    /// </summary>
+    private void SelectIndexPage()
+    {
+        // Look for an "Index" file at the root level
+        var indexNode = _allDocNodes
+            .SelectMany(n => n.IsFile ? new[] { n } : n.Children.Where(c => c.IsFile))
+            .FirstOrDefault(n => n.Name.Equals("Index", StringComparison.OrdinalIgnoreCase));
+
+        if (indexNode != null)
+        {
+            SelectedNode = indexNode;
+        }
     }
 
     private void LoadDocument(DocTreeNode node)

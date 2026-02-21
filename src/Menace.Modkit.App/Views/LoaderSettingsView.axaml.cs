@@ -53,6 +53,9 @@ public class LoaderSettingsView : UserControl
         // Quick Actions section
         stack.Children.Add(BuildQuickActionsSection());
 
+        // Uninstall section
+        stack.Children.Add(BuildUninstallSection());
+
         scrollViewer.Content = stack;
         return scrollViewer;
     }
@@ -347,6 +350,72 @@ public class LoaderSettingsView : UserControl
         buttonStack.Children.Add(openSavesFolderButton);
 
         stack.Children.Add(buttonStack);
+
+        border.Child = stack;
+        return border;
+    }
+
+    private Control BuildUninstallSection()
+    {
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24)
+        };
+
+        var stack = new StackPanel { Spacing = 16 };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Uninstall",
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Remove the mod loader from the game. This deletes MelonLoader, deployed mods, and runtime files. Your saves in UserData/Saves are preserved.",
+            Opacity = 0.7,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var uninstallButton = new Button
+        {
+            Content = "Uninstall from Game",
+            Background = new SolidColorBrush(Color.Parse("#4A1515")),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.Parse("#6A2020")),
+            Padding = new Thickness(16, 8)
+        };
+        uninstallButton.Bind(Button.CommandProperty, new Avalonia.Data.Binding("UninstallFromGameCommand"));
+        stack.Children.Add(uninstallButton);
+
+        var uninstallStatusText = new TextBlock
+        {
+            Opacity = 0.7,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12
+        };
+        uninstallStatusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("UninstallStatus"));
+        stack.Children.Add(uninstallStatusText);
+
+        // Additional info about full uninstall
+        stack.Children.Add(new TextBlock
+        {
+            Text = "To fully uninstall the Modkit app itself, delete:\n" +
+                   "  - This app folder\n" +
+                   "  - ~/.menace-modkit/ (component cache)\n" +
+                   "  - ~/.config/MenaceModkit/ (settings)",
+            Opacity = 0.5,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 11,
+            Margin = new Thickness(0, 8, 0, 0)
+        });
 
         border.Child = stack;
         return border;

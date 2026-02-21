@@ -153,6 +153,20 @@ public class SetupViewModel : ViewModelBase
     public bool CanDownload => !IsDownloading && !IsFixing && (HasPendingDownloads || !HasRequiredPending);
     public bool CanSkip => !IsDownloading && !IsFixing;
 
+    /// <summary>
+    /// True when a self-update has been staged and the app needs to restart to apply it.
+    /// </summary>
+    public bool NeedsSelfUpdateRestart { get; private set; }
+
+    /// <summary>
+    /// Restart the app to apply the staged self-update.
+    /// </summary>
+    public void RestartToApplyUpdate()
+    {
+        ModkitLog.Info("[Setup] User requested restart to apply self-update");
+        _componentManager.LaunchUpdaterAndExit();
+    }
+
     private bool _hasPendingDownloads;
     public bool HasPendingDownloads
     {
@@ -369,7 +383,14 @@ public class SetupViewModel : ViewModelBase
                 return;
             }
 
-            SetDownloadState(DownloadState.Downloading, $"Downloading {toDownload.Count} component(s)...");
+            // Handle Modkit self-update separately
+            var needsSelfUpdate = toDownload.Contains("Modkit");
+            if (needsSelfUpdate)
+            {
+                toDownload.Remove("Modkit");
+            }
+
+            SetDownloadState(DownloadState.Downloading, $"Downloading {toDownload.Count + (needsSelfUpdate ? 1 : 0)} component(s)...");
 
             var progress = new Progress<MultiDownloadProgress>(p =>
             {
@@ -397,9 +418,41 @@ public class SetupViewModel : ViewModelBase
                 }
             });
 
-            var success = await _componentManager.DownloadComponentsAsync(toDownload, progress, _downloadCts.Token);
+            var success = true;
 
-            ModkitLog.Info($"[Setup] Download result: {(success ? "success" : "failed")}");
+            // Download regular components
+            if (toDownload.Count > 0)
+            {
+                success = await _componentManager.DownloadComponentsAsync(toDownload, progress, _downloadCts.Token);
+            }
+
+            // Handle self-update separately
+            var selfUpdateStaged = false;
+            if (needsSelfUpdate && success)
+            {
+                CurrentComponent = "Modkit";
+                DownloadStatus = "Downloading Modkit update...";
+                this.RaisePropertyChanged(nameof(HasDownloadStatus));
+
+                var selfUpdateProgress = new Progress<DownloadProgress>(p =>
+                {
+                    DownloadStatus = $"Downloading Modkit: {p.Message}";
+                    CurrentProgress = p.PercentComplete;
+                    if (p.BytesPerSecond > 0)
+                        DownloadSpeed = $"{p.BytesPerSecond / (1024.0 * 1024.0):F1} MB/s";
+                });
+
+                selfUpdateStaged = await _componentManager.DownloadAndStageSelfUpdateAsync(
+                    selfUpdateProgress, _downloadCts.Token);
+
+                if (!selfUpdateStaged)
+                {
+                    success = false;
+                    ModkitLog.Error("[Setup] Self-update download failed");
+                }
+            }
+
+            ModkitLog.Info($"[Setup] Download result: {(success ? "success" : "failed")}, selfUpdateStaged: {selfUpdateStaged}");
 
             // Refresh component status
             await LoadComponentsAsync();
@@ -417,7 +470,14 @@ public class SetupViewModel : ViewModelBase
 
             ModkitLog.Info($"[Setup] After refresh - HasRequiredPending: {HasRequiredPending}");
 
-            if (success && !HasRequiredPending)
+            if (success && selfUpdateStaged)
+            {
+                // Self-update was downloaded - prompt to restart
+                SetDownloadState(DownloadState.Success, "Update downloaded! Click 'Restart to Update' to apply.");
+                NeedsSelfUpdateRestart = true;
+                this.RaisePropertyChanged(nameof(NeedsSelfUpdateRestart));
+            }
+            else if (success && !HasRequiredPending)
             {
                 SetDownloadState(DownloadState.Success, "All components installed!");
                 await Task.Delay(500);

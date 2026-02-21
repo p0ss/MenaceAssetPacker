@@ -13,25 +13,25 @@ public static class ModkitVersion
     /// <summary>
     /// The current build number. Derived from ModpackLoader version in versions.json.
     /// </summary>
-    public const int BuildNumber = 27;
+    public const int BuildNumber = 29;
 
     /// <summary>
     /// Version string for MelonLoader attribute (must be compile-time constant).
     /// </summary>
-    public const string MelonVersion = "27.0.0";
+    public const string MelonVersion = "29.0.0";
 
     /// <summary>
     /// Short display version (e.g., "v19").
     /// </summary>
-    public const string Short = "v27";
+    public const string Short = "v29";
 
     /// <summary>
     /// Full version for the Modkit App.
     /// </summary>
-    public const string AppFull = "Menace Modkit v27";
+    public const string AppFull = "Menace Modkit v29";
 
     /// <summary>
     /// Full version for the Modpack Loader.
     /// </summary>
-    public const string LoaderFull = "Menace Modpack Loader v27";
+    public const string LoaderFull = "Menace Modpack Loader v29";
 }

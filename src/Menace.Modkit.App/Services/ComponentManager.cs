@@ -93,8 +93,16 @@ public sealed class ComponentManager : IDisposable
                 InstallPath = component.InstallPath
             };
 
+            // Special case: Modkit component compares against running app version
+            if (name == "Modkit")
+            {
+                status.InstalledVersion = ModkitVersion.MelonVersion;
+                status.State = CompareVersions(ModkitVersion.MelonVersion, component.Version) >= 0
+                    ? ComponentState.UpToDate
+                    : ComponentState.Outdated;
+            }
             // Check if installed (downloaded to cache)
-            if (localManifest.Components.TryGetValue(name, out var installed))
+            else if (localManifest.Components.TryGetValue(name, out var installed))
             {
                 status.InstalledVersion = installed.Version;
                 status.InstalledAt = installed.InstalledAt;
@@ -808,6 +816,313 @@ public sealed class ComponentManager : IDisposable
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    /// <summary>
+    /// Compare two semver-ish version strings.
+    /// Returns: positive if a > b, negative if a &lt; b, 0 if equal.
+    /// </summary>
+    private static int CompareVersions(string a, string b)
+    {
+        var partsA = a.Split('.', '-', '+');
+        var partsB = b.Split('.', '-', '+');
+
+        var maxParts = Math.Max(partsA.Length, partsB.Length);
+
+        for (int i = 0; i < maxParts; i++)
+        {
+            var partA = i < partsA.Length ? partsA[i] : "0";
+            var partB = i < partsB.Length ? partsB[i] : "0";
+
+            // Try numeric comparison first
+            if (int.TryParse(partA, out var numA) && int.TryParse(partB, out var numB))
+            {
+                if (numA != numB)
+                    return numA.CompareTo(numB);
+            }
+            else
+            {
+                // Fall back to string comparison
+                var cmp = string.Compare(partA, partB, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0)
+                    return cmp;
+            }
+        }
+
+        return 0;
+    }
+
+    // --- Self-Update Support ---
+
+    /// <summary>
+    /// Path to the update staging directory.
+    /// </summary>
+    public string UpdateStagingPath => Path.Combine(_componentsCachePath, "update-staging");
+
+    /// <summary>
+    /// Check if a self-update has been staged and is ready to apply.
+    /// </summary>
+    public bool HasStagedUpdate()
+    {
+        var stagingPath = UpdateStagingPath;
+        if (!Directory.Exists(stagingPath))
+            return false;
+
+        // Check for marker file that indicates update is ready
+        var markerFile = Path.Combine(stagingPath, ".update-ready");
+        return File.Exists(markerFile);
+    }
+
+    /// <summary>
+    /// Download the Modkit update and stage it for installation.
+    /// Returns true if the update is ready to apply (requires app restart).
+    /// </summary>
+    public async Task<bool> DownloadAndStageSelfUpdateAsync(
+        IProgress<DownloadProgress>? progress = null,
+        CancellationToken ct = default)
+    {
+        var manifest = await GetVersionsManifestAsync();
+        if (!manifest.Components.TryGetValue("Modkit", out var component))
+        {
+            progress?.Report(new DownloadProgress("Modkit component not found in manifest", 0, 0));
+            return false;
+        }
+
+        var downloadInfo = GetDownloadInfo("Modkit", component);
+        if (downloadInfo == null)
+        {
+            progress?.Report(new DownloadProgress($"No download available for {_platform}", 0, 0));
+            return false;
+        }
+
+        try
+        {
+            progress?.Report(new DownloadProgress("Connecting...", 0, 0));
+
+            // Download to temp file
+            var tempFile = Path.Combine(Path.GetTempPath(), $"menace-modkit-{Guid.NewGuid()}.tmp");
+            try
+            {
+                using var response = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, ct);
+                response.EnsureSuccessStatusCode();
+
+                var totalBytes = response.Content.Headers.ContentLength ?? downloadInfo.Size;
+                using var contentStream = await response.Content.ReadAsStreamAsync(ct);
+                using var fileStream = File.Create(tempFile);
+
+                var buffer = new byte[81920];
+                long totalRead = 0;
+                int bytesRead;
+                var stopwatch = Stopwatch.StartNew();
+                long lastReportedBytes = 0;
+                var lastReportTime = stopwatch.ElapsedMilliseconds;
+
+                while ((bytesRead = await contentStream.ReadAsync(buffer, ct)) > 0)
+                {
+                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
+                    totalRead += bytesRead;
+
+                    var elapsed = stopwatch.ElapsedMilliseconds;
+                    if (elapsed - lastReportTime >= 300 || totalRead == totalBytes)
+                    {
+                        var bytesPerSecond = (totalRead - lastReportedBytes) * 1000.0 / Math.Max(1, elapsed - lastReportTime);
+                        lastReportedBytes = totalRead;
+                        lastReportTime = elapsed;
+
+                        if (totalBytes > 0)
+                        {
+                            var percent = (int)(totalRead * 85 / totalBytes);
+                            var mb = totalRead / (1024.0 * 1024.0);
+                            var totalMb = totalBytes / (1024.0 * 1024.0);
+                            var speedMb = bytesPerSecond / (1024.0 * 1024.0);
+                            progress?.Report(new DownloadProgress(
+                                $"{mb:F1} / {totalMb:F1} MB ({speedMb:F1} MB/s)",
+                                percent,
+                                (long)bytesPerSecond));
+                        }
+                    }
+                }
+
+                fileStream.Close();
+
+                // Verify checksum if provided
+                if (!string.IsNullOrEmpty(downloadInfo.Sha256))
+                {
+                    progress?.Report(new DownloadProgress("Verifying...", 88, 0));
+                    var actualHash = await ComputeFileHashAsync(tempFile, ct);
+                    if (!string.Equals(actualHash, downloadInfo.Sha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        progress?.Report(new DownloadProgress("Checksum mismatch!", 0, 0));
+                        return false;
+                    }
+                }
+
+                // Extract to staging directory
+                progress?.Report(new DownloadProgress("Staging update...", 92, 0));
+
+                var stagingPath = UpdateStagingPath;
+                if (Directory.Exists(stagingPath))
+                {
+                    try { Directory.Delete(stagingPath, true); }
+                    catch { /* ignore */ }
+                }
+                Directory.CreateDirectory(stagingPath);
+
+                // Extract based on file type
+                if (downloadInfo.Url.EndsWith(".zip"))
+                {
+                    SafeExtractZip(tempFile, stagingPath);
+                }
+                else if (downloadInfo.Url.EndsWith(".tar.gz"))
+                {
+                    await ExtractTarGzAsync(tempFile, stagingPath, ct);
+                }
+
+                // Set executable permissions on Linux
+                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    SetExecutablePermissions(stagingPath);
+                }
+
+                // Create updater script
+                progress?.Report(new DownloadProgress("Creating updater...", 96, 0));
+                CreateUpdaterScript(stagingPath);
+
+                // Mark update as ready
+                var markerFile = Path.Combine(stagingPath, ".update-ready");
+                await File.WriteAllTextAsync(markerFile, component.Version, ct);
+
+                progress?.Report(new DownloadProgress("Update staged - restart to apply", 100, 0));
+                return true;
+            }
+            finally
+            {
+                try { File.Delete(tempFile); } catch { /* ignore */ }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            progress?.Report(new DownloadProgress("Cancelled", 0, 0));
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ComponentManager] Self-update download failed: {ex.Message}");
+            progress?.Report(new DownloadProgress($"Error: {ex.Message}", 0, 0));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Create an updater script that will apply the staged update after the app exits.
+    /// </summary>
+    private void CreateUpdaterScript(string stagingPath)
+    {
+        var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        var appExe = Environment.ProcessPath ?? Path.Combine(appDir, "Menace.Modkit.App");
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var scriptPath = Path.Combine(stagingPath, "apply-update.bat");
+            var script = $@"@echo off
+echo Waiting for Modkit to exit...
+:waitloop
+tasklist /FI ""PID eq {Environment.ProcessId}"" 2>nul | find /i ""{Environment.ProcessId}"" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto waitloop
+)
+echo Applying update...
+xcopy /E /Y /I ""{stagingPath}\*"" ""{appDir}\"" >nul 2>&1
+if errorlevel 1 (
+    echo Update failed. Please manually extract the update from:
+    echo {stagingPath}
+    pause
+    exit /b 1
+)
+echo Update complete. Restarting...
+start """" ""{appExe}""
+rmdir /S /Q ""{stagingPath}""
+";
+            File.WriteAllText(scriptPath, script);
+        }
+        else
+        {
+            var scriptPath = Path.Combine(stagingPath, "apply-update.sh");
+            var script = $@"#!/bin/bash
+echo ""Waiting for Modkit to exit...""
+while kill -0 {Environment.ProcessId} 2>/dev/null; do
+    sleep 1
+done
+echo ""Applying update...""
+cp -r ""{stagingPath}/""* ""{appDir}/"" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo ""Update failed. Please manually copy files from:""
+    echo ""{stagingPath}""
+    exit 1
+fi
+chmod +x ""{appExe}"" 2>/dev/null
+echo ""Update complete. Restarting...""
+""{appExe}"" &
+rm -rf ""{stagingPath}""
+";
+            File.WriteAllText(scriptPath, script);
+            // Make script executable
+            var psi = new ProcessStartInfo("chmod")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("+x");
+            psi.ArgumentList.Add(scriptPath);
+            Process.Start(psi)?.WaitForExit(1000);
+        }
+    }
+
+    /// <summary>
+    /// Launch the updater script and exit the app.
+    /// Call this after DownloadAndStageSelfUpdateAsync returns true.
+    /// </summary>
+    public void LaunchUpdaterAndExit()
+    {
+        var stagingPath = UpdateStagingPath;
+        if (!HasStagedUpdate())
+        {
+            ModkitLog.Error("[ComponentManager] No staged update found");
+            return;
+        }
+
+        string scriptPath;
+        ProcessStartInfo psi;
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            scriptPath = Path.Combine(stagingPath, "apply-update.bat");
+            psi = new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"")
+            {
+                UseShellExecute = true,
+                CreateNoWindow = false,
+                WindowStyle = ProcessWindowStyle.Minimized
+            };
+        }
+        else
+        {
+            scriptPath = Path.Combine(stagingPath, "apply-update.sh");
+            psi = new ProcessStartInfo("/bin/bash", scriptPath)
+            {
+                UseShellExecute = true
+            };
+        }
+
+        if (!File.Exists(scriptPath))
+        {
+            ModkitLog.Error($"[ComponentManager] Updater script not found: {scriptPath}");
+            return;
+        }
+
+        ModkitLog.Info("[ComponentManager] Launching updater script and exiting...");
+        Process.Start(psi);
+        Environment.Exit(0);
+    }
 }
 
 // --- JSON Models ---
