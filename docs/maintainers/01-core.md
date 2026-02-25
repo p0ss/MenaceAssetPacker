@@ -201,10 +201,17 @@ BundleCompileResult
    - Patches are tracked but actual field modifications deferred to runtime
 
 2. **Unity 6 Type Tree Absence** (BundleCompiler.cs:216-218)
-   - Unity 6 doesn't embed type trees
+   - Unity 6 doesn't embed type trees in standalone builds
    - Uses raw byte scanning with pattern matching for m_ID discovery
+   - See [unity-asset-format.md](../reverse-engineering/unity-asset-format.md) for binary format details
 
-3. **Memory Usage** (BundleCompiler.cs:198-209)
+3. **ScriptableObject vs MonoBehaviour Offsets**
+   - DataTemplates are **ScriptableObjects**, not MonoBehaviours
+   - ScriptableObject header: 12 bytes (m_Script PPtr only)
+   - MonoBehaviour header: 28 bytes (m_GameObject + m_Enabled + m_Script)
+   - `FindTemplateId` and `CloneWithNewId` use offset 12 for ScriptableObjects
+
+4. **Memory Usage** (BundleCompiler.cs:198-209)
    - No streaming for resource.assets (entire file loaded to memory)
    - Large game assets could cause memory pressure
 

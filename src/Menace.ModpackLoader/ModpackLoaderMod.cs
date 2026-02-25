@@ -103,12 +103,13 @@ public partial class ModpackLoaderMod : MelonMod
         foreach (var mp in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
             PlayerLog($"  - {mp.Name} v{mp.Version} by {mp.Author ?? "Unknown"} (order: {mp.LoadOrder})");
         PlayerLog($"Bundles: {BundleLoader.LoadedBundleCount} ({BundleLoader.LoadedAssetCount} assets)");
+        PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
+        PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
+        PlayerLog($"Compiled assets in manifest: {CompiledAssetLoader.ManifestAssetCount}");
         PlayerLog($"Mod DLLs: {DllLoader.GetLoadedAssemblies().Count}");
         var pluginSummary = DllLoader.GetPluginSummary();
         if (pluginSummary != null)
             PlayerLog($"Modpack plugins: {pluginSummary}");
-        PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
-        PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
         PlayerLog($"Lua scripts loaded: {LuaScriptEngine.Instance.LoadedScriptCount}");
         PlayerLog("========================================");
     }
@@ -187,6 +188,10 @@ public partial class ModpackLoaderMod : MelonMod
 
         // Initialize save system watcher (tries to find saves folder)
         SaveSystemPatches.TryInitialize();
+
+        // Load compiled assets now that Unity is ready
+        // (manifest was loaded during init, actual Resources.Load happens here)
+        CompiledAssetLoader.LoadAssets();
 
         // Load any pending custom sprites now that Unity is initialized
         AssetReplacer.LoadPendingSprites();
@@ -301,7 +306,7 @@ public partial class ModpackLoaderMod : MelonMod
                     var vLabel = manifestVersion >= 2 ? "v2" : "v1 (legacy)";
                     SdkLogger.Msg($"  Loaded [{vLabel}]: {modpack.Name} v{modpack.Version} (order: {modpack.LoadOrder})");
 
-                    // V2: Load bundles, GLB models, and DLLs
+                    // V2: Load mod DLLs, bundles, and models
                     if (manifestVersion >= 2 && !string.IsNullOrEmpty(modpackDir))
                     {
                         BundleLoader.LoadBundles(modpackDir, modpack.Name);
@@ -310,6 +315,8 @@ public partial class ModpackLoaderMod : MelonMod
                     }
 
                     // Load asset replacements (both V1 and V2)
+                    // Textures are NOT compiled into assets due to ColorSpace issues,
+                    // so replacements are applied at runtime via ImageConversion.LoadImage
                     if (modpack.Assets != null)
                     {
                         LoadModpackAssets(modpack);
@@ -324,12 +331,12 @@ public partial class ModpackLoaderMod : MelonMod
 
         SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
 
-        // Load compiled bundles from Mods/compiled/ (contains merged template clones)
+        // Load compiled asset manifest (actual asset loading deferred until Unity is ready)
+        // Assets are embedded in resources.assets and registered with ResourceManager.
         var compiledDir = Path.Combine(modsPath, "compiled");
         if (Directory.Exists(compiledDir))
         {
-            SdkLogger.Msg($"Loading compiled bundles from: {compiledDir}");
-            BundleLoader.LoadBundles(compiledDir, "compiled");
+            CompiledAssetLoader.LoadManifest(compiledDir);
         }
     }
 
@@ -392,11 +399,13 @@ public partial class ModpackLoaderMod : MelonMod
                         AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
                         SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
 
-                        // Queues sprite for deferred loading - returns null until LoadPendingSprites() is called
-                        AssetReplacer.LoadCustomSprite(fullPath, assetName);
+                        var sprite = AssetReplacer.LoadCustomSprite(fullPath, assetName);
+                        if (sprite != null)
+                            SdkLogger.Msg($"  Custom sprite ready: '{assetName}'");
+                        else
+                            SdkLogger.Warning($"  Failed to load custom sprite: '{assetName}'");
                     }
                     // For GLB/GLTF files, load as custom 3D model
-                    // Registers mesh, materials, textures, and prefab with BundleLoader
                     else if (ext == ".glb" || ext == ".gltf")
                     {
                         var model = GlbLoader.LoadGlb(fullPath);
@@ -587,15 +596,52 @@ public partial class ModpackLoaderMod : MelonMod
                 }
 
                 int appliedCount = 0;
+                // Cache GetID method lookup for this template type
+                var getIdMethod = templateType.GetMethod("GetID",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+                // Debug: Log GetID availability and patch keys we're looking for
+                var patchKeys = string.Join(", ", templateInstances.Keys.Take(5));
+                SdkLogger.Msg($"  [Debug] {templateTypeName}: {objects.Length} instances, GetID={getIdMethod != null}, patches=[{patchKeys}]");
+
                 foreach (var obj in objects)
                 {
                     if (obj == null) continue;
                     var templateName = obj.name;
+
+                    // First try matching by obj.name (m_Name)
                     if (templateInstances.ContainsKey(templateName))
                     {
+                        SdkLogger.Msg($"    [Debug] obj.name matched: '{templateName}'");
                         var modifications = templateInstances[templateName];
                         ApplyTemplateModifications(obj, templateType, modifications);
                         appliedCount++;
+                    }
+                    // Fall back to matching by GetID() (m_ID) for cloned templates
+                    // Cloned templates have m_Name unchanged but m_ID set to the new name
+                    else if (getIdMethod != null)
+                    {
+                        try
+                        {
+                            // Need to cast to the proxy type first
+                            var genericTryCast = TryCastMethod.MakeGenericMethod(templateType);
+                            var castObj = genericTryCast.Invoke(obj, null);
+                            if (castObj != null)
+                            {
+                                var templateId = getIdMethod.Invoke(castObj, null)?.ToString();
+                                if (!string.IsNullOrEmpty(templateId) && templateInstances.ContainsKey(templateId))
+                                {
+                                    SdkLogger.Msg($"    [Debug] GetID matched: '{templateId}'");
+                                    var modifications = templateInstances[templateId];
+                                    ApplyTemplateModifications(obj, templateType, modifications);
+                                    appliedCount++;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            SdkLogger.Warning($"    [Debug] GetID failed for {templateName}: {ex.Message}");
+                        }
                     }
                 }
 

@@ -734,10 +734,22 @@ public class ModpackManager
 
             manifest.Path = modpackDir;
 
-            // Warn about empty names which can cause deployment issues
+            // Auto-fix empty names by deriving from directory name
             if (string.IsNullOrWhiteSpace(manifest.Name))
             {
-                ModkitLog.Warn($"[ModpackManager] Modpack at '{modpackDir}' has empty name - this may cause issues");
+                var dirName = Path.GetFileName(modpackDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                // Strip common suffixes like "-modpack"
+                var fixedName = dirName.Replace("-modpack", "").Replace("_modpack", "").Trim();
+                if (!string.IsNullOrWhiteSpace(fixedName))
+                {
+                    manifest.Name = fixedName;
+                    manifest.SaveToFile(modpackPath);
+                    ModkitLog.Info($"[ModpackManager] Auto-fixed empty modpack name to '{fixedName}' (from directory '{dirName}')");
+                }
+                else
+                {
+                    ModkitLog.Warn($"[ModpackManager] Modpack at '{modpackDir}' has empty name - this may cause issues");
+                }
             }
 
             // If loaded from manifest.json, save as modpack.json for consistency

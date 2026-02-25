@@ -493,6 +493,11 @@ public static class NativePrefabCreator
             var transformBytes = CreateTransformBytes(
                 trTemplate, gameObjectPathId, transformPathId);
             var transformInfo = AssetFileInfo.Create(afile, transformPathId, (int)AssetClassID.Transform, 0);
+            if (transformInfo == null)
+            {
+                result.ErrorMessage = "Failed to create Transform asset - Unity 6 without type trees";
+                return result;
+            }
             transformInfo.SetNewData(transformBytes);
             afile.Metadata.AddAssetInfo(transformInfo);
 
@@ -500,6 +505,11 @@ public static class NativePrefabCreator
             var meshFilterBytes = CreateMeshFilterBytes(
                 mfTemplate, gameObjectPathId, meshPathId);
             var meshFilterInfo = AssetFileInfo.Create(afile, meshFilterPathId, (int)AssetClassID.MeshFilter, 0);
+            if (meshFilterInfo == null)
+            {
+                result.ErrorMessage = "Failed to create MeshFilter asset - Unity 6 without type trees";
+                return result;
+            }
             meshFilterInfo.SetNewData(meshFilterBytes);
             afile.Metadata.AddAssetInfo(meshFilterInfo);
 
@@ -507,6 +517,11 @@ public static class NativePrefabCreator
             var meshRendererBytes = CreateMeshRendererBytes(
                 mrTemplate, gameObjectPathId, materialPathIds);
             var meshRendererInfo = AssetFileInfo.Create(afile, meshRendererPathId, (int)AssetClassID.MeshRenderer, 0);
+            if (meshRendererInfo == null)
+            {
+                result.ErrorMessage = "Failed to create MeshRenderer asset - Unity 6 without type trees";
+                return result;
+            }
             meshRendererInfo.SetNewData(meshRendererBytes);
             afile.Metadata.AddAssetInfo(meshRendererInfo);
 
@@ -515,6 +530,11 @@ public static class NativePrefabCreator
                 goTemplate, prefabName,
                 transformPathId, meshFilterPathId, meshRendererPathId);
             var gameObjectInfo = AssetFileInfo.Create(afile, gameObjectPathId, (int)AssetClassID.GameObject, 0);
+            if (gameObjectInfo == null)
+            {
+                result.ErrorMessage = "Failed to create GameObject asset - Unity 6 without type trees";
+                return result;
+            }
             gameObjectInfo.SetNewData(gameObjectBytes);
             afile.Metadata.AddAssetInfo(gameObjectInfo);
 

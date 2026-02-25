@@ -117,7 +117,7 @@ public class TextureAssetCreator
             SetNestedField(texField, "m_TextureSettings", "m_WrapW", 1); // Clamp
 
             SetField(texField, "m_LightmapFormat", 0);
-            SetField(texField, "m_ColorSpace", 1); // Linear (0 = Gamma/sRGB)
+            SetField(texField, "m_ColorSpace", 0); // sRGB/Gamma (0) for diffuse/UI textures (1 = Linear for normal maps)
 
             // Platform blob - empty for now
             var platformBlob = texField["m_PlatformBlob"];

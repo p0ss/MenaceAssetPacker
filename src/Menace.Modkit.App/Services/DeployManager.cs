@@ -68,6 +68,30 @@ public class DeployManager
             progress?.Report($"Deploying {modpack.Name}...");
             await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
 
+            // Restore original game data before compiling to ensure we read from vanilla files
+            // This prevents the compiler from finding clones that were added in previous deployments
+            var gameInstallPath = _modpackManager.GetGameInstallPath();
+            if (!string.IsNullOrEmpty(gameInstallPath))
+            {
+                var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
+                if (!string.IsNullOrEmpty(gameDataDir))
+                {
+                    foreach (var (backupName, originalName) in new[] {
+                        ("resources.assets.original", "resources.assets"),
+                        ("globalgamemanagers.original", "globalgamemanagers") })
+                    {
+                        var backupPath = Path.Combine(gameDataDir, backupName);
+                        var originalPath = Path.Combine(gameDataDir, originalName);
+                        if (File.Exists(backupPath))
+                        {
+                            // Restore from backup so compilation reads vanilla data
+                            ModkitLog.Info($"[DeployManager] Restoring {originalName} from backup for clean compile");
+                            File.Copy(backupPath, originalPath, overwrite: true);
+                        }
+                    }
+                }
+            }
+
             // Compile merged bundle with all staging modpacks (not just this one)
             // This ensures clones, patches, and audio work correctly
             progress?.Report("Compiling asset bundles...");
@@ -556,11 +580,11 @@ public class DeployManager
 
         var merged = MergedPatchSet.MergePatchSets(orderedPatchSets);
 
-        // Only skip compilation if there are no patches, no clones, no audio, no textures, AND no models
+        // Only skip compilation if there are no patches, no clones, no audio, AND no models
+        // NOTE: Textures are now handled at runtime to avoid ColorSpace issues
         bool hasAudio = audioEntries.Count > 0;
-        bool hasTextures = allTextureEntries.Count > 0;
         bool hasModels = allModelEntries.Count > 0;
-        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio && !hasTextures && !hasModels)
+        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio && !hasModels)
             return files;
 
         // Determine game data path and Unity version
@@ -572,15 +596,38 @@ public class DeployManager
         var compiledDir = Path.Combine(modsBasePath, "compiled");
         var outputPath = Path.Combine(compiledDir, "templates.bundle");
 
+        // Copy texture files to compiled/textures for runtime loading
+        // (asset-file texture creation had ColorSpace issues, runtime loading works correctly)
+        var texturesDir = Path.Combine(compiledDir, "textures");
+        if (allTextureEntries.Count > 0)
+        {
+            Directory.CreateDirectory(texturesDir);
+            ModkitLog.Info($"[DeployManager] Copying {allTextureEntries.Count} texture(s) for runtime loading...");
+            foreach (var tex in allTextureEntries)
+            {
+                try
+                {
+                    var destPath = Path.Combine(texturesDir, $"{tex.AssetName}.png");
+                    File.Copy(tex.SourceFilePath, destPath, overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    ModkitLog.Warn($"[DeployManager] Failed to copy texture '{tex.AssetName}': {ex.Message}");
+                }
+            }
+        }
+
         try
         {
-            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s), {allTextureEntries.Count} texture(s), {allModelEntries.Count} model(s)");
+            // NOTE: Textures are handled at runtime via copied PNG files
+            // Asset-file texture creation always resulted in washed-out colors
+            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s), {allModelEntries.Count} model(s), {allTextureEntries.Count} texture(s) (runtime)");
             var compiler = new BundleCompiler();
             var result = await compiler.CompileDataPatchBundleAsync(
                 merged,
                 mergedClones,
                 audioEntries.Count > 0 ? audioEntries : null,
-                allTextureEntries.Count > 0 ? allTextureEntries : null,
+                null, // Textures handled at runtime - asset creation had ColorSpace issues
                 allModelEntries.Count > 0 ? allModelEntries : null,
                 gameInstallPath,
                 unityVersion,
@@ -1024,10 +1071,12 @@ public class DeployManager
             var originalPath = Path.Combine(gameDataDir, originalName);
             var backupPath = Path.Combine(gameDataDir, originalName + ".original");
 
-            // Create backup if it doesn't exist
+            // Only create backup if one doesn't exist yet (preserve vanilla backup)
+            // CRITICAL: Don't overwrite existing .original - it may be the only vanilla copy!
+            // Previous bug: always creating "fresh backup" would copy a patched file to .original
             if (File.Exists(originalPath) && !File.Exists(backupPath))
             {
-                ModkitLog.Info($"[DeployManager] Creating backup: {originalName} -> {originalName}.original");
+                ModkitLog.Info($"[DeployManager] Creating first-time backup: {originalName} -> {originalName}.original");
                 File.Copy(originalPath, backupPath);
             }
 
@@ -1042,16 +1091,35 @@ public class DeployManager
     /// </summary>
     private void RestoreOriginalGameData(string modsBasePath)
     {
+        ModkitLog.Info("[DeployManager] RestoreOriginalGameData starting...");
+
         var gameInstallPath = _modpackManager.GetGameInstallPath();
         if (string.IsNullOrEmpty(gameInstallPath))
+        {
+            ModkitLog.Warn("[DeployManager] RestoreOriginalGameData: gameInstallPath is empty, cannot restore");
             return;
+        }
+
+        ModkitLog.Info($"[DeployManager] RestoreOriginalGameData: gameInstallPath = {gameInstallPath}");
 
         var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
         if (string.IsNullOrEmpty(gameDataDir))
+        {
+            ModkitLog.Warn($"[DeployManager] RestoreOriginalGameData: No *_Data directory found in {gameInstallPath}");
             return;
+        }
+
+        ModkitLog.Info($"[DeployManager] RestoreOriginalGameData: gameDataDir = {gameDataDir}");
 
         // Files to restore
         var filesToRestore = new[] { "resources.assets", "globalgamemanagers" };
+
+        // Expected minimum sizes for validation (vanilla game files)
+        var expectedMinSizes = new Dictionary<string, long>
+        {
+            { "resources.assets", 500 * 1024 * 1024 }, // ~518MB for vanilla
+            { "globalgamemanagers", 5 * 1024 * 1024 }  // ~6MB for vanilla
+        };
 
         foreach (var originalName in filesToRestore)
         {
@@ -1060,10 +1128,34 @@ public class DeployManager
 
             if (File.Exists(backupPath))
             {
-                ModkitLog.Info($"[DeployManager] Restoring original: {originalName}.original -> {originalName}");
-                File.Copy(backupPath, originalPath, overwrite: true);
+                try
+                {
+                    var backupSize = new FileInfo(backupPath).Length;
+
+                    // Validate backup isn't corrupted (too small)
+                    if (expectedMinSizes.TryGetValue(originalName, out var minSize) && backupSize < minSize)
+                    {
+                        ModkitLog.Error($"[DeployManager] Backup {originalName}.original appears corrupted: {backupSize / 1024 / 1024}MB (expected >{minSize / 1024 / 1024}MB). Use Steam to verify game files, then use Clean Redeploy.");
+                        continue;
+                    }
+
+                    ModkitLog.Info($"[DeployManager] Restoring original: {originalName}.original ({backupSize / 1024 / 1024}MB) -> {originalName}");
+                    File.Copy(backupPath, originalPath, overwrite: true);
+                    var restoredSize = new FileInfo(originalPath).Length;
+                    ModkitLog.Info($"[DeployManager] Restored {originalName}: {restoredSize / 1024 / 1024}MB");
+                }
+                catch (Exception ex)
+                {
+                    ModkitLog.Error($"[DeployManager] Failed to restore {originalName}: {ex.Message}");
+                }
+            }
+            else
+            {
+                ModkitLog.Warn($"[DeployManager] No backup found for {originalName} at {backupPath}");
             }
         }
+
+        ModkitLog.Info("[DeployManager] RestoreOriginalGameData complete");
     }
 }
 

@@ -406,7 +406,65 @@ public class ModLoaderInstaller
         Directory.CreateDirectory(modsFolder);
         Directory.CreateDirectory(userLibsFolder);
         progressCallback?.Invoke("✓ Mods and UserLibs directories cleaned");
+
+        // Restore original game data files (resources.assets, globalgamemanagers)
+        RestoreOriginalGameData(progressCallback);
+
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Restore original game data from backups during Clean Redeploy.
+    /// This ensures the game files are vanilla before a fresh deploy.
+    /// </summary>
+    private void RestoreOriginalGameData(Action<string>? progressCallback = null)
+    {
+        // Find the *_Data directory
+        var gameDataDir = Directory.GetDirectories(_gameInstallPath, "*_Data").FirstOrDefault();
+        if (string.IsNullOrEmpty(gameDataDir))
+        {
+            ModkitLog.Warn("[ModLoaderInstaller] No *_Data directory found, cannot restore game data");
+            return;
+        }
+
+        var filesToRestore = new[] {
+            ("resources.assets.original", "resources.assets"),
+            ("globalgamemanagers.original", "globalgamemanagers")
+        };
+        int restored = 0;
+
+        foreach (var (backupName, originalName) in filesToRestore)
+        {
+            var backupPath = Path.Combine(gameDataDir, backupName);
+            var originalPath = Path.Combine(gameDataDir, originalName);
+
+            if (File.Exists(backupPath))
+            {
+                try
+                {
+                    var backupSize = new FileInfo(backupPath).Length;
+                    progressCallback?.Invoke($"Restoring {originalName} from backup ({backupSize / 1024 / 1024}MB)...");
+                    File.Copy(backupPath, originalPath, overwrite: true);
+                    restored++;
+                    ModkitLog.Info($"[ModLoaderInstaller] Restored: {backupName} -> {originalName}");
+                }
+                catch (Exception ex)
+                {
+                    progressCallback?.Invoke($"⚠ Failed to restore {originalName}: {ex.Message}");
+                    ModkitLog.Error($"[ModLoaderInstaller] Failed to restore {originalName}: {ex.Message}");
+                }
+            }
+            else
+            {
+                progressCallback?.Invoke($"⚠ No backup found for {originalName} - verify game files via Steam");
+                ModkitLog.Warn($"[ModLoaderInstaller] No backup found: {backupPath}");
+            }
+        }
+
+        if (restored > 0)
+        {
+            progressCallback?.Invoke($"✓ Restored {restored} game file(s) from backup");
+        }
     }
 
     public bool IsMelonLoaderInstalled()

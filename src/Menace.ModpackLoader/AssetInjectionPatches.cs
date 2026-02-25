@@ -27,8 +27,8 @@ namespace Menace.ModpackLoader;
 public static class AssetReplacer
 {
     // Set to true to disable runtime asset replacement (relies on native assets only)
-    // This is used to verify that native asset creation is working correctly.
-    private const bool DISABLE_RUNTIME_REPLACEMENT = true;
+    // This was used to verify native asset creation - now disabled since we use runtime for textures
+    private const bool DISABLE_RUNTIME_REPLACEMENT = false;
     /// <summary>
     /// A registered disk-file replacement.
     /// </summary>
@@ -860,7 +860,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleReplacements()
     {
-        if (BundleLoader.LoadedAssetCount == 0)
+        if (CompiledAssetLoader.LoadedAssetCount == 0)
             return 0;
 
         int replaced = 0;
@@ -881,7 +881,7 @@ public static class AssetReplacer
     /// </summary>
     private static int ApplyBundleTextureReplacements()
     {
-        var bundleTextures = BundleLoader.GetAssetsByType("Texture2D");
+        var bundleTextures = CompiledAssetLoader.GetAssetsByType("Texture2D");
         if (bundleTextures.Count == 0)
             return 0;
 
@@ -950,7 +950,7 @@ public static class AssetReplacer
     /// </summary>
     private static int ApplyBundleAudioReplacements()
     {
-        var bundleClips = BundleLoader.GetAssetsByType("AudioClip");
+        var bundleClips = CompiledAssetLoader.GetAssetsByType("AudioClip");
         if (bundleClips.Count == 0)
             return 0;
 
@@ -1021,7 +1021,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMeshReplacements()
     {
-        var bundleMeshes = BundleLoader.GetAssetsByType("Mesh");
+        var bundleMeshes = CompiledAssetLoader.GetAssetsByType("Mesh");
         if (bundleMeshes.Count == 0)
             return 0;
 
@@ -1111,7 +1111,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMaterialReplacements()
     {
-        var bundleMaterials = BundleLoader.GetAssetsByType("Material");
+        var bundleMaterials = CompiledAssetLoader.GetAssetsByType("Material");
         if (bundleMaterials.Count == 0)
             return 0;
 
@@ -1199,7 +1199,7 @@ public static class AssetReplacer
 
     private static int ApplyBundlePrefabReplacements()
     {
-        var bundlePrefabs = BundleLoader.GetAssetsByType("GameObject");
+        var bundlePrefabs = CompiledAssetLoader.GetAssetsByType("GameObject");
         if (bundlePrefabs.Count == 0)
             return 0;
 

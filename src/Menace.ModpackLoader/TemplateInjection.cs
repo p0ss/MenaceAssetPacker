@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MelonLoader;
 using Menace.SDK;
 using Menace.SDK.Internal;
@@ -41,6 +43,10 @@ public partial class ModpackLoaderMod
 
     // Cache for name -> Object lookups, keyed by element type
     private readonly Dictionary<Type, Dictionary<string, UnityEngine.Object>> _nameLookupCache = new();
+
+    // Keep runtime-created sprites and textures alive to prevent garbage collection
+    private readonly List<Sprite> _runtimeSprites = new();
+    private readonly List<Texture2D> _runtimeTextures = new();
 
     /// <summary>
     /// Clear the name lookup cache. Call this after creating clones so that
@@ -363,36 +369,60 @@ public partial class ModpackLoaderMod
     }
 
     /// <summary>
-    /// Write a string value to an existing localization object.
-    /// DEPRECATED: This method modifies shared instances and can cause corruption.
-    /// Kept for cases where we already have a newly-created object.
+    /// Write a localized string via reflection, creating a NEW object to avoid corruption.
+    /// Used for fallback cases where the parent is not a direct IL2CPP object.
     /// </summary>
-    private bool WriteLocalizedStringValue(object locObject, string value)
+    private bool WriteLocalizedFieldViaReflection(object parent, PropertyInfo prop, FieldInfo field, string fieldName, string value)
     {
-        if (locObject == null || !(locObject is Il2CppObjectBase il2cppObj))
-            return false;
-
         try
         {
-            var ptr = il2cppObj.Pointer;
-            if (ptr == IntPtr.Zero)
-                return false;
-
-            // Convert managed string to IL2CPP string
-            IntPtr il2cppStr = IntPtr.Zero;
-            if (!string.IsNullOrEmpty(value))
+            // Get the existing localization object
+            object existingLoc = prop != null ? prop.GetValue(parent) : field?.GetValue(parent);
+            if (existingLoc == null || !(existingLoc is Il2CppObjectBase il2cppLoc))
             {
-                il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
+                SdkLogger.Warning($"    {fieldName}: existing localization is null or not IL2CPP");
+                return false;
             }
 
-            // Write the string pointer to the field
-            Marshal.WriteIntPtr(ptr + LOC_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+            var existingPtr = il2cppLoc.Pointer;
+            if (existingPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning($"    {fieldName}: existing localization pointer is null");
+                return false;
+            }
+
+            // Create a NEW localization object with our text
+            var newLocPtr = CreateLocalizedObject(existingPtr, value);
+            if (newLocPtr == IntPtr.Zero)
+            {
+                SdkLogger.Warning($"    {fieldName}: failed to create new localization object");
+                return false;
+            }
+
+            // Wrap the new pointer in the appropriate managed type and set it back
+            var locType = existingLoc.GetType();
+            var wrappedNew = Activator.CreateInstance(locType, newLocPtr);
+            if (wrappedNew == null)
+            {
+                SdkLogger.Warning($"    {fieldName}: failed to wrap new localization object");
+                return false;
+            }
+
+            if (prop != null && prop.CanWrite)
+                prop.SetValue(parent, wrappedNew);
+            else if (field != null)
+                field.SetValue(parent, wrappedNew);
+            else
+            {
+                SdkLogger.Warning($"    {fieldName}: no writable property or field");
+                return false;
+            }
 
             return true;
         }
         catch (Exception ex)
         {
-            SdkLogger.Warning($"    WriteLocalizedStringValue failed: {ex.Message}");
+            SdkLogger.Warning($"    WriteLocalizedFieldViaReflection({fieldName}) failed: {ex.Message}");
             return false;
         }
     }
@@ -443,8 +473,9 @@ public partial class ModpackLoaderMod
                 var addedCount = 0;
                 foreach (var typeName in typeNamesToTry)
                 {
-                    var bundleAssets = BundleLoader.GetAssetsByType(typeName);
-                    foreach (var asset in bundleAssets)
+                    // Check compiled assets (loaded from manifest via Resources.Load)
+                    var compiledAssets = CompiledAssetLoader.GetAssetsByType(typeName);
+                    foreach (var asset in compiledAssets)
                     {
                         if (asset != null && !string.IsNullOrEmpty(asset.name) && !lookup.ContainsKey(asset.name))
                         {
@@ -454,7 +485,76 @@ public partial class ModpackLoaderMod
                     }
                 }
                 if (addedCount > 0)
-                    SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) from BundleLoader to lookup");
+                    SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) to lookup");
+
+                // For Sprites: create runtime sprites from PNG files in compiled/textures
+                // Asset-file sprites have complex vertex/UV data that's hard to generate correctly,
+                // and asset-file textures have ColorSpace issues (always washed out)
+                // Runtime loading via ImageConversion.LoadImage works correctly for both
+                if (elementType == typeof(Sprite))
+                {
+                    int runtimeSpriteCount = 0;
+
+                    // Scan compiled/textures directory for PNG files
+                    var modsPath = Path.Combine(Directory.GetCurrentDirectory(), "Mods");
+                    var texturesDir = Path.Combine(modsPath, "compiled", "textures");
+
+                    if (Directory.Exists(texturesDir))
+                    {
+                        var pngFiles = Directory.GetFiles(texturesDir, "*.png");
+                        SdkLogger.Msg($"    Found {pngFiles.Length} PNG file(s) in compiled/textures");
+
+                        foreach (var pngPath in pngFiles)
+                        {
+                            var textureName = Path.GetFileNameWithoutExtension(pngPath);
+
+                            // Skip if we already have a sprite for this texture
+                            if (lookup.ContainsKey(textureName)) continue;
+
+                            try
+                            {
+                                // Load PNG file as Texture2D using ImageConversion
+                                var bytes = File.ReadAllBytes(pngPath);
+                                var tex = new Texture2D(2, 2);
+                                var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+
+                                if (ImageConversion.LoadImage(tex, il2cppBytes))
+                                {
+                                    tex.name = textureName;
+
+                                    // Create a runtime sprite from the texture
+                                    var rect = new Rect(0, 0, tex.width, tex.height);
+                                    var pivot = new Vector2(0.5f, 0.5f);
+                                    var sprite = Sprite.Create(tex, rect, pivot, 100f);
+
+                                    if (sprite != null)
+                                    {
+                                        sprite.name = textureName;
+                                        lookup[textureName] = sprite;
+
+                                        // Cache to prevent garbage collection
+                                        _runtimeSprites.Add(sprite);
+                                        _runtimeTextures.Add(tex);
+                                        runtimeSpriteCount++;
+
+                                        SdkLogger.Msg($"      Loaded sprite: '{textureName}' ({tex.width}x{tex.height})");
+                                    }
+                                }
+                                else
+                                {
+                                    SdkLogger.Warning($"    Failed to load texture from '{pngPath}'");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                SdkLogger.Warning($"    Failed to create sprite for '{textureName}': {ex.Message}");
+                            }
+                        }
+                    }
+
+                    if (runtimeSpriteCount > 0)
+                        SdkLogger.Msg($"    Created {runtimeSpriteCount} sprite(s) from PNG files");
+                }
             }
             catch (Exception ex)
             {
@@ -626,16 +726,8 @@ public partial class ModpackLoaderMod
                         }
                         else
                         {
-                            // Fallback for managed value types - use property/field getter
-                            try
-                            {
-                                var existingLoc = childProp != null ? childProp.GetValue(parentObj) : childField?.GetValue(parentObj);
-                                success = existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue);
-                            }
-                            catch (Exception ex)
-                            {
-                                SdkLogger.Warning($"    {obj.name}.{fieldName}: getter failed: {ex.Message}");
-                            }
+                            // Fallback for managed value types - create new object via reflection
+                            success = WriteLocalizedFieldViaReflection(parentObj, childProp, childField, childFieldName, stringValue);
                         }
 
                         if (success)
@@ -1154,8 +1246,17 @@ public partial class ModpackLoaderMod
                 var lookup = BuildNameLookup(targetType);
                 if (lookup.TryGetValue(name, out var resolved))
                 {
+                    SdkLogger.Msg($"    [Debug] Resolved '{name}' -> {targetType.Name} '{resolved.name}'");
                     var castMethod = TryCastMethod.MakeGenericMethod(targetType);
                     return castMethod.Invoke(resolved, null);
+                }
+                else
+                {
+                    // Log failed lookups for Sprite type to debug icon issues
+                    if (targetType == typeof(Sprite))
+                    {
+                        SdkLogger.Warning($"    [Debug] Sprite lookup FAILED for '{name}' (lookup has {lookup.Count} entries)");
+                    }
                 }
             }
             catch (Exception ex)
@@ -1301,16 +1402,8 @@ public partial class ModpackLoaderMod
                     }
                     else
                     {
-                        // Fallback for managed types - use property getter
-                        try
-                        {
-                            var existingLoc = prop.GetValue(target);
-                            success = existingLoc != null && WriteLocalizedStringValue(existingLoc, stringValue);
-                        }
-                        catch (Exception ex)
-                        {
-                            SdkLogger.Warning($"    {targetType.Name}.{fieldName}: getter failed: {ex.Message}");
-                        }
+                        // Fallback for managed types - create new object via reflection
+                        success = WriteLocalizedFieldViaReflection(target, prop, null, fieldName, stringValue);
                     }
 
                     if (!success)

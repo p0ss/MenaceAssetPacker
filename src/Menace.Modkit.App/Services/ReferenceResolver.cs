@@ -21,6 +21,26 @@ public class ReferenceResolver
 {
     private readonly string _gameInstallPath;
 
+    // Common reference aliases - maps shorthand names to actual assembly names
+    private static readonly Dictionary<string, string[]> ReferenceAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Il2CppInterop shortcuts
+        ["Il2CppInterop"] = new[] { "Il2CppInterop.Runtime", "Il2CppInterop.Common" },
+        ["Il2Cpp"] = new[] { "Il2CppInterop.Runtime", "Il2CppInterop.Common" },
+
+        // Harmony shortcuts
+        ["HarmonyLib"] = new[] { "0Harmony" },
+        ["Harmony"] = new[] { "0Harmony" },
+
+        // Game assembly shortcuts
+        ["Menace"] = new[] { "Assembly-CSharp" },
+        ["Game"] = new[] { "Assembly-CSharp" },
+
+        // MelonLoader shortcuts
+        ["MelonLoader"] = new[] { "MelonLoader" },
+        ["Melon"] = new[] { "MelonLoader" },
+    };
+
     public ReferenceResolver(string gameInstallPath)
     {
         _gameInstallPath = gameInstallPath;
@@ -86,22 +106,15 @@ public class ReferenceResolver
                 return;
 
             if (!IsManagedAssembly(path))
-            {
-                ModkitLog.Info($"  [skip-native] {Path.GetFileName(path)}");
                 return;
-            }
 
             var name = Path.GetFileNameWithoutExtension(path);
             if (!addedAssemblyNames.Add(name))
-            {
-                ModkitLog.Info($"  [skip-dup] {name} <- {path}");
                 return;
-            }
 
             try
             {
                 refs.Add(MetadataReference.CreateFromFile(path));
-                ModkitLog.Info($"  [added] {name} <- {path}");
             }
             catch (Exception ex)
             {
@@ -116,10 +129,7 @@ public class ReferenceResolver
         {
             var name = Path.GetFileNameWithoutExtension(path);
             if (IsFrameworkAssembly(name))
-            {
-                ModkitLog.Info($"  [skip-framework] {name} <- {path}");
                 return;
-            }
             AddRef(path);
         }
 
@@ -237,13 +247,29 @@ public class ReferenceResolver
                 if (string.IsNullOrWhiteSpace(refName) || addedAssemblyNames.Contains(refName))
                     continue;
 
-                var foundPath = TryFindRequestedReference(refName, searchRoots);
-                if (foundPath != null)
+                // Expand aliases to actual assembly names
+                var namesToTry = ReferenceAliases.TryGetValue(refName, out var aliases)
+                    ? aliases.Prepend(refName).ToArray()
+                    : new[] { refName };
+
+                bool foundAny = false;
+                foreach (var nameToTry in namesToTry)
                 {
-                    AddRef(foundPath);
+                    if (addedAssemblyNames.Contains(nameToTry))
+                    {
+                        foundAny = true;
+                        continue;
+                    }
+
+                    var foundPath = TryFindRequestedReference(nameToTry, searchRoots);
+                    if (foundPath != null)
+                    {
+                        AddRef(foundPath);
+                        foundAny = true;
+                    }
                 }
 
-                if (!addedAssemblyNames.Contains(refName))
+                if (!foundAny)
                 {
                     ReportIssue($"Requested reference '{refName}' was not found in game, component cache, or bundled directories.");
                 }
@@ -523,11 +549,7 @@ public class ReferenceResolver
             {
                 return installedRoot;
             }
-
-            if (!string.IsNullOrEmpty(expectedVersion))
-            {
-                reportIssue($"Installed DotNetRefs version '{installedVersion ?? "unknown"}' does not match configured version '{expectedVersion}'.");
-            }
+            // Don't warn here - we'll try bundled refs next and only warn if nothing works
         }
 
         var bundledRoot = FindBundledDotNetRefsRoot();

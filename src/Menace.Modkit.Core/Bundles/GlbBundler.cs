@@ -550,6 +550,19 @@ public class GlbBundler
 
             result.SourceName = parseResult.SourceName;
 
+            // Native model compilation currently emits Mesh + MeshFilter/MeshRenderer prefab
+            // structures. Surface rigs/animations in warnings so users know what is not
+            // fully reconstructed in this path yet.
+            if (parseResult.Skeletons.Count > 0 || parseResult.Animations.Count > 0)
+            {
+                var totalBones = parseResult.Skeletons.Sum(s => s.Bones.Count);
+                result.Warnings.Add(
+                    $"Model '{parseResult.SourceName}' contains skeletal data " +
+                    $"({parseResult.Skeletons.Count} skeleton(s), {totalBones} bone(s), {parseResult.Animations.Count} animation(s)). " +
+                    "Current native GLB compilation creates MeshFilter/MeshRenderer prefabs only and does not fully reconstruct " +
+                    "SkinnedMeshRenderer bone hierarchies or animation clips.");
+            }
+
             // Create Mesh assets for each extracted mesh
             foreach (var extractedMesh in parseResult.Meshes)
             {

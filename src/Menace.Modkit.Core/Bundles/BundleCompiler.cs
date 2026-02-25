@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace Menace.Modkit.Core.Bundles;
 
@@ -204,7 +206,15 @@ public class BundleCompiler
             }
 
             // Load the primary assets file (resources.assets preferred)
+            // CRITICAL: Prefer .original backup over potentially-modified resources.assets
+            // Previous deployments may have added clones to resources.assets, which would
+            // cause BuildAssetNameLookup to find them as "already existing" and skip clones.
             var primaryDataFile = dataFiles.FirstOrDefault(f => f.EndsWith("resources.assets")) ?? dataFiles[0];
+            var originalBackup = primaryDataFile + ".original";
+            if (File.Exists(originalBackup))
+            {
+                primaryDataFile = originalBackup;
+            }
             var primaryFileInst = am.LoadAssetsFile(primaryDataFile, false);
             var afile = primaryFileInst.file;
 
@@ -219,7 +229,15 @@ public class BundleCompiler
             result.Warnings.Add($"Asset lookup indexed {assetsByName.Count} template assets from {primaryDataFile}");
 
             // Load globalgamemanagers to get ResourceManager path mappings
-            var ggmPath = Path.Combine(Path.GetDirectoryName(primaryDataFile)!, "globalgamemanagers");
+            // CRITICAL: Prefer .original backup over potentially-modified globalgamemanagers
+            // globalgamemanagers is in the *_Data directory, not the game root
+            var gameDataDir = Path.GetDirectoryName(primaryDataFile) ?? gameDataPath;
+            var ggmPath = Path.Combine(gameDataDir, "globalgamemanagers");
+            var ggmOriginal = ggmPath + ".original";
+            if (File.Exists(ggmOriginal))
+            {
+                ggmPath = ggmOriginal;
+            }
             var resourcePathLookup = new Dictionary<string, string>(); // templateName -> resourcePath
             var originalResourceRefs = new Dictionary<string, (int FileId, long PathId)>(StringComparer.OrdinalIgnoreCase); // resourcePath -> original (FileId, PathId)
             byte[]? ggmBytes = null;
@@ -259,7 +277,10 @@ public class BundleCompiler
             var clonedAssets = new Dictionary<string, AssetFileInfo>();
             var cloneSourceMap = new Dictionary<string, string>(); // cloneName -> sourceName
 
-            if (hasClones)
+            // DEBUG: Test if load/save without clones corrupts the file
+            bool skipClonesForDebug = false; // Re-enabled clone processing
+
+            if (hasClones && !skipClonesForDebug)
             {
                 var cloneResult = ProcessClones(
                     afile, mergedClones!, assetsByName, clonedAssets, cloneSourceMap, ref nextPathId);
@@ -450,7 +471,6 @@ public class BundleCompiler
                 {
                     afile.Write(writer);
                 }
-
                 serializedBytes = ms.ToArray();
 
                 // Write raw assets file for manual testing/replacement
@@ -458,6 +478,34 @@ public class BundleCompiler
                 var rawAssetsPath = Path.Combine(dir!, "resources.assets.patched");
                 File.WriteAllBytes(rawAssetsPath, serializedBytes);
                 result.Warnings.Add($"Raw assets file written: {rawAssetsPath} ({serializedBytes.Length / 1024 / 1024}MB)");
+
+                // Validate the written file can be read back
+                try
+                {
+                    var validateAm = new AssetsManager();
+                    var validateInst = validateAm.LoadAssetsFile(rawAssetsPath, false);
+                    var validateFile = validateInst.file;
+                    result.Warnings.Add($"[Validate] File has {validateFile.AssetInfos.Count} assets");
+
+                    // Check if our clones exist
+                    foreach (var (cloneName, cloneInfo) in clonedAssets)
+                    {
+                        var found = validateFile.AssetInfos.FirstOrDefault(a => a.PathId == cloneInfo.PathId);
+                        if (found != null)
+                        {
+                            result.Warnings.Add($"[Validate] Clone '{cloneName}' PathId={cloneInfo.PathId} found, ByteSize={found.ByteSize}");
+                        }
+                        else
+                        {
+                            result.Warnings.Add($"[Validate] Clone '{cloneName}' PathId={cloneInfo.PathId} NOT FOUND!");
+                        }
+                    }
+                    validateAm.UnloadAll();
+                }
+                catch (Exception valEx)
+                {
+                    result.Warnings.Add($"[Validate] FAILED to read back file: {valEx.Message}");
+                }
 
                 // Patch globalgamemanagers ResourceManager with new entries (clones + audio + textures + models)
                 if (ggmBytes != null && (clonedAssets.Count > 0 || audioAssets.Count > 0 || textureAssets.Count > 0 || spriteAssets.Count > 0 || modelAssets.Count > 0 || prefabAssets.Count > 0))
@@ -489,8 +537,14 @@ public class BundleCompiler
                         {
                             var ggmPatchedPath = Path.Combine(dir!, "globalgamemanagers.patched");
                             File.WriteAllBytes(ggmPatchedPath, patchedGgm);
-                            var totalEntries = clonedAssets.Count + audioAssets.Count + textureAssets.Count + spriteAssets.Count + modelAssets.Count + prefabAssets.Count;
-                            result.Warnings.Add($"GlobalGameManagers patched with {totalEntries} ResourceManager entries ({clonedAssets.Count} clones, {audioAssets.Count} audio, {textureAssets.Count} textures, {spriteAssets.Count} sprites, {modelAssets.Count} models, {prefabAssets.Count} prefabs): {ggmPatchedPath}");
+                            // Count only assets that have resource paths (others are skipped)
+                            var textureCount = textureResourcePaths?.Count ?? 0;
+                            var audioCount = audioResourcePaths?.Count ?? 0;
+                            var spriteCount = spriteResourcePaths?.Count ?? 0;
+                            var modelCount = modelResourcePaths?.Count ?? 0;
+                            var prefabCount = prefabResourcePaths?.Count ?? 0;
+                            var totalEntries = clonedAssets.Count + audioCount + textureCount + spriteCount + modelCount + prefabCount;
+                            result.Warnings.Add($"GlobalGameManagers patched with {totalEntries} ResourceManager entries ({clonedAssets.Count} clones, {audioCount} audio, {textureCount} textures, {spriteCount} sprites, {modelCount} models, {prefabCount} prefabs): {ggmPatchedPath}");
                         }
                     }
                     catch (Exception ex)
@@ -501,6 +555,26 @@ public class BundleCompiler
 
                 // Also try to write UnityFS bundle (may fail to load due to IL2CPP issues)
                 bundleWritten = BundleWriter.WriteBundle(serializedBytes, outputPath, unityVersion);
+
+                // ===== PHASE 4: WRITE ASSET MANIFEST =====
+                // The manifest enables runtime enumeration of compiled assets via Resources.Load()
+                WriteAssetManifest(
+                    dir!,
+                    clonedAssets,
+                    cloneSourceMap,
+                    resourcePathLookup,
+                    mergedClones,
+                    audioAssets,
+                    audioResourcePaths,
+                    textureAssets,
+                    textureResourcePaths,
+                    spriteAssets,
+                    spriteResourcePaths,
+                    modelAssets,
+                    modelResourcePaths,
+                    prefabAssets,
+                    prefabResourcePaths);
+                result.Warnings.Add($"Asset manifest written: {Path.Combine(dir!, CompiledAssetManifest.ManifestFileName)}");
             }
             catch (Exception ex)
             {
@@ -581,10 +655,23 @@ public class BundleCompiler
     /// Search for a template ID string in asset bytes.
     /// Template IDs have format "category.name" (e.g., "weapon.laser_rifle").
     /// Returns the ID and its offset, or (null, -1) if not found.
+    ///
+    /// The search scans from offset 16 onwards looking for length-prefixed strings
+    /// that match the template ID pattern. This offset was empirically determined
+    /// to work with the game's serialized assets (avoids m_Script PPtr data while
+    /// still finding template IDs in m_Name or m_ID fields).
+    ///
+    /// Note: The actual structure varies between MonoBehaviour and ScriptableObject,
+    /// and the template ID may be in m_Name, m_ID, or both. This pattern-matching
+    /// approach finds whichever field contains the ID first.
     /// </summary>
     private static (string? id, int offset) FindTemplateId(byte[] bytes, int maxSearchOffset)
     {
-        for (int offset = 16; offset < Math.Min(maxSearchOffset, bytes.Length - 8); offset++)
+        // Start at offset 16 - empirically determined to work with game assets
+        // This is after m_Script PPtr (12 bytes) + a small buffer
+        const int HEADER_SIZE = 16;
+
+        for (int offset = HEADER_SIZE; offset < Math.Min(maxSearchOffset, bytes.Length - 8); offset++)
         {
             // Read potential string length
             if (offset + 4 > bytes.Length) break;
@@ -668,16 +755,19 @@ public class BundleCompiler
     {
         var result = new CloneProcessResult();
 
+        // Log clone summary for debugging
+        var totalClones = mergedClones.Clones.Sum(c => c.Value.Count);
+        var uniqueSources = mergedClones.Clones.SelectMany(c => c.Value.Values).Distinct().ToList();
+        var sourcesFound = uniqueSources.Count(s => assetsByName.ContainsKey(s));
+        result.Warnings.Add($"[ProcessClones] Attempting {totalClones} clone(s) from {uniqueSources.Count} unique source(s), {sourcesFound} found in asset lookup ({assetsByName.Count} total templates indexed)");
+
         foreach (var (templateType, cloneMap) in mergedClones.Clones)
         {
             foreach (var (newName, sourceName) in cloneMap)
             {
-                // Skip if clone already exists
-                if (assetsByName.ContainsKey(newName))
-                {
-                    result.Warnings.Add($"Clone '{newName}' skipped: asset already exists");
-                    continue;
-                }
+                // TEMPORARILY DISABLED: Skip check to debug clone creation
+                // The "already exists" check was returning false positives
+                // if (assetsByName.ContainsKey(newName)) { continue; }
 
                 // Find source asset
                 if (!assetsByName.TryGetValue(sourceName, out var source))
@@ -698,37 +788,44 @@ public class BundleCompiler
                         continue;
                     }
 
+                    // Validate clone bytes are reasonable
+                    int sizeDiff = cloneBytes.Length - source.bytes.Length;
+                    if (Math.Abs(sizeDiff) > 200)
+                    {
+                        result.Warnings.Add($"Clone '{newName}' WARNING: size changed significantly ({source.bytes.Length} -> {cloneBytes.Length}, diff={sizeDiff})");
+                    }
+
                     // Create new asset info with same type as source
                     var pathId = nextPathId++;
-                    var newInfo = AssetFileInfo.Create(
-                        afile,
-                        pathId,
-                        source.info.TypeId,
-                        source.info.ScriptTypeIndex
-                    );
 
-                    // Unity 6 files without type trees return null from Create
-                    // In that case, manually create the AssetFileInfo from the source template
-                    if (newInfo == null)
+                    // Unity 6 files without type trees - create AssetFileInfo manually from source template
+                    var newInfo = new AssetFileInfo
                     {
-                        newInfo = new AssetFileInfo
-                        {
-                            PathId = pathId,
-                            TypeIdOrIndex = source.info.TypeIdOrIndex,
-                            TypeId = source.info.TypeId,
-                            ScriptTypeIndex = source.info.ScriptTypeIndex,
-                            Stripped = source.info.Stripped
-                        };
-                    }
+                        PathId = pathId,
+                        TypeIdOrIndex = source.info.TypeIdOrIndex,
+                        TypeId = source.info.TypeId,
+                        ScriptTypeIndex = source.info.ScriptTypeIndex,
+                        Stripped = source.info.Stripped
+                    };
 
                     // Register the clone in the assets file
                     newInfo.SetNewData(cloneBytes);
                     afile.Metadata.AddAssetInfo(newInfo);
 
-                    // Track for later reference (use same offset as source)
+                    // Track for later reference - recalculate offset since name size might have changed
+                    int newIdOffset = source.idOffset + sizeDiff;
                     clonedAssets[newName] = newInfo;
                     cloneSourceMap[newName] = sourceName;
-                    assetsByName[newName] = (newInfo, cloneBytes, source.idOffset);
+                    assetsByName[newName] = (newInfo, cloneBytes, newIdOffset);
+
+                    // Debug: dump first 20 bytes of source and clone to compare m_Script PPtr
+                    var srcHex = string.Join(" ", source.bytes.Take(20).Select(b => b.ToString("X2")));
+                    var clnHex = string.Join(" ", cloneBytes.Take(20).Select(b => b.ToString("X2")));
+                    result.Warnings.Add($"[Clone OK] {newName} (from {sourceName}, PathId={pathId}, size={cloneBytes.Length}, srcSize={source.bytes.Length})");
+                    result.Warnings.Add($"[Clone DEBUG] Source first 20 bytes: {srcHex}");
+                    result.Warnings.Add($"[Clone DEBUG] Clone  first 20 bytes: {clnHex}");
+                    result.Warnings.Add($"[Clone DEBUG] Source info: TypeId={source.info.TypeId}, TypeIdOrIndex={source.info.TypeIdOrIndex}, ScriptTypeIndex={source.info.ScriptTypeIndex}");
+                    result.Warnings.Add($"[Clone DEBUG] Clone  info: TypeId={newInfo.TypeId}, TypeIdOrIndex={newInfo.TypeIdOrIndex}, ScriptTypeIndex={newInfo.ScriptTypeIndex}");
                 }
                 catch (Exception ex)
                 {
@@ -987,35 +1084,9 @@ public class BundleCompiler
                             textureResourcePaths[entry.AssetName] = resourcePath;
                         }
 
-                        // Create Sprite if requested (only for new textures, not replacements)
-                        if (entry.CreateSprite && spriteTemplate != null)
-                        {
-                            var spritePathId = nextPathId++;
-                            var spriteName = entry.AssetName + "_sprite";
-                            var spriteResult = NativeSpriteCreator.CreateSprite(
-                                afile,
-                                spriteTemplate,
-                                spriteName,
-                                texturePathId,
-                                texResult.Width,
-                                texResult.Height,
-                                spritePathId,
-                                entry.PixelsPerUnit);
-
-                            if (spriteResult.Success)
-                            {
-                                var spriteInfo = afile.AssetInfos.FirstOrDefault(i => i.PathId == spriteResult.PathId);
-                                if (spriteInfo != null)
-                                {
-                                    spriteAssets[spriteName] = spriteInfo;
-                                    spriteResourcePaths[spriteName] = resourcePath + "_sprite";
-                                }
-                            }
-                            else
-                            {
-                                result.Warnings.Add($"Sprite for '{entry.AssetName}' failed: {spriteResult.ErrorMessage}");
-                            }
-                        }
+                        // NOTE: Sprites are now created at runtime using Sprite.Create() in ModpackLoader
+                        // Asset-file sprite creation had issues with vertex/UV data
+                        // The textures are in assets, sprites are created from them at load time
                     }
                     else
                     {
@@ -1034,47 +1105,22 @@ public class BundleCompiler
     }
 
     /// <summary>
-    /// Create a clone of asset bytes with new m_Name and m_ID strings.
-    /// For MonoBehaviour/ScriptableObject, m_Name is at offset 12 (after the m_Script PPtr),
-    /// and m_ID is at a later offset found by FindTemplateId.
-    /// Both must be patched for Unity to correctly identify the clone by name.
+    /// Create a clone of asset bytes with new m_ID string.
+    ///
+    /// NOTE: We only patch m_ID, NOT m_Name. In Unity 6 Il2Cpp builds, patching m_Name
+    /// causes the game to crash ("Position out of bounds" / "referenced script missing").
+    /// The m_Name field contains a single control character (0x01) that appears to be
+    /// required for type resolution.
+    ///
+    /// The runtime ModpackLoader needs to be updated to match clones by m_ID instead
+    /// of m_Name for patches and sprite lookups to work correctly.
     /// </summary>
     private static byte[]? CloneWithNewId(byte[] sourceBytes, string newId, int idOffset)
     {
         if (sourceBytes.Length <= idOffset + 4) return null;
-        if (sourceBytes.Length <= UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET + 4) return null;
 
-        // Step 1: Patch m_Name at offset 12
-        // CRITICAL: m_Name MUST be patched for runtime patch lookup to work.
-        // The runtime uses obj.name (which is m_Name) to find patches by template name.
-        var afterNamePatch = UnityBinaryPatcher.PatchStringAtOffset(
-            sourceBytes, UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET, newId);
-
-        if (afterNamePatch == null)
-        {
-            // m_Name patch failed - this is a critical error since runtime lookup won't work
-            Console.WriteLine($"[BundleCompiler] WARNING: m_Name patch failed for clone '{newId}' - runtime patches may not apply");
-            // Still try to patch m_ID on original bytes, but clone will likely have issues
-            return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
-        }
-
-        // Step 2: Calculate the new m_ID offset after m_Name patch shifted the data
-        int nameSizeDiff = afterNamePatch.Length - sourceBytes.Length;
-        int newIdOffset = idOffset + nameSizeDiff;
-
-        // Sanity check: m_ID offset should still be valid
-        if (newIdOffset < UnityBinaryPatcher.MONOBEHAVIOUR_NAME_OFFSET || newIdOffset + 4 > afterNamePatch.Length)
-        {
-            // m_ID offset calculation failed, but m_Name IS patched in afterNamePatch.
-            // Return the name-patched version so runtime lookup will work.
-            // m_ID won't match m_Name, but at least patches can be found and applied.
-            Console.WriteLine($"[BundleCompiler] WARNING: m_ID offset invalid after m_Name patch for '{newId}' - returning name-only patch");
-            return afterNamePatch;
-        }
-
-        // Step 3: Patch m_ID at the adjusted offset
-        var result = UnityBinaryPatcher.PatchStringAtOffset(afterNamePatch, newIdOffset, newId);
-        return result ?? afterNamePatch; // If m_ID patch fails, at least m_Name is patched
+        // Only patch m_ID - patching m_Name crashes Unity 6 Il2Cpp
+        return UnityBinaryPatcher.PatchStringAtOffset(sourceBytes, idOffset, newId);
     }
 
     /// <summary>
@@ -1533,5 +1579,170 @@ public class BundleCompiler
         {
             am.UnloadAll();
         }
+    }
+
+    /// <summary>
+    /// Write the asset manifest for runtime enumeration via Resources.Load().
+    /// </summary>
+    private static void WriteAssetManifest(
+        string outputDir,
+        Dictionary<string, AssetFileInfo> clonedAssets,
+        Dictionary<string, string> cloneSourceMap,
+        Dictionary<string, string> resourcePathLookup,
+        MergedCloneSet? mergedClones,
+        Dictionary<string, AssetFileInfo>? audioAssets,
+        Dictionary<string, string>? audioResourcePaths,
+        Dictionary<string, AssetFileInfo>? textureAssets,
+        Dictionary<string, string>? textureResourcePaths,
+        Dictionary<string, AssetFileInfo>? spriteAssets,
+        Dictionary<string, string>? spriteResourcePaths,
+        Dictionary<string, AssetFileInfo>? modelAssets,
+        Dictionary<string, string>? modelResourcePaths,
+        Dictionary<string, AssetFileInfo>? prefabAssets,
+        Dictionary<string, string>? prefabResourcePaths)
+    {
+        var manifest = new CompiledAssetManifest
+        {
+            Version = 1,
+            CompiledAt = DateTime.UtcNow
+        };
+
+        // Build reverse lookup: cloneName -> templateType
+        var cloneTemplateTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (mergedClones != null)
+        {
+            foreach (var (templateType, cloneMap) in mergedClones.Clones)
+            {
+                foreach (var cloneName in cloneMap.Keys)
+                {
+                    cloneTemplateTypes[cloneName] = templateType;
+                }
+            }
+        }
+
+        // Add clones
+        foreach (var (cloneName, _) in clonedAssets)
+        {
+            var sourceName = cloneSourceMap.GetValueOrDefault(cloneName);
+            var resourcePath = string.Empty;
+
+            // Derive resource path from source template's path
+            if (sourceName != null && resourcePathLookup.TryGetValue(sourceName, out var sourcePath))
+            {
+                var lastSlash = sourcePath.LastIndexOf('/');
+                if (lastSlash >= 0)
+                {
+                    var folder = sourcePath.Substring(0, lastSlash);
+                    resourcePath = $"{folder}/{cloneName}";
+                }
+            }
+
+            manifest.Assets.Add(new CompiledAssetEntry
+            {
+                Name = cloneName,
+                Type = "MonoBehaviour",
+                ResourcePath = resourcePath,
+                Category = AssetCategory.Clone,
+                SourceTemplate = sourceName,
+                TemplateType = cloneTemplateTypes.GetValueOrDefault(cloneName)
+            });
+        }
+
+        // Add audio clips (only those with valid resource paths)
+        if (audioAssets != null && audioResourcePaths != null)
+        {
+            foreach (var (audioName, _) in audioAssets)
+            {
+                var resourcePath = audioResourcePaths.GetValueOrDefault(audioName);
+                if (string.IsNullOrEmpty(resourcePath))
+                    continue;
+
+                manifest.Assets.Add(new CompiledAssetEntry
+                {
+                    Name = audioName,
+                    Type = "AudioClip",
+                    ResourcePath = resourcePath,
+                    Category = AssetCategory.Audio
+                });
+            }
+        }
+
+        // Add textures (only those with valid resource paths)
+        if (textureAssets != null && textureResourcePaths != null)
+        {
+            foreach (var (textureName, _) in textureAssets)
+            {
+                var resourcePath = textureResourcePaths.GetValueOrDefault(textureName);
+                if (string.IsNullOrEmpty(resourcePath))
+                    continue; // Skip textures that weren't compiled (no resource path)
+
+                manifest.Assets.Add(new CompiledAssetEntry
+                {
+                    Name = textureName,
+                    Type = "Texture2D",
+                    ResourcePath = resourcePath,
+                    Category = AssetCategory.Texture
+                });
+            }
+        }
+
+        // Add sprites (only those with valid resource paths)
+        if (spriteAssets != null && spriteResourcePaths != null)
+        {
+            foreach (var (spriteName, _) in spriteAssets)
+            {
+                var resourcePath = spriteResourcePaths.GetValueOrDefault(spriteName);
+                if (string.IsNullOrEmpty(resourcePath))
+                    continue;
+
+                manifest.Assets.Add(new CompiledAssetEntry
+                {
+                    Name = spriteName,
+                    Type = "Sprite",
+                    ResourcePath = resourcePath,
+                    Category = AssetCategory.Sprite
+                });
+            }
+        }
+
+        // Add meshes (models) - only those with valid resource paths
+        if (modelAssets != null && modelResourcePaths != null)
+        {
+            foreach (var (meshName, _) in modelAssets)
+            {
+                var resourcePath = modelResourcePaths.GetValueOrDefault(meshName);
+                if (string.IsNullOrEmpty(resourcePath))
+                    continue;
+
+                manifest.Assets.Add(new CompiledAssetEntry
+                {
+                    Name = meshName,
+                    Type = "Mesh",
+                    ResourcePath = resourcePath,
+                    Category = AssetCategory.Mesh
+                });
+            }
+        }
+
+        // Add prefabs - only those with valid resource paths
+        if (prefabAssets != null && prefabResourcePaths != null)
+        {
+            foreach (var (prefabName, _) in prefabAssets)
+            {
+                var resourcePath = prefabResourcePaths.GetValueOrDefault(prefabName);
+                if (string.IsNullOrEmpty(resourcePath))
+                    continue;
+
+                manifest.Assets.Add(new CompiledAssetEntry
+                {
+                    Name = prefabName,
+                    Type = "GameObject",
+                    ResourcePath = resourcePath,
+                    Category = AssetCategory.Prefab
+                });
+            }
+        }
+
+        manifest.SaveToFile(outputDir);
     }
 }

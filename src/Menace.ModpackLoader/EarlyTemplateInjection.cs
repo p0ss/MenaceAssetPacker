@@ -436,9 +436,6 @@ public static class EarlyTemplateInjection
 
         try
         {
-            // Force load sprites first
-            AssetReplacer.LoadPendingSprites();
-
             // Apply all modpack patches
             var success = _modInstance.ApplyAllModpacks();
 

@@ -47,10 +47,18 @@ public static class NativeSpriteCreator
 
     /// <summary>
     /// Find a Sprite asset to use as a template and extract field offsets.
+    /// Prefers simple sprites (small byte size, likely non-atlased).
     /// </summary>
-    public static SpriteTemplate? FindTemplate(AssetsFile afile)
+    public static SpriteTemplate? FindTemplate(AssetsFile afile) => FindTemplate(afile, 0, 0);
+
+    /// <summary>
+    /// Find a Sprite asset to use as a template, preferring one that matches target dimensions.
+    /// </summary>
+    public static SpriteTemplate? FindTemplate(AssetsFile afile, int targetWidth, int targetHeight)
     {
         var reader = afile.Reader;
+        SpriteTemplate? bestTemplate = null;
+        int bestScore = int.MaxValue;
 
         foreach (var info in afile.GetAssetsOfType(AssetClassID.Sprite))
         {
@@ -62,7 +70,37 @@ public static class NativeSpriteCreator
 
                 var template = TryParseSprite(bytes, info);
                 if (template != null)
-                    return template;
+                {
+                    float w = BitConverter.ToSingle(template.Bytes, template.RectOffset + 8);
+                    float h = BitConverter.ToSingle(template.Bytes, template.RectOffset + 12);
+
+                    int score;
+                    if (targetWidth > 0 && targetHeight > 0)
+                    {
+                        // If target dimensions specified, prioritize exact or close match
+                        int dimDiff = Math.Abs((int)w - targetWidth) + Math.Abs((int)h - targetHeight);
+                        if (dimDiff == 0)
+                        {
+                            // Exact match - use immediately
+                            Console.WriteLine($"[NativeSpriteCreator] Found exact match template: {w}x{h}");
+                            return template;
+                        }
+                        score = dimDiff * 10 + bytes.Length / 100;
+                    }
+                    else
+                    {
+                        // No target specified - prefer sprites around 100-200px
+                        int sizePenalty = Math.Abs((int)w - 128) + Math.Abs((int)h - 128);
+                        int bytePenalty = bytes.Length / 100;
+                        score = sizePenalty + bytePenalty;
+                    }
+
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestTemplate = template;
+                    }
+                }
             }
             catch
             {
@@ -70,7 +108,14 @@ public static class NativeSpriteCreator
             }
         }
 
-        return null;
+        if (bestTemplate != null)
+        {
+            float w = BitConverter.ToSingle(bestTemplate.Bytes, bestTemplate.RectOffset + 8);
+            float h = BitConverter.ToSingle(bestTemplate.Bytes, bestTemplate.RectOffset + 12);
+            Console.WriteLine($"[NativeSpriteCreator] Selected template sprite: {w}x{h}, {bestTemplate.Bytes.Length} bytes (target: {targetWidth}x{targetHeight})");
+        }
+
+        return bestTemplate;
     }
 
     /// <summary>
@@ -227,12 +272,16 @@ public static class NativeSpriteCreator
                 return result;
             }
 
-            var newInfo = AssetFileInfo.Create(
-                afile,
-                spritePathId,
-                (int)AssetClassID.Sprite,
-                0
-            );
+            // Unity 6 doesn't have embedded type trees, so AssetFileInfo.Create returns null.
+            // Instead, create the info manually based on the template's info.
+            var newInfo = new AssetFileInfo
+            {
+                PathId = spritePathId,
+                TypeIdOrIndex = template.Info.TypeIdOrIndex,
+                TypeId = template.Info.TypeId,
+                ScriptTypeIndex = template.Info.ScriptTypeIndex,
+                Stripped = template.Info.Stripped
+            };
             newInfo.SetNewData(spriteBytes);
             afile.Metadata.AddAssetInfo(newInfo);
 
@@ -337,16 +386,13 @@ public static class NativeSpriteCreator
         srcOffset += 12;
         dstOffset += 12;
 
-        // Copy remaining bytes (alpha texture, other render data)
-        // But we need to patch the textureRect as well
-        // First, copy alphaTexture PPtr (we'll set PathID to 0)
+        // Copy alphaTexture PPtr (set PathID to 0 = no alpha texture)
         Array.Copy(BitConverter.GetBytes(0), 0, newBytes, dstOffset, 4);  // FileID
         Array.Copy(BitConverter.GetBytes(0L), 0, newBytes, dstOffset + 4, 8); // PathID = 0 (no alpha tex)
         srcOffset += 12;
         dstOffset += 12;
 
-        // Copy the rest of the sprite data (secondaryTextures array, vertices, etc.)
-        // These are complex and we'll just copy them from template
+        // Copy the rest of the sprite data from template
         int remaining = template.Bytes.Length - srcOffset;
         if (remaining > 0)
         {
@@ -354,22 +400,83 @@ public static class NativeSpriteCreator
             dstOffset += remaining;
         }
 
-        // Now we need to patch textureRect which is inside m_RD
-        // textureRect follows alphaTexture PPtr
-        // Layout: secondaryTextures (array), then textureRect (Rect), textureRectOffset (Vector2)
-        // This is tricky because secondaryTextures is a variable-length array
-        // For simplicity, let's find it by searching for a rect-like pattern
-
-        // Actually, let's just patch what we need for basic sprites
-        // The template should work if texture dimensions match approximately
-
         // Trim if needed
         if (dstOffset < newBytes.Length)
         {
             Array.Resize(ref newBytes, dstOffset);
         }
 
+        // Now patch textureRect inside m_RD by searching for it
+        // After alphaTexture PPtr, we have: secondaryTextures array, then textureRect
+        // The textureRect should contain the template's original dimensions
+        // Find and replace with our dimensions
+        PatchTextureRectInRD(newBytes, template, width, height);
+
         return newBytes;
+    }
+
+    /// <summary>
+    /// Patch the textureRect inside m_RD to match our texture dimensions.
+    /// Searches for the template's original rect dimensions and replaces with new ones.
+    /// </summary>
+    private static void PatchTextureRectInRD(byte[] spriteBytes, SpriteTemplate template, int newWidth, int newHeight)
+    {
+        // Get the template's original rect dimensions from RectOffset
+        float origWidth = BitConverter.ToSingle(template.Bytes, template.RectOffset + 8);
+        float origHeight = BitConverter.ToSingle(template.Bytes, template.RectOffset + 12);
+
+        // Search for this rect pattern (x=0, y=0, width, height) in the sprite data
+        // This should appear in m_RD.textureRect
+        // The pattern is: 0f, 0f, origWidth, origHeight (16 bytes)
+        byte[] searchPattern = new byte[16];
+        Array.Copy(BitConverter.GetBytes(0f), 0, searchPattern, 0, 4);
+        Array.Copy(BitConverter.GetBytes(0f), 0, searchPattern, 4, 4);
+        Array.Copy(BitConverter.GetBytes(origWidth), 0, searchPattern, 8, 4);
+        Array.Copy(BitConverter.GetBytes(origHeight), 0, searchPattern, 12, 4);
+
+        // Search starting from after the main rect (which we already patched at RectOffset)
+        // The textureRect in m_RD should be later in the byte stream
+        int searchStart = template.RectOffset + 100; // Skip past the header area
+
+        for (int i = searchStart; i < spriteBytes.Length - 16; i += 4)
+        {
+            bool match = true;
+            for (int j = 0; j < 16; j++)
+            {
+                if (spriteBytes[i + j] != searchPattern[j])
+                {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match)
+            {
+                // Found it - patch with new dimensions
+                Array.Copy(BitConverter.GetBytes(0f), 0, spriteBytes, i, 4);
+                Array.Copy(BitConverter.GetBytes(0f), 0, spriteBytes, i + 4, 4);
+                Array.Copy(BitConverter.GetBytes((float)newWidth), 0, spriteBytes, i + 8, 4);
+                Array.Copy(BitConverter.GetBytes((float)newHeight), 0, spriteBytes, i + 12, 4);
+                return; // Only patch first occurrence
+            }
+        }
+
+        // If exact match not found, try a more lenient search (just width/height pattern)
+        // Some sprites may have non-zero x,y in textureRect
+        for (int i = searchStart; i < spriteBytes.Length - 8; i += 4)
+        {
+            float w = BitConverter.ToSingle(spriteBytes, i);
+            float h = BitConverter.ToSingle(spriteBytes, i + 4);
+
+            // Check if this looks like our template dimensions (within tolerance)
+            if (Math.Abs(w - origWidth) < 0.5f && Math.Abs(h - origHeight) < 0.5f)
+            {
+                // Found it - patch with new dimensions
+                Array.Copy(BitConverter.GetBytes((float)newWidth), 0, spriteBytes, i, 4);
+                Array.Copy(BitConverter.GetBytes((float)newHeight), 0, spriteBytes, i + 4, 4);
+                return;
+            }
+        }
     }
 
     /// <summary>

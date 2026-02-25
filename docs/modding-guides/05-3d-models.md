@@ -28,8 +28,11 @@ Use the Modkit to export the model you want to replace:
 
 This gives you a reference for:
 - Scale and proportions
-- Bone structure (for animated models)
+- Mesh layout and pivot/origin placement
 - UV layout (for texturing)
+
+> **Important:** Many files under `Assets/Mesh/` are mesh-only exports.  
+> Skeletons, animator setup, and runtime animation wiring can live in prefab assets (for example under `Assets/Prefab/` or `Assets/PrefabHierarchyObject/` depending on extraction output).
 
 ## Step 2: Create Your Model
 
@@ -106,6 +109,20 @@ Root
 ```
 
 Your model must be rigged to these exact bone names for animations to work.
+
+## Vehicle Wheels and Bones
+
+If you exported a vehicle `.glb` and it has no bones, that can be expected.
+
+- Vehicle wheel motion is often driven by prefab hierarchy + Animator parameters, not only by skinned mesh bones.
+- `Assets/Mesh/*.glb` exports can be mesh-only even when the in-game vehicle animates.
+- For vehicle animation debugging, inspect the matching prefab asset as well as the mesh.
+
+Current Modkit caveat:
+
+- The deploy-time native GLB pipeline currently compiles mesh/prefab data for static rendering.
+- Full reconstruction of skinned rig hierarchies and animation clips is not fully implemented in the native compiler path.
+- For now, vehicle replacements are most reliable when preserving the original prefab animation structure and replacing compatible mesh data.
 
 ## Weapon Models
 

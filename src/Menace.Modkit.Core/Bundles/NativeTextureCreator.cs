@@ -360,12 +360,19 @@ public static class NativeTextureCreator
     /// <summary>
     /// Create a Texture2D asset from a PNG file.
     /// </summary>
+    /// <param name="afile">The assets file to add the texture to.</param>
+    /// <param name="template">Template Texture2D to clone structure from.</param>
+    /// <param name="pngPath">Path to the source PNG file.</param>
+    /// <param name="assetName">Name for the new texture asset.</param>
+    /// <param name="pathId">PathID to assign to the new asset.</param>
+    /// <param name="colorSpace">Color space: 0 = sRGB/Gamma (default, for diffuse/UI), 1 = Linear (for normal maps, data).</param>
     public static TextureCreationResult CreateFromPng(
         AssetsFile afile,
         Texture2DTemplate template,
         string pngPath,
         string assetName,
-        long pathId)
+        long pathId,
+        int colorSpace = 0)
     {
         var result = new TextureCreationResult
         {
@@ -438,10 +445,11 @@ public static class NativeTextureCreator
                 }
 
                 // Build the new Texture2D bytes
+                // Use provided colorSpace (default 0 = sRGB for most textures)
                 byte[] textureBytes;
                 try
                 {
-                    textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData);
+                    textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData, colorSpace);
                 }
                 catch (Exception buildEx)
                 {
@@ -656,9 +664,10 @@ public static class NativeTextureCreator
             int origStreamDataStart = template.ImageDataOffset + template.OriginalImageDataSize + origImageDataPadding;
             int origStreamDataSize = template.Bytes.Length - origStreamDataStart;
 
-            // New StreamData is fixed: empty path (4 bytes) + offset (8 bytes) + size (8 bytes) = 20 bytes
-            int newStreamDataSize = 20;
-            int streamDataSizeDiff = newStreamDataSize - origStreamDataSize;
+            // Keep the same StreamData size as the original to maintain correct structure
+            // We'll zero it out to indicate inline data instead of streaming
+            int newStreamDataSize = origStreamDataSize;
+            int streamDataSizeDiff = 0; // Same size as original
 
         // Calculate new buffer size
         int newSize = template.Bytes.Length + nameSizeDiff + imageSizeDiff + streamDataSizeDiff;
@@ -722,10 +731,14 @@ public static class NativeTextureCreator
         // This includes IsReadable, ColorSpace, TextureSettings, etc.
         int srcImageSizeOffset = template.ImageDataSizeOffset;
         int bytesUntilImageSize = srcImageSizeOffset - srcOffset;
-        int dstBeforeCopy = dstOffset; // Remember position before copy for ColorSpace patching
+        int dstBeforeCopy = dstOffset; // Remember position before copy for patching
         Array.Copy(template.Bytes, srcOffset, newBytes, dstOffset, bytesUntilImageSize);
         srcOffset += bytesUntilImageSize;
         dstOffset += bytesUntilImageSize;
+
+        // Patch m_IsReadable to true (required for sprites to render correctly)
+        // m_IsReadable is the first byte after m_MipCount
+        newBytes[dstBeforeCopy] = 1; // true
 
         // Patch ColorSpace if override is specified
         // ColorSpace is at a fixed offset from MipCount in the template
@@ -758,20 +771,12 @@ public static class NativeTextureCreator
             newBytes[dstOffset++] = 0;
         srcOffset += origImageDataPadding;
 
-        // Write empty StreamData (so Unity uses inline data, not external .resS)
-        // StreamData format: path (aligned string), offset (uint64), size (uint64)
-
-        // Empty path string (length = 0, no padding needed since 0 % 4 == 0)
-        Array.Copy(BitConverter.GetBytes(0), 0, newBytes, dstOffset, 4);
-        dstOffset += 4;
-
-        // Offset = 0
-        Array.Copy(BitConverter.GetBytes(0UL), 0, newBytes, dstOffset, 8);
-        dstOffset += 8;
-
-        // Size = 0 (tells Unity to use inline data instead of streaming)
-        Array.Copy(BitConverter.GetBytes(0UL), 0, newBytes, dstOffset, 8);
-        dstOffset += 8;
+        // Copy original StreamData structure but zero it out for inline data
+        // This preserves the correct structure size for this Unity version
+        // origStreamDataSize was calculated earlier in the function
+        // Zero out the StreamData (empty path, offset=0, size=0 tells Unity to use inline data)
+        for (int i = 0; i < newStreamDataSize; i++)
+            newBytes[dstOffset++] = 0;
 
         // Trim to actual size used
         if (dstOffset < newBytes.Length)

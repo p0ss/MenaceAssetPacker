@@ -211,6 +211,13 @@ public class MeshAssetCreator
                 (int)AssetClassID.Mesh,
                 0);
 
+            // Unity 6 files without type trees return null from Create
+            if (info == null)
+            {
+                result.ErrorMessage = "AssetFileInfo.Create returned null - Unity 6 without type trees may not support mesh creation via TypeTree";
+                return result;
+            }
+
             info.SetNewData(meshField);
             afile.Metadata.AddAssetInfo(info);
 

@@ -43,6 +43,7 @@ This directory contains reverse-engineered documentation of Menace's game system
 | Offmap Abilities | ✅ Complete | [offmap-abilities.md](./offmap-abilities.md) |
 | BlackMarket | ✅ Complete | [blackmarket.md](./blackmarket.md) |
 | Localization System | ✅ Complete | [localization-system.md](./localization-system.md) |
+| Unity Asset Format | ✅ Complete | [unity-asset-format.md](./unity-asset-format.md) |
 | IL2CPP Runtime | ✅ Complete | [../system-guide/il2cpp-runtime.md](../system-guide/il2cpp-runtime.md) |
 | Unnamed Functions Plan | 📋 Reference | [unnamed-functions-plan.md](./unnamed-functions-plan.md) |
 
@@ -113,6 +114,7 @@ See [offsets.md](./offsets.md) for a consolidated list of struct field offsets d
 - **[ui-system.md](./ui-system.md)** - UITacticalHUD, adding custom HUD elements, settings screens
 - **[offset-stability.md](./offset-stability.md)** - API considerations, version compatibility, best practices
 - **[asset-references.md](./asset-references.md)** - Template hierarchy, sprite/prefab references, finding asset usages
+- **[unity-asset-format.md](./unity-asset-format.md)** - Unity binary serialization format, MonoBehaviour vs ScriptableObject structures, string/PPtr encoding, texture formats
 - **[terrain-generation.md](./terrain-generation.md)** - Map generation pipeline, ChunkGenerator, MapMagic integration, road/cover placement
 - **[tile-map-system.md](./tile-map-system.md)** - Tile/Map classes, cover system, visibility, 8-direction system
 - **[pathfinding-system.md](./pathfinding-system.md)** - A* pathfinding, movement costs, traversability, path modifiers

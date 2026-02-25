@@ -496,34 +496,12 @@ public partial class ModpackLoaderMod
     }
 
     /// <summary>
-    /// Register clone templates that were loaded from compiled bundles with DataTemplateLoader.
-    /// This handles clones created by BundleCompiler's raw binary cloning approach.
+    /// Register clone templates from native assets (resources.assets) with DataTemplateLoader.
+    /// Clones are embedded in resources.assets by BundleCompiler and registered in ResourceManager.
+    /// We use Resources.Load() to retrieve them, using paths from the asset manifest.
     /// </summary>
     private void RegisterBundleClones()
     {
-        // Collect all clone names from all loaded modpacks
-        var clonesByType = new Dictionary<string, HashSet<string>>();
-
-        foreach (var modpack in _loadedModpacks.Values)
-        {
-            if (modpack.Clones == null) continue;
-            foreach (var (templateTypeName, cloneMap) in modpack.Clones)
-            {
-                if (!clonesByType.TryGetValue(templateTypeName, out var cloneNames))
-                {
-                    cloneNames = new HashSet<string>();
-                    clonesByType[templateTypeName] = cloneNames;
-                }
-                foreach (var cloneName in cloneMap.Keys)
-                {
-                    cloneNames.Add(cloneName);
-                }
-            }
-        }
-
-        if (clonesByType.Count == 0)
-            return;
-
         var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
@@ -535,63 +513,128 @@ public partial class ModpackLoaderMod
 
         int registered = 0;
 
-        foreach (var (templateTypeName, cloneNames) in clonesByType)
+        // First, try to use the manifest for accurate resource paths
+        foreach (var entry in CompiledAssetLoader.GetCloneEntries())
+        {
+            var cloneKey = $"native:{entry.TemplateType}:{entry.Name}";
+            if (_appliedCloneKeys.Contains(cloneKey))
+                continue;
+
+            if (string.IsNullOrEmpty(entry.TemplateType))
+            {
+                SdkLogger.Warning($"  RegisterBundleClones: clone '{entry.Name}' has no template type");
+                continue;
+            }
+
+            var templateType = gameAssembly.GetTypes()
+                .FirstOrDefault(t => t.Name == entry.TemplateType && !t.IsAbstract);
+
+            if (templateType == null)
+            {
+                SdkLogger.Warning($"  RegisterBundleClones: type '{entry.TemplateType}' not found");
+                continue;
+            }
+
+            try
+            {
+                // Ensure the game has loaded templates of this type
+                EnsureTemplatesLoaded(gameAssembly, templateType);
+
+                // Load using the manifest's resource path
+                var il2cppType = Il2CppType.From(templateType);
+                UnityEngine.Object cloneAsset = null;
+
+                if (!string.IsNullOrEmpty(entry.ResourcePath))
+                {
+                    cloneAsset = Resources.Load(entry.ResourcePath, il2cppType);
+                }
+
+                if (cloneAsset == null)
+                {
+                    // Fallback: try standard folder naming
+                    var fallbackPath = $"data/templates/{entry.TemplateType.ToLowerInvariant()}/{entry.Name}";
+                    cloneAsset = Resources.Load(fallbackPath, il2cppType);
+                }
+
+                if (cloneAsset == null)
+                {
+                    SdkLogger.Warning($"  Clone '{entry.Name}' not found (tried: {entry.ResourcePath})");
+                    continue;
+                }
+
+                // Register in DataTemplateLoader
+                RegisterInLoader(gameAssembly, cloneAsset, templateType, entry.Name);
+                _appliedCloneKeys.Add(cloneKey);
+                registered++;
+
+                SdkLogger.Msg($"  Registered native clone: {entry.Name} ({entry.TemplateType})");
+            }
+            catch (Exception ex)
+            {
+                SdkLogger.Warning($"  RegisterBundleClones '{entry.Name}': {ex.Message}");
+            }
+        }
+
+        // Fallback: also check modpack clone definitions in case manifest is missing
+        var clonesByType = new Dictionary<string, Dictionary<string, string>>();
+        foreach (var modpack in _loadedModpacks.Values)
+        {
+            if (modpack.Clones == null) continue;
+            foreach (var (templateTypeName, cloneMap) in modpack.Clones)
+            {
+                if (!clonesByType.TryGetValue(templateTypeName, out var existingMap))
+                {
+                    existingMap = new Dictionary<string, string>();
+                    clonesByType[templateTypeName] = existingMap;
+                }
+                foreach (var (cloneName, sourceName) in cloneMap)
+                {
+                    existingMap[cloneName] = sourceName;
+                }
+            }
+        }
+
+        foreach (var (templateTypeName, cloneMap) in clonesByType)
         {
             var templateType = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == templateTypeName && !t.IsAbstract);
 
             if (templateType == null)
-            {
-                SdkLogger.Warning($"  RegisterBundleClones: type '{templateTypeName}' not found");
                 continue;
-            }
 
-            // Ensure the game has loaded templates of this type
             EnsureTemplatesLoaded(gameAssembly, templateType);
+            var il2cppType = Il2CppType.From(templateType);
 
-            foreach (var cloneName in cloneNames)
+            foreach (var (cloneName, sourceName) in cloneMap)
             {
-                // Skip if already registered via runtime cloning
-                var cloneKey = $"bundle:{templateTypeName}:{cloneName}";
+                var cloneKey = $"native:{templateTypeName}:{cloneName}";
                 if (_appliedCloneKeys.Contains(cloneKey))
                     continue;
 
-                // Try to find this clone in BundleLoader
-                var bundleAsset = BundleLoader.GetAsset(cloneName);
-                if (bundleAsset == null)
-                {
-                    // Not in bundle - will be created via runtime cloning
-                    continue;
-                }
-
                 try
                 {
-                    // Cast to the template type
-                    var genericTryCast = TryCastMethod.MakeGenericMethod(templateType);
-                    var castClone = genericTryCast.Invoke(bundleAsset, null);
-                    if (castClone == null)
-                    {
-                        SdkLogger.Warning($"  RegisterBundleClones: cast failed for '{cloneName}'");
-                        continue;
-                    }
+                    var clonePath = $"data/templates/{templateTypeName.ToLowerInvariant()}/{cloneName}";
+                    var cloneAsset = Resources.Load(clonePath, il2cppType);
 
-                    // Register in DataTemplateLoader
-                    RegisterInLoader(gameAssembly, bundleAsset, templateType, cloneName);
+                    if (cloneAsset == null)
+                        continue; // Already logged by manifest path or not in resources
+
+                    RegisterInLoader(gameAssembly, cloneAsset, templateType, cloneName);
                     _appliedCloneKeys.Add(cloneKey);
                     registered++;
 
-                    SdkLogger.Msg($"  Registered bundle clone: {cloneName} ({templateTypeName})");
+                    SdkLogger.Msg($"  Registered native clone (fallback): {cloneName} ({templateTypeName})");
                 }
                 catch (Exception ex)
                 {
-                    SdkLogger.Warning($"  RegisterBundleClones '{cloneName}': {ex.Message}");
+                    SdkLogger.Warning($"  RegisterBundleClones fallback '{cloneName}': {ex.Message}");
                 }
             }
         }
 
         if (registered > 0)
         {
-            SdkLogger.Msg($"Registered {registered} clone(s) from compiled bundle");
+            SdkLogger.Msg($"Registered {registered} clone(s) from native assets");
             InvalidateNameLookupCache();
         }
     }
