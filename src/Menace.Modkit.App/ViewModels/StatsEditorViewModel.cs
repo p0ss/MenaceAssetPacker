@@ -1869,6 +1869,10 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                     // top-level field names (e.g., AnimatorTemplate.name vs name).
                     if (property.Value.ValueKind == JsonValueKind.Object)
                     {
+                        // Store the parent object itself (as a cloned JsonElement) so that
+                        // UpdateComplexArrayProperty can find it when editing sub-fields
+                        result[property.Name] = property.Value.Clone();
+
                         foreach (var subProp in property.Value.EnumerateObject())
                         {
                             var qualifiedKey = $"{property.Name}.{subProp.Name}";
