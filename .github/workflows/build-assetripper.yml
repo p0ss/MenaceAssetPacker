@@ -1,0 +1,118 @@
+name: Build AssetRipper
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_results:
+        description: 'Commit built binaries back to repo'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: AssetRipper-linux-x64
+            archive_cmd: tar -czf AssetRipper-linux-x64.tar.gz -C output .
+            archive_ext: tar.gz
+          - os: windows-latest
+            rid: win-x64
+            artifact: AssetRipper-win-x64
+            archive_cmd: Compress-Archive -Path output\* -DestinationPath AssetRipper-win-x64.zip
+            archive_ext: zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build AssetRipper
+        working-directory: third_party/AssetRipper
+        run: |
+          dotnet publish Source/AssetRipper.GUI.Free -c Release -r ${{ matrix.rid }} --self-contained -o publish
+
+      - name: Copy capstone library (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cp third_party/AssetRipper/libcapstone.so third_party/AssetRipper/publish/ || true
+
+      - name: Prepare output
+        shell: bash
+        run: |
+          mkdir -p output
+          cp -r third_party/AssetRipper/publish/* output/
+          # Remove debug symbols
+          find output -name "*.pdb" -delete 2>/dev/null || true
+          find output -name "*.dbg" -delete 2>/dev/null || true
+
+      - name: Create archive (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: tar -czf AssetRipper-linux-x64.tar.gz -C output .
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: Compress-Archive -Path output\* -DestinationPath AssetRipper-win-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            AssetRipper-*.${{ matrix.archive_ext }}
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ inputs.commit_results }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AssetRipper-linux-x64
+          path: artifacts/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AssetRipper-win-x64
+          path: artifacts/
+
+      - name: Update component archives
+        run: |
+          cp artifacts/AssetRipper-linux-x64.tar.gz third_party/components/
+          cp artifacts/AssetRipper-win-x64.zip third_party/components/
+
+          # Also extract to bundled directories for fallback
+          mkdir -p third_party/bundled/AssetRipper/linux
+          mkdir -p third_party/bundled/AssetRipper/windows
+
+          tar -xzf artifacts/AssetRipper-linux-x64.tar.gz -C third_party/bundled/AssetRipper/linux
+          unzip -o artifacts/AssetRipper-win-x64.zip -d third_party/bundled/AssetRipper/windows
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add third_party/components/AssetRipper-*.tar.gz third_party/components/AssetRipper-*.zip
+          git add third_party/bundled/AssetRipper/
+          git diff --staged --quiet || git commit -m "Update AssetRipper builds for both platforms"
+          git push
