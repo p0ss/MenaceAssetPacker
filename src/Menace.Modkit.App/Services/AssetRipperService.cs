@@ -281,20 +281,51 @@ public class AssetRipperService
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Load folder (this call blocks until loading completes)
-            progressCallback?.Invoke($"Loading game assets from {dataPath}...");
-            var loadResponse = await client.PostAsync(
-                $"http://localhost:{_port}/LoadFolder",
-                new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("Path", dataPath)
-                }),
-                cancellationToken);
-
-            if (!loadResponse.IsSuccessStatusCode)
+            // Load specific asset files to get complete texture extraction
+            // Loading the whole folder causes texture deduplication; loading sharedassets files separately preserves all textures
+            var assetFiles = GetAssetFilesToLoad(dataPath);
+            if (assetFiles.Count == 0)
             {
-                progressCallback?.Invoke($"Failed to load assets (Status: {loadResponse.StatusCode})");
-                return false;
+                // Fallback to folder load if no specific files found
+                progressCallback?.Invoke($"Loading game assets from {dataPath}...");
+                var folderResponse = await client.PostAsync(
+                    $"http://localhost:{_port}/LoadFolder",
+                    new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("Path", dataPath)
+                    }),
+                    cancellationToken);
+
+                if (!folderResponse.IsSuccessStatusCode)
+                {
+                    progressCallback?.Invoke($"Failed to load assets (Status: {folderResponse.StatusCode})");
+                    return false;
+                }
+            }
+            else
+            {
+                progressCallback?.Invoke($"Loading {assetFiles.Count} asset files...");
+
+                // Load each asset file - AssetRipper accumulates loaded files
+                foreach (var assetFile in assetFiles)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var fileName = Path.GetFileName(assetFile);
+                    progressCallback?.Invoke($"Loading {fileName}...");
+
+                    var loadResponse = await client.PostAsync(
+                        $"http://localhost:{_port}/LoadFile",
+                        new FormUrlEncodedContent(new[]
+                        {
+                            new KeyValuePair<string, string>("Path", assetFile)
+                        }),
+                        cancellationToken);
+
+                    if (!loadResponse.IsSuccessStatusCode)
+                    {
+                        progressCallback?.Invoke($"Warning: Failed to load {fileName} (Status: {loadResponse.StatusCode})");
+                    }
+                }
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -728,5 +759,51 @@ public class AssetRipperService
         using var stream = File.OpenRead(assemblyPath);
         var hash = await sha256.ComputeHashAsync(stream);
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Gets the list of asset files to load for complete texture extraction.
+    /// Loading sharedassets files separately (instead of the whole folder) preserves all textures
+    /// that would otherwise be deduplicated when loading the entire game folder.
+    /// </summary>
+    private static List<string> GetAssetFilesToLoad(string dataPath)
+    {
+        var files = new List<string>();
+
+        try
+        {
+            // Primary asset files that contain most game textures
+            // sharedassets files contain the bulk of textures, sprites, and other assets
+            var sharedAssets = Directory.GetFiles(dataPath, "sharedassets*.assets")
+                .OrderBy(f => f)
+                .ToList();
+            files.AddRange(sharedAssets);
+
+            // Also include resources.assets which has UI and common assets
+            var resourcesAssets = Path.Combine(dataPath, "resources.assets");
+            if (File.Exists(resourcesAssets))
+                files.Add(resourcesAssets);
+
+            // Include level files for scene-specific assets
+            var levelFiles = Directory.GetFiles(dataPath, "level*.assets")
+                .OrderBy(f => f)
+                .ToList();
+            files.AddRange(levelFiles);
+
+            // Include globalgamemanagers for settings/config
+            var ggm = Path.Combine(dataPath, "globalgamemanagers");
+            if (File.Exists(ggm))
+                files.Add(ggm);
+
+            var ggmAssets = Path.Combine(dataPath, "globalgamemanagers.assets");
+            if (File.Exists(ggmAssets))
+                files.Add(ggmAssets);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[AssetRipperService] Error enumerating asset files: {ex.Message}");
+        }
+
+        return files;
     }
 }

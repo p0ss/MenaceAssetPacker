@@ -142,10 +142,19 @@ public static class GlbMeshBuilder
 				image = new MemoryImage(memoryStream.ToArray());
 				return true;
 			}
+			else
+			{
+				// Log conversion failures for debugging
+				AssetRipper.Import.Logging.Logger.Warning(
+					AssetRipper.Import.Logging.LogCategory.Export,
+					$"[GlbMeshBuilder] Failed to convert texture '{texture.Name}' to bitmap (CheckAssetIntegrity: {texture.CheckAssetIntegrity()})");
+			}
 		}
-		catch
+		catch (Exception ex)
 		{
-			// Ignore conversion errors
+			AssetRipper.Import.Logging.Logger.Warning(
+				AssetRipper.Import.Logging.LogCategory.Export,
+				$"[GlbMeshBuilder] Exception converting texture '{texture.Name}': {ex.Message}");
 		}
 
 		image = default;

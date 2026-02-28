@@ -359,6 +359,77 @@ public class ModpackManager
     }
 
     // ---------------------------------------------------------------
+    // Unity Bundle operations
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// Import a Unity AssetBundle (.bundle) file into a modpack.
+    /// Bundles are stored in the bundles/ subfolder and registered in the manifest.
+    /// Use this for complex Unity assets (animated prefabs, custom shaders, etc.)
+    /// that can't be created through the normal Modkit workflow.
+    /// </summary>
+    public void ImportUnityBundle(string modpackName, string bundleSourcePath)
+    {
+        var modpackDir = ResolveStagingDir(modpackName);
+        var bundlesDir = Path.Combine(modpackDir, "bundles");
+        Directory.CreateDirectory(bundlesDir);
+
+        var fileName = Path.GetFileName(bundleSourcePath);
+        var destPath = Path.Combine(bundlesDir, fileName);
+        File.Copy(bundleSourcePath, destPath, true);
+
+        // Update manifest
+        var manifest = LoadManifest(modpackDir);
+        if (manifest != null)
+        {
+            var bundlePath = $"bundles/{fileName}";
+            if (!manifest.Bundles.Contains(bundlePath))
+            {
+                manifest.Bundles.Add(bundlePath);
+                manifest.SaveToFile();
+            }
+        }
+
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Remove a Unity bundle from a modpack.
+    /// </summary>
+    public void RemoveUnityBundle(string modpackName, string bundleFileName)
+    {
+        var modpackDir = ResolveStagingDir(modpackName);
+        var bundlePath = Path.Combine(modpackDir, "bundles", bundleFileName);
+        if (File.Exists(bundlePath))
+            File.Delete(bundlePath);
+
+        // Update manifest
+        var manifest = LoadManifest(modpackDir);
+        if (manifest != null)
+        {
+            manifest.Bundles.RemoveAll(b => b.EndsWith(bundleFileName, StringComparison.OrdinalIgnoreCase));
+            manifest.SaveToFile();
+        }
+
+        TouchModified(modpackDir);
+    }
+
+    /// <summary>
+    /// Get list of Unity bundles in a modpack.
+    /// </summary>
+    public List<string> GetUnityBundles(string modpackName)
+    {
+        var bundlesDir = Path.Combine(ResolveStagingDir(modpackName), "bundles");
+        if (!Directory.Exists(bundlesDir))
+            return new List<string>();
+
+        return Directory.GetFiles(bundlesDir, "*.bundle", SearchOption.AllDirectories)
+            .Select(Path.GetFileName)
+            .Where(f => f != null)
+            .ToList()!;
+    }
+
+    // ---------------------------------------------------------------
     // Source code operations (Phase 0 + Phase 3)
     // ---------------------------------------------------------------
 

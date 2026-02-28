@@ -49,6 +49,8 @@ public static class DevConsole
     // Log panel state
     private static readonly List<string> _logBuffer = new();
     private static readonly int LogBufferMax = 200;
+    private static int _lastLogCount = 0;
+    private static bool _logAutoScroll = true;
 
     // Panel error diagnostic (dedup so we only log once per distinct error)
     private static string _lastPanelError;
@@ -60,6 +62,19 @@ public static class DevConsole
     private static Vector2 _commandScroll;
     private static int _commandHistoryNav = -1;
     private static readonly List<string> _commandInputHistory = new();
+    private static int _commandCursorIndex;
+
+    // Autocomplete state (Tab cycles suggestions)
+    private static string _autocompleteBaseInput = "";
+    private static int _autocompleteBaseTokenStart = -1;
+    private static int _autocompleteBaseTokenEnd = -1;
+    private static readonly List<string> _autocompleteMatches = new();
+    private static int _autocompleteMatchIndex = -1;
+
+    // Cached template/type names for autocomplete
+    private static readonly Dictionary<string, List<string>> _templateNamesByTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly List<string> _templateTypeNameCache = new();
+    private static readonly List<string> _itemTemplateNameCache = new();
 
     // REPL evaluator (set by ModpackLoaderMod after Roslyn init)
     private static ConsoleEvaluator _replEvaluator;
@@ -266,7 +281,7 @@ public static class DevConsole
         if (string.IsNullOrWhiteSpace(input))
             return (false, "Empty command");
 
-        var parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var parts = ParseCommandArgs(input.Trim());
         if (parts.Length == 0)
             return (false, "Empty command");
 
@@ -312,6 +327,16 @@ public static class DevConsole
 
     internal static void Initialize()
     {
+        _commandInput = "";
+        _commandCursorIndex = 0;
+        _commandHistoryNav = -1;
+        _commandInputHistory.Clear();
+        _commandHistory.Clear();
+        ResetAutocompleteState();
+        _templateNamesByTypeCache.Clear();
+        _templateTypeNameCache.Clear();
+        _itemTemplateNameCache.Clear();
+
         // Register built-in panels in display order
         _panels.Clear();
         _panels.Add(new PanelEntry { Name = "Battle Log", DrawCallback = DrawBattleLogPanel });
@@ -1168,8 +1193,17 @@ public static class DevConsole
         {
             ModError.Clear();
             _logBuffer.Clear();
+            _lastLogCount = 0;
         }
         bx += 56;
+
+        // Auto-scroll toggle
+        string autoLabel = _logAutoScroll ? "[v]Auto" : "[ ]Auto";
+        if (GUI.Button(new Rect(bx, y, 60, 20), autoLabel, _logAutoScroll ? _tabActiveStyle : _tabInactiveStyle))
+        {
+            _logAutoScroll = !_logAutoScroll;
+        }
+        bx += 66;
 
         // Severity filter toggles
         DrawSeverityToggle(ref bx, y, "Err", ErrorSeverity.Error | ErrorSeverity.Fatal);
@@ -1271,6 +1305,15 @@ public static class DevConsole
         float scrollHeight = area.yMax - y;
         float contentHeight = entries.Count * LineHeight;
         var viewRect = new Rect(area.x, y, area.width, scrollHeight);
+
+        // Auto-scroll to bottom when new entries are added
+        int currentLogCount = entries.Count;
+        if (_logAutoScroll && currentLogCount > _lastLogCount)
+        {
+            _errorScroll.y = Math.Max(0, contentHeight - scrollHeight);
+        }
+        _lastLogCount = currentLogCount;
+
         _errorScroll.y = HandleScrollWheel(viewRect, contentHeight, _errorScroll.y);
 
         GUI.BeginGroup(viewRect);
@@ -1659,11 +1702,13 @@ public static class DevConsole
 
         // Help text
         GUI.Label(new Rect(area.x, y, area.width, LineHeight),
-            "Type 'help' to see available commands.", _helpStyle);
+            "Type 'help' to see available commands. Use arrows/Home/End to edit, Tab to autocomplete.", _helpStyle);
         y += LineHeight + 2;
 
         // Adjust area for help text
         area = new Rect(area.x, y, area.width, area.height - LineHeight - 2);
+
+        _commandCursorIndex = Mathf.Clamp(_commandCursorIndex, 0, _commandInput.Length);
 
         // Handle keyboard input for the command line
         var e = Event.current;
@@ -1671,22 +1716,65 @@ public static class DevConsole
         {
             if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter)
             {
-                ExecuteCommand(_commandInput);
-                _commandInputHistory.Add(_commandInput);
-                _commandInput = "";
-                _commandHistoryNav = -1;
+                SubmitCurrentCommand();
                 e.Use();
             }
             else if (e.keyCode == KeyCode.Backspace)
             {
-                if (_commandInput.Length > 0)
-                    _commandInput = _commandInput[..^1];
+                if (_commandCursorIndex > 0)
+                {
+                    _commandInput = _commandInput.Remove(_commandCursorIndex - 1, 1);
+                    _commandCursorIndex--;
+                    ResetAutocompleteState();
+                }
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.Delete)
+            {
+                if (_commandCursorIndex < _commandInput.Length)
+                {
+                    _commandInput = _commandInput.Remove(_commandCursorIndex, 1);
+                    ResetAutocompleteState();
+                }
                 e.Use();
             }
             else if (e.keyCode == KeyCode.Escape)
             {
                 _commandInput = "";
+                _commandCursorIndex = 0;
                 _commandHistoryNav = -1;
+                ResetAutocompleteState();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.LeftArrow)
+            {
+                if (_commandCursorIndex > 0)
+                    _commandCursorIndex--;
+                ResetAutocompleteState();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.RightArrow)
+            {
+                if (_commandCursorIndex < _commandInput.Length)
+                    _commandCursorIndex++;
+                ResetAutocompleteState();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.Home)
+            {
+                _commandCursorIndex = 0;
+                ResetAutocompleteState();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.End)
+            {
+                _commandCursorIndex = _commandInput.Length;
+                ResetAutocompleteState();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.Tab)
+            {
+                TryApplyAutocomplete();
                 e.Use();
             }
             else if (e.keyCode == KeyCode.UpArrow)
@@ -1698,6 +1786,8 @@ public static class DevConsole
                     else if (_commandHistoryNav > 0)
                         _commandHistoryNav--;
                     _commandInput = _commandInputHistory[_commandHistoryNav];
+                    _commandCursorIndex = _commandInput.Length;
+                    ResetAutocompleteState();
                 }
                 e.Use();
             }
@@ -1715,12 +1805,16 @@ public static class DevConsole
                     {
                         _commandInput = _commandInputHistory[_commandHistoryNav];
                     }
+                    _commandCursorIndex = _commandInput.Length;
+                    ResetAutocompleteState();
                 }
                 e.Use();
             }
             else if (e.character != 0 && !char.IsControl(e.character))
             {
-                _commandInput += e.character;
+                _commandInput = _commandInput.Insert(_commandCursorIndex, e.character.ToString());
+                _commandCursorIndex++;
+                ResetAutocompleteState();
                 e.Use();
             }
         }
@@ -1776,24 +1870,467 @@ public static class DevConsole
         // Blinking cursor
         bool cursorVisible = ((int)(Time.time * 2)) % 2 == 0;
         string cursor = cursorVisible ? "|" : "";
+        string inputWithCursor = _commandInput.Insert(_commandCursorIndex, cursor);
         GUI.Label(new Rect(area.x, iy, area.width, inputBarHeight),
-            $"> {_commandInput}{cursor}", _infoStyle);
+            $"> {inputWithCursor}", _infoStyle);
 
         // Run button
         if (GUI.Button(new Rect(area.x + area.width - 44, iy, 40, 20), "Run"))
         {
-            ExecuteCommand(_commandInput);
-            _commandInputHistory.Add(_commandInput);
-            _commandInput = "";
-            _commandHistoryNav = -1;
+            SubmitCurrentCommand();
         }
+    }
+
+    private readonly struct CommandTokenContext
+    {
+        public CommandTokenContext(int tokenStart, int tokenEnd, int tokenIndex, string prefix, string[] tokens)
+        {
+            TokenStart = tokenStart;
+            TokenEnd = tokenEnd;
+            TokenIndex = tokenIndex;
+            Prefix = prefix;
+            Tokens = tokens;
+        }
+
+        public int TokenStart { get; }
+        public int TokenEnd { get; }
+        public int TokenIndex { get; }
+        public string Prefix { get; }
+        public string[] Tokens { get; }
+    }
+
+    private static void SubmitCurrentCommand()
+    {
+        var input = _commandInput.Trim();
+        if (!string.IsNullOrWhiteSpace(input))
+        {
+            ExecuteCommand(input);
+            _commandInputHistory.Add(input);
+        }
+
+        _commandInput = "";
+        _commandCursorIndex = 0;
+        _commandHistoryNav = -1;
+        ResetAutocompleteState();
+    }
+
+    private static void ResetAutocompleteState()
+    {
+        _autocompleteBaseInput = "";
+        _autocompleteBaseTokenStart = -1;
+        _autocompleteBaseTokenEnd = -1;
+        _autocompleteMatches.Clear();
+        _autocompleteMatchIndex = -1;
+    }
+
+    private static void TryApplyAutocomplete()
+    {
+        if (_autocompleteMatches.Count == 0)
+        {
+            var context = GetTokenContext(_commandInput, _commandCursorIndex);
+            var matches = GetAutocompleteMatches(context);
+            if (matches.Count == 0)
+                return;
+
+            _autocompleteBaseInput = _commandInput;
+            _autocompleteBaseTokenStart = context.TokenStart;
+            _autocompleteBaseTokenEnd = context.TokenEnd;
+            _autocompleteMatches.AddRange(matches);
+            _autocompleteMatchIndex = 0;
+        }
+        else
+        {
+            _autocompleteMatchIndex = (_autocompleteMatchIndex + 1) % _autocompleteMatches.Count;
+        }
+
+        if (_autocompleteMatchIndex < 0 || _autocompleteMatchIndex >= _autocompleteMatches.Count)
+            return;
+
+        var replacement = _autocompleteMatches[_autocompleteMatchIndex];
+        if (_autocompleteBaseTokenStart < 0 || _autocompleteBaseTokenEnd < _autocompleteBaseTokenStart)
+            return;
+
+        var updated = _autocompleteBaseInput[.._autocompleteBaseTokenStart] +
+                      replacement +
+                      _autocompleteBaseInput[_autocompleteBaseTokenEnd..];
+
+        bool appendSpace = _autocompleteMatches.Count == 1 &&
+                           _autocompleteBaseTokenEnd == _autocompleteBaseInput.Length &&
+                           (updated.Length == 0 || updated[^1] != ' ');
+        if (appendSpace)
+            updated += " ";
+
+        _commandInput = updated;
+        _commandCursorIndex = _autocompleteBaseTokenStart + replacement.Length + (appendSpace ? 1 : 0);
+    }
+
+    private static CommandTokenContext GetTokenContext(string input, int cursorIndex)
+    {
+        cursorIndex = Mathf.Clamp(cursorIndex, 0, input.Length);
+
+        int tokenStart = cursorIndex;
+        while (tokenStart > 0 && !char.IsWhiteSpace(input[tokenStart - 1]))
+            tokenStart--;
+
+        int tokenEnd = cursorIndex;
+        while (tokenEnd < input.Length && !char.IsWhiteSpace(input[tokenEnd]))
+            tokenEnd++;
+
+        string prefix = input[tokenStart..cursorIndex];
+        string beforeCursor = input[..cursorIndex];
+        var beforeTokens = SplitInputTokens(beforeCursor);
+        int tokenIndex = prefix.Length > 0 ? beforeTokens.Length - 1 : beforeTokens.Length;
+        if (tokenIndex < 0)
+            tokenIndex = 0;
+
+        return new CommandTokenContext(
+            tokenStart,
+            tokenEnd,
+            tokenIndex,
+            prefix,
+            SplitInputTokens(input));
+    }
+
+    private static List<string> GetAutocompleteMatches(CommandTokenContext context)
+    {
+        if (context.TokenIndex == 0)
+            return FilterAutocompleteCandidates(
+                _commands.Keys.Where(k => !k.Contains(' ')),
+                context.Prefix,
+                allowEmptyPrefix: true,
+                maxResults: 40);
+
+        if (context.Tokens.Length == 0)
+            return new List<string>();
+
+        var commandName = context.Tokens[0];
+        if (!_commands.TryGetValue(commandName, out var command))
+            return new List<string>();
+
+        int argIndex = context.TokenIndex - 1;
+        if (argIndex < 0)
+            return new List<string>();
+
+        var usageTokens = SplitInputTokens(command.Usage);
+        string usageToken = argIndex < usageTokens.Length ? usageTokens[argIndex] : "";
+        string firstArg = context.Tokens.Length > 1 ? context.Tokens[1] : "";
+
+        IEnumerable<string> source = Enumerable.Empty<string>();
+        if (commandName.Equals("template", StringComparison.OrdinalIgnoreCase) && argIndex == 0)
+        {
+            source = GetTemplateTypeAliases();
+        }
+        else if (commandName.Equals("templates", StringComparison.OrdinalIgnoreCase) && argIndex == 0)
+        {
+            source = GetTemplateTypeAliases();
+        }
+        else if (commandName.Equals("template", StringComparison.OrdinalIgnoreCase) && argIndex == 1)
+        {
+            source = GetTemplateNamesForType(firstArg);
+        }
+        else if ((commandName.Equals("findbyname", StringComparison.OrdinalIgnoreCase) ||
+                  commandName.Equals("inspect", StringComparison.OrdinalIgnoreCase)) &&
+                 argIndex == 1 &&
+                 LooksLikeTemplateType(firstArg))
+        {
+            source = GetTemplateNamesForType(firstArg);
+        }
+        else if (commandName.Equals("conversation", StringComparison.OrdinalIgnoreCase) && argIndex == 0)
+        {
+            source = GetTemplateNamesForType("ConversationTemplate");
+        }
+        else if (commandName.Equals("playconversation", StringComparison.OrdinalIgnoreCase) && argIndex == 0)
+        {
+            source = GetTemplateNamesForType("ConversationTemplate");
+        }
+        else if (commandName.Equals("hire", StringComparison.OrdinalIgnoreCase) && argIndex == 0)
+        {
+            source = GetTemplateNamesForType("UnitLeaderTemplate");
+        }
+        else if (commandName.Equals("addperk", StringComparison.OrdinalIgnoreCase) && argIndex == 1)
+        {
+            source = GetTemplateNamesForType("PerkTemplate");
+        }
+        else if (commandName.Equals("spawneffect", StringComparison.OrdinalIgnoreCase) && argIndex == 2)
+        {
+            source = GetTemplateNamesForType("TileEffectTemplate");
+        }
+        else if ((commandName.Equals("spawn", StringComparison.OrdinalIgnoreCase) ||
+                  commandName.Equals("give", StringComparison.OrdinalIgnoreCase) ||
+                  commandName.Equals("bmstock", StringComparison.OrdinalIgnoreCase)) &&
+                 argIndex == 0)
+        {
+            source = GetSpawnTemplateNames();
+        }
+        else if (usageToken.Contains("template", StringComparison.OrdinalIgnoreCase))
+        {
+            source = GetKnownTemplateNames();
+        }
+
+        return FilterAutocompleteCandidates(source, context.Prefix, allowEmptyPrefix: false, maxResults: 40);
+    }
+
+    private static List<string> FilterAutocompleteCandidates(IEnumerable<string> source, string prefix, bool allowEmptyPrefix, int maxResults)
+    {
+        var normalizedPrefix = prefix?.Trim() ?? "";
+        if (!allowEmptyPrefix && normalizedPrefix.Length == 0)
+            return new List<string>();
+
+        var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in source)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+                all.Add(candidate.Trim());
+        }
+
+        var startsWith = all
+            .Where(c => normalizedPrefix.Length == 0 || c.StartsWith(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c.Length)
+            .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .Take(maxResults)
+            .ToList();
+
+        if (startsWith.Count >= maxResults || normalizedPrefix.Length == 0)
+            return startsWith;
+
+        var contains = all
+            .Where(c => !startsWith.Contains(c) && c.Contains(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c.Length)
+            .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .Take(maxResults - startsWith.Count);
+
+        startsWith.AddRange(contains);
+        return startsWith;
+    }
+
+    private static string[] SplitInputTokens(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? Array.Empty<string>()
+            : value.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Parse command arguments, respecting quoted strings.
+    /// e.g., 'anim.rotate "Main Camera" up 30' -> ["anim.rotate", "Main Camera", "up", "30"]
+    /// </summary>
+    private static string[] ParseCommandArgs(string input)
+    {
+        var args = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        char quoteChar = '"';
+
+        foreach (char c in input)
+        {
+            if ((c == '"' || c == '\'') && !inQuotes)
+            {
+                inQuotes = true;
+                quoteChar = c;
+            }
+            else if (c == quoteChar && inQuotes)
+            {
+                inQuotes = false;
+            }
+            else if (c == ' ' && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    args.Add(current.ToString());
+                    current.Clear();
+                }
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+
+        if (current.Length > 0)
+            args.Add(current.ToString());
+
+        return args.ToArray();
+    }
+
+    private static bool LooksLikeTemplateType(string typeToken)
+    {
+        return !string.IsNullOrWhiteSpace(typeToken) &&
+               typeToken.Contains("Template", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetSpawnTemplateNames()
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in GetTemplateNamesForType("EntityTemplate"))
+            result.Add(name);
+
+        foreach (var name in GetItemTemplateNames())
+            result.Add(name);
+
+        return result;
+    }
+
+    private static IEnumerable<string> GetKnownTemplateNames()
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in GetSpawnTemplateNames())
+            result.Add(name);
+
+        foreach (var templateType in new[]
+                 {
+                     "ArmyTemplate",
+                     "TileEffectTemplate",
+                     "ConversationTemplate",
+                     "SpeakerTemplate",
+                     "UnitLeaderTemplate",
+                     "PerkTemplate",
+                     "EmotionTemplate",
+                     "MissionTemplate",
+                     "ModularVehicleTemplate"
+                 })
+        {
+            foreach (var name in GetTemplateNamesForType(templateType))
+                result.Add(name);
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<string> GetTemplateTypeAliases()
+    {
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var typeName in GetTemplateTypeNames())
+        {
+            aliases.Add(typeName);
+            if (typeName.EndsWith("Template", StringComparison.OrdinalIgnoreCase) &&
+                typeName.Length > "Template".Length)
+            {
+                aliases.Add(typeName[..^"Template".Length]);
+            }
+        }
+        return aliases.OrderBy(t => t, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetTemplateTypeNames()
+    {
+        if (_templateTypeNameCache.Count > 0)
+            return _templateTypeNameCache;
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+            if (gameAssembly != null)
+            {
+                foreach (var t in gameAssembly.GetTypes())
+                {
+                    if (t != null && t.Name.EndsWith("Template", StringComparison.Ordinal))
+                        names.Add(t.Name);
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to curated defaults below.
+        }
+
+        foreach (var fallback in new[]
+                 {
+                     "EntityTemplate",
+                     "ArmyTemplate",
+                     "TileEffectTemplate",
+                     "ConversationTemplate",
+                     "SpeakerTemplate",
+                     "UnitLeaderTemplate",
+                     "PerkTemplate",
+                     "EmotionTemplate",
+                     "MissionTemplate",
+                     "ModularVehicleTemplate",
+                     "WeaponTemplate",
+                     "ArmorTemplate",
+                     "BaseItemTemplate"
+                 })
+        {
+            names.Add(fallback);
+        }
+
+        _templateTypeNameCache.Clear();
+        _templateTypeNameCache.AddRange(names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+        return _templateTypeNameCache;
+    }
+
+    private static IEnumerable<string> GetTemplateNamesForType(string typeToken)
+    {
+        var normalizedType = NormalizeTemplateType(typeToken);
+        if (string.IsNullOrEmpty(normalizedType))
+            return Array.Empty<string>();
+
+        if (_templateNamesByTypeCache.TryGetValue(normalizedType, out var cached))
+            return cached;
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var obj in GameQuery.FindAll(normalizedType))
+            {
+                var name = obj.GetName();
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+        }
+        catch
+        {
+            // Ignore autocomplete data failures.
+        }
+
+        var sorted = names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        if (sorted.Count > 0)
+            _templateNamesByTypeCache[normalizedType] = sorted;
+        return sorted;
+    }
+
+    private static IEnumerable<string> GetItemTemplateNames()
+    {
+        if (_itemTemplateNameCache.Count > 0)
+            return _itemTemplateNameCache;
+
+        try
+        {
+            var names = Inventory.GetItemTemplates();
+            _itemTemplateNameCache.Clear();
+            _itemTemplateNameCache.AddRange(names
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            // Ignore autocomplete data failures.
+        }
+
+        return _itemTemplateNameCache;
+    }
+
+    private static string NormalizeTemplateType(string typeToken)
+    {
+        if (string.IsNullOrWhiteSpace(typeToken))
+            return string.Empty;
+
+        var type = typeToken.Trim();
+        return type.EndsWith("Template", StringComparison.OrdinalIgnoreCase)
+            ? type
+            : type + "Template";
     }
 
     private static void ExecuteCommand(string input)
     {
         if (string.IsNullOrWhiteSpace(input)) return;
 
-        var parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var parts = ParseCommandArgs(input.Trim());
         if (parts.Length == 0) return;
 
         var cmdName = parts[0];

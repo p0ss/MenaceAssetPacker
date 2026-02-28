@@ -101,6 +101,17 @@ public static class MeshMaterialLookup
 
 		_isBuilt = true;
 		Logger.Info(LogCategory.Export, $"MeshMaterialLookup: Built lookup for {meshCount} meshes, found {materialCount} materials, {textureCount} texture sets");
+
+		// Log specific mesh lookups for debugging texture issues
+		string[] debugMeshes = { "turret_carrier_heavy", "turret_carrier_light", "turret_carrier_medium" };
+		foreach (var meshName in debugMeshes)
+		{
+			foreach (var key in MeshToMaterial.Keys.Where(k => k.Contains(meshName, StringComparison.OrdinalIgnoreCase)))
+			{
+				var mat = MeshToMaterial[key];
+				Logger.Info(LogCategory.Export, $"[DEBUG] Mesh '{key}' -> Material '{mat?.Name ?? "null"}'");
+			}
+		}
 	}
 
 	/// <summary>

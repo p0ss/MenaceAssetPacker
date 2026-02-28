@@ -1,0 +1,67 @@
+<Project>
+  <!--
+    Generates ModkitVersion.cs from versions.json at build time.
+    Import this in projects that need version info.
+  -->
+
+  <PropertyGroup>
+    <VersionsJsonPath>$(MSBuildThisFileDirectory)..\..\third_party\versions.json</VersionsJsonPath>
+    <ModkitVersionFile>$(MSBuildThisFileDirectory)ModkitVersion.cs</ModkitVersionFile>
+  </PropertyGroup>
+
+  <Target Name="GenerateModkitVersion" BeforeTargets="BeforeCompile;CoreCompile" Inputs="$(VersionsJsonPath)" Outputs="$(ModkitVersionFile)">
+    <PropertyGroup>
+      <!-- Read versions.json and extract ModpackLoader version -->
+      <VersionsJson>$([System.IO.File]::ReadAllText('$(VersionsJsonPath)'))</VersionsJson>
+      <!-- Extract version string like "30.0.0" using regex -->
+      <FullVersion>$([System.Text.RegularExpressions.Regex]::Match($(VersionsJson), '"ModpackLoader":\s*\{\s*"version":\s*"([^"]+)"').Groups[1].Value)</FullVersion>
+      <!-- Extract major version number -->
+      <BuildNumber>$([System.Text.RegularExpressions.Regex]::Match($(FullVersion), '^(\d+)').Groups[1].Value)</BuildNumber>
+    </PropertyGroup>
+
+    <Error Condition="'$(BuildNumber)' == ''" Text="Could not extract version from versions.json" />
+
+    <PropertyGroup>
+      <ModkitVersionContent><![CDATA[// AUTO-GENERATED at build time from third_party/versions.json - DO NOT EDIT
+// To change version, update versions.json and rebuild
+
+namespace Menace%3B
+
+/// <summary>
+/// Centralized version information for the Menace Modkit ecosystem.
+/// This file is generated at build time from versions.json.
+/// </summary>
+public static class ModkitVersion
+{
+    /// <summary>
+    /// The current build number. Derived from ModpackLoader version in versions.json.
+    /// </summary>
+    public const int BuildNumber = $(BuildNumber)%3B
+
+    /// <summary>
+    /// Version string for MelonLoader attribute (must be compile-time constant).
+    /// </summary>
+    public const string MelonVersion = "$(FullVersion)"%3B
+
+    /// <summary>
+    /// Short display version (e.g., "v30").
+    /// </summary>
+    public const string Short = "v$(BuildNumber)"%3B
+
+    /// <summary>
+    /// Full version for the Modkit App.
+    /// </summary>
+    public const string AppFull = "Menace Modkit v$(BuildNumber)"%3B
+
+    /// <summary>
+    /// Full version for the Modpack Loader.
+    /// </summary>
+    public const string LoaderFull = "Menace Modpack Loader v$(BuildNumber)"%3B
+}
+]]></ModkitVersionContent>
+    </PropertyGroup>
+
+    <WriteLinesToFile File="$(ModkitVersionFile)" Lines="$(ModkitVersionContent)" Overwrite="true" />
+    <Message Importance="high" Text="Generated ModkitVersion.cs (v$(BuildNumber) from versions.json)" />
+  </Target>
+</Project>

@@ -446,7 +446,7 @@ public static class NativeTextureCreator
 
                 // Build the new Texture2D bytes
                 // Use provided colorSpace (default 0 = sRGB for most textures)
-                byte[] textureBytes;
+                byte[]? textureBytes;
                 try
                 {
                     textureBytes = BuildTexture2DBytes(template, assetName, image.Width, image.Height, pixelData, colorSpace);

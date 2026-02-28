@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using ReactiveUI;
@@ -48,6 +49,30 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         public string Path = "";     // parent directory components
         public string FileType = ""; // file type category
     }
+
+    private sealed class PrefabSearchEntry
+    {
+        public string FullPath { get; init; } = string.Empty;
+        public string RelativePath { get; init; } = string.Empty;
+        public string PrefabName { get; init; } = string.Empty;
+        public string NormalizedName { get; init; } = string.Empty;
+        public HashSet<string> NameTokens { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> PathTokens { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static readonly Regex LodSuffixRegex = new(@"_lod\d+(_\d+)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex TokenSplitRegex = new(@"[^a-z0-9]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly HashSet<string> GenericMatchTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "assets", "mesh", "meshes", "prefab", "prefabs", "model", "models",
+        "lod", "gameobject", "object", "part", "parts", "vehicle", "vehicles",
+        "default", "unity", "resource", "resources", "body", "wheel", "wheels"
+    };
+    private static readonly HashSet<string> IgnoredPathSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "assets", "mesh", "meshes", "prefab", "prefabs", "gameobject", "resources"
+    };
+
     private readonly Dictionary<AssetTreeNode, SearchEntry> _searchEntries = new();
 
     public AssetBrowserViewModel()
@@ -442,11 +467,16 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
 
     private GlbService? _glbService;
     public ObservableCollection<GlbLinkedTexture> GlbLinkedTextures { get; } = new();
+    public ObservableCollection<GlbPrefabMatch> GlbPrefabMatches { get; } = new();
+
+    private string? _prefabSearchRoot;
+    private List<PrefabSearchEntry> _prefabSearchEntries = new();
 
     private void LoadGlbPreview()
     {
         HasGlbPreview = false;
         GlbLinkedTextures.Clear();
+        GlbPrefabMatches.Clear();
         GlbPreviewImage = null;
 
         if (_selectedNode == null || !_selectedNode.IsFile)
@@ -456,10 +486,11 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         if (ext != ".glb")
             return;
 
+        var extractedPath = AppSettings.GetEffectiveAssetsPath();
+
         // Initialize GLB service if needed
         if (_glbService == null)
         {
-            var extractedPath = AppSettings.GetEffectiveAssetsPath();
             if (extractedPath != null)
                 _glbService = new GlbService(extractedPath);
         }
@@ -476,7 +507,15 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             foreach (var texture in linkedTextures)
                 GlbLinkedTextures.Add(texture);
 
-            HasGlbPreview = linkedTextures.Count > 0 || GlbPreviewImage != null;
+            if (!string.IsNullOrEmpty(extractedPath))
+            {
+                var meshNames = _glbService.GetMeshNames(_selectedNode.FullPath);
+                var matches = FindMatchingPrefabsForGlb(_selectedNode.FullPath, extractedPath, meshNames);
+                foreach (var match in matches)
+                    GlbPrefabMatches.Add(match);
+            }
+
+            HasGlbPreview = true;
         }
         catch (Exception ex)
         {
@@ -533,6 +572,277 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             ExpandToNode(targetNode);
             SelectedNode = targetNode;
         }
+    }
+
+    /// <summary>
+    /// Navigate to a matched prefab in the asset tree.
+    /// </summary>
+    public void NavigateToPrefabMatch(GlbPrefabMatch match)
+    {
+        if (string.IsNullOrWhiteSpace(match.PrefabPath))
+            return;
+
+        var targetNode = FindNodeByPath(match.PrefabPath);
+        if (targetNode != null)
+        {
+            ExpandToNode(targetNode);
+            SelectedNode = targetNode;
+        }
+    }
+
+    private List<GlbPrefabMatch> FindMatchingPrefabsForGlb(string glbPath, string extractedAssetsPath, IReadOnlyList<string> meshNames)
+    {
+        var prefabEntries = GetPrefabSearchEntries(extractedAssetsPath);
+        if (prefabEntries.Count == 0)
+            return new List<GlbPrefabMatch>();
+
+        var glbName = Path.GetFileNameWithoutExtension(glbPath);
+        var glbBaseName = LodSuffixRegex.Replace(glbName, string.Empty);
+        var normalizedGlbName = NormalizeForMatch(glbBaseName);
+        var glbNameTokens = BuildMatchTokens(glbBaseName);
+        var glbPathTokens = BuildPathTokens(GetRelativeAssetPath(glbPath) ?? string.Empty);
+        var verificationTerms = BuildVerificationTerms(glbName, glbBaseName, glbNameTokens, meshNames);
+
+        var candidates = new List<(PrefabSearchEntry Entry, int Score)>();
+        foreach (var entry in prefabEntries)
+        {
+            var score = ScorePrefabCandidate(entry, normalizedGlbName, glbNameTokens, glbPathTokens);
+            if (score >= 30)
+                candidates.Add((entry, score));
+        }
+
+        if (candidates.Count == 0)
+            return new List<GlbPrefabMatch>();
+
+        var topCandidates = candidates
+            .OrderByDescending(c => c.Score)
+            .ThenBy(c => c.Entry.PrefabName, StringComparer.OrdinalIgnoreCase)
+            .Take(40);
+
+        var matches = new List<GlbPrefabMatch>();
+        foreach (var candidate in topCandidates)
+        {
+            var hitTerms = FindVerificationTermsInPrefab(candidate.Entry.FullPath, verificationTerms);
+            var confidence = DetermineMatchConfidence(candidate.Score, hitTerms.Count);
+            if (confidence == null)
+                continue;
+
+            var evidence = BuildMatchEvidence(candidate.Score, hitTerms, candidate.Entry.RelativePath);
+
+            matches.Add(new GlbPrefabMatch
+            {
+                PrefabName = candidate.Entry.PrefabName,
+                PrefabPath = candidate.Entry.FullPath,
+                RelativePath = candidate.Entry.RelativePath,
+                Confidence = confidence.Value,
+                Evidence = evidence,
+                Score = candidate.Score
+            });
+        }
+
+        return matches
+            .OrderBy(m => m.Confidence)
+            .ThenByDescending(m => m.Score)
+            .ThenBy(m => m.PrefabName, StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToList();
+    }
+
+    private List<PrefabSearchEntry> GetPrefabSearchEntries(string extractedAssetsPath)
+    {
+        var normalizedRoot = Path.GetFullPath(extractedAssetsPath);
+        if (string.Equals(_prefabSearchRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            return _prefabSearchEntries;
+
+        _prefabSearchEntries = new List<PrefabSearchEntry>();
+        _prefabSearchRoot = normalizedRoot;
+
+        if (!Directory.Exists(normalizedRoot))
+            return _prefabSearchEntries;
+
+        IEnumerable<string> prefabPaths;
+        try
+        {
+            prefabPaths = Directory.EnumerateFiles(normalizedRoot, "*.prefab", SearchOption.AllDirectories);
+        }
+        catch
+        {
+            return _prefabSearchEntries;
+        }
+
+        foreach (var prefabPath in prefabPaths)
+        {
+            var prefabName = Path.GetFileNameWithoutExtension(prefabPath);
+            if (string.IsNullOrWhiteSpace(prefabName))
+                continue;
+
+            var relativePath = Path.GetRelativePath(normalizedRoot, prefabPath).Replace('\\', '/');
+            _prefabSearchEntries.Add(new PrefabSearchEntry
+            {
+                FullPath = prefabPath,
+                RelativePath = relativePath,
+                PrefabName = prefabName,
+                NormalizedName = NormalizeForMatch(prefabName),
+                NameTokens = BuildMatchTokens(prefabName),
+                PathTokens = BuildPathTokens(relativePath)
+            });
+        }
+
+        return _prefabSearchEntries;
+    }
+
+    private static int ScorePrefabCandidate(
+        PrefabSearchEntry prefab,
+        string normalizedGlbName,
+        HashSet<string> glbNameTokens,
+        HashSet<string> glbPathTokens)
+    {
+        var score = 0;
+
+        if (prefab.NormalizedName == normalizedGlbName)
+            score += 120;
+        else if (!string.IsNullOrEmpty(normalizedGlbName) &&
+                 (prefab.NormalizedName.Contains(normalizedGlbName, StringComparison.Ordinal) ||
+                  normalizedGlbName.Contains(prefab.NormalizedName, StringComparison.Ordinal)))
+            score += 80;
+
+        var sharedNameTokens = prefab.NameTokens.Intersect(glbNameTokens, StringComparer.OrdinalIgnoreCase).Count();
+        if (sharedNameTokens > 0)
+            score += sharedNameTokens * 18;
+
+        var sharedPathTokens = prefab.PathTokens.Intersect(glbPathTokens, StringComparer.OrdinalIgnoreCase).Count();
+        if (sharedPathTokens > 0)
+            score += sharedPathTokens * 12;
+
+        if (sharedNameTokens > 0 && sharedPathTokens > 0)
+            score += 15;
+
+        return score;
+    }
+
+    private static GlbPrefabMatchConfidence? DetermineMatchConfidence(int score, int verificationHitCount)
+    {
+        if (verificationHitCount > 0)
+            return GlbPrefabMatchConfidence.Verified;
+        if (score >= 110)
+            return GlbPrefabMatchConfidence.Likely;
+        if (score >= 70)
+            return GlbPrefabMatchConfidence.WeakHeuristic;
+        return null;
+    }
+
+    private static string BuildMatchEvidence(int score, IReadOnlyList<string> hitTerms, string relativePath)
+    {
+        if (hitTerms.Count > 0)
+        {
+            var evidenceTerms = string.Join(", ", hitTerms.Take(3));
+            return $"Verified from prefab content ({evidenceTerms})";
+        }
+
+        if (score >= 110)
+            return $"Likely name/path match ({relativePath})";
+
+        return "Name/path heuristic match";
+    }
+
+    private static List<string> FindVerificationTermsInPrefab(string prefabPath, IReadOnlyList<string> terms)
+    {
+        if (terms.Count == 0)
+            return new List<string>();
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(prefabPath);
+        }
+        catch
+        {
+            return new List<string>();
+        }
+
+        var hits = new List<string>();
+        foreach (var term in terms)
+        {
+            if (content.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                hits.Add(term);
+                if (hits.Count >= 4)
+                    break;
+            }
+        }
+
+        return hits;
+    }
+
+    private static List<string> BuildVerificationTerms(
+        string glbName,
+        string glbBaseName,
+        HashSet<string> glbNameTokens,
+        IReadOnlyList<string> meshNames)
+    {
+        var terms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (glbName.Length >= 4 && !GenericMatchTokens.Contains(glbName))
+            terms.Add(glbName);
+        if (!glbBaseName.Equals(glbName, StringComparison.OrdinalIgnoreCase) &&
+            glbBaseName.Length >= 4 &&
+            !GenericMatchTokens.Contains(glbBaseName))
+            terms.Add(glbBaseName);
+
+        foreach (var token in glbNameTokens.Where(t => t.Length >= 4))
+            terms.Add(token);
+
+        foreach (var meshName in meshNames)
+        {
+            var normalizedMeshName = LodSuffixRegex.Replace(meshName, string.Empty);
+            if (normalizedMeshName.Length >= 4 && !GenericMatchTokens.Contains(normalizedMeshName))
+                terms.Add(normalizedMeshName);
+
+            foreach (var token in BuildMatchTokens(normalizedMeshName).Where(t => t.Length >= 4))
+                terms.Add(token);
+        }
+
+        return terms
+            .OrderByDescending(t => t.Length)
+            .Take(20)
+            .ToList();
+    }
+
+    private static string NormalizeForMatch(string value)
+    {
+        return string.Concat(value
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit));
+    }
+
+    private static HashSet<string> BuildMatchTokens(string value)
+    {
+        var cleaned = LodSuffixRegex.Replace(value.ToLowerInvariant(), string.Empty);
+        var tokens = TokenSplitRegex
+            .Split(cleaned)
+            .Where(t => t.Length >= 2 && !GenericMatchTokens.Contains(t));
+
+        return new HashSet<string>(tokens, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<string> BuildPathTokens(string relativePath)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return tokens;
+
+        var segments = relativePath.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var segment in segments)
+        {
+            var segmentName = Path.GetFileNameWithoutExtension(segment);
+            if (IgnoredPathSegments.Contains(segmentName))
+                continue;
+
+            foreach (var token in BuildMatchTokens(segmentName))
+                tokens.Add(token);
+        }
+
+        return tokens;
     }
 
     private AssetTreeNode? FindNodeByPath(string fullPath)
@@ -653,6 +963,8 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         _topLevelNodes.Clear();
         _allTreeNodes.Clear();
         _searchEntries.Clear();
+        _prefabSearchRoot = null;
+        _prefabSearchEntries.Clear();
 
         var assetPath = AppSettings.GetEffectiveAssetsPath();
 
@@ -855,10 +1167,14 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
             var embeddedCount = GlbLinkedTextures.Count(t => t.IsEmbedded);
             var foundCount = GlbLinkedTextures.Count(t => !t.IsEmbedded && t.IsFound);
             var missingCount = GlbLinkedTextures.Count(t => !t.IsEmbedded && !t.IsFound);
+            var verifiedPrefabCount = GlbPrefabMatches.Count(m => m.Confidence == GlbPrefabMatchConfidence.Verified);
+            var likelyPrefabCount = GlbPrefabMatches.Count(m => m.Confidence == GlbPrefabMatchConfidence.Likely);
+            var weakHeuristicPrefabCount = GlbPrefabMatches.Count(m => m.Confidence == GlbPrefabMatchConfidence.WeakHeuristic);
 
             PreviewText = $"{_selectedNode.Name}\n{FormatFileSize(_selectedNode.Size)}\n\n" +
                           $"Materials: {materialCount}\n" +
-                          $"Textures: {embeddedCount} embedded, {foundCount} linked, {missingCount} missing";
+                          $"Textures: {embeddedCount} embedded, {foundCount} linked, {missingCount} missing\n" +
+                          $"Prefabs: {verifiedPrefabCount} verified, {likelyPrefabCount} likely, {weakHeuristicPrefabCount} weak heuristic";
             HasTextPreview = true;
         }
         else if (ext is ".txt" or ".json" or ".xml" or ".cs" or ".shader")
@@ -997,14 +1313,31 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
     /// <summary>
     /// Add a new asset file to the selected folder within the current modpack.
     /// Supports both vanilla folders and virtual "Modpack New Assets" folders.
+    /// Unity bundles (.bundle) are handled specially and stored in bundles/ folder.
     /// </summary>
     public bool AddAssetToModpackFolder(string sourceFilePath, AssetTreeNode targetFolderNode)
     {
-        if (targetFolderNode == null || targetFolderNode.IsFile || string.IsNullOrEmpty(_currentModpackName))
+        if (string.IsNullOrEmpty(_currentModpackName))
             return false;
 
         try
         {
+            var ext = Path.GetExtension(sourceFilePath).ToLowerInvariant();
+
+            // Unity bundles are stored separately in bundles/ folder
+            if (ext == ".bundle")
+            {
+                _modpackManager.ImportUnityBundle(_currentModpackName, sourceFilePath);
+                var bundleName = Path.GetFileName(sourceFilePath);
+                SaveStatus = $"Imported Unity bundle: {bundleName}";
+                RefreshAssets();
+                return true;
+            }
+
+            // Normal assets need a target folder
+            if (targetFolderNode == null || targetFolderNode.IsFile)
+                return false;
+
             var folderRelativePath = GetAssetRelativeFolderPath(targetFolderNode);
             if (folderRelativePath == null)
             {
@@ -1049,7 +1382,7 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         return _selectedNode.IsFile ? _selectedNode.Parent : _selectedNode;
     }
 
-    public void ClearAssetReplacement()
+    public void RemoveAssetFromModpack()
     {
         if (_selectedNode == null || !_selectedNode.IsFile || string.IsNullOrEmpty(_currentModpackName))
             return;
@@ -1057,19 +1390,40 @@ public sealed class AssetBrowserViewModel : ViewModelBase, ISearchableViewModel
         var relativePath = GetAssetRelativePath(_selectedNode.FullPath);
         if (relativePath == null)
             return;
+        var removedName = _selectedNode.Name;
 
         try
         {
             _modpackManager.RemoveStagingAsset(_currentModpackName, relativePath);
             _modpackAssetPaths.Remove(relativePath);
-            LoadModifiedPreview();
-            SaveStatus = $"Cleared: {_selectedNode.Name}";
+
+            if (_showModpackOnly || IsSearching)
+            {
+                ApplySearchFilter();
+
+                // If the removed file is no longer visible in the filtered tree, clear selection.
+                if (_showModpackOnly &&
+                    (GetAssetRelativePath(_selectedNode.FullPath) is not string remainingRelative
+                    || !_modpackAssetPaths.Contains(remainingRelative)))
+                {
+                    SelectedNode = null;
+                }
+            }
+            else
+            {
+                LoadModifiedPreview();
+            }
+
+            SaveStatus = $"Removed: {removedName}";
         }
         catch (Exception ex)
         {
-            SaveStatus = $"Clear failed: {ex.Message}";
+            SaveStatus = $"Remove failed: {ex.Message}";
         }
     }
+
+    // Backward-compatible alias for existing call sites.
+    public void ClearAssetReplacement() => RemoveAssetFromModpack();
 
     private string? GetAssetRelativeFolderPath(AssetTreeNode folderNode)
     {

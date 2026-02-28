@@ -111,8 +111,29 @@ public class GlbService
     }
 
     /// <summary>
+    /// Returns logical mesh names found in the GLB.
+    /// </summary>
+    public List<string> GetMeshNames(string glbPath)
+    {
+        try
+        {
+            var model = ModelRoot.Load(glbPath);
+            return model.LogicalMeshes
+                .Select(m => m.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Cast<string>()
+                .ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
     /// Get all linked textures for a GLB, checking which are embedded vs need external files.
-    /// Uses the GLB filename to infer texture names since AssetRipper doesn't preserve material info.
+    /// Uses both GLB filename and material names to infer texture names.
     /// </summary>
     public List<GlbLinkedTexture> GetLinkedTextures(string glbPath)
     {
@@ -122,6 +143,17 @@ public class GlbService
         // Get base name from GLB filename for texture lookup
         var glbFileName = Path.GetFileNameWithoutExtension(glbPath);
         var baseNames = GetPossibleBaseNames(glbFileName);
+
+        // Also try deriving base names from material names (e.g., "heavy_cannon_long_marine_material" -> "heavy_cannon_long_marine", "heavy_cannon_long")
+        foreach (var mat in materials)
+        {
+            var matBaseNames = GetBaseNamesFromMaterial(mat.MaterialName);
+            foreach (var name in matBaseNames)
+            {
+                if (!baseNames.Contains(name))
+                    baseNames.Add(name);
+            }
+        }
 
         // Check if any textures are embedded in the GLB
         bool hasEmbeddedBaseColor = materials.Any(m => m.HasBaseColorTexture);
@@ -311,6 +343,56 @@ public class GlbService
         }
 
         return names.Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Get possible base names from a material name.
+    /// E.g., "heavy_cannon_long_marine_material" -> ["heavy_cannon_long_marine", "heavy_cannon_long"]
+    /// Also handles "DefaultMaterial" (ignored) and "_mat" suffix.
+    /// </summary>
+    private List<string> GetBaseNamesFromMaterial(string materialName)
+    {
+        var names = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(materialName))
+            return names;
+
+        // Skip generic material names that don't help with texture lookup
+        if (materialName.Equals("DefaultMaterial", StringComparison.OrdinalIgnoreCase) ||
+            materialName.Equals("Material", StringComparison.OrdinalIgnoreCase) ||
+            materialName.StartsWith("Material_", StringComparison.OrdinalIgnoreCase))
+            return names;
+
+        // Strip common material suffixes
+        var baseName = materialName;
+        foreach (var suffix in new[] { "_material", "_mat", "_Material", "_Mat" })
+        {
+            if (baseName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                baseName = baseName.Substring(0, baseName.Length - suffix.Length);
+                break;
+            }
+        }
+
+        // Add the base name with common prefixes
+        foreach (var prefix in CommonPrefixes)
+        {
+            names.Add(prefix + baseName);
+        }
+
+        // Also try progressively stripping the last segment (e.g., "heavy_cannon_long_marine" -> "heavy_cannon_long")
+        var parts = baseName.Split('_');
+        for (int i = parts.Length - 1; i >= 2; i--)
+        {
+            var shorterName = string.Join("_", parts.Take(i));
+            foreach (var prefix in CommonPrefixes)
+            {
+                if (!names.Contains(prefix + shorterName))
+                    names.Add(prefix + shorterName);
+            }
+        }
+
+        return names;
     }
 
     /// <summary>

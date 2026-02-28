@@ -48,6 +48,10 @@ public partial class ModpackLoaderMod : MelonMod
 
         SdkLogger.Msg($"{ModkitVersion.LoaderFull} initialized");
         ModSettings.Initialize();
+
+        // Register Modpack Loader settings
+        RegisterModpackLoaderSettings();
+
         InitializeRepl();
 
         // Register SDK console commands
@@ -59,6 +63,9 @@ public partial class ModpackLoaderMod : MelonMod
 
         // Initialize menu injection for mod settings UI
         MenuInjector.Initialize();
+
+        // Initialize GLB loader (can be disabled via settings if it causes issues)
+        GlbLoader.Initialize();
 
         LoadModpacks();
         DllLoader.InitializeAllPlugins();
@@ -210,6 +217,19 @@ public partial class ModpackLoaderMod : MelonMod
         }
     }
 
+    /// <summary>
+    /// Register settings for the Modpack Loader module.
+    /// Settings appear in the in-game Settings menu.
+    /// </summary>
+    private static void RegisterModpackLoaderSettings()
+    {
+        ModSettings.Register("Modpack Loader", settings =>
+        {
+            settings.AddHeader("GLB Model Loading");
+            settings.AddToggle("GlbLoader", "Enable GLB Loading", true);
+        });
+    }
+
     private static void RegisterSdkCommands()
     {
         // Register console commands from SDK wrapper classes
@@ -228,6 +248,7 @@ public partial class ModpackLoaderMod : MelonMod
         LineOfSight.RegisterConsoleCommands();
         TileEffects.RegisterConsoleCommands();
         BootSkip.RegisterConsoleCommands();
+        SimpleAnimations.RegisterConsoleCommands();
     }
 
     private void LoadModpacks()

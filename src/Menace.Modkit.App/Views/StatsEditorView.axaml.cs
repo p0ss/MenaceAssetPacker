@@ -633,6 +633,17 @@ public class StatsEditorView : UserControl
     cloneWizardButton.Click += OnCloneWithWizardClick;
     toolbar.Children.Add(cloneWizardButton);
 
+    var deleteCloneButton = new Button
+    {
+      Content = "Delete Clone",
+      FontSize = 12
+    };
+    deleteCloneButton.Classes.Add("destructive");
+    deleteCloneButton.Click += OnDeleteCloneClick;
+    deleteCloneButton.Bind(Button.IsVisibleProperty, new Avalonia.Data.Binding("CanDeleteSelectedClone"));
+    deleteCloneButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("CanDeleteSelectedClone"));
+    toolbar.Children.Add(deleteCloneButton);
+
     var reloadButton = new Button
     {
       Content = "Reload Data",
@@ -1213,6 +1224,28 @@ public class StatsEditorView : UserControl
     {
       Services.ModkitLog.Error($"Clone wizard failed: {ex.Message}");
     }
+  }
+
+  private async void OnDeleteCloneClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+  {
+    if (DataContext is not StatsEditorViewModel vm || vm.SelectedNode?.Template == null || !vm.CanDeleteSelectedClone)
+      return;
+
+    var topLevel = TopLevel.GetTopLevel(this);
+    if (topLevel is not Window window)
+      return;
+
+    var templateName = vm.SelectedNode.Template.Name;
+    var confirmed = await ConfirmationDialog.ShowAsync(
+      window,
+      "Delete Clone",
+      $"Delete cloned template '{templateName}' from this modpack?\n\nThis removes the clone and its staged stat overrides.",
+      "Delete",
+      isDestructive: true
+    );
+
+    if (confirmed)
+      vm.DeleteSelectedClone();
   }
 
   private Avalonia.Controls.Templates.IDataTemplate CreatePropertyGridTemplate(bool isEditable)

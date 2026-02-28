@@ -257,29 +257,25 @@ public partial class ModpackLoaderMod
                 return IntPtr.Zero;
             }
 
-            // Copy key fields from the existing object to maintain localization key structure
-            // This ensures the object has valid category/identifier for the localization system
-            // but with our custom m_DefaultTranslation that will be used as fallback
+            // IMPORTANT: Clear the key fields so localization lookup FAILS
+            // This forces the game to use m_DefaultTranslation as the actual text
+            // If we copy the original key, the game's localization system will
+            // look it up and OVERWRITE m_DefaultTranslation with cached text
 
-            // Copy LocaCategory (int at +0x10)
-            int category = Marshal.ReadInt32(existingLocPtr + LOC_CATEGORY_OFFSET);
-            Marshal.WriteInt32(newObj + LOC_CATEGORY_OFFSET, category);
+            // Clear LocaCategory (int at +0x10) - set to 0 (None/Invalid)
+            Marshal.WriteInt32(newObj + LOC_CATEGORY_OFFSET, 0);
 
-            // Copy m_KeyPart1 (string at +0x18)
-            IntPtr keyPart1 = Marshal.ReadIntPtr(existingLocPtr + LOC_KEY_PART1_OFFSET);
-            Marshal.WriteIntPtr(newObj + LOC_KEY_PART1_OFFSET, keyPart1);
+            // Clear m_KeyPart1 (string at +0x18) - set to null
+            Marshal.WriteIntPtr(newObj + LOC_KEY_PART1_OFFSET, IntPtr.Zero);
 
-            // Copy m_KeyPart2 (string at +0x20)
-            IntPtr keyPart2 = Marshal.ReadIntPtr(existingLocPtr + LOC_KEY_PART2_OFFSET);
-            Marshal.WriteIntPtr(newObj + LOC_KEY_PART2_OFFSET, keyPart2);
+            // Clear m_KeyPart2 (string at +0x20) - set to null
+            Marshal.WriteIntPtr(newObj + LOC_KEY_PART2_OFFSET, IntPtr.Zero);
 
-            // Copy m_CategoryName (string at +0x28)
-            IntPtr categoryName = Marshal.ReadIntPtr(existingLocPtr + LOC_CATEGORY_NAME_OFFSET);
-            Marshal.WriteIntPtr(newObj + LOC_CATEGORY_NAME_OFFSET, categoryName);
+            // Clear m_CategoryName (string at +0x28) - set to null
+            Marshal.WriteIntPtr(newObj + LOC_CATEGORY_NAME_OFFSET, IntPtr.Zero);
 
-            // Copy m_Identifier (string at +0x30)
-            IntPtr identifier = Marshal.ReadIntPtr(existingLocPtr + LOC_IDENTIFIER_OFFSET);
-            Marshal.WriteIntPtr(newObj + LOC_IDENTIFIER_OFFSET, identifier);
+            // Clear m_Identifier (string at +0x30) - set to null
+            Marshal.WriteIntPtr(newObj + LOC_IDENTIFIER_OFFSET, IntPtr.Zero);
 
             // Set m_DefaultTranslation to our new value (string at +0x38)
             IntPtr il2cppStr = IntPtr.Zero;

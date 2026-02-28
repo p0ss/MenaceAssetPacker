@@ -42,3 +42,6 @@ PLAN.md
 # Developer notes (internal debugging/exploration docs)
 docs/dev-notes/
 docs/dev-notes/
+
+# Generated at build time from versions.json
+src/Shared/ModkitVersion.cs

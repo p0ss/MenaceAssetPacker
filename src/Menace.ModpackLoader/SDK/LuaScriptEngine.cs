@@ -347,6 +347,9 @@ public class LuaScriptEngine
         script.Globals["get_equipped_weapons"] = DynValue.NewCallback((ctx, args) => LuaGetEquippedWeapons(args[0]));
         script.Globals["get_equipped_armor"] = DynValue.NewCallback((ctx, args) => LuaGetEquippedArmor(args[0]));
         script.Globals["get_item_templates"] = DynValue.NewCallback((ctx, args) => LuaGetItemTemplates(args.Count > 0 ? args[0].String : null));
+
+        // --- Animation API ---
+        SimpleAnimations.RegisterLuaHelpers(script);
     }
 
     /// <summary>

@@ -2,7 +2,7 @@
   "schemaVersion": 4,
   "components": {
     "Modkit": {
-      "version": "30.0.0",
+      "version": "31.0.1",
       "required": true,
       "category": "app",
       "description": "Menace Modkit application (self-update)",
@@ -14,12 +14,12 @@
       }
     },
     "MelonLoader": {
-      "version": "0.7.2-ci.2388",
+      "version": "0.7.2-ci.2403",
       "required": true,
       "category": "core",
       "description": "Mod loading framework for Unity games",
       "installPath": "MelonLoader",
-      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/20586441562",
+      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/22476630986",
       "sourceNote": "Official LavaGang CI build",
       "downloads": {
         "win-x64": { "size": 49000000 },
@@ -27,7 +27,7 @@
       }
     },
     "DataExtractor": {
-      "version": "9.0.0",
+      "version": "10.0.2",
       "required": true,
       "category": "core",
       "description": "Extracts game template data for editing",
@@ -37,7 +37,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "30.0.0",
+      "version": "31.0.1",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",

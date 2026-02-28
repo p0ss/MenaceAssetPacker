@@ -113,7 +113,8 @@
     </PackageReference>
   </ItemGroup>
 
-  <!-- Shared version file (single source of truth) -->
+  <!-- Generate version from versions.json at build time -->
+  <Import Project="..\Shared\GenerateVersion.targets" />
   <ItemGroup>
     <Compile Include="..\Shared\ModkitVersion.cs" Link="ModkitVersion.cs" />
   </ItemGroup>

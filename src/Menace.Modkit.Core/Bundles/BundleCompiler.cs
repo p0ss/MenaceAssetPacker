@@ -817,15 +817,6 @@ public class BundleCompiler
                     clonedAssets[newName] = newInfo;
                     cloneSourceMap[newName] = sourceName;
                     assetsByName[newName] = (newInfo, cloneBytes, newIdOffset);
-
-                    // Debug: dump first 20 bytes of source and clone to compare m_Script PPtr
-                    var srcHex = string.Join(" ", source.bytes.Take(20).Select(b => b.ToString("X2")));
-                    var clnHex = string.Join(" ", cloneBytes.Take(20).Select(b => b.ToString("X2")));
-                    result.Warnings.Add($"[Clone OK] {newName} (from {sourceName}, PathId={pathId}, size={cloneBytes.Length}, srcSize={source.bytes.Length})");
-                    result.Warnings.Add($"[Clone DEBUG] Source first 20 bytes: {srcHex}");
-                    result.Warnings.Add($"[Clone DEBUG] Clone  first 20 bytes: {clnHex}");
-                    result.Warnings.Add($"[Clone DEBUG] Source info: TypeId={source.info.TypeId}, TypeIdOrIndex={source.info.TypeIdOrIndex}, ScriptTypeIndex={source.info.ScriptTypeIndex}");
-                    result.Warnings.Add($"[Clone DEBUG] Clone  info: TypeId={newInfo.TypeId}, TypeIdOrIndex={newInfo.TypeIdOrIndex}, ScriptTypeIndex={newInfo.ScriptTypeIndex}");
                 }
                 catch (Exception ex)
                 {

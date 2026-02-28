@@ -151,7 +151,6 @@ public sealed class BulkEditorViewModel : ViewModelBase
 
         var allFieldNames = new HashSet<string>();
         var fieldTypeMap = new Dictionary<string, FieldTypeCategory>();
-        int nodeCount = 0;
 
         try
         {

@@ -1155,6 +1155,148 @@ public class AssetBrowserView : UserControl
         });
         panel.Children.Add(textureList);
 
+        var noTexturesText = new TextBlock
+        {
+            Text = "No linked textures detected",
+            Foreground = Brushes.White,
+            Opacity = 0.45,
+            FontSize = 11,
+            FontStyle = FontStyle.Italic
+        };
+        noTexturesText.Bind(TextBlock.IsVisibleProperty,
+            new Avalonia.Data.Binding("GlbLinkedTextures.Count")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<int, bool>(c => c == 0)
+            });
+        panel.Children.Add(noTexturesText);
+
+        var prefabHeader = new TextBlock
+        {
+            Text = "Linked Prefabs",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            Margin = new Thickness(0, 10, 0, 4)
+        };
+        panel.Children.Add(prefabHeader);
+
+        var prefabList = new ItemsControl();
+        prefabList.Bind(ItemsControl.ItemsSourceProperty, new Avalonia.Data.Binding("GlbPrefabMatches"));
+        prefabList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<GlbPrefabMatch>((match, _) =>
+        {
+            var row = new StackPanel
+            {
+                Spacing = 2,
+                Margin = new Thickness(0, 2)
+            };
+
+            var topLine = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8
+            };
+
+            var confidenceColor = match.Confidence switch
+            {
+                GlbPrefabMatchConfidence.Verified => Color.Parse("#8ECDC8"),
+                GlbPrefabMatchConfidence.Likely => Color.Parse("#E8CC77"),
+                _ => Color.Parse("#A0A0A0")
+            };
+            var confidenceText = match.Confidence switch
+            {
+                GlbPrefabMatchConfidence.Verified => "VERIFIED",
+                GlbPrefabMatchConfidence.Likely => "LIKELY?",
+                _ => "HEURISTIC"
+            };
+
+            topLine.Children.Add(new Border
+            {
+                Width = 8,
+                Height = 8,
+                CornerRadius = new CornerRadius(4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(confidenceColor)
+            });
+
+            var confidenceBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#2A3A4A")),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(4, 1),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = confidenceText,
+                    Foreground = new SolidColorBrush(confidenceColor),
+                    FontSize = 10
+                }
+            };
+            topLine.Children.Add(confidenceBadge);
+
+            topLine.Children.Add(new TextBlock
+            {
+                Text = match.PrefabName,
+                Foreground = Brushes.White,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var navButton = new Button
+            {
+                Content = "→",
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(4, 0),
+                FontSize = 14,
+                Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            navButton.Click += (_, _) =>
+            {
+                if (DataContext is AssetBrowserViewModel vm)
+                    vm.NavigateToPrefabMatch(match);
+            };
+            ToolTip.SetTip(navButton, "Navigate to prefab");
+            topLine.Children.Add(navButton);
+
+            row.Children.Add(topLine);
+
+            row.Children.Add(new TextBlock
+            {
+                Text = match.RelativePath,
+                Foreground = Brushes.White,
+                Opacity = 0.55,
+                FontSize = 10
+            });
+
+            row.Children.Add(new TextBlock
+            {
+                Text = match.Evidence,
+                Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+                Opacity = 0.9,
+                FontSize = 10
+            });
+
+            return row;
+        });
+        panel.Children.Add(prefabList);
+
+        var noPrefabsText = new TextBlock
+        {
+            Text = "No matching prefabs found",
+            Foreground = Brushes.White,
+            Opacity = 0.45,
+            FontSize = 11,
+            FontStyle = FontStyle.Italic
+        };
+        noPrefabsText.Bind(TextBlock.IsVisibleProperty,
+            new Avalonia.Data.Binding("GlbPrefabMatches.Count")
+            {
+                Converter = new Avalonia.Data.Converters.FuncValueConverter<int, bool>(c => c == 0)
+            });
+        panel.Children.Add(noPrefabsText);
+
         // Export button
         var buttonPanel = new StackPanel
         {
@@ -1501,15 +1643,15 @@ public class AssetBrowserView : UserControl
         });
         actionStack.Children.Add(replaceButton);
 
-        var clearButton = new Button
+        var removeButton = new Button
         {
-            Content = "Clear Replacement",
+            Content = "Remove Asset",
             FontSize = 13
         };
-        clearButton.Classes.Add("secondary");
-        clearButton.Click += OnClearReplacementClick;
-        clearButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("HasModifiedReplacement"));
-        actionStack.Children.Add(clearButton);
+        removeButton.Classes.Add("destructive");
+        removeButton.Click += OnRemoveAssetClick;
+        removeButton.Bind(Button.IsEnabledProperty, new Avalonia.Data.Binding("HasModifiedReplacement"));
+        actionStack.Children.Add(removeButton);
 
         var exportAssetButton = new Button
         {
@@ -1552,10 +1694,11 @@ public class AssetBrowserView : UserControl
             AllowMultiple = false,
             FileTypeFilter = new[]
             {
-                new FilePickerFileType("All Supported") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.wav", "*.glb" } },
+                new FilePickerFileType("All Supported") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.wav", "*.glb", "*.bundle" } },
                 new FilePickerFileType("Images") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg" } },
                 new FilePickerFileType("Audio") { Patterns = new[] { "*.wav" } },
-                new FilePickerFileType("3D Models") { Patterns = new[] { "*.glb" } }
+                new FilePickerFileType("3D Models") { Patterns = new[] { "*.glb" } },
+                new FilePickerFileType("Unity Bundles") { Patterns = new[] { "*.bundle" } }
             }
         });
 
@@ -1623,7 +1766,7 @@ public class AssetBrowserView : UserControl
         }
     }
 
-    private async void OnClearReplacementClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnRemoveAssetClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is AssetBrowserViewModel vm && vm.SelectedNode != null)
         {
@@ -1632,14 +1775,14 @@ public class AssetBrowserView : UserControl
 
             var confirmed = await ConfirmationDialog.ShowAsync(
                 window,
-                "Clear Replacement",
-                $"Remove the custom asset replacement for '{vm.SelectedNode.Name}'?",
-                "Clear",
+                "Remove Asset",
+                $"Remove '{vm.SelectedNode.Name}' from this modpack?\n\nIf this overrides a vanilla asset, the vanilla file will still be used.",
+                "Remove",
                 isDestructive: true
             );
 
             if (confirmed)
-                vm.ClearAssetReplacement();
+                vm.RemoveAssetFromModpack();
         }
     }
 

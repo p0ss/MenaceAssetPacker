@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MelonLoader;
+using Menace.SDK;
 using SharpGLTF.Schema2;
 using UnityEngine;
 using Vector2 = UnityEngine.Vector2;
@@ -26,10 +27,51 @@ namespace Menace.ModpackLoader;
 /// Runtime GLB/GLTF loader that converts 3D model files to Unity objects.
 /// Creates Mesh, Material, and Texture2D assets that the existing
 /// AssetReplacer can use for in-game replacements.
+///
+/// Can be disabled via ModSettings if it causes crashes.
+/// Supports skinned meshes with bone hierarchies.
+///
+/// For animations, use one of these approaches:
+/// 1. Match bone names to existing game skeletons (game animations drive your mesh)
+/// 2. Use SDK animation helpers (Rotate, Hover, Bob) via Lua/C#
+/// 3. Export full Unity prefabs with Animation components for complex needs
 /// </summary>
 public static class GlbLoader
 {
     private static readonly MelonLogger.Instance _log = new("GlbLoader");
+
+    // Settings
+    private const string SETTINGS_NAME = "Modpack Loader";
+    private const string SETTING_KEY_ENABLED = "GlbLoader";
+
+    private static bool _enabled = true;
+    private static bool _initialized = false;
+
+    /// <summary>
+    /// Whether GLB loading is enabled.
+    /// </summary>
+    public static bool IsEnabled => _enabled;
+
+    /// <summary>
+    /// Initialize the GLB loader settings.
+    /// Call from ModpackLoaderMod.OnInitializeMelon().
+    /// </summary>
+    public static void Initialize()
+    {
+        if (_initialized) return;
+
+        _enabled = ModSettings.Get<bool>(SETTINGS_NAME, SETTING_KEY_ENABLED);
+        _initialized = true;
+
+        if (!_enabled)
+        {
+            _log.Msg("GLB loading disabled (enable in Settings > Modpack Loader)");
+        }
+        else
+        {
+            _log.Msg("GLB loading enabled");
+        }
+    }
 
     /// <summary>
     /// Loaded model with all its components.
@@ -52,6 +94,11 @@ public static class GlbLoader
     /// </summary>
     public static void LoadModpackModels(string modpackPath)
     {
+        if (!_enabled)
+        {
+            return;
+        }
+
         var modelsDir = Path.Combine(modpackPath, "models");
         if (!Directory.Exists(modelsDir))
             return;
@@ -507,6 +554,7 @@ public static class GlbLoader
 
     /// <summary>
     /// Set up bone transforms for a skinned mesh renderer.
+    /// Preserves the GLTF bone hierarchy (parent-child relationships).
     /// </summary>
     private static void SetupBones(SkinnedMeshRenderer smr, Skin skin, ModelRoot model)
     {
@@ -516,28 +564,62 @@ public static class GlbLoader
         var boneRoot = new GameObject("Armature").transform;
         boneRoot.SetParent(smr.transform.parent, false);
 
+        // Build a mapping from GLTF node to joint index and Transform
+        var nodeToJointIndex = new Dictionary<Node, int>();
+        var nodeToTransform = new Dictionary<Node, Transform>();
+
+        // First pass: create all bone GameObjects and map nodes to joint indices
         for (int i = 0; i < skin.JointsCount; i++)
         {
             var (joint, inverseBindMatrix) = skin.GetJoint(i);
+            nodeToJointIndex[joint] = i;
 
             var boneGO = new GameObject(joint.Name ?? $"Bone_{i}");
-            boneGO.transform.SetParent(boneRoot, false);
-
-            // Set local transform from GLTF
-            var localTransform = joint.LocalTransform;
-            boneGO.transform.localPosition = ConvertPosition(localTransform.Translation);
-            boneGO.transform.localRotation = ConvertRotation(localTransform.Rotation);
-            boneGO.transform.localScale = ConvertScale(localTransform.Scale);
-
             bones[i] = boneGO.transform;
+            nodeToTransform[joint] = boneGO.transform;
 
             // Convert inverse bind matrix
             bindPoses[i] = ConvertMatrix(inverseBindMatrix);
         }
 
+        // Second pass: establish parent-child relationships and set transforms
+        Transform firstRootBone = null;
+        for (int i = 0; i < skin.JointsCount; i++)
+        {
+            var (joint, _) = skin.GetJoint(i);
+            var boneTransform = bones[i];
+
+            // Find parent in GLTF hierarchy
+            var parentNode = joint.VisualParent;
+
+            if (parentNode != null && nodeToTransform.TryGetValue(parentNode, out var parentTransform))
+            {
+                // Parent is also a joint in this skin - establish hierarchy
+                boneTransform.SetParent(parentTransform, false);
+            }
+            else
+            {
+                // Root bone (parent is not a joint) - parent to Armature
+                boneTransform.SetParent(boneRoot, false);
+                if (firstRootBone == null)
+                {
+                    firstRootBone = boneTransform;
+                }
+            }
+
+            // Set local transform from GLTF
+            var localTransform = joint.LocalTransform;
+            boneTransform.localPosition = ConvertPosition(localTransform.Translation);
+            boneTransform.localRotation = ConvertRotation(localTransform.Rotation);
+            boneTransform.localScale = ConvertScale(localTransform.Scale);
+        }
+
         smr.bones = bones;
         smr.sharedMesh.bindposes = bindPoses;
-        smr.rootBone = boneRoot;
+        // Use the first root bone as the root, or the Armature if no bones
+        smr.rootBone = firstRootBone ?? boneRoot;
+
+        _log.Msg($"    Bone hierarchy set up with {skin.JointsCount} bones, root: {smr.rootBone.name}");
     }
 
     // Coordinate conversion helpers (GLTF right-handed → Unity left-handed)

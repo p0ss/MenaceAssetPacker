@@ -180,6 +180,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                 // Re-render current node with new overrides
                 if (_selectedNode?.Template != null)
                     OnNodeSelected(_selectedNode);
+                this.RaisePropertyChanged(nameof(HasModifications));
+                this.RaisePropertyChanged(nameof(CanDeleteSelectedClone));
             }
         }
     }
@@ -203,6 +205,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                 FlushCurrentEdits();
                 this.RaiseAndSetIfChanged(ref _selectedNode, value);
                 OnNodeSelected(value);
+                this.RaisePropertyChanged(nameof(HasModifications));
+                this.RaisePropertyChanged(nameof(CanDeleteSelectedClone));
             }
         }
     }
@@ -248,6 +252,21 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                 return true;
 
             return false;
+        }
+    }
+
+    /// <summary>
+    /// True when the currently selected template is a clone that can be deleted.
+    /// </summary>
+    public bool CanDeleteSelectedClone
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(_currentModpackName) || _selectedNode?.Template == null)
+                return false;
+
+            var key = GetTemplateKey(_selectedNode.Template);
+            return key != null && _cloneDefinitions.ContainsKey(key);
         }
     }
 
@@ -1220,12 +1239,28 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             dict[newName] = sourceName;
         }
 
+        var existingTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var clonesDir = Path.Combine(_modpackManager.ResolveStagingDir(_currentModpackName), "clones");
+        if (Directory.Exists(clonesDir))
+        {
+            foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
+            {
+                existingTypes.Add(Path.GetFileNameWithoutExtension(file));
+            }
+        }
+
         foreach (var (templateType, clones) in byType)
         {
             var json = System.Text.Json.JsonSerializer.Serialize(clones,
                 new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             _modpackManager.SaveStagingClones(_currentModpackName, templateType, json);
         }
+
+        var activeTypes = new HashSet<string>(byType.Keys, StringComparer.OrdinalIgnoreCase);
+
+        // Remove stale clone files when all clones for a template type were deleted.
+        foreach (var staleType in existingTypes.Where(t => !activeTypes.Contains(t)))
+            _modpackManager.DeleteStagingClones(_currentModpackName, staleType);
     }
 
     /// <summary>
@@ -1343,6 +1378,94 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             ModkitLog.Warn($"[CloneTemplate] Could not find clone '{newName}' in TreeNodes to select it");
 
         StatusMessage = $"Created template '{newName}'";
+        this.RaisePropertyChanged(nameof(CanDeleteSelectedClone));
+        return true;
+    }
+
+    /// <summary>
+    /// Delete the currently selected cloned template from the working tree.
+    /// </summary>
+    public bool DeleteSelectedClone()
+    {
+        if (string.IsNullOrEmpty(_currentModpackName) || _selectedNode?.Template == null)
+        {
+            SaveStatus = "Select a clone template to delete";
+            return false;
+        }
+
+        var nodeToDelete = _selectedNode;
+        var compositeKey = GetTemplateKey(nodeToDelete.Template);
+        if (string.IsNullOrEmpty(compositeKey) || !_cloneDefinitions.ContainsKey(compositeKey))
+        {
+            SaveStatus = "Selected template is not a clone";
+            return false;
+        }
+
+        var slash = compositeKey.IndexOf('/');
+        if (slash < 0 || slash == compositeKey.Length - 1)
+        {
+            SaveStatus = "Delete failed: invalid clone key";
+            return false;
+        }
+
+        var templateType = compositeKey[..slash];
+        var instanceName = compositeKey[(slash + 1)..];
+
+        _cloneDefinitions.Remove(compositeKey);
+        _templateInstanceNamesCache.Remove(templateType);
+        _stagingOverrides.Remove(compositeKey);
+        _pendingChanges.Remove(compositeKey);
+        _pendingRemovals.Remove(compositeKey);
+        _searchEntries.Remove(nodeToDelete);
+        _allTreeNodes.Remove(nodeToDelete);
+        _userEditedFields.Clear();
+
+        // Clean up any legacy per-instance staging file if present.
+        var legacyCloneFile = Path.Combine(
+            _modpackManager.ResolveStagingDir(_currentModpackName),
+            "stats",
+            templateType,
+            $"{instanceName}.json");
+        if (File.Exists(legacyCloneFile))
+        {
+            try
+            {
+                File.Delete(legacyCloneFile);
+            }
+            catch (Exception ex)
+            {
+                ModkitLog.Warn($"[StatsEditor] Failed to delete legacy clone file '{legacyCloneFile}': {ex.Message}");
+            }
+        }
+
+        var parent = nodeToDelete.Parent;
+        if (parent != null)
+            parent.Children.Remove(nodeToDelete);
+        else
+            _topLevelNodes.Remove(nodeToDelete);
+
+        ApplySearchFilter();
+
+        TreeNodeViewModel? nextSelection = null;
+        if (parent != null)
+        {
+            nextSelection = parent.Children.FirstOrDefault(c => !c.IsCategory)
+                            ?? parent.Children.FirstOrDefault()
+                            ?? parent;
+        }
+        else if (_topLevelNodes.Count > 0)
+        {
+            nextSelection = _topLevelNodes[0];
+        }
+
+        // Manually update selection to avoid flushing deleted clone edits back into pending changes.
+        _selectedNode = nextSelection;
+        this.RaisePropertyChanged(nameof(SelectedNode));
+        OnNodeSelected(nextSelection);
+
+        SaveStatus = $"Deleted clone '{instanceName}'";
+        this.RaisePropertyChanged(nameof(HasModifications));
+        this.RaisePropertyChanged(nameof(CanDeleteSelectedClone));
         return true;
     }
 
