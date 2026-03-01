@@ -289,10 +289,16 @@ public sealed class ComponentManager : IDisposable
 
             // Download to temp file
             var tempFile = Path.Combine(Path.GetTempPath(), $"menace-{componentName}-{Guid.NewGuid()}.tmp");
+            ModkitLog.Info($"[ComponentManager] Downloading {componentName} from {downloadInfo.Url}");
             try
             {
                 using var response = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, ct);
-                response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                {
+                    ModkitLog.Error($"[ComponentManager] HTTP {(int)response.StatusCode} {response.ReasonPhrase} for {downloadInfo.Url}");
+                    progress?.Report(new DownloadProgress($"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}", 0, 0));
+                    return false;
+                }
 
                 var totalBytes = response.Content.Headers.ContentLength ?? downloadInfo.Size;
                 using var contentStream = await response.Content.ReadAsStreamAsync(ct);
@@ -332,6 +338,16 @@ public sealed class ComponentManager : IDisposable
                 }
 
                 fileStream.Close();
+
+                // Verify download completed
+                var downloadedSize = new FileInfo(tempFile).Length;
+                ModkitLog.Info($"[ComponentManager] Downloaded {downloadedSize} bytes to {tempFile} (expected ~{totalBytes})");
+                if (totalBytes > 0 && downloadedSize < totalBytes * 0.9) // Allow 10% variance for Content-Length inaccuracies
+                {
+                    ModkitLog.Error($"[ComponentManager] Incomplete download: got {downloadedSize}, expected {totalBytes}");
+                    progress?.Report(new DownloadProgress("Incomplete download", 0, 0));
+                    return false;
+                }
 
                 // Verify checksum if provided
                 if (!string.IsNullOrEmpty(downloadInfo.Sha256))
@@ -384,14 +400,31 @@ public sealed class ComponentManager : IDisposable
                 try { File.Delete(tempFile); } catch { /* ignore */ }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             progress?.Report(new DownloadProgress("Cancelled", 0, 0));
             return false;
         }
+        catch (OperationCanceledException tcEx) when (!ct.IsCancellationRequested)
+        {
+            // Timeout (TaskCanceledException without user cancellation)
+            ModkitLog.Error($"[ComponentManager] Timeout downloading {componentName}: {tcEx.Message}");
+            progress?.Report(new DownloadProgress("Download timed out", 0, 0));
+            return false;
+        }
+        catch (HttpRequestException httpEx)
+        {
+            ModkitLog.Error($"[ComponentManager] HTTP error downloading {componentName}: {httpEx.Message}");
+            if (httpEx.InnerException != null)
+                ModkitLog.Error($"[ComponentManager]   Inner: {httpEx.InnerException.Message}");
+            progress?.Report(new DownloadProgress($"Network error: {httpEx.Message}", 0, 0));
+            return false;
+        }
         catch (Exception ex)
         {
-            ModkitLog.Error($"[ComponentManager] Download failed for {componentName}: {ex.Message}");
+            ModkitLog.Error($"[ComponentManager] Download failed for {componentName}: {ex.GetType().Name}: {ex.Message}");
+            if (ex.InnerException != null)
+                ModkitLog.Error($"[ComponentManager]   Inner: {ex.InnerException.Message}");
             progress?.Report(new DownloadProgress($"Error: {ex.Message}", 0, 0));
             return false;
         }
@@ -824,10 +857,15 @@ public sealed class ComponentManager : IDisposable
 
     private static async Task ExtractTarGzAsync(string archivePath, string destinationPath, CancellationToken ct)
     {
+        var fileInfo = new FileInfo(archivePath);
+        ModkitLog.Info($"[ComponentManager] Extracting {archivePath} ({fileInfo.Length} bytes) to {destinationPath}");
+
         var psi = new ProcessStartInfo("tar")
         {
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
         };
         psi.ArgumentList.Add("-xzf");
         psi.ArgumentList.Add(archivePath);
@@ -837,9 +875,23 @@ public sealed class ComponentManager : IDisposable
         var process = Process.Start(psi);
         if (process != null)
         {
+            var stderr = await process.StandardError.ReadToEndAsync(ct);
+            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
+
             if (process.ExitCode != 0)
-                throw new Exception($"tar extraction failed with exit code {process.ExitCode}");
+            {
+                ModkitLog.Error($"[ComponentManager] tar failed with exit code {process.ExitCode}");
+                if (!string.IsNullOrEmpty(stderr))
+                    ModkitLog.Error($"[ComponentManager] tar stderr: {stderr}");
+                if (!string.IsNullOrEmpty(stdout))
+                    ModkitLog.Error($"[ComponentManager] tar stdout: {stdout}");
+                throw new Exception($"tar extraction failed with exit code {process.ExitCode}: {stderr}");
+            }
+
+            // Verify extraction produced files
+            var extractedFiles = Directory.GetFiles(destinationPath, "*", SearchOption.AllDirectories);
+            ModkitLog.Info($"[ComponentManager] Extracted {extractedFiles.Length} files");
         }
     }
 

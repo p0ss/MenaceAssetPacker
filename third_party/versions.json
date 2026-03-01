@@ -14,12 +14,12 @@
       }
     },
     "MelonLoader": {
-      "version": "0.7.2-ci.2403",
+      "version": "0.7.2.2388",
       "required": true,
       "category": "core",
       "description": "Mod loading framework for Unity games",
       "installPath": "MelonLoader",
-      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/22476630986",
+      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/12633016693",
       "sourceNote": "Official LavaGang CI build",
       "downloads": {
         "win-x64": { "size": 49000000 },
