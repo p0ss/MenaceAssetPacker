@@ -76,10 +76,15 @@
     </None>
   </ItemGroup>
 
-  <!-- Copy dependency version manifest -->
+  <!-- Copy dependency version manifests (stable and beta) -->
   <ItemGroup>
     <None Include="..\..\third_party\versions.json">
       <Link>third_party\versions.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\..\third_party\versions-beta.json">
+      <Link>third_party\versions-beta.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 4,
+  "components": {
+    "Modkit": {
+      "version": "31.0.3",
+      "required": true,
+      "category": "app",
+      "description": "Menace Modkit application (self-update)",
+      "installPath": "_self",
+      "selfUpdate": true,
+      "downloads": {
+        "win-x64": { "size": 85000000 },
+        "linux-x64": { "size": 90000000 }
+      }
+    },
+    "MelonLoader": {
+      "version": "0.7.2-ci.2403",
+      "required": true,
+      "category": "core",
+      "description": "Mod loading framework for Unity games",
+      "installPath": "MelonLoader",
+      "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/22476630986",
+      "sourceNote": "Official LavaGang CI build",
+      "downloads": {
+        "win-x64": { "size": 49000000 },
+        "linux-x64": { "size": 47000000 }
+      }
+    },
+    "DataExtractor": {
+      "version": "10.0.3",
+      "required": true,
+      "category": "core",
+      "description": "Extracts game template data for editing",
+      "installPath": "DataExtractor",
+      "downloads": {
+        "any": { "size": 1000000 }
+      }
+    },
+    "ModpackLoader": {
+      "version": "31.0.2",
+      "required": true,
+      "category": "core",
+      "description": "In-game mod loader with REPL and hot-reload",
+      "installPath": "ModpackLoader",
+      "downloads": {
+        "any": { "size": 13000000 }
+      }
+    },
+    "DotNetRefs": {
+      "version": "6.0.36",
+      "required": true,
+      "category": "core",
+      "description": ".NET 6 reference assemblies for mod compilation",
+      "installPath": "dotnet-refs",
+      "downloads": {
+        "any": { "size": 5000000 }
+      }
+    },
+    "AssetRipper": {
+      "version": "1.3.4-patched",
+      "required": true,
+      "category": "core",
+      "requiredFor": "asset-extraction",
+      "description": "Extracts textures, models, and audio from game assets",
+      "installPath": "AssetRipper",
+      "sourceUrl": "https://github.com/AssetRipper/AssetRipper/releases/tag/1.3.4",
+      "sourceNote": "Patched build - fixes texture extraction for IL2CPP games",
+      "downloads": {
+        "win-x64": { "size": 136000000 },
+        "linux-x64": { "size": 142000000 }
+      }
+    },
+    "TwitchSquaddies": {
+      "version": "1.0.0",
+      "required": false,
+      "category": "addon",
+      "description": "Twitch chat integration - let viewers control squaddies",
+      "installPath": "addons/TwitchSquaddies",
+      "downloads": {
+        "any": { "size": 12000000 }
+      }
+    },
+    "DevMode": {
+      "version": "1.3.0",
+      "required": false,
+      "category": "addon",
+      "description": "Developer tools: cheats, god mode, entity spawning, in-game tweaks",
+      "installPath": "addons/DevMode",
+      "downloads": {
+        "any": { "size": 50000 }
+      }
+    }
+  }
+}

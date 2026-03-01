@@ -60,6 +60,22 @@ public class SetupViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isLoading, value);
     }
 
+    /// <summary>
+    /// True if the user is on the beta channel.
+    /// </summary>
+    public bool IsBetaChannel => AppSettings.Instance.IsBetaChannel;
+
+    /// <summary>
+    /// Badge text to display next to the title (e.g., "BETA").
+    /// Empty if on stable channel.
+    /// </summary>
+    public string ChannelBadgeText => IsBetaChannel ? "BETA" : "";
+
+    /// <summary>
+    /// True if a channel badge should be shown.
+    /// </summary>
+    public bool ShowChannelBadge => IsBetaChannel;
+
     private bool _isDownloading;
     public bool IsDownloading
     {
@@ -337,12 +353,16 @@ public class SetupViewModel : ViewModelBase
 
     private void UpdatePendingStatus()
     {
+        // Only NotInstalled and Outdated are blocking - UpdateAvailable is informational only
         var pendingRequired = RequiredComponents
-            .Where(c => c.Status.State != ComponentState.UpToDate)
+            .Where(c => c.Status.State == ComponentState.NotInstalled ||
+                        c.Status.State == ComponentState.Outdated)
             .ToList();
 
         var pendingOptional = OptionalComponents
-            .Where(c => c.IsSelected && c.Status.State != ComponentState.UpToDate)
+            .Where(c => c.IsSelected &&
+                        (c.Status.State == ComponentState.NotInstalled ||
+                         c.Status.State == ComponentState.Outdated))
             .ToList();
 
         HasRequiredPending = pendingRequired.Count > 0;
@@ -368,12 +388,15 @@ public class SetupViewModel : ViewModelBase
 
         try
         {
-            // Get list of components to download
+            // Get list of components to download (NotInstalled or Outdated only - UpdateAvailable is informational)
             var toDownload = RequiredComponents
-                .Where(c => c.Status.State != ComponentState.UpToDate)
+                .Where(c => c.Status.State == ComponentState.NotInstalled ||
+                            c.Status.State == ComponentState.Outdated)
                 .Select(c => c.Status.Name)
                 .Concat(OptionalComponents
-                    .Where(c => c.IsSelected && c.Status.State != ComponentState.UpToDate)
+                    .Where(c => c.IsSelected &&
+                                (c.Status.State == ComponentState.NotInstalled ||
+                                 c.Status.State == ComponentState.Outdated))
                     .Select(c => c.Status.Name))
                 .ToList();
 

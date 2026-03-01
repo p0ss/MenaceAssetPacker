@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 31.0.3 for beta, 32.0.0 for stable)'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel'
+        required: true
+        type: choice
+        options:
+          - beta
+          - stable
+        default: beta
 
 permissions:
   contents: write
@@ -26,8 +40,17 @@ jobs:
       - name: Get version
         id: version
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          echo "VERSION=$TAG_VERSION" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            CHANNEL="${{ inputs.channel }}"
+          else
+            # Tag-triggered: extract version from tag, default to stable
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            CHANNEL="stable"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "CHANNEL=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "IS_BETA=$([[ $CHANNEL == 'beta' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
       - name: Generate ModkitVersion.cs
         run: |
@@ -58,11 +81,31 @@ jobs:
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/gui-win-x64
 
+      - name: Update version manifests
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          CHANNEL="${{ steps.version.outputs.CHANNEL }}"
+
+          if [ "$CHANNEL" == "beta" ]; then
+            # Beta: update versions-beta.json only
+            jq --arg version "$VERSION" '.components.Modkit.version = $version' \
+              third_party/versions-beta.json > tmp.json && mv tmp.json third_party/versions-beta.json
+            echo "Updated versions-beta.json with Modkit version $VERSION"
+          else
+            # Stable: update both manifests
+            jq --arg version "$VERSION" '.components.Modkit.version = $version' \
+              third_party/versions.json > tmp.json && mv tmp.json third_party/versions.json
+            jq --arg version "$VERSION" '.components.Modkit.version = $version' \
+              third_party/versions-beta.json > tmp.json && mv tmp.json third_party/versions-beta.json
+            echo "Updated versions.json and versions-beta.json with Modkit version $VERSION"
+          fi
+
       - name: Bundle files
         run: |
           for platform in linux-x64 win-x64; do
             mkdir -p dist/gui-$platform/third_party/bundled
             cp third_party/versions.json dist/gui-$platform/third_party/
+            cp third_party/versions-beta.json dist/gui-$platform/third_party/
             cp -r third_party/bundled/DataExtractor dist/gui-$platform/third_party/bundled/
             cp -r third_party/bundled/ModpackLoader dist/gui-$platform/third_party/bundled/
             [ -d "third_party/bundled/dotnet-refs" ] && cp -r third_party/bundled/dotnet-refs dist/gui-$platform/third_party/bundled/
@@ -74,10 +117,21 @@ jobs:
           tar -czf menace-modkit-linux-x64.tar.gz -C gui-linux-x64 .
           zip -q -r menace-modkit-win-x64.zip gui-win-x64/
 
+      - name: Commit manifest updates
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add third_party/versions.json third_party/versions-beta.json
+          git diff --staged --quiet || git commit -m "Release v${{ steps.version.outputs.VERSION }} (${{ steps.version.outputs.CHANNEL }})"
+          git push
+
       - name: Create App Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Menace Modkit v${{ steps.version.outputs.VERSION }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: Menace Modkit v${{ steps.version.outputs.VERSION }}${{ steps.version.outputs.IS_BETA == 'true' && ' (Beta)' || '' }}
+          prerelease: ${{ steps.version.outputs.IS_BETA == 'true' }}
           generate_release_notes: true
           body: |
             ## Download
@@ -88,6 +142,8 @@ jobs:
             | **Linux** | `menace-modkit-linux-x64.tar.gz` |
 
             Extract and run. The app downloads required components on first launch.
+
+            ${{ steps.version.outputs.IS_BETA == 'true' && '> **Note:** This is a beta release. It may contain bugs or incomplete features. Use with caution.' || '' }}
           files: |
             dist/menace-modkit-linux-x64.tar.gz
             dist/menace-modkit-win-x64.zip

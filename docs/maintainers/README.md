@@ -15,6 +15,7 @@ This directory contains detailed architectural documentation for maintainers and
 | [07-tools.md](07-tools.md) | tools/ | Python tools, diagnostics, and utilities |
 | [08-tests-and-build.md](08-tests-and-build.md) | tests/, CI | Testing infrastructure and build/release process |
 | [09-shared-and-supporting.md](09-shared-and-supporting.md) | src/Shared, etc. | Shared configuration and supporting projects |
+| [10-release-channels.md](10-release-channels.md) | Release system | Stable/Beta channel system and release workflow |
 
 ## Quick Reference
 
@@ -36,7 +37,8 @@ Menace.ModpackLoader (runtime, references game assemblies)
 
 | Purpose | Location |
 |---------|----------|
-| Version source of truth | `third_party/versions.json` |
+| Stable version manifest | `third_party/versions.json` |
+| Beta version manifest | `third_party/versions-beta.json` |
 | Shared version constants | `src/Shared/ModkitVersion.cs` |
 | Build configuration | `src/Directory.Build.props` |
 | Build script | `build-redistributables.sh` |
@@ -63,12 +65,20 @@ python -m pytest tests/test_schema_generation.py -v
 powershell -ExecutionPolicy Bypass -File tools/doctor.ps1  # Windows
 ```
 
-**Release:**
-```bash
-git tag v27.0.0
-git push origin main v27.0.0
-# CI creates GitHub release automatically
+**Release (via workflow dispatch - recommended):**
 ```
+Actions → Release → Run workflow
+  - version: 31.0.3 (beta) or 32.0.0 (stable)
+  - channel: beta or stable
+```
+
+**Release (via git tag - defaults to stable):**
+```bash
+git tag v32.0.0
+git push origin v32.0.0
+```
+
+See [10-release-channels.md](10-release-channels.md) for full details.
 
 ## Known Issues Across Codebase
 

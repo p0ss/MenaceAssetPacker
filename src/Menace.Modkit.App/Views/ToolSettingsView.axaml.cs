@@ -224,6 +224,9 @@ public class ToolSettingsView : UserControl
         // Component Versions
         stack.Children.Add(BuildVersionsSection());
 
+        // Release Channel
+        stack.Children.Add(BuildReleaseChannelSection());
+
         // Extracted Assets Directory
         stack.Children.Add(BuildAssetsSection());
 
@@ -235,6 +238,135 @@ public class ToolSettingsView : UserControl
 
         scrollViewer.Content = stack;
         return scrollViewer;
+    }
+
+    private Control BuildReleaseChannelSection()
+    {
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24)
+        };
+
+        var stack = new StackPanel { Spacing = 16 };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Release Channel",
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+
+        // Stable option
+        var stableStack = new StackPanel { Spacing = 4 };
+        var stableRadio = new RadioButton
+        {
+            GroupName = "ReleaseChannel",
+            Foreground = Brushes.White
+        };
+        stableRadio.Bind(RadioButton.IsCheckedProperty,
+            new Avalonia.Data.Binding("IsStableChannel") { Mode = Avalonia.Data.BindingMode.TwoWay });
+
+        var stableContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        stableContent.Children.Add(new TextBlock
+        {
+            Text = "Stable",
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        stableContent.Children.Add(new TextBlock
+        {
+            Text = "(Recommended)",
+            Foreground = new SolidColorBrush(Color.Parse("#8ECDC8")),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        stableRadio.Content = stableContent;
+        stableStack.Children.Add(stableRadio);
+        stableStack.Children.Add(new TextBlock
+        {
+            Text = "Well-tested releases, best for most users",
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            FontSize = 12,
+            Margin = new Thickness(24, 0, 0, 0)
+        });
+        stack.Children.Add(stableStack);
+
+        // Beta option
+        var betaStack = new StackPanel { Spacing = 4 };
+        var betaRadio = new RadioButton
+        {
+            GroupName = "ReleaseChannel",
+            Foreground = Brushes.White
+        };
+        betaRadio.Bind(RadioButton.IsCheckedProperty,
+            new Avalonia.Data.Binding("IsBetaChannel") { Mode = Avalonia.Data.BindingMode.TwoWay });
+
+        var betaContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        betaContent.Children.Add(new TextBlock
+        {
+            Text = "Beta",
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        betaRadio.Content = betaContent;
+        betaStack.Children.Add(betaRadio);
+        betaStack.Children.Add(new TextBlock
+        {
+            Text = "Latest features, may contain bugs",
+            Foreground = Brushes.White,
+            Opacity = 0.6,
+            FontSize = 12,
+            Margin = new Thickness(24, 0, 0, 0)
+        });
+
+        // Beta warning
+        var betaWarning = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#3a3a1a")),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(24, 8, 0, 0)
+        };
+        betaWarning.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("IsBetaChannel"));
+        var warningStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        warningStack.Children.Add(new TextBlock
+        {
+            Text = "\u26A0",
+            Foreground = new SolidColorBrush(Color.Parse("#FFD700")),
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        warningStack.Children.Add(new TextBlock
+        {
+            Text = "Beta builds may break your mods or save data",
+            Foreground = new SolidColorBrush(Color.Parse("#FFD700")),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        betaWarning.Child = warningStack;
+        betaStack.Children.Add(betaWarning);
+
+        stack.Children.Add(betaStack);
+
+        // Channel status message
+        var statusText = new TextBlock
+        {
+            Foreground = Brushes.White,
+            Opacity = 0.7,
+            FontSize = 12,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        statusText.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding("ChannelStatusMessage"));
+        stack.Children.Add(statusText);
+
+        border.Child = stack;
+        return border;
     }
 
     private Control BuildVersionsSection()

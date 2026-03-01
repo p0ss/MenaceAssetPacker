@@ -112,13 +112,42 @@ public class SetupView : UserControl
             Margin = new Thickness(0, 0, 0, 16)
         };
 
-        stack.Children.Add(new TextBlock
+        // Title row with optional BETA badge
+        var titleRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12
+        };
+
+        titleRow.Children.Add(new TextBlock
         {
             Text = "Menace Modkit Setup",
             FontSize = 28,
             FontWeight = FontWeight.Bold,
             Foreground = Brushes.White
         });
+
+        // BETA badge (only visible when on beta channel)
+        var betaBadge = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#3a3a1a")),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 4),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        betaBadge.Bind(Border.IsVisibleProperty, new Avalonia.Data.Binding("ShowChannelBadge"));
+
+        var badgeText = new TextBlock
+        {
+            Text = "BETA",
+            FontSize = 12,
+            FontWeight = FontWeight.Bold,
+            Foreground = new SolidColorBrush(Color.Parse("#FFD700"))
+        };
+        betaBadge.Child = badgeText;
+        titleRow.Children.Add(betaBadge);
+
+        stack.Children.Add(titleRow);
 
         stack.Children.Add(new TextBlock
         {
@@ -219,9 +248,10 @@ public class SetupView : UserControl
             {
                 Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, string>(state => state switch
                 {
-                    ComponentState.UpToDate => "\u2713",      // Checkmark
-                    ComponentState.Outdated => "\u2191",      // Up arrow
-                    ComponentState.NotInstalled => "\u2193",  // Down arrow (download)
+                    ComponentState.UpToDate => "\u2713",        // Checkmark
+                    ComponentState.UpdateAvailable => "\u2713", // Checkmark (compatible, just newer exists)
+                    ComponentState.Outdated => "\u2191",        // Up arrow
+                    ComponentState.NotInstalled => "\u2193",    // Down arrow (download)
                     _ => "?"
                 })
             });
@@ -230,6 +260,7 @@ public class SetupView : UserControl
                 Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, IBrush>(state => state switch
                 {
                     ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#8ECDC8")),
+                    ComponentState.UpdateAvailable => new SolidColorBrush(Color.Parse("#8ECDC8")), // Same as UpToDate
                     ComponentState.Outdated => new SolidColorBrush(Color.Parse("#FFD700")),
                     ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#6B9FFF")), // Blue
                     _ => Brushes.White
@@ -331,6 +362,7 @@ public class SetupView : UserControl
             Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, IBrush>(state => state switch
             {
                 ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#1a3a2a")),
+                ComponentState.UpdateAvailable => new SolidColorBrush(Color.Parse("#1a3a2a")), // Same as UpToDate
                 ComponentState.Outdated => new SolidColorBrush(Color.Parse("#3a3a1a")),
                 ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#1a2a3a")), // Blue, not red
                 _ => Brushes.Transparent
@@ -342,6 +374,7 @@ public class SetupView : UserControl
             Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, string>(state => state switch
             {
                 ComponentState.UpToDate => "Installed",
+                ComponentState.UpdateAvailable => "Installed",  // Non-blocking, show as installed
                 ComponentState.Outdated => "Update",
                 ComponentState.NotInstalled => "Required",
                 _ => ""
@@ -353,6 +386,7 @@ public class SetupView : UserControl
             Converter = new Avalonia.Data.Converters.FuncValueConverter<ComponentState, IBrush>(state => state switch
             {
                 ComponentState.UpToDate => new SolidColorBrush(Color.Parse("#8ECDC8")),
+                ComponentState.UpdateAvailable => new SolidColorBrush(Color.Parse("#8ECDC8")), // Same as UpToDate
                 ComponentState.Outdated => new SolidColorBrush(Color.Parse("#FFD700")),
                 ComponentState.NotInstalled => new SolidColorBrush(Color.Parse("#6B9FFF")), // Blue, not red
                 _ => Brushes.White

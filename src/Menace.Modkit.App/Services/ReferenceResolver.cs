@@ -601,8 +601,13 @@ public class ReferenceResolver
 
     private static string? FindVersionsJsonPath()
     {
+        // Use channel-specific manifest
+        var filename = AppSettings.Instance.IsBetaChannel ? "versions-beta.json" : "versions.json";
         var candidates = new[]
         {
+            Path.Combine(AppContext.BaseDirectory, "third_party", filename),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", filename),
+            // Fall back to stable manifest
             Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json"),
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "versions.json"),
         };

@@ -55,10 +55,18 @@ public class DeployManager
                     ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
                 if (!compileResult.Success)
                 {
+                    // Include both errors and warnings - warnings often explain WHY errors occurred
+                    // (e.g., "Il2CppAssemblies not found" warning explains "UnityEngine not found" errors)
                     var errors = string.Join("\n", compileResult.Diagnostics
                         .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
                         .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
+                    var warnings = compileResult.Diagnostics
+                        .Where(d => d.Severity == Models.DiagnosticSeverity.Warning)
+                        .Select(d => d.Message)
+                        .ToList();
                     var msg = $"Compile failed for {modpack.Name}:\n{errors}";
+                    if (warnings.Count > 0)
+                        msg += $"\n\nPossible causes:\n• " + string.Join("\n• ", warnings);
                     ModkitLog.Error(msg);
                     return new DeployResult { Success = false, Message = msg };
                 }
@@ -177,10 +185,18 @@ public class DeployManager
                         ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
                     if (!compileResult.Success)
                     {
+                        // Include both errors and warnings - warnings often explain WHY errors occurred
+                        // (e.g., "Il2CppAssemblies not found" warning explains "UnityEngine not found" errors)
                         var errors = string.Join("\n", compileResult.Diagnostics
                             .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
                             .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
+                        var warnings = compileResult.Diagnostics
+                            .Where(d => d.Severity == Models.DiagnosticSeverity.Warning)
+                            .Select(d => d.Message)
+                            .ToList();
                         var msg = $"Compilation failed for {modpack.Name}:\n{errors}";
+                        if (warnings.Count > 0)
+                            msg += $"\n\nPossible causes:\n• " + string.Join("\n• ", warnings);
                         ModkitLog.Error(msg);
                         return new DeployResult { Success = false, Message = msg };
                     }

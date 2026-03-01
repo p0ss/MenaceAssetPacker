@@ -19,6 +19,7 @@ public class AppSettings
     private bool _enableDeveloperTools = false;
     private bool? _enableMcpServer = null; // null = auto-detect, true/false = explicit
     private bool _hasUsedModdingTools = false;
+    private string _updateChannel = "stable";
     private ExtractionSettings _extractionSettings = new();
 
     private class PersistedSettings
@@ -37,6 +38,9 @@ public class AppSettings
 
         [JsonPropertyName("hasUsedModdingTools")]
         public bool HasUsedModdingTools { get; set; }
+
+        [JsonPropertyName("updateChannel")]
+        public string UpdateChannel { get; set; } = "stable";
     }
 
     private static string GetSettingsFilePath()
@@ -86,6 +90,13 @@ public class AppSettings
                 ModkitLog.Info($"MCP server: {(_enableMcpServer.Value ? "enabled" : "disabled")}");
 
             _hasUsedModdingTools = data.HasUsedModdingTools;
+
+            if (!string.IsNullOrEmpty(data.UpdateChannel))
+            {
+                _updateChannel = data.UpdateChannel;
+                if (_updateChannel == "beta")
+                    ModkitLog.Info("Update channel: beta");
+            }
         }
         catch (Exception ex)
         {
@@ -108,7 +119,8 @@ public class AppSettings
                 ExtractedAssetsPath = string.IsNullOrEmpty(_extractedAssetsPath) ? null : _extractedAssetsPath,
                 EnableDeveloperTools = _enableDeveloperTools,
                 EnableMcpServer = _enableMcpServer,
-                HasUsedModdingTools = _hasUsedModdingTools
+                HasUsedModdingTools = _hasUsedModdingTools,
+                UpdateChannel = _updateChannel
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
@@ -485,11 +497,23 @@ public class AppSettings
         set => _hasUsedModdingTools = value;
     }
 
+    /// <summary>
+    /// The release channel the user is subscribed to ("stable" or "beta").
+    /// Beta channel receives bleeding-edge builds; Stable receives well-tested releases.
+    /// </summary>
+    public string UpdateChannel => _updateChannel;
+
+    /// <summary>
+    /// Returns true if the user is on the beta channel.
+    /// </summary>
+    public bool IsBetaChannel => _updateChannel == "beta";
+
     public event EventHandler? GameInstallPathChanged;
     public event EventHandler? ExtractedAssetsPathChanged;
     public event EventHandler? ExtractionSettingsChanged;
     public event EventHandler? EnableDeveloperToolsChanged;
     public event EventHandler? EnableMcpServerChanged;
+    public event EventHandler? UpdateChannelChanged;
 
     public void SetGameInstallPath(string path)
     {
@@ -523,6 +547,20 @@ public class AppSettings
         _enableMcpServer = enabled;
         SaveToDisk();
         EnableMcpServerChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Set the release channel ("stable" or "beta").
+    /// </summary>
+    public void SetUpdateChannel(string channel)
+    {
+        if (_updateChannel != channel && (channel == "stable" || channel == "beta"))
+        {
+            _updateChannel = channel;
+            SaveToDisk();
+            ModkitLog.Info($"Update channel changed to: {channel}");
+            UpdateChannelChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>

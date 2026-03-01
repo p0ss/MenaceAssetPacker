@@ -74,6 +74,8 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     private bool _hasAppUpdate = false;
     private string _latestAppVersion = string.Empty;
     private string _appDownloadUrl = string.Empty;
+    private string _otherChannelVersion = string.Empty;
+    private string _channelStatusMessage = string.Empty;
     private readonly SchemaService _schemaService;
     private readonly ExtractionValidator _validator;
     private readonly ModpackManager _modpackManager;
@@ -135,8 +137,8 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         CheckForAppUpdateCommand = ReactiveCommand.CreateFromTask(CheckForAppUpdateAsync);
         StartUpdateCommand = ReactiveCommand.CreateFromTask(StartUpdateFlowAsync);
 
-        // Check for app updates on load
-        _ = CheckForAppUpdateAsync();
+        // Check for app updates on load and refresh channel info
+        _ = RefreshChannelInfoAsync();
 
         // Check for pending redeploy from previous session
         _ = CheckPendingRedeployAsync();
@@ -326,6 +328,66 @@ public sealed class ToolSettingsViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _appDownloadUrl, value);
     }
 
+    // Release Channel properties
+
+    /// <summary>
+    /// True if the user is on the stable channel.
+    /// </summary>
+    public bool IsStableChannel
+    {
+        get => AppSettings.Instance.UpdateChannel == "stable";
+        set
+        {
+            if (value && !IsStableChannel)
+            {
+                AppSettings.Instance.SetUpdateChannel("stable");
+                ComponentManager.Instance.InvalidateManifestCache();
+                this.RaisePropertyChanged();
+                this.RaisePropertyChanged(nameof(IsBetaChannel));
+                this.RaisePropertyChanged(nameof(ChannelStatusMessage));
+                _ = RefreshChannelInfoAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// True if the user is on the beta channel.
+    /// </summary>
+    public bool IsBetaChannel
+    {
+        get => AppSettings.Instance.UpdateChannel == "beta";
+        set
+        {
+            if (value && !IsBetaChannel)
+            {
+                AppSettings.Instance.SetUpdateChannel("beta");
+                ComponentManager.Instance.InvalidateManifestCache();
+                this.RaisePropertyChanged();
+                this.RaisePropertyChanged(nameof(IsStableChannel));
+                this.RaisePropertyChanged(nameof(ChannelStatusMessage));
+                _ = RefreshChannelInfoAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Version available on the other channel (if different from current).
+    /// </summary>
+    public string OtherChannelVersion
+    {
+        get => _otherChannelVersion;
+        private set => this.RaiseAndSetIfChanged(ref _otherChannelVersion, value);
+    }
+
+    /// <summary>
+    /// Status message about the current channel (e.g., "v31.0.2 (Beta) - v32.0.0 available on Stable").
+    /// </summary>
+    public string ChannelStatusMessage
+    {
+        get => _channelStatusMessage;
+        private set => this.RaiseAndSetIfChanged(ref _channelStatusMessage, value);
+    }
+
     // Commands
     public ReactiveCommand<Unit, Unit> ViewCacheDetailsCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearCacheCommand { get; }
@@ -429,7 +491,14 @@ public sealed class ToolSettingsViewModel : ViewModelBase
     {
         try
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json");
+            // Use channel-specific manifest
+            var filename = AppSettings.Instance.IsBetaChannel ? "versions-beta.json" : "versions.json";
+            var path = Path.Combine(AppContext.BaseDirectory, "third_party", filename);
+            if (!File.Exists(path))
+            {
+                // Fall back to stable manifest
+                path = Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json");
+            }
             if (!File.Exists(path))
             {
                 DependencyVersionsText = "versions.json not found";
@@ -921,5 +990,37 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             len = len / 1024;
         }
         return $"{len:0.##} {sizes[order]}";
+    }
+
+    /// <summary>
+    /// Refresh channel information after a channel change.
+    /// Checks for updates on the new channel.
+    /// </summary>
+    private async Task RefreshChannelInfoAsync()
+    {
+        ChannelStatusMessage = "Checking for updates...";
+
+        try
+        {
+            // Force refresh to get info from the new channel
+            await CheckForAppUpdateAsync();
+
+            var channel = AppSettings.Instance.UpdateChannel;
+            var currentVersion = ModkitVersion.MelonVersion;
+
+            if (HasAppUpdate)
+            {
+                ChannelStatusMessage = $"Current: v{currentVersion} ({(channel == "beta" ? "Beta" : "Stable")}) → v{LatestAppVersion} available";
+            }
+            else
+            {
+                ChannelStatusMessage = $"Current: v{currentVersion} ({(channel == "beta" ? "Beta" : "Stable")}) - up to date";
+            }
+        }
+        catch (Exception ex)
+        {
+            ChannelStatusMessage = $"Error checking channel: {ex.Message}";
+            ModkitLog.Warn($"[ToolSettingsViewModel] Channel info refresh failed: {ex.Message}");
+        }
     }
 }

@@ -625,8 +625,13 @@ public class ModLoaderInstaller
 
     private static string? GetConfiguredMelonLoaderVersion()
     {
+        // Use channel-specific manifest
+        var filename = AppSettings.Instance.IsBetaChannel ? "versions-beta.json" : "versions.json";
         var candidatePaths = new[]
         {
+            Path.Combine(AppContext.BaseDirectory, "third_party", filename),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", filename),
+            // Fall back to stable manifest
             Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json"),
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "versions.json")
         };

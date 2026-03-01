@@ -53,21 +53,11 @@ public static class MenuInjector
         _settingsPanel?.Destroy();
         _settingsPanel = null;
 
-        SdkLogger.Msg($"[MenuInjector] Scene loaded: '{sceneName}'");
-
-        // Log settings status for debugging
-        var hasSettings = ModSettings.HasAnySettings();
-        var settingsCount = ModSettings.GetRegisteredMods().Count();
-        SdkLogger.Msg($"[MenuInjector] Settings status: hasSettings={hasSettings}, modCount={settingsCount}");
-
-        // Check if this looks like a main menu scene OR has title UI
+        // Only attempt injection on scenes that might have a main menu
         if (!IsMainMenuScene(sceneName))
-        {
-            SdkLogger.Msg($"[MenuInjector] Scene '{sceneName}' does not look like main menu, will check for title UI");
-        }
+            return;
 
         // Delay injection to let the UI fully initialize
-        // Always attempt - we'll check for TitleUIScreen in TryInjectMenuButton
         GameState.RunDelayed(30, () => TryInjectMenuButton());
     }
 
@@ -126,11 +116,7 @@ public static class MenuInjector
         }
 
         // We're on the pure main menu if we have Quit/New Game but NO mission-specific buttons
-        var isMainMenu = (hasQuitButton || hasNewGameButton) && !hasMissionButton;
-
-        SdkLogger.Msg($"[MenuInjector] Menu detection: Quit={hasQuitButton}, NewGame={hasNewGameButton}, MissionBtn={hasMissionButton} => IsMainMenu={isMainMenu}");
-
-        return isMainMenu;
+        return (hasQuitButton || hasNewGameButton) && !hasMissionButton;
     }
 
     /// <summary>
@@ -161,15 +147,10 @@ public static class MenuInjector
 
         try
         {
-            SdkLogger.Msg("[MenuInjector] Attempting UIToolkit menu injection...");
-
             // Find active UIDocuments
             var docs = UnityEngine.Object.FindObjectsOfType<UIDocument>();
             if (docs == null || docs.Length == 0)
-            {
-                SdkLogger.Msg("[MenuInjector] No UIDocument found");
                 return;
-            }
 
             // Prioritize title/main menu documents
             UIDocument targetDoc = null;
@@ -179,7 +160,6 @@ public static class MenuInjector
                 if (IsTitleUIDocument(doc))
                 {
                     targetDoc = doc;
-                    SdkLogger.Msg($"[MenuInjector] Found title UI document: {doc.gameObject.name}");
                     break;
                 }
             }
@@ -198,21 +178,11 @@ public static class MenuInjector
             }
 
             if (targetDoc == null)
-            {
-                SdkLogger.Msg("[MenuInjector] No suitable UIDocument found");
                 return;
-            }
 
             var root = targetDoc.rootVisualElement;
             if (root == null)
-            {
-                SdkLogger.Msg("[MenuInjector] UIDocument has no root element");
                 return;
-            }
-
-            // Log buttons for debugging
-            var allButtons = QueryAll<Button>(root);
-            SdkLogger.Msg($"[MenuInjector] Found {allButtons.Count} buttons in UI");
 
             // Store root for UIToolkit settings panel
             _currentRoot = root;
@@ -233,7 +203,7 @@ public static class MenuInjector
                 return;
             }
 
-            SdkLogger.Msg("[MenuInjector] Could not find suitable injection point");
+            // Silently fail - this scene doesn't have a suitable menu
         }
         catch (Exception ex)
         {
@@ -276,10 +246,7 @@ public static class MenuInjector
             }
 
             if (menuLikeCount >= 2)
-            {
-                SdkLogger.Msg($"[MenuInjector] Found button container with {buttonList.Count} buttons");
                 return parent;
-            }
         }
 
         return null;
@@ -309,17 +276,11 @@ public static class MenuInjector
 
         // If we found Settings that shares a parent with New Game, use it
         if (settingsBtn != null && newGameBtn != null && settingsBtn.parent == newGameBtn.parent)
-        {
-            SdkLogger.Msg($"[MenuInjector] Found Settings button in main menu group");
             return settingsBtn;
-        }
 
         // Fallback: find Settings button anyway
         if (settingsBtn != null)
-        {
-            SdkLogger.Msg($"[MenuInjector] Found Settings button");
             return settingsBtn;
-        }
 
         // Last resort: try other buttons
         string[] priorityNames = { "credits", "quit", "exit" };
@@ -329,10 +290,7 @@ public static class MenuInjector
             {
                 var btnText = GetButtonText(btn)?.ToLowerInvariant() ?? "";
                 if (btnText.Contains(targetName))
-                {
-                    SdkLogger.Msg($"[MenuInjector] Found reference button: '{GetButtonText(btn)}'");
                     return btn;
-                }
             }
         }
 
@@ -397,7 +355,7 @@ public static class MenuInjector
 
         container.Insert(insertIndex, _modsButton);
         _injected = true;
-        SdkLogger.Msg($"[MenuInjector] Successfully injected Mods button at index {insertIndex}");
+        SdkLogger.Msg("[MenuInjector] Mods button added to menu");
     }
 
     /// <summary>
@@ -422,7 +380,7 @@ public static class MenuInjector
         parent.Insert(refIndex + 1, _modsButton);
 
         _injected = true;
-        SdkLogger.Msg($"[MenuInjector] Successfully injected Mods button after '{referenceButton.name}'");
+        SdkLogger.Msg("[MenuInjector] Mods button added to menu");
     }
 
     private static Button CreateModsButton()
@@ -464,16 +422,14 @@ public static class MenuInjector
             // Note: Copying USS classes from source would require IL2CPP-compatible iteration
             // which is complex. The button will inherit styles from its parent context.
         }
-        catch (Exception ex)
+        catch
         {
-            SdkLogger.Msg($"[MenuInjector] Could not copy styles: {ex.Message}");
+            // Silently ignore style copy failures - button will use default styles
         }
     }
 
     private static void OnModsButtonClick()
     {
-        SdkLogger.Msg("[MenuInjector] Mods button clicked");
-
         // Try UIToolkit panel first
         if (_currentRoot != null && !_useImguiFallback)
         {

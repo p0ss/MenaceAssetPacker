@@ -90,7 +90,8 @@ public sealed class ComponentManager : IDisposable
                 RequiredFor = component.RequiredFor,
                 LatestVersion = component.Version,
                 DownloadSize = GetDownloadSize(name, component),
-                InstallPath = component.InstallPath
+                InstallPath = component.InstallPath,
+                Channel = CurrentChannel
             };
 
             // Special case: Modkit component compares against running app version
@@ -132,19 +133,31 @@ public sealed class ComponentManager : IDisposable
             else if (name == "MelonLoader" && IsGameMelonLoaderPresent())
             {
                 // User already has MelonLoader in their game.
-                // Validate version compatibility against versions.json expectations.
+                // Check version compatibility and whether update is available.
                 var gamePath = AppSettings.Instance.GameInstallPath;
                 if (!string.IsNullOrWhiteSpace(gamePath))
                 {
                     var installer = new ModLoaderInstaller(gamePath);
-                    if (installer.IsInstalledMelonLoaderVersionCompatible(out var installedVersion, out _, out _))
+                    var installedVersion = installer.GetInstalledMelonLoaderVersion();
+                    status.InstalledVersion = installedVersion;
+
+                    if (string.IsNullOrEmpty(installedVersion))
                     {
-                        status.InstalledVersion = installedVersion ?? component.Version;
+                        status.State = ComponentState.Outdated;
+                    }
+                    else if (NormalizeVersion(installedVersion) == NormalizeVersion(component.Version))
+                    {
+                        // Exact match
                         status.State = ComponentState.UpToDate;
+                    }
+                    else if (installer.IsInstalledMelonLoaderVersionCompatible(out _, out _, out _))
+                    {
+                        // Same family (e.g., 0.7.2.x) - compatible but update available
+                        status.State = ComponentState.UpdateAvailable;
                     }
                     else
                     {
-                        status.InstalledVersion = installedVersion;
+                        // Incompatible version - requires update
                         status.State = ComponentState.Outdated;
                     }
                 }
@@ -226,7 +239,10 @@ public sealed class ComponentManager : IDisposable
     {
         // Startup should be fast/offline-safe: use bundled versions and avoid remote fetch here.
         var statuses = await GetComponentStatusAsync(useBundledManifestOnly: true);
-        return statuses.Any(s => s.Required && s.State != ComponentState.UpToDate);
+        // UpdateAvailable is non-blocking (compatible version installed)
+        // Only NotInstalled and Outdated (incompatible) require setup
+        return statuses.Any(s => s.Required &&
+            (s.State == ComponentState.NotInstalled || s.State == ComponentState.Outdated));
     }
 
     /// <summary>
@@ -553,27 +569,60 @@ public sealed class ComponentManager : IDisposable
         return GetBundledManifest();
     }
 
+    /// <summary>
+    /// Get the appropriate manifest URL based on the current update channel.
+    /// </summary>
+    private string GetManifestUrlForChannel()
+    {
+        var channel = AppSettings.Instance.UpdateChannel;
+        const string baseUrl = "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party";
+
+        return channel == "beta"
+            ? $"{baseUrl}/versions-beta.json"
+            : $"{baseUrl}/versions.json";
+    }
+
+    /// <summary>
+    /// Returns the current update channel ("stable" or "beta").
+    /// </summary>
+    public string CurrentChannel => AppSettings.Instance.UpdateChannel;
+
+    /// <summary>
+    /// Returns true if the user is on the beta channel.
+    /// </summary>
+    public bool IsBetaChannel => AppSettings.Instance.IsBetaChannel;
+
+    /// <summary>
+    /// Invalidate the cached remote manifest.
+    /// Call this when the update channel changes to force a fresh fetch.
+    /// </summary>
+    public void InvalidateManifestCache()
+    {
+        _cachedRemoteManifest = null;
+        _lastRemoteFetch = DateTime.MinValue;
+        ModkitLog.Info("[ComponentManager] Manifest cache invalidated");
+    }
+
     private async Task<VersionsManifest?> FetchRemoteManifestAsync()
     {
-        var bundled = GetBundledManifest();
-        if (string.IsNullOrEmpty(bundled.RemoteUrl))
-            return null;
+        var manifestUrl = GetManifestUrlForChannel();
 
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var json = await _httpClient.GetStringAsync(bundled.RemoteUrl, cts.Token);
+            var json = await _httpClient.GetStringAsync(manifestUrl, cts.Token);
             return JsonSerializer.Deserialize<VersionsManifest>(json, JsonOptions);
         }
-        catch
+        catch (Exception ex)
         {
+            ModkitLog.Warn($"[ComponentManager] Failed to fetch manifest from {manifestUrl}: {ex.Message}");
             return null;
         }
     }
 
     private VersionsManifest GetBundledManifest()
     {
-        var path = FindVersionsJson();
+        var path = FindVersionsJson(forCurrentChannel: true);
         if (path == null)
             return new VersionsManifest();
 
@@ -676,12 +725,14 @@ public sealed class ComponentManager : IDisposable
         return info?.Size ?? 0;
     }
 
-    private string? FindVersionsJson()
+    private string? FindVersionsJson(bool forCurrentChannel = false)
     {
+        var filename = forCurrentChannel && IsBetaChannel ? "versions-beta.json" : "versions.json";
+
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "third_party", "versions.json"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "versions.json"),
+            Path.Combine(AppContext.BaseDirectory, "third_party", filename),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", filename),
         };
 
         foreach (var candidate in candidates)
@@ -690,6 +741,10 @@ public sealed class ComponentManager : IDisposable
             if (File.Exists(resolved))
                 return resolved;
         }
+
+        // Fall back to stable manifest if beta not found
+        if (forCurrentChannel && IsBetaChannel)
+            return FindVersionsJson(forCurrentChannel: false);
 
         return null;
     }
@@ -849,6 +904,25 @@ public sealed class ComponentManager : IDisposable
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Normalize a version string for comparison.
+    /// Extracts all numeric parts to handle versions like "0.7.2-ci.2403" vs assembly version "0.7.2.2403".
+    /// </summary>
+    private static string NormalizeVersion(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return "";
+
+        // Extract all numeric parts and join them
+        var numbers = System.Text.RegularExpressions.Regex.Matches(version, @"\d+");
+        var parts = new List<string>();
+        foreach (System.Text.RegularExpressions.Match match in numbers)
+        {
+            parts.Add(match.Value);
+        }
+        return string.Join(".", parts);
     }
 
     // --- Self-Update Support ---
@@ -1169,7 +1243,8 @@ public class InstalledComponent
 public enum ComponentState
 {
     NotInstalled,
-    Outdated,
+    Outdated,          // Incompatible version - blocks setup
+    UpdateAvailable,   // Compatible but newer exists - informational only
     UpToDate
 }
 
@@ -1187,6 +1262,11 @@ public class ComponentStatus
     public string InstallPath { get; set; } = "";
     public ComponentState State { get; set; }
 
+    /// <summary>
+    /// The update channel this component info was fetched from ("stable" or "beta").
+    /// </summary>
+    public string Channel { get; set; } = "stable";
+
     public string DownloadSizeDisplay => DownloadSize > 0
         ? $"{DownloadSize / (1024.0 * 1024.0):F0} MB"
         : "Unknown";
@@ -1194,7 +1274,8 @@ public class ComponentStatus
     public string StateDisplay => State switch
     {
         ComponentState.UpToDate => "Up to date",
-        ComponentState.Outdated => $"Update available ({InstalledVersion} → {LatestVersion})",
+        ComponentState.UpdateAvailable => $"Update available ({InstalledVersion} → {LatestVersion})",
+        ComponentState.Outdated => $"Incompatible ({InstalledVersion} → {LatestVersion})",
         ComponentState.NotInstalled => "Not installed",
         _ => "Unknown"
     };
