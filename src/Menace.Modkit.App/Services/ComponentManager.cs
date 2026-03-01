@@ -95,12 +95,13 @@ public sealed class ComponentManager : IDisposable
             };
 
             // Special case: Modkit component compares against running app version
+            // Use UpdateAvailable (not Outdated) since user already has a working Modkit - self-update shouldn't block
             if (name == "Modkit")
             {
                 status.InstalledVersion = ModkitVersion.MelonVersion;
                 status.State = CompareVersions(ModkitVersion.MelonVersion, component.Version) >= 0
                     ? ComponentState.UpToDate
-                    : ComponentState.Outdated;
+                    : ComponentState.UpdateAvailable;
             }
             // Check if installed (downloaded to cache)
             else if (localManifest.Components.TryGetValue(name, out var installed))
@@ -713,14 +714,27 @@ public sealed class ComponentManager : IDisposable
         else if (component.Downloads.TryGetValue("any", out var anyDownload))
             baseInfo = anyDownload;
 
-        // Construct URL from app version
-        var url = BuildComponentUrl(componentName);
-        if (url == null)
+        // Modkit downloads from GitHub Releases (version-specific URL)
+        if (componentName == "Modkit")
+        {
+            var ext = _platform == "win-x64" ? "zip" : "tar.gz";
+            var url = $"https://github.com/p0ss/MenaceAssetPacker/releases/download/v{component.Version}/menace-modkit-{_platform}.{ext}";
+            return new DownloadInfo
+            {
+                Url = url,
+                Sha256 = baseInfo?.Sha256 ?? "",
+                Size = baseInfo?.Size ?? 0
+            };
+        }
+
+        // Construct URL for other components
+        var componentUrl = BuildComponentUrl(componentName);
+        if (componentUrl == null)
             return null;
 
         return new DownloadInfo
         {
-            Url = url,
+            Url = componentUrl,
             Sha256 = baseInfo?.Sha256 ?? "",
             Size = baseInfo?.Size ?? 0
         };
