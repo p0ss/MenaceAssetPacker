@@ -2,7 +2,7 @@
   "schemaVersion": 4,
   "components": {
     "Modkit": {
-      "version": "31.0.3",
+      "version": "32.0.0",
       "required": true,
       "category": "app",
       "description": "Menace Modkit application (self-update)",

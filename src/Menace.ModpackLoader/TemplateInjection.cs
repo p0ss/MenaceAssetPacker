@@ -177,11 +177,12 @@ public partial class ModpackLoaderMod
     /// <summary>
     /// Field names that are known to be localization fields.
     /// Used as a fallback when type detection fails for IL2CPP wrapped types.
+    /// Note: "Name" is excluded as it's too generic (many plain string fields use this name).
     /// </summary>
     private static readonly HashSet<string> KnownLocalizationFieldNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Title", "ShortName", "Description", "Text", "DisplayText",
-        "TooltipText", "Label", "Name", "Message", "Hint"
+        "TooltipText", "Label", "Message", "Hint"
     };
 
     /// <summary>
@@ -768,11 +769,13 @@ public partial class ModpackLoaderMod
                     // Detection strategy (same as ApplyFieldOverrides):
                     // 1. Check C# property type (fastest, catches most cases)
                     // 2. Check runtime type of current value (catches IL2CPP type mismatches)
-                    // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                    // 3. Name-based fallback: only if current value is an IL2CPP object
                     var childCurrentValue = childProp?.CanRead == true ? childProp.GetValue(parentObj) : childField?.GetValue(parentObj);
                     bool isChildLocalization = IsLocalizationType(childType) ||
                                                IsRuntimeLocalizationType(childCurrentValue) ||
-                                               (IsLikelyLocalizationField(childFieldName) && rawValue is JValue jVal && jVal.Type == JTokenType.String);
+                                               (IsLikelyLocalizationField(childFieldName) &&
+                                                childCurrentValue is Il2CppObjectBase &&
+                                                rawValue is JValue jVal && jVal.Type == JTokenType.String);
 
                     if (isChildLocalization)
                     {
@@ -796,8 +799,10 @@ public partial class ModpackLoaderMod
                                                   IsRuntimeLocalizationType(childCurrentValue) ? "runtime" : "name";
                             SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text (detected by {detectionMethod})");
                             appliedCount++;
+                            continue; // Localization handled successfully
                         }
-                        continue;
+                        // Fall through to normal assignment if localization write failed
+                        SdkLogger.Msg($"    {obj.name}.{fieldName}: localization write failed, trying normal assignment");
                     }
 
                     var nestedConverted = ConvertToPropertyType(rawValue, childType);
@@ -870,11 +875,13 @@ public partial class ModpackLoaderMod
                 // Detection strategy (same as ApplyFieldOverrides):
                 // 1. Check C# property type (fastest, catches most cases)
                 // 2. Check runtime type of current value (catches IL2CPP type mismatches)
-                // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                // 3. Name-based fallback: only if current value is an IL2CPP object
                 var topLevelCurrentValue = prop.CanRead ? prop.GetValue(castObj) : null;
                 bool isTopLevelLocalization = IsLocalizationType(prop.PropertyType) ||
                                               IsRuntimeLocalizationType(topLevelCurrentValue) ||
-                                              (IsLikelyLocalizationField(fieldName) && rawValue is JValue jVal && jVal.Type == JTokenType.String);
+                                              (IsLikelyLocalizationField(fieldName) &&
+                                               topLevelCurrentValue is Il2CppObjectBase &&
+                                               rawValue is JValue jVal && jVal.Type == JTokenType.String);
 
                 if (isTopLevelLocalization)
                 {
@@ -886,8 +893,10 @@ public partial class ModpackLoaderMod
                                               IsRuntimeLocalizationType(topLevelCurrentValue) ? "runtime" : "name";
                         SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text (detected by {detectionMethod})");
                         appliedCount++;
+                        continue; // Localization handled successfully
                     }
-                    continue;
+                    // Fall through to normal assignment if localization write failed
+                    SdkLogger.Msg($"    {obj.name}.{fieldName}: localization write failed, trying normal assignment");
                 }
 
                 var convertedValue = ConvertToPropertyType(rawValue, prop.PropertyType);
@@ -1468,11 +1477,14 @@ public partial class ModpackLoaderMod
                 // Detection strategy:
                 // 1. Check C# property type (fastest, catches most cases)
                 // 2. Check runtime type of current value (catches IL2CPP type mismatches)
-                // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                // 3. Name-based fallback: only if current value is an IL2CPP object (to avoid false positives
+                //    on plain string fields named "Name", "Description", etc.)
                 var currentValue = prop.CanRead ? prop.GetValue(target) : null;
                 bool isLocalization = IsLocalizationType(prop.PropertyType) ||
                                       IsRuntimeLocalizationType(currentValue) ||
-                                      (IsLikelyLocalizationField(fieldName) && value is JValue jv && jv.Type == JTokenType.String);
+                                      (IsLikelyLocalizationField(fieldName) &&
+                                       currentValue is Il2CppObjectBase &&
+                                       value is JValue jv && jv.Type == JTokenType.String);
 
                 if (isLocalization)
                 {
@@ -1492,11 +1504,12 @@ public partial class ModpackLoaderMod
                         success = WriteLocalizedFieldViaReflection(target, prop, null, fieldName, stringValue);
                     }
 
-                    if (!success)
+                    if (success)
                     {
-                        SdkLogger.Warning($"    {targetType.Name}.{fieldName}: could not set localized text");
+                        continue; // Localization handled successfully
                     }
-                    continue;
+                    // Fall through to normal assignment if localization write failed
+                    SdkLogger.Msg($"    {targetType.Name}.{fieldName}: localization write failed, trying normal assignment");
                 }
 
                 // For everything else, use ConvertJTokenToType which handles:
@@ -1568,34 +1581,14 @@ public partial class ModpackLoaderMod
 
         int opCount = 0;
 
-        // $remove — remove elements by index (highest-first to preserve positions)
-        if (ops.TryGetValue("$remove", out var removeToken) && removeToken is JArray removeIndices)
-        {
-            if (removeAt == null)
-            {
-                SdkLogger.Warning($"    {prop.Name}: List has no RemoveAt method");
-            }
-            else
-            {
-                var indices = removeIndices.Select(t => t.Value<int>()).OrderByDescending(i => i).ToList();
-                var count = (int)countProp.GetValue(list);
-                foreach (var idx in indices)
-                {
-                    if (idx >= 0 && idx < count)
-                    {
-                        removeAt.Invoke(list, new object[] { idx });
-                        count--;
-                        opCount++;
-                    }
-                    else
-                    {
-                        SdkLogger.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={count})");
-                    }
-                }
-            }
-        }
+        // IMPORTANT: Operation order matters for index semantics!
+        // UI sends all indices as ORIGINAL indices (before any modifications).
+        // We apply in this order:
+        // 1. $update — uses original indices on original array
+        // 2. $remove — uses original indices, applied highest-first
+        // 3. $append — adds to end (indices don't matter)
 
-        // $update — modify fields on existing elements at specific indices
+        // $update — modify fields on existing elements at specific indices (ORIGINAL indices)
         if (ops.TryGetValue("$update", out var updateToken) && updateToken is JObject updates)
         {
             var count = (int)countProp.GetValue(list);
@@ -1622,6 +1615,33 @@ public partial class ModpackLoaderMod
                 {
                     ApplyFieldOverrides(element, fieldOverrides);
                     opCount++;
+                }
+            }
+        }
+
+        // $remove — remove elements by index (highest-first to preserve positions during removal)
+        if (ops.TryGetValue("$remove", out var removeToken) && removeToken is JArray removeIndices)
+        {
+            if (removeAt == null)
+            {
+                SdkLogger.Warning($"    {prop.Name}: List has no RemoveAt method");
+            }
+            else
+            {
+                var indices = removeIndices.Select(t => t.Value<int>()).OrderByDescending(i => i).ToList();
+                var count = (int)countProp.GetValue(list);
+                foreach (var idx in indices)
+                {
+                    if (idx >= 0 && idx < count)
+                    {
+                        removeAt.Invoke(list, new object[] { idx });
+                        count--;
+                        opCount++;
+                    }
+                    else
+                    {
+                        SdkLogger.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={count})");
+                    }
                 }
             }
         }

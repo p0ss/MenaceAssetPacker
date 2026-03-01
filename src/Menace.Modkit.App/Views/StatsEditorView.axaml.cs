@@ -1888,8 +1888,8 @@ public class StatsEditorView : UserControl
 
       if (isNewElement)
       {
-        // For new elements, we need to track the full element in appendedElements
-        // The UI already updates the element dict, so we just need to sync
+        // For new elements, the element dict is already updated.
+        // Re-sync the entire append list to reflect the change.
         SyncAppendedElements();
       }
       else
@@ -1905,13 +1905,13 @@ public class StatsEditorView : UserControl
 
       if (isNewElement)
       {
-        // Remove from appended list
+        // Remove from our local appended list, then re-sync
         appendedElements.Remove(elementData);
         SyncAppendedElements();
       }
       else
       {
-        // Mark original element for removal
+        // Mark original element for removal via incremental patch
         removedIndices.Add(origIdx);
         vm.RemoveArrayElementAt(arrayFieldName, origIdx);
       }
@@ -1921,14 +1921,9 @@ public class StatsEditorView : UserControl
     {
       if (vm == null) return;
 
-      // Build the full patch including appends
-      // First, serialize all new elements and call AppendArrayElement for each
-      // Note: this is additive - new elements are added to the patch
-      foreach (var newElem in appendedElements)
-      {
-        var json = SerializeDict(newElem).GetRawText();
-        vm.AppendArrayElement(arrayFieldName, json);
-      }
+      // Replace the entire $append list with current state of appendedElements
+      var jsonList = appendedElements.Select(elem => SerializeDict(elem).GetRawText());
+      vm.SetArrayAppends(arrayFieldName, jsonList);
     }
 
     void RebuildItemsPanel()
@@ -2140,7 +2135,8 @@ public class StatsEditorView : UserControl
 
           bodyPanel.Children.Add(CreateObjectFieldControlWithIncrementalUpdates(
             kvp.Key, kvp.Value, element, elementTypeName, isEditable,
-            capturedOrigIdx, capturedIsNew, arrayFieldName, vm));
+            capturedOrigIdx, capturedIsNew, arrayFieldName, vm,
+            capturedIsNew ? SyncAppendedElements : null));
         }
 
         expander.Content = bodyPanel;
@@ -2190,9 +2186,8 @@ public class StatsEditorView : UserControl
         elements.Add((-1, newElement, true));
         appendedElements.Add(newElement);
 
-        // Serialize and append to VM
-        var json = SerializeDict(newElement).GetRawText();
-        vm.AppendArrayElement(arrayFieldName, json);
+        // Sync the full append list to VM
+        SyncAppendedElements();
 
         RebuildItemsPanel();
       };
@@ -2215,7 +2210,8 @@ public class StatsEditorView : UserControl
     int originalElementIndex,
     bool isNewElement,
     string arrayFieldName,
-    StatsEditorViewModel? vm)
+    StatsEditorViewModel? vm,
+    System.Action? onNewElementChanged = null)
   {
     var fieldStack = new StackPanel { Spacing = 4 };
 
@@ -2244,14 +2240,12 @@ public class StatsEditorView : UserControl
 
       if (isNewElement)
       {
-        // For new elements, we need to update the append list
-        var json = SerializeDict(element).GetRawText();
-        // Note: AppendArrayElement is additive, but we're updating an existing append
-        // For now, the VM will handle deduplication or we accept some redundancy
+        // For new elements, notify parent to re-sync the append list
+        onNewElementChanged?.Invoke();
       }
       else
       {
-        // Use incremental update
+        // Use incremental update for existing elements
         vm.UpdateArrayElementField(arrayFieldName, originalElementIndex, propName, newValue);
       }
     }

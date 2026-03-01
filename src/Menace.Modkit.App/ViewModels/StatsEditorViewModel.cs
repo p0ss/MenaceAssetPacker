@@ -1054,11 +1054,12 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
     }
 
     /// <summary>
-    /// Appends a new element to an array using incremental $append patches.
+    /// Replaces the entire $append list for an array field.
+    /// Call this when new elements are added, edited, or removed to ensure consistency.
     /// </summary>
     /// <param name="arrayFieldName">The name of the array field.</param>
-    /// <param name="newElementJson">The JSON representation of the new element.</param>
-    public void AppendArrayElement(string arrayFieldName, string newElementJson)
+    /// <param name="newElementsJson">List of JSON strings for each new element.</param>
+    public void SetArrayAppends(string arrayFieldName, IEnumerable<string> newElementsJson)
     {
         if (_suppressPropertyUpdates)
             return;
@@ -1069,25 +1070,57 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         if (patch == null)
             return;
 
-        // Get or create the $append section
-        if (!patch.TryGetValue("$append", out var appendObj) || appendObj is not List<JsonElement> appendList)
+        // Create fresh append list
+        var appendList = new List<JsonElement>();
+
+        foreach (var json in newElementsJson)
         {
-            appendList = new List<JsonElement>();
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                appendList.Add(doc.RootElement.Clone());
+            }
+            catch
+            {
+                // Invalid JSON — skip this element
+            }
+        }
+
+        // Replace or remove the $append section
+        if (appendList.Count > 0)
+        {
             patch["$append"] = appendList;
+            _userEditedFields.Add(arrayFieldName);
+        }
+        else
+        {
+            patch.Remove("$append");
         }
 
-        try
-        {
-            using var doc = JsonDocument.Parse(newElementJson);
-            appendList.Add(doc.RootElement.Clone());
-        }
-        catch
-        {
-            // Invalid JSON — ignore
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
+    /// <summary>
+    /// Clears a specific remove index (used when the user undoes a removal).
+    /// </summary>
+    public void ClearArrayRemove(string arrayFieldName, int elementIndex)
+    {
+        if (_suppressPropertyUpdates)
             return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(arrayFieldName))
+            return;
+
+        var patch = GetOrCreateArrayPatch(arrayFieldName);
+        if (patch == null)
+            return;
+
+        if (patch.TryGetValue("$remove", out var removeObj) && removeObj is List<int> removeList)
+        {
+            removeList.Remove(elementIndex);
+            if (removeList.Count == 0)
+                patch.Remove("$remove");
         }
 
-        _userEditedFields.Add(arrayFieldName);
         this.RaisePropertyChanged(nameof(HasModifications));
     }
 
@@ -1997,7 +2030,7 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             var patchObj = new JsonObject();
 
             // Handle $remove (List<int> of indices to remove)
-            if (patchDict.TryGetValue("$remove", out var removeVal) && removeVal is List<int> removeList)
+            if (patchDict.TryGetValue("$remove", out var removeVal) && removeVal is List<int> removeList && removeList.Count > 0)
             {
                 var removeArr = new JsonArray();
                 foreach (var idx in removeList)
@@ -2028,7 +2061,7 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             }
 
             // Handle $append (List<JsonElement> of new elements)
-            if (patchDict.TryGetValue("$append", out var appendVal) && appendVal is List<JsonElement> appendList)
+            if (patchDict.TryGetValue("$append", out var appendVal) && appendVal is List<JsonElement> appendList && appendList.Count > 0)
             {
                 var appendArr = new JsonArray();
                 foreach (var elem in appendList)
