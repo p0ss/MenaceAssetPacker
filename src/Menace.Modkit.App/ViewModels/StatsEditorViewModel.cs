@@ -980,6 +980,155 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         }
     }
 
+    /// <summary>
+    /// Updates a specific field on a specific array element using incremental $update patches.
+    /// This avoids saving unmodified fields (especially localization fields that may get scrambled).
+    /// </summary>
+    /// <param name="arrayFieldName">The name of the array field (e.g., "EventHandlers").</param>
+    /// <param name="elementIndex">The index of the element in the array.</param>
+    /// <param name="subFieldName">The name of the field within the element.</param>
+    /// <param name="value">The new value for the field.</param>
+    public void UpdateArrayElementField(string arrayFieldName, int elementIndex, string subFieldName, object? value)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(arrayFieldName))
+            return;
+
+        // Get or create the incremental patch structure
+        var patch = GetOrCreateArrayPatch(arrayFieldName);
+        if (patch == null)
+            return;
+
+        // Get or create the $update section
+        if (!patch.TryGetValue("$update", out var updateObj) || updateObj is not Dictionary<string, Dictionary<string, object?>> updates)
+        {
+            updates = new Dictionary<string, Dictionary<string, object?>>();
+            patch["$update"] = updates;
+        }
+
+        // Get or create the entry for this index
+        var indexKey = elementIndex.ToString();
+        if (!updates.TryGetValue(indexKey, out var elementUpdates))
+        {
+            elementUpdates = new Dictionary<string, object?>();
+            updates[indexKey] = elementUpdates;
+        }
+
+        // Set the field value
+        elementUpdates[subFieldName] = value;
+
+        _userEditedFields.Add(arrayFieldName);
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
+    /// <summary>
+    /// Marks an array element for removal using incremental $remove patches.
+    /// </summary>
+    /// <param name="arrayFieldName">The name of the array field.</param>
+    /// <param name="elementIndex">The index of the element to remove.</param>
+    public void RemoveArrayElementAt(string arrayFieldName, int elementIndex)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(arrayFieldName))
+            return;
+
+        var patch = GetOrCreateArrayPatch(arrayFieldName);
+        if (patch == null)
+            return;
+
+        // Get or create the $remove section
+        if (!patch.TryGetValue("$remove", out var removeObj) || removeObj is not List<int> removeList)
+        {
+            removeList = new List<int>();
+            patch["$remove"] = removeList;
+        }
+
+        // Add the index if not already present
+        if (!removeList.Contains(elementIndex))
+            removeList.Add(elementIndex);
+
+        _userEditedFields.Add(arrayFieldName);
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
+    /// <summary>
+    /// Appends a new element to an array using incremental $append patches.
+    /// </summary>
+    /// <param name="arrayFieldName">The name of the array field.</param>
+    /// <param name="newElementJson">The JSON representation of the new element.</param>
+    public void AppendArrayElement(string arrayFieldName, string newElementJson)
+    {
+        if (_suppressPropertyUpdates)
+            return;
+        if (_modifiedProperties == null || !_modifiedProperties.ContainsKey(arrayFieldName))
+            return;
+
+        var patch = GetOrCreateArrayPatch(arrayFieldName);
+        if (patch == null)
+            return;
+
+        // Get or create the $append section
+        if (!patch.TryGetValue("$append", out var appendObj) || appendObj is not List<JsonElement> appendList)
+        {
+            appendList = new List<JsonElement>();
+            patch["$append"] = appendList;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(newElementJson);
+            appendList.Add(doc.RootElement.Clone());
+        }
+        catch
+        {
+            // Invalid JSON — ignore
+            return;
+        }
+
+        _userEditedFields.Add(arrayFieldName);
+        this.RaisePropertyChanged(nameof(HasModifications));
+    }
+
+    /// <summary>
+    /// Gets or creates an incremental patch structure for an array field.
+    /// If the current value is a plain array (from initial load or full replacement),
+    /// converts it to a patch structure with the array as the base.
+    /// </summary>
+    private Dictionary<string, object?>? GetOrCreateArrayPatch(string arrayFieldName)
+    {
+        if (_modifiedProperties == null || !_modifiedProperties.TryGetValue(arrayFieldName, out var currentValue))
+            return null;
+
+        // If already a patch structure, return it
+        if (currentValue is Dictionary<string, object?> existingPatch)
+            return existingPatch;
+
+        // If it's a JsonElement array, we need to store it as the base and create a patch
+        if (currentValue is JsonElement je && je.ValueKind == JsonValueKind.Array)
+        {
+            var patch = new Dictionary<string, object?>
+            {
+                ["$base"] = je.Clone()  // Keep the original array for reference
+            };
+            _modifiedProperties[arrayFieldName] = patch;
+            return patch;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if an array field has incremental patches (as opposed to full replacement).
+    /// </summary>
+    public bool HasIncrementalPatches(string arrayFieldName)
+    {
+        if (_modifiedProperties == null || !_modifiedProperties.TryGetValue(arrayFieldName, out var value))
+            return false;
+        return value is Dictionary<string, object?>;
+    }
+
     #region Bulk Editing Support
 
     /// <summary>
@@ -1838,6 +1987,86 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             return JsonNode.Parse(je.GetRawText());
 
         // Preserve JsonNode objects (from wizard-generated patches with $append/$update)
+        if (value is JsonNode jn)
+            return jn.DeepClone();
+
+        // Handle incremental array patches from UpdateArrayElementField/RemoveArrayElementAt/AppendArrayElement
+        // These are Dictionary<string, object?> with $update/$remove/$append keys
+        if (value is Dictionary<string, object?> patchDict)
+        {
+            var patchObj = new JsonObject();
+
+            // Handle $remove (List<int> of indices to remove)
+            if (patchDict.TryGetValue("$remove", out var removeVal) && removeVal is List<int> removeList)
+            {
+                var removeArr = new JsonArray();
+                foreach (var idx in removeList)
+                    removeArr.Add(JsonValue.Create(idx));
+                patchObj["$remove"] = removeArr;
+            }
+
+            // Handle $update (Dictionary<index, Dictionary<field, value>>)
+            if (patchDict.TryGetValue("$update", out var updateVal)
+                && updateVal is Dictionary<string, Dictionary<string, object?>> updateDict)
+            {
+                var updateObj = new JsonObject();
+                foreach (var indexKvp in updateDict)
+                {
+                    var fieldsObj = new JsonObject();
+                    foreach (var fieldKvp in indexKvp.Value)
+                    {
+                        // Recursively convert field values
+                        var fieldNode = ConvertPatchValueToJsonNode(fieldKvp.Value);
+                        if (fieldNode != null)
+                            fieldsObj[fieldKvp.Key] = fieldNode;
+                    }
+                    if (fieldsObj.Count > 0)
+                        updateObj[indexKvp.Key] = fieldsObj;
+                }
+                if (updateObj.Count > 0)
+                    patchObj["$update"] = updateObj;
+            }
+
+            // Handle $append (List<JsonElement> of new elements)
+            if (patchDict.TryGetValue("$append", out var appendVal) && appendVal is List<JsonElement> appendList)
+            {
+                var appendArr = new JsonArray();
+                foreach (var elem in appendList)
+                    appendArr.Add(JsonNode.Parse(elem.GetRawText()));
+                patchObj["$append"] = appendArr;
+            }
+
+            // Only return patch if it has operations (skip $base which is just for reference)
+            if (patchObj.Count > 0)
+                return patchObj;
+
+            return null;
+        }
+
+        return JsonValue.Create(value.ToString());
+    }
+
+    /// <summary>
+    /// Converts a patch field value to JsonNode (simpler version without vanilla type lookup).
+    /// Used by incremental array patches.
+    /// </summary>
+    private static JsonNode? ConvertPatchValueToJsonNode(object? value)
+    {
+        if (value == null)
+            return null;
+
+        if (value is string str)
+            return JsonValue.Create(str);
+        if (value is long lv)
+            return JsonValue.Create(lv);
+        if (value is int iv)
+            return JsonValue.Create(iv);
+        if (value is double dv)
+            return JsonValue.Create(dv);
+        if (value is bool bv)
+            return JsonValue.Create(bv);
+        if (value is JsonElement je)
+            return JsonNode.Parse(je.GetRawText());
         if (value is JsonNode jn)
             return jn.DeepClone();
 

@@ -174,6 +174,60 @@ public partial class ModpackLoaderMod
         return false;
     }
 
+    /// <summary>
+    /// Field names that are known to be localization fields.
+    /// Used as a fallback when type detection fails for IL2CPP wrapped types.
+    /// </summary>
+    private static readonly HashSet<string> KnownLocalizationFieldNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Title", "ShortName", "Description", "Text", "DisplayText",
+        "TooltipText", "Label", "Name", "Message", "Hint"
+    };
+
+    /// <summary>
+    /// Check if a field is likely a localization field by name.
+    /// Used when the C# type doesn't match but we need to handle localization specially.
+    /// </summary>
+    private static bool IsLikelyLocalizationField(string fieldName)
+    {
+        return KnownLocalizationFieldNames.Contains(fieldName);
+    }
+
+    /// <summary>
+    /// Try to detect if an IL2CPP object's property actually holds a localization type at runtime.
+    /// This catches cases where the C# property type is wrong but the runtime object is a LocalizedLine.
+    /// </summary>
+    private static bool IsRuntimeLocalizationType(object value)
+    {
+        if (value == null) return false;
+
+        // If it's an IL2CPP object, check its actual runtime class
+        if (value is Il2CppObjectBase il2cppObj)
+        {
+            try
+            {
+                var ptr = il2cppObj.Pointer;
+                if (ptr == IntPtr.Zero) return false;
+
+                var klassPtr = IL2CPP.il2cpp_object_get_class(ptr);
+                if (klassPtr == IntPtr.Zero) return false;
+
+                var namePtr = IL2CPP.il2cpp_class_get_name(klassPtr);
+                if (namePtr == IntPtr.Zero) return false;
+
+                var className = Marshal.PtrToStringAnsi(namePtr);
+                return className == "LocalizedLine" || className == "LocalizedMultiLine" ||
+                       className == "BaseLocalizedString";
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     // Memory layout offsets for BaseLocalizedString (from reverse engineering)
     private const int LOC_CATEGORY_OFFSET = 0x10;           // int LocaCategory
     private const int LOC_KEY_PART1_OFFSET = 0x18;          // string m_KeyPart1
@@ -710,7 +764,17 @@ public partial class ModpackLoaderMod
 
                     // Localization types: write directly to m_DefaultTranslation
                     // Use direct memory access if parentObj is an IL2CPP object to avoid crashes
-                    if (IsLocalizationType(childType))
+                    //
+                    // Detection strategy (same as ApplyFieldOverrides):
+                    // 1. Check C# property type (fastest, catches most cases)
+                    // 2. Check runtime type of current value (catches IL2CPP type mismatches)
+                    // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                    var childCurrentValue = childProp?.CanRead == true ? childProp.GetValue(parentObj) : childField?.GetValue(parentObj);
+                    bool isChildLocalization = IsLocalizationType(childType) ||
+                                               IsRuntimeLocalizationType(childCurrentValue) ||
+                                               (IsLikelyLocalizationField(childFieldName) && rawValue is JValue jVal && jVal.Type == JTokenType.String);
+
+                    if (isChildLocalization)
                     {
                         var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
                         bool success = false;
@@ -728,7 +792,9 @@ public partial class ModpackLoaderMod
 
                         if (success)
                         {
-                            SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
+                            var detectionMethod = IsLocalizationType(childType) ? "type" :
+                                                  IsRuntimeLocalizationType(childCurrentValue) ? "runtime" : "name";
+                            SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text (detected by {detectionMethod})");
                             appliedCount++;
                         }
                         continue;
@@ -800,13 +866,25 @@ public partial class ModpackLoaderMod
                 // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
                 // These are wrapper objects that can't be replaced with strings via normal property set
                 // Use direct memory access to avoid property getter crashes
-                if (IsLocalizationType(prop.PropertyType))
+                //
+                // Detection strategy (same as ApplyFieldOverrides):
+                // 1. Check C# property type (fastest, catches most cases)
+                // 2. Check runtime type of current value (catches IL2CPP type mismatches)
+                // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                var topLevelCurrentValue = prop.CanRead ? prop.GetValue(castObj) : null;
+                bool isTopLevelLocalization = IsLocalizationType(prop.PropertyType) ||
+                                              IsRuntimeLocalizationType(topLevelCurrentValue) ||
+                                              (IsLikelyLocalizationField(fieldName) && rawValue is JValue jVal && jVal.Type == JTokenType.String);
+
+                if (isTopLevelLocalization)
                 {
                     var stringValue = rawValue is JToken jt ? jt.Value<string>() : rawValue?.ToString();
                     if (castObj is Il2CppObjectBase il2cppCastObj &&
                         WriteLocalizedFieldDirect(il2cppCastObj, fieldName, stringValue))
                     {
-                        SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text");
+                        var detectionMethod = IsLocalizationType(prop.PropertyType) ? "type" :
+                                              IsRuntimeLocalizationType(topLevelCurrentValue) ? "runtime" : "name";
+                        SdkLogger.Msg($"    {obj.name}.{fieldName}: set localized text (detected by {detectionMethod})");
                         appliedCount++;
                     }
                     continue;
@@ -1386,7 +1464,17 @@ public partial class ModpackLoaderMod
 
                 // Localization types (LocalizedLine, LocalizedMultiLine): write directly to m_DefaultTranslation
                 // Use direct memory access if target is an IL2CPP object to avoid crashes
-                if (IsLocalizationType(prop.PropertyType))
+                //
+                // Detection strategy:
+                // 1. Check C# property type (fastest, catches most cases)
+                // 2. Check runtime type of current value (catches IL2CPP type mismatches)
+                // 3. Check field name for known localization patterns (fallback for polymorphic types)
+                var currentValue = prop.CanRead ? prop.GetValue(target) : null;
+                bool isLocalization = IsLocalizationType(prop.PropertyType) ||
+                                      IsRuntimeLocalizationType(currentValue) ||
+                                      (IsLikelyLocalizationField(fieldName) && value is JValue jv && jv.Type == JTokenType.String);
+
+                if (isLocalization)
                 {
                     var stringValue = value is JToken jt ? jt.Value<string>() : value?.ToString();
                     bool success = false;
@@ -1395,6 +1483,8 @@ public partial class ModpackLoaderMod
                     {
                         // Use safe direct memory access
                         success = WriteLocalizedFieldDirect(il2cppTarget, fieldName, stringValue);
+                        if (success)
+                            SdkLogger.Msg($"    {targetType.Name}.{fieldName}: set localized text (detected by {(IsLocalizationType(prop.PropertyType) ? "type" : IsRuntimeLocalizationType(currentValue) ? "runtime" : "name")})");
                     }
                     else
                     {
