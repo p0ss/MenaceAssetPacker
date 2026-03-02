@@ -233,7 +233,12 @@ public static class ModSettings
                     var setting = group.Settings.FirstOrDefault(s => s.Key == key);
                     if (setting == null) continue;
 
-                    setting.Value = ConvertJsonElement(element, setting.Type);
+                    var loadedValue = ConvertJsonElement(element, setting.Type);
+                    setting.Value = loadedValue;
+
+                    // Fire OnSettingChanged so listeners (like DevConsole) can update
+                    // their cached values when settings are loaded from disk
+                    OnSettingChanged?.Invoke(modName, key, loadedValue);
                 }
             }
         }
@@ -264,7 +269,11 @@ public static class ModSettings
                 var setting = group.Settings.FirstOrDefault(s => s.Key == key);
                 if (setting == null) continue;
 
-                setting.Value = ConvertJsonElement(element, setting.Type);
+                var loadedValue = ConvertJsonElement(element, setting.Type);
+                setting.Value = loadedValue;
+
+                // Fire OnSettingChanged so listeners can update their cached values
+                OnSettingChanged?.Invoke(group.ModName, key, loadedValue);
             }
         }
         catch { }

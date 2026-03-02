@@ -1336,12 +1336,121 @@ public class StatsEditorView : UserControl
       return fieldStack;
     }
 
+    // Handle incremental patch dictionaries (from array field edits)
+    // These have $update/$remove/$append keys - pass vanilla + patches to control for proper rendering
+    if (value is System.Collections.Generic.Dictionary<string, object?> patchDict &&
+        (patchDict.ContainsKey("$update") || patchDict.ContainsKey("$remove") || patchDict.ContainsKey("$append") || patchDict.ContainsKey("$base")))
+    {
+      // Get the vanilla array - control will apply patches for display while tracking edits incrementally
+      if (DataContext is StatsEditorViewModel patchVm && patchVm.VanillaProperties?.TryGetValue(name, out var vanillaVal) == true &&
+          vanillaVal is System.Text.Json.JsonElement vanillaArray && vanillaArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+      {
+        // Pass vanilla array + existing patches to the control
+        // The control will display merged state but track edits incrementally relative to vanilla
+        if (ArrayContainsObjects(vanillaArray))
+        {
+          fieldStack.Children.Add(CreateObjectArrayControl(name, vanillaArray, isEditable, patchDict));
+        }
+        else
+        {
+          // For template ref / primitive arrays, merge for display (simpler, less critical for localization)
+          var mergedArray = MergeArrayWithPatches(vanillaArray, patchDict);
+          var elementType = patchVm.GetTemplateRefElementType(name);
+          if (elementType != null)
+          {
+            fieldStack.Children.Add(CreateTemplateRefListControl(name, mergedArray, elementType, isEditable));
+          }
+          else
+          {
+            var dummyElement = new System.Collections.Generic.Dictionary<string, object?> { { name, mergedArray.Clone() } };
+            fieldStack.Children.Add(CreatePrimitiveArrayControl(
+              name, mergedArray, dummyElement, isEditable, () =>
+              {
+                if (dummyElement.TryGetValue(name, out var val) && val is System.Text.Json.JsonElement je2)
+                  patchVm.UpdateComplexArrayProperty(name, je2.GetRawText());
+              }));
+          }
+        }
+        return fieldStack;
+      }
+      // Fallback: show as read-only indicator that field has patches
+      var patchLabel = new TextBlock
+      {
+        Text = "(modified with incremental patches - reset to edit)",
+        Foreground = new SolidColorBrush(Color.Parse("#FFA500")),
+        FontStyle = FontStyle.Italic,
+        FontSize = 11
+      };
+      fieldStack.Children.Add(patchLabel);
+      return fieldStack;
+    }
+
     // Handle nested objects and arrays
     if (value is System.Text.Json.JsonElement jsonElement)
     {
       switch (jsonElement.ValueKind)
       {
         case System.Text.Json.JsonValueKind.Object:
+          // Check if this is a reloaded incremental patch (saved with $update/$remove/$append)
+          bool isPatchObject = false;
+          foreach (var prop in jsonElement.EnumerateObject())
+          {
+            if (prop.Name == "$update" || prop.Name == "$remove" || prop.Name == "$append" || prop.Name == "$base")
+            {
+              isPatchObject = true;
+              break;
+            }
+          }
+          if (isPatchObject)
+          {
+            // Convert JsonElement patch to Dictionary for the control
+            var patchDict2 = new System.Collections.Generic.Dictionary<string, object?>();
+            foreach (var prop in jsonElement.EnumerateObject())
+              patchDict2[prop.Name] = prop.Value.Clone();
+
+            // Get the vanilla array - pass to control with patches for proper incremental tracking
+            if (DataContext is StatsEditorViewModel patchVm2 && patchVm2.VanillaProperties?.TryGetValue(name, out var vanillaVal2) == true &&
+                vanillaVal2 is System.Text.Json.JsonElement vanillaArray2 && vanillaArray2.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+              // Pass vanilla array + existing patches to the control
+              if (ArrayContainsObjects(vanillaArray2))
+              {
+                fieldStack.Children.Add(CreateObjectArrayControl(name, vanillaArray2, isEditable, patchDict2));
+              }
+              else
+              {
+                // For template ref / primitive arrays, merge for display
+                var mergedArray2 = MergeArrayWithPatches(vanillaArray2, patchDict2);
+                var elementType2 = patchVm2.GetTemplateRefElementType(name);
+                if (elementType2 != null)
+                {
+                  fieldStack.Children.Add(CreateTemplateRefListControl(name, mergedArray2, elementType2, isEditable));
+                }
+                else
+                {
+                  var dummyElement2 = new System.Collections.Generic.Dictionary<string, object?> { { name, mergedArray2.Clone() } };
+                  fieldStack.Children.Add(CreatePrimitiveArrayControl(
+                    name, mergedArray2, dummyElement2, isEditable, () =>
+                    {
+                      if (dummyElement2.TryGetValue(name, out var val2) && val2 is System.Text.Json.JsonElement je2)
+                        patchVm2.UpdateComplexArrayProperty(name, je2.GetRawText());
+                    }));
+                }
+              }
+              return fieldStack;
+            }
+            // Fallback for patch without vanilla data
+            var patchLabel2 = new TextBlock
+            {
+              Text = "(modified with incremental patches - reset to edit)",
+              Foreground = new SolidColorBrush(Color.Parse("#FFA500")),
+              FontStyle = FontStyle.Italic,
+              FontSize = 11
+            };
+            fieldStack.Children.Add(patchLabel2);
+            return fieldStack;
+          }
+
           // Deeply nested object (2+ levels) — render editable with sync callback.
           // The parent field key (name) is used to update the entire nested object.
           var nestedDict = new System.Collections.Generic.Dictionary<string, object?>();
@@ -1817,7 +1926,8 @@ public class StatsEditorView : UserControl
     return false;
   }
 
-  private Control CreateObjectArrayControl(string fieldName, System.Text.Json.JsonElement arrayElement, bool isEditable)
+  private Control CreateObjectArrayControl(string fieldName, System.Text.Json.JsonElement arrayElement, bool isEditable,
+    System.Collections.Generic.Dictionary<string, object?>? existingPatches = null)
   {
     // Get element type from schema for the current template's field
     string? elementType = null;
@@ -1829,7 +1939,7 @@ public class StatsEditorView : UserControl
 
     // Use incremental updates for top-level array fields (avoids saving unmodified fields)
     return CreateObjectArrayControlCoreWithIncrementalUpdates(
-      fieldName, elementType, null, arrayElement, isEditable, vm);
+      fieldName, elementType, null, arrayElement, isEditable, vm, existingPatches);
   }
 
   /// <summary>
@@ -1842,7 +1952,8 @@ public class StatsEditorView : UserControl
     string? parentClassName,
     System.Text.Json.JsonElement arrayElement,
     bool isEditable,
-    StatsEditorViewModel? vm)
+    StatsEditorViewModel? vm,
+    System.Collections.Generic.Dictionary<string, object?>? existingPatches = null)
   {
     // Track elements with their original indices
     var elements = new System.Collections.Generic.List<(int OriginalIndex, System.Collections.Generic.Dictionary<string, object?> Data, bool IsNew)>();
@@ -1865,6 +1976,83 @@ public class StatsEditorView : UserControl
     var removedIndices = new System.Collections.Generic.HashSet<int>();
     // Track appended elements (new elements not in original array)
     var appendedElements = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object?>>();
+
+    // Initialize from existing patches if provided (for reload scenarios)
+    if (existingPatches != null)
+    {
+      // Load $remove indices
+      if (existingPatches.TryGetValue("$remove", out var removeVal))
+      {
+        if (removeVal is System.Collections.Generic.List<int> removeList)
+          foreach (var idx in removeList) removedIndices.Add(idx);
+        else if (removeVal is System.Text.Json.JsonElement removeEl && removeEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+          foreach (var idx in removeEl.EnumerateArray())
+            if (idx.TryGetInt32(out var i)) removedIndices.Add(i);
+      }
+
+      // Load $update patches and apply to element data for display
+      if (existingPatches.TryGetValue("$update", out var updateVal))
+      {
+        System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, object?>>? updates = null;
+        if (updateVal is System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, object?>> dictUpdates)
+          updates = dictUpdates;
+        else if (updateVal is System.Text.Json.JsonElement updateEl && updateEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+          updates = new();
+          foreach (var indexProp in updateEl.EnumerateObject())
+            if (int.TryParse(indexProp.Name, out var _) && indexProp.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+              var fields = new System.Collections.Generic.Dictionary<string, object?>();
+              foreach (var fieldProp in indexProp.Value.EnumerateObject())
+                fields[fieldProp.Name] = fieldProp.Value.Clone();
+              updates[indexProp.Name] = fields;
+            }
+        }
+        if (updates != null)
+        {
+          foreach (var kvp in updates)
+            if (int.TryParse(kvp.Key, out var idx))
+            {
+              var elem = elements.FirstOrDefault(e => e.OriginalIndex == idx);
+              if (elem.Data != null)
+                foreach (var field in kvp.Value)
+                  elem.Data[field.Key] = field.Value;
+            }
+        }
+      }
+
+      // Load $append elements
+      if (existingPatches.TryGetValue("$append", out var appendVal))
+      {
+        if (appendVal is System.Collections.Generic.List<System.Text.Json.JsonElement> appendList)
+        {
+          foreach (var el in appendList)
+            if (el.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+              var dict = new System.Collections.Generic.Dictionary<string, object?>();
+              foreach (var prop in el.EnumerateObject())
+                dict[prop.Name] = prop.Value.Clone();
+              appendedElements.Add(dict);
+              elements.Add((-1, dict, true));
+            }
+        }
+        else if (appendVal is System.Text.Json.JsonElement appendEl && appendEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+          foreach (var el in appendEl.EnumerateArray())
+            if (el.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+              var dict = new System.Collections.Generic.Dictionary<string, object?>();
+              foreach (var prop in el.EnumerateObject())
+                dict[prop.Name] = prop.Value.Clone();
+              appendedElements.Add(dict);
+              elements.Add((-1, dict, true));
+            }
+        }
+      }
+
+      // Filter out removed elements from display
+      elements = elements.Where(e => e.IsNew || !removedIndices.Contains(e.OriginalIndex)).ToList();
+    }
 
     var outerPanel = new StackPanel { Spacing = 2 };
     var countLabel = new TextBlock
@@ -3399,6 +3587,115 @@ public class StatsEditorView : UserControl
       catch { }
     }
     return null;
+  }
+
+  /// <summary>
+  /// Merges vanilla array with incremental patches ($update/$remove/$append) to produce
+  /// the actual current state for display.
+  /// </summary>
+  private static System.Text.Json.JsonElement MergeArrayWithPatches(
+    System.Text.Json.JsonElement vanillaArray,
+    System.Collections.Generic.Dictionary<string, object?> patchDict)
+  {
+    // Build list of elements from vanilla
+    var elements = new System.Collections.Generic.List<System.Text.Json.JsonElement>();
+    foreach (var el in vanillaArray.EnumerateArray())
+      elements.Add(el.Clone());
+
+    // Get removed indices (apply last, after we know final state)
+    var removedIndices = new System.Collections.Generic.HashSet<int>();
+    if (patchDict.TryGetValue("$remove", out var removeVal))
+    {
+      if (removeVal is System.Collections.Generic.List<int> removeList)
+      {
+        foreach (var idx in removeList)
+          removedIndices.Add(idx);
+      }
+      else if (removeVal is System.Text.Json.JsonElement removeEl && removeEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+      {
+        foreach (var idx in removeEl.EnumerateArray())
+          if (idx.TryGetInt32(out var i))
+            removedIndices.Add(i);
+      }
+    }
+
+    // Apply $update patches
+    if (patchDict.TryGetValue("$update", out var updateVal))
+    {
+      System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, object?>>? updates = null;
+
+      if (updateVal is System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, object?>> dictUpdates)
+      {
+        updates = dictUpdates;
+      }
+      else if (updateVal is System.Text.Json.JsonElement updateEl && updateEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+      {
+        updates = new();
+        foreach (var indexProp in updateEl.EnumerateObject())
+        {
+          if (int.TryParse(indexProp.Name, out var _) && indexProp.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+          {
+            var fields = new System.Collections.Generic.Dictionary<string, object?>();
+            foreach (var fieldProp in indexProp.Value.EnumerateObject())
+              fields[fieldProp.Name] = fieldProp.Value.Clone();
+            updates[indexProp.Name] = fields;
+          }
+        }
+      }
+
+      if (updates != null)
+      {
+        foreach (var kvp in updates)
+        {
+          if (int.TryParse(kvp.Key, out var idx) && idx >= 0 && idx < elements.Count)
+          {
+            // Merge the updates into the element
+            var original = elements[idx];
+            if (original.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+              var merged = new System.Collections.Generic.Dictionary<string, object?>();
+              foreach (var prop in original.EnumerateObject())
+                merged[prop.Name] = prop.Value.Clone();
+              foreach (var field in kvp.Value)
+                merged[field.Key] = field.Value;
+              elements[idx] = SerializeDict(merged);
+            }
+          }
+        }
+      }
+    }
+
+    // Build result array, excluding removed indices
+    using var ms = new System.IO.MemoryStream();
+    using (var writer = new System.Text.Json.Utf8JsonWriter(ms))
+    {
+      writer.WriteStartArray();
+      for (int i = 0; i < elements.Count; i++)
+      {
+        if (!removedIndices.Contains(i))
+          elements[i].WriteTo(writer);
+      }
+
+      // Append new elements
+      if (patchDict.TryGetValue("$append", out var appendVal))
+      {
+        if (appendVal is System.Collections.Generic.List<System.Text.Json.JsonElement> appendList)
+        {
+          foreach (var el in appendList)
+            el.WriteTo(writer);
+        }
+        else if (appendVal is System.Text.Json.JsonElement appendEl && appendEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+          foreach (var el in appendEl.EnumerateArray())
+            el.WriteTo(writer);
+        }
+      }
+
+      writer.WriteEndArray();
+    }
+
+    using var doc = System.Text.Json.JsonDocument.Parse(ms.ToArray());
+    return doc.RootElement.Clone();
   }
 
   private static string SerializeElementList(

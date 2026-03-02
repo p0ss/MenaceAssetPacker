@@ -565,7 +565,7 @@ public sealed class CodeEditorViewModel : ViewModelBase, ISearchableViewModel
             return;
         }
 
-        if (!fileName.EndsWith(".lua"))
+        if (!fileName.EndsWith(".lua") && !fileName.EndsWith(".cs"))
             fileName += ".lua";
 
         var modpacks = _modpackManager.GetStagingModpacks();

@@ -306,23 +306,10 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         }
         _suppressPropertyUpdates = false;
 
-        // Delete the staging file if it exists
-        var stagingDir = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "MenaceModkit", "staging", _currentModpackName, "stats");
-
-        var parts = key.Split('/');
-        if (parts.Length == 2)
-        {
-            var templateType = parts[0];
-            var instanceName = parts[1];
-            var filePath = System.IO.Path.Combine(stagingDir, templateType, $"{instanceName}.json");
-            if (System.IO.File.Exists(filePath))
-            {
-                System.IO.File.Delete(filePath);
-                Services.ModkitLog.Info($"[StatsEditor] Deleted staging file: {filePath}");
-            }
-        }
+        // Persist the removal to disk by re-saving the staging files
+        // (The staging file format is stats/{TemplateType}.json containing multiple instances,
+        // so we can't just delete a single file - we need to rewrite without this instance)
+        SaveToStaging();
 
         SaveStatus = $"Reset '{SelectedNode.Template.Name}' to vanilla";
         this.RaisePropertyChanged(nameof(HasModifications));
