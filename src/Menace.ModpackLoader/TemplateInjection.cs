@@ -269,38 +269,54 @@ public partial class ModpackLoaderMod
     /// <summary>
     /// Create a new LocalizedLine or LocalizedMultiLine object with the given text.
     /// Creates a FRESH instance to avoid corrupting shared localization objects.
+    /// If existingLocPtr is null/zero, creates a LocalizedLine by default.
     /// </summary>
     private IntPtr CreateLocalizedObject(IntPtr existingLocPtr, string value)
     {
         try
         {
-            // Get the class of the existing object to create the same type
-            var existingClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
-            if (existingClass == IntPtr.Zero)
-            {
-                SdkLogger.Warning("    CreateLocalizedObject: could not get class of existing object");
-                return IntPtr.Zero;
-            }
-
-            // Get the class name to determine if it's LocalizedLine or LocalizedMultiLine
-            var classNamePtr = IL2CPP.il2cpp_class_get_name(existingClass);
-            var className = classNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(classNamePtr) : "";
-
-            // Get the appropriate class pointer
             IntPtr newClass;
-            if (className == "LocalizedMultiLine")
+            byte hasPlaceholders = 0;
+
+            if (existingLocPtr != IntPtr.Zero)
             {
-                newClass = GetLocalizedMultiLineClass();
+                // Get the class of the existing object to create the same type
+                var existingClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
+                if (existingClass == IntPtr.Zero)
+                {
+                    SdkLogger.Warning("    CreateLocalizedObject: could not get class of existing object, defaulting to LocalizedLine");
+                    newClass = GetLocalizedLineClass();
+                }
+                else
+                {
+                    // Get the class name to determine if it's LocalizedLine or LocalizedMultiLine
+                    var classNamePtr = IL2CPP.il2cpp_class_get_name(existingClass);
+                    var className = classNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(classNamePtr) : "";
+
+                    // Get the appropriate class pointer
+                    if (className == "LocalizedMultiLine")
+                    {
+                        newClass = GetLocalizedMultiLineClass();
+                    }
+                    else
+                    {
+                        // Default to LocalizedLine for LocalizedLine or BaseLocalizedString
+                        newClass = GetLocalizedLineClass();
+                    }
+
+                    // Copy hasPlaceholders from existing object
+                    hasPlaceholders = Marshal.ReadByte(existingLocPtr + LOC_HAS_PLACEHOLDERS_OFFSET);
+                }
             }
             else
             {
-                // Default to LocalizedLine for LocalizedLine or BaseLocalizedString
+                // No existing object - default to LocalizedLine (most common for names/titles)
                 newClass = GetLocalizedLineClass();
             }
 
             if (newClass == IntPtr.Zero)
             {
-                SdkLogger.Warning($"    CreateLocalizedObject: could not find class for {className}");
+                SdkLogger.Warning("    CreateLocalizedObject: could not find LocalizedLine class");
                 return IntPtr.Zero;
             }
 
@@ -340,8 +356,7 @@ public partial class ModpackLoaderMod
             }
             Marshal.WriteIntPtr(newObj + LOC_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
 
-            // Copy hasPlaceholders (bool at +0x40)
-            byte hasPlaceholders = Marshal.ReadByte(existingLocPtr + LOC_HAS_PLACEHOLDERS_OFFSET);
+            // Set hasPlaceholders (bool at +0x40)
             Marshal.WriteByte(newObj + LOC_HAS_PLACEHOLDERS_OFFSET, hasPlaceholders);
 
             return newObj;
@@ -385,21 +400,17 @@ public partial class ModpackLoaderMod
 
             // Read the existing localization object pointer
             var existingLocPtr = Marshal.ReadIntPtr(templatePtr + (int)fieldOffset);
-            if (existingLocPtr == IntPtr.Zero)
-            {
-                SdkLogger.Warning($"    {fieldName}: localization object is null");
-                return false;
-            }
 
-            // Validate the pointer looks reasonable
-            if (existingLocPtr.ToInt64() < 0x10000)
+            // Validate the pointer if non-null
+            if (existingLocPtr != IntPtr.Zero && existingLocPtr.ToInt64() < 0x10000)
             {
-                SdkLogger.Warning($"    {fieldName}: invalid localization pointer");
-                return false;
+                SdkLogger.Warning($"    {fieldName}: invalid localization pointer, treating as null");
+                existingLocPtr = IntPtr.Zero;
             }
 
             // Create a NEW localization object with our text
-            // This avoids corrupting shared localization instances
+            // If existingLocPtr is null (e.g., on cloned templates), CreateLocalizedObject
+            // will create a fresh LocalizedLine object
             var newLocPtr = CreateLocalizedObject(existingLocPtr, value);
             if (newLocPtr == IntPtr.Zero)
             {
@@ -427,22 +438,30 @@ public partial class ModpackLoaderMod
     {
         try
         {
-            // Get the existing localization object
+            // Get the existing localization object (may be null for cloned templates)
             object existingLoc = prop != null ? prop.GetValue(parent) : field?.GetValue(parent);
-            if (existingLoc == null || !(existingLoc is Il2CppObjectBase il2cppLoc))
+            IntPtr existingPtr = IntPtr.Zero;
+            Type locType = null;
+
+            if (existingLoc is Il2CppObjectBase il2cppLoc)
             {
-                SdkLogger.Warning($"    {fieldName}: existing localization is null or not IL2CPP");
-                return false;
+                existingPtr = il2cppLoc.Pointer;
+                locType = existingLoc.GetType();
             }
 
-            var existingPtr = il2cppLoc.Pointer;
-            if (existingPtr == IntPtr.Zero)
+            // If no existing object, try to determine the type from the property/field declaration
+            if (locType == null)
             {
-                SdkLogger.Warning($"    {fieldName}: existing localization pointer is null");
-                return false;
+                locType = prop?.PropertyType ?? field?.FieldType;
+                if (locType == null)
+                {
+                    SdkLogger.Warning($"    {fieldName}: could not determine localization type");
+                    return false;
+                }
             }
 
             // Create a NEW localization object with our text
+            // CreateLocalizedObject handles null existingPtr by creating a fresh LocalizedLine
             var newLocPtr = CreateLocalizedObject(existingPtr, value);
             if (newLocPtr == IntPtr.Zero)
             {
@@ -451,7 +470,6 @@ public partial class ModpackLoaderMod
             }
 
             // Wrap the new pointer in the appropriate managed type and set it back
-            var locType = existingLoc.GetType();
             var wrappedNew = Activator.CreateInstance(locType, newLocPtr);
             if (wrappedNew == null)
             {
