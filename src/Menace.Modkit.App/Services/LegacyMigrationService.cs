@@ -196,13 +196,60 @@ public class LegacyMigrationService
             }
 
             // 4. Delete MelonLoader directory (mod loader)
+            // CRITICAL: Preserve Il2CppAssemblies - these are build dependencies, not user mods
             var melonLoaderPath = Path.Combine(gamePath, "MelonLoader");
             if (Directory.Exists(melonLoaderPath))
             {
-                progress?.Report("Removing MelonLoader...");
-                await Task.Run(() => Directory.Delete(melonLoaderPath, recursive: true));
-                details.Add("Removed MelonLoader/ directory");
-                ModkitLog.Info("[LegacyMigrationService] Removed MelonLoader/ directory");
+                var il2cppAssembliesPath = Path.Combine(melonLoaderPath, "Il2CppAssemblies");
+                List<string>? preservedAssemblies = null;
+
+                // Backup Il2CppAssemblies if they exist
+                if (Directory.Exists(il2cppAssembliesPath))
+                {
+                    progress?.Report("Preserving IL2CPP proxy assemblies...");
+                    var tempBackupPath = Path.Combine(Path.GetTempPath(), $"Il2CppAssemblies_backup_{Guid.NewGuid()}");
+                    await Task.Run(() =>
+                    {
+                        Directory.CreateDirectory(tempBackupPath);
+                        foreach (var file in Directory.GetFiles(il2cppAssembliesPath))
+                        {
+                            var fileName = Path.GetFileName(file);
+                            File.Copy(file, Path.Combine(tempBackupPath, fileName));
+                        }
+                    });
+                    preservedAssemblies = Directory.GetFiles(tempBackupPath).Select(Path.GetFileName).Where(n => n != null).ToList()!;
+                    ModkitLog.Info($"[LegacyMigrationService] Backed up {preservedAssemblies.Count} IL2CPP assemblies to temp");
+
+                    // Delete MelonLoader
+                    progress?.Report("Removing MelonLoader...");
+                    await Task.Run(() => Directory.Delete(melonLoaderPath, recursive: true));
+                    details.Add("Removed MelonLoader/ directory");
+                    ModkitLog.Info("[LegacyMigrationService] Removed MelonLoader/ directory");
+
+                    // Restore Il2CppAssemblies
+                    progress?.Report("Restoring IL2CPP proxy assemblies...");
+                    await Task.Run(() =>
+                    {
+                        Directory.CreateDirectory(melonLoaderPath);
+                        Directory.CreateDirectory(il2cppAssembliesPath);
+                        foreach (var file in Directory.GetFiles(tempBackupPath))
+                        {
+                            var fileName = Path.GetFileName(file);
+                            File.Move(file, Path.Combine(il2cppAssembliesPath, fileName));
+                        }
+                        Directory.Delete(tempBackupPath);
+                    });
+                    details.Add($"Preserved {preservedAssemblies!.Count} IL2CPP proxy assemblies (required for code mod compilation)");
+                    ModkitLog.Info($"[LegacyMigrationService] Restored {preservedAssemblies.Count} IL2CPP assemblies");
+                }
+                else
+                {
+                    // No Il2CppAssemblies to preserve - just delete MelonLoader
+                    progress?.Report("Removing MelonLoader...");
+                    await Task.Run(() => Directory.Delete(melonLoaderPath, recursive: true));
+                    details.Add("Removed MelonLoader/ directory");
+                    ModkitLog.Info("[LegacyMigrationService] Removed MelonLoader/ directory (no Il2CppAssemblies found)");
+                }
             }
 
             // 5. Delete deploy-state.json only (NOT staging - user modpacks live there)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -510,6 +511,9 @@ public class SetupViewModel : ViewModelBase
                 // Refresh health state after successful setup
                 await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
 
+                // Check if IL2CPP assembly generation is needed
+                await GenerateIl2CppAssembliesIfNeededAsync();
+
                 await Task.Delay(500);
                 SetupComplete?.Invoke();
             }
@@ -673,6 +677,65 @@ public class SetupViewModel : ViewModelBase
         finally
         {
             IsConfiguringAi = false;
+        }
+    }
+
+    /// <summary>
+    /// Generate IL2CPP proxy assemblies if needed for code mod compilation.
+    /// This runs automatically after components are installed if the game is IL2CPP.
+    /// </summary>
+    private async Task GenerateIl2CppAssembliesIfNeededAsync()
+    {
+        try
+        {
+            var gamePath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gamePath) || !Directory.Exists(gamePath))
+                return;
+
+            var generator = Il2CppGeneratorService.Instance;
+
+            // Check if game is IL2CPP
+            if (!generator.IsIl2CppGame(gamePath))
+            {
+                ModkitLog.Info("[Setup] Game is not IL2CPP, skipping assembly generation");
+                return;
+            }
+
+            // Check if assemblies already exist
+            if (generator.AssembliesExist(gamePath))
+            {
+                ModkitLog.Info("[Setup] IL2CPP assemblies already exist, skipping generation");
+                return;
+            }
+
+            // Generate assemblies
+            ModkitLog.Info("[Setup] IL2CPP game detected, generating proxy assemblies for code compilation");
+
+            var progress = new Progress<string>(msg =>
+            {
+                DownloadStatus = msg;
+                this.RaisePropertyChanged(nameof(HasDownloadStatus));
+            });
+
+            var success = await generator.GenerateAssembliesAsync(gamePath, progress);
+
+            if (success)
+            {
+                ModkitLog.Info("[Setup] IL2CPP assemblies generated successfully");
+                DownloadStatus = "Code compilation support ready!";
+            }
+            else
+            {
+                ModkitLog.Warn("[Setup] Failed to generate IL2CPP assemblies - code mods may not compile");
+                DownloadStatus = "Warning: Code compilation support not ready (you can generate it later by running the game)";
+            }
+
+            this.RaisePropertyChanged(nameof(HasDownloadStatus));
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[Setup] Error during IL2CPP assembly generation: {ex.Message}");
+            // Don't fail setup - this is non-critical, user can run game manually later
         }
     }
 }

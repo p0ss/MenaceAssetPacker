@@ -101,9 +101,10 @@ public class App : Application
             var detectionResult = detector.Detect(gamePath);
 
             // Create a temporary window to host the dialog
+            // IMPORTANT: Do NOT set this as MainWindow or closing it will exit the app
             var hostWindow = new Window
             {
-                Title = "Menace Modkit",
+                Title = "Menace Modkit - Migration Required",
                 Width = 600,
                 Height = 500,
                 Background = new SolidColorBrush(Color.Parse("#0A0A0A")),
@@ -119,16 +120,15 @@ public class App : Application
             }
             catch { /* Icon loading failed */ }
 
-            if (_desktop != null)
-            {
-                _desktop.MainWindow = hostWindow;
-                hostWindow.Show();
-            }
+            // Show the window but DON'T set as MainWindow
+            // This prevents the app from exiting when we close it
+            hostWindow.Show();
 
             // Show the migration dialog
             var result = await LegacyMigrationDialog.ShowAsync(hostWindow, detectionResult, gamePath);
 
-            // Close the host window
+            // Close the temporary host window
+            // This won't exit the app because it's not the MainWindow
             hostWindow.Close();
 
             ModkitLog.Info($"[App] Legacy migration dialog result: {result}");

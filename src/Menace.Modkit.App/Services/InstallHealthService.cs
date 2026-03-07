@@ -347,6 +347,11 @@ public class InstallHealthService
                 }
             }
 
+            // NOTE: Il2CppAssemblies check removed from health check
+            // These are generated when the game first runs with MelonLoader, so they won't exist for new installs
+            // Instead, we check for them at code compilation time where they're actually needed
+            // See: CodeModCompilationService for the runtime check
+
             var summary = needsSetup
                 ? $"Required components missing or outdated: {string.Join(", ", issues.Take(3))}"
                 : "All required components available";
