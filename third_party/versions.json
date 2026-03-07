@@ -2,7 +2,7 @@
   "schemaVersion": 4,
   "components": {
     "Modkit": {
-      "version": "34.0.3",
+      "version": "34.0.4",
       "required": true,
       "category": "app",
       "description": "Menace Modkit application (self-update)",
@@ -27,7 +27,7 @@
       }
     },
     "DataExtractor": {
-      "version": "12.0.1",
+      "version": "12.0.2",
       "required": true,
       "category": "core",
       "description": "Extracts game template data for editing",
@@ -37,7 +37,7 @@
       }
     },
     "ModpackLoader": {
-      "version": "34.0.3",
+      "version": "34.0.4",
       "required": true,
       "category": "core",
       "description": "In-game mod loader with REPL and hot-reload",
