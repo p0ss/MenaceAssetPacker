@@ -258,6 +258,8 @@ public class LegacyInstallDetector
         if (!Directory.Exists(modsPath))
             return;
 
+        ModkitLog.Info($"[LegacyDetector] Checking Mods layout in: {modsPath}");
+
         // Check for loose DLLs directly in Mods/ that aren't Menace.* infrastructure
         var looseDlls = Directory.GetFiles(modsPath, "*.dll")
             .Select(Path.GetFileName)
@@ -269,6 +271,7 @@ public class LegacyInstallDetector
         {
             flags.OldModsLayout = true;
             issues.Add($"Found {looseDlls.Count} loose DLL(s) in Mods/ (expected in modpack subfolders): {string.Join(", ", looseDlls.Take(3))}");
+            ModkitLog.Warn($"[LegacyDetector] Loose DLLs in Mods root: {string.Join(", ", looseDlls)}");
         }
 
         // Check for DLL files that look like they're from old manual mod installations
@@ -284,15 +287,38 @@ public class LegacyInstallDetector
                 dirName.Equals("dlls", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            // Check if directory has DLLs but no modpack indicator
-            var hasDlls = Directory.GetFiles(subDir, "*.dll").Length > 0;
+            // Check if directory has DLLs (in any subdirectory, including dlls/)
+            var dllFiles = Directory.GetFiles(subDir, "*.dll", SearchOption.AllDirectories);
+            if (dllFiles.Length == 0)
+                continue;
+
+            // Check for modpack indicators in the TOP LEVEL of this directory only
             var hasModpackJson = ModpackIndicatorFiles.Any(f =>
                 File.Exists(Path.Combine(subDir, f)));
 
-            if (hasDlls && !hasModpackJson)
+            if (!hasModpackJson)
             {
+                // Additional check: Skip if DLLs are ONLY in a dlls/ subdirectory
+                // (legitimate deploy structure is <modpack>/dlls/*.dll with <modpack>/modpack.json)
+                var dllsSubdir = Path.Combine(subDir, "dlls");
+                var allDllsInSubdir = dllFiles.All(dll =>
+                    dll.StartsWith(dllsSubdir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                    dll.StartsWith(dllsSubdir + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+                if (allDllsInSubdir)
+                {
+                    // This looks like a properly deployed modpack that's missing its modpack.json
+                    // (possibly mid-deploy or corrupted). Log but don't flag as legacy.
+                    ModkitLog.Warn($"[LegacyDetector] Directory '{dirName}' has dlls/ subdirectory but no modpack.json - may be mid-deploy or corrupted");
+                    continue;
+                }
+
+                // DLLs are scattered or in root - this is likely a legacy manual install
                 flags.OldModsLayout = true;
-                issues.Add($"Directory '{dirName}' in Mods/ has DLLs but no modpack.json (possible legacy manual install)");
+                var dllCount = dllFiles.Length;
+                var dllLocations = string.Join(", ", dllFiles.Take(3).Select(Path.GetFileName));
+                issues.Add($"Directory '{dirName}' in Mods/ has {dllCount} DLL(s) but no modpack.json (possible legacy manual install): {dllLocations}");
+                ModkitLog.Warn($"[LegacyDetector] Potential legacy install in '{dirName}': {dllCount} DLLs, no modpack.json");
             }
         }
     }
