@@ -190,12 +190,17 @@ public class AssetRipperService
                 WorkingDirectory = Path.GetDirectoryName(assetRipperPath)
             };
 
+            ModkitLog.Info($"[AssetRipperService] Starting AssetRipper: {assetRipperPath} --launch-browser=false --port={_port}");
+
             _assetRipperProcess = Process.Start(startInfo);
             if (_assetRipperProcess == null)
             {
+                ModkitLog.Error("[AssetRipperService] Failed to start AssetRipper process");
                 progressCallback?.Invoke("Failed to start AssetRipper process");
                 return false;
             }
+
+            ModkitLog.Info($"[AssetRipperService] AssetRipper process started (PID: {_assetRipperProcess.Id})");
 
             // Consume stdout/stderr asynchronously to prevent pipe buffer deadlock.
             // AssetRipper produces thousands of lines during loading — if the pipe
@@ -281,52 +286,30 @@ public class AssetRipperService
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Load specific asset files to get complete texture extraction
-            // Loading the whole folder causes texture deduplication; loading sharedassets files separately preserves all textures
-            var assetFiles = GetAssetFilesToLoad(dataPath);
-            if (assetFiles.Count == 0)
-            {
-                // Fallback to folder load if no specific files found
-                progressCallback?.Invoke($"Loading game assets from {dataPath}...");
-                var folderResponse = await client.PostAsync(
-                    $"http://localhost:{_port}/LoadFolder",
-                    new FormUrlEncodedContent(new[]
-                    {
-                        new KeyValuePair<string, string>("Path", dataPath)
-                    }),
-                    cancellationToken);
+            // Load the entire game folder
+            // Note: Individual file loading via /LoadFile causes AssetRipper to reset data between files,
+            // resulting in incomplete extraction (only ~2k files instead of 30k+).
+            // LoadFolder properly recognizes the game structure and scripting backend.
+            progressCallback?.Invoke($"Loading game assets from {dataPath}...");
+            ModkitLog.Info($"[AssetRipperService] Loading folder: {dataPath}");
 
-                if (!folderResponse.IsSuccessStatusCode)
+            var folderResponse = await client.PostAsync(
+                $"http://localhost:{_port}/LoadFolder",
+                new FormUrlEncodedContent(new[]
                 {
-                    progressCallback?.Invoke($"Failed to load assets (Status: {folderResponse.StatusCode})");
-                    return false;
-                }
-            }
-            else
+                    new KeyValuePair<string, string>("Path", dataPath)
+                }),
+                cancellationToken);
+
+            if (!folderResponse.IsSuccessStatusCode)
             {
-                progressCallback?.Invoke($"Loading {assetFiles.Count} asset files...");
-
-                // Load each asset file - AssetRipper accumulates loaded files
-                foreach (var assetFile in assetFiles)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var fileName = Path.GetFileName(assetFile);
-                    progressCallback?.Invoke($"Loading {fileName}...");
-
-                    var loadResponse = await client.PostAsync(
-                        $"http://localhost:{_port}/LoadFile",
-                        new FormUrlEncodedContent(new[]
-                        {
-                            new KeyValuePair<string, string>("Path", assetFile)
-                        }),
-                        cancellationToken);
-
-                    if (!loadResponse.IsSuccessStatusCode)
-                    {
-                        progressCallback?.Invoke($"Warning: Failed to load {fileName} (Status: {loadResponse.StatusCode})");
-                    }
-                }
+                var errorBody = await folderResponse.Content.ReadAsStringAsync(cancellationToken);
+                ModkitLog.Error($"[AssetRipperService] Failed to load folder (Status: {folderResponse.StatusCode}): {errorBody}");
+                progressCallback?.Invoke($"Failed to load assets (Status: {folderResponse.StatusCode})");
+                return false;
             }
+
+            ModkitLog.Info("[AssetRipperService] Folder load request successful");
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -334,10 +317,14 @@ public class AssetRipperService
             progressCallback?.Invoke("Verifying asset collections loaded...");
             await WaitForLoadCompletion(client, progressCallback, cancellationToken);
 
+            ModkitLog.Info("[AssetRipperService] Asset loading complete, proceeding to export");
+
             cancellationToken.ThrowIfCancellationRequested();
 
             // Export primary content (returns immediately, export runs async)
             progressCallback?.Invoke($"Exporting assets to {OutputPath}...");
+            ModkitLog.Info($"[AssetRipperService] Initiating export to: {OutputPath}");
+
             var exportResponse = await client.PostAsync(
                 $"http://localhost:{_port}/Export/PrimaryContent",
                 new FormUrlEncodedContent(new[]
@@ -348,22 +335,37 @@ public class AssetRipperService
 
             if (!exportResponse.IsSuccessStatusCode)
             {
+                var errorBody = await exportResponse.Content.ReadAsStringAsync(cancellationToken);
+                ModkitLog.Error($"[AssetRipperService] Export request failed with status {exportResponse.StatusCode}: {errorBody}");
                 progressCallback?.Invoke($"Failed to export assets (Status: {exportResponse.StatusCode})");
                 return false;
             }
 
+            ModkitLog.Info("[AssetRipperService] Export request accepted, waiting for completion...");
+
             // Poll output directory until export stabilizes
             var fileCount = await WaitForExportCompletion(progressCallback, cancellationToken);
+
+            ModkitLog.Info($"[AssetRipperService] Export monitoring complete: {fileCount} files in {OutputPath}");
 
             if (fileCount > 0)
             {
                 // Update manifest to record successful extraction
                 await SaveAssetRipManifestAsync(gameInstallPath);
                 progressCallback?.Invoke($"Asset extraction completed! Extracted {fileCount} files.");
+
+                // Diagnostic: Check if expected number of assets were extracted (Unity 6 games typically have 20k-40k assets)
+                if (fileCount < 5000)
+                {
+                    ModkitLog.Warn($"[AssetRipperService] Asset count ({fileCount}) seems low for a Unity game. Expected 20k-40k assets. Possible incomplete extraction.");
+                    progressCallback?.Invoke($"Warning: Only {fileCount} files extracted (expected 20k-40k). Check logs for errors.");
+                }
+
                 return true;
             }
             else
             {
+                ModkitLog.Error("[AssetRipperService] Export completed but no files were found in output directory");
                 progressCallback?.Invoke("Export completed but no files were found");
                 return false;
             }
@@ -539,21 +541,41 @@ public class AssetRipperService
                 stableChecks++;
                 if (stableChecks >= stableThreshold)
                 {
+                    ModkitLog.Info($"[AssetRipperService] Export appears complete (stable at {currentCount} files for {stableChecks * 5} seconds)");
                     return currentCount;
                 }
             }
             else
             {
                 stableChecks = 0;
+                if (currentCount != lastFileCount)
+                {
+                    var change = currentCount - lastFileCount;
+                    ModkitLog.Info($"[AssetRipperService] Export progress: {currentCount} files (+{change})");
+                }
                 lastFileCount = currentCount;
             }
 
             if (_assetRipperProcess?.HasExited == true)
             {
-                // Process exited — final count
+                // Process exited — check if it was expected or a crash
                 var finalCount = Directory.Exists(OutputPath)
                     ? Directory.GetFiles(OutputPath, "*.*", SearchOption.AllDirectories).Length
                     : 0;
+
+                var exitCode = _assetRipperProcess.ExitCode;
+                if (exitCode != 0)
+                {
+                    DumpProcessLog();
+                    var lastLines = GetLastProcessOutput(20);
+                    ModkitLog.Error($"[AssetRipperService] AssetRipper crashed during export (exit code: {exitCode}). Extracted {finalCount} files before crash. Last output:\n{lastLines}");
+                    progressCallback?.Invoke($"Warning: AssetRipper exited unexpectedly (code {exitCode}) after extracting {finalCount} files. See log for details.");
+                }
+                else
+                {
+                    ModkitLog.Info($"[AssetRipperService] AssetRipper process exited cleanly with {finalCount} files");
+                }
+
                 return finalCount;
             }
         }
@@ -761,49 +783,4 @@ public class AssetRipperService
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 
-    /// <summary>
-    /// Gets the list of asset files to load for complete texture extraction.
-    /// Loading sharedassets files separately (instead of the whole folder) preserves all textures
-    /// that would otherwise be deduplicated when loading the entire game folder.
-    /// </summary>
-    private static List<string> GetAssetFilesToLoad(string dataPath)
-    {
-        var files = new List<string>();
-
-        try
-        {
-            // Primary asset files that contain most game textures
-            // sharedassets files contain the bulk of textures, sprites, and other assets
-            var sharedAssets = Directory.GetFiles(dataPath, "sharedassets*.assets")
-                .OrderBy(f => f)
-                .ToList();
-            files.AddRange(sharedAssets);
-
-            // Also include resources.assets which has UI and common assets
-            var resourcesAssets = Path.Combine(dataPath, "resources.assets");
-            if (File.Exists(resourcesAssets))
-                files.Add(resourcesAssets);
-
-            // Include level files for scene-specific assets
-            var levelFiles = Directory.GetFiles(dataPath, "level*.assets")
-                .OrderBy(f => f)
-                .ToList();
-            files.AddRange(levelFiles);
-
-            // Include globalgamemanagers for settings/config
-            var ggm = Path.Combine(dataPath, "globalgamemanagers");
-            if (File.Exists(ggm))
-                files.Add(ggm);
-
-            var ggmAssets = Path.Combine(dataPath, "globalgamemanagers.assets");
-            if (File.Exists(ggmAssets))
-                files.Add(ggmAssets);
-        }
-        catch (Exception ex)
-        {
-            ModkitLog.Warn($"[AssetRipperService] Error enumerating asset files: {ex.Message}");
-        }
-
-        return files;
-    }
 }
