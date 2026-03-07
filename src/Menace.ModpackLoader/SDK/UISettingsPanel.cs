@@ -27,6 +27,9 @@ public class UISettingsPanel
     // Track elements for value polling
     private readonly List<(object element, string modName, string key, SettingType type)> _elements = new();
 
+    // Track value labels for slider updates
+    private readonly Dictionary<object, Label> _sliderValueLabels = new();
+
     private static void InitializeTypes()
     {
         if (_typesInitialized) return;
@@ -194,6 +197,7 @@ public class UISettingsPanel
 
         _settingsContainer.Clear();
         _elements.Clear();
+        _sliderValueLabels.Clear();
 
         var mods = ModSettings.GetRegisteredMods().ToList();
 
@@ -349,10 +353,19 @@ public class UISettingsPanel
 
             case SettingType.Slider:
                 var sliderLabel = new Label(setting.Label);
-                sliderLabel.style.width = new Length(45, LengthUnit.Percent);
+                sliderLabel.style.width = new Length(40, LengthUnit.Percent);
                 sliderLabel.style.fontSize = fontSize;
                 sliderLabel.style.color = labelColor;
                 row.Add(sliderLabel);
+
+                // Min value label
+                var sliderMinLabel = new Label(setting.Min.ToString("0.#"));
+                sliderMinLabel.style.fontSize = 9;
+                sliderMinLabel.style.color = new Color(0.5f, 0.5f, 0.55f);
+                sliderMinLabel.style.width = 28;
+                sliderMinLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+                sliderMinLabel.style.marginRight = 4;
+                row.Add(sliderMinLabel);
 
                 var floatVal = setting.Value is float f ? f : Convert.ToSingle(setting.DefaultValue ?? 0f);
                 var slider = new Slider(setting.Min, setting.Max);
@@ -360,15 +373,44 @@ public class UISettingsPanel
                 slider.style.flexGrow = 1;
                 slider.style.height = 16;
                 row.Add(slider);
+
+                // Max value label
+                var sliderMaxLabel = new Label(setting.Max.ToString("0.#"));
+                sliderMaxLabel.style.fontSize = 9;
+                sliderMaxLabel.style.color = new Color(0.5f, 0.5f, 0.55f);
+                sliderMaxLabel.style.width = 28;
+                sliderMaxLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+                sliderMaxLabel.style.marginLeft = 4;
+                row.Add(sliderMaxLabel);
+
+                // Current value label
+                var sliderValueLabel = new Label(floatVal.ToString("0.##"));
+                sliderValueLabel.style.fontSize = 10;
+                sliderValueLabel.style.color = new Color(0.8f, 0.85f, 0.9f);
+                sliderValueLabel.style.width = 40;
+                sliderValueLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+                sliderValueLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                row.Add(sliderValueLabel);
+
                 _elements.Add((slider, modName, setting.Key, setting.Type));
+                _sliderValueLabels[slider] = sliderValueLabel;
                 break;
 
             case SettingType.Number:
                 var numLabel = new Label(setting.Label);
-                numLabel.style.width = new Length(45, LengthUnit.Percent);
+                numLabel.style.width = new Length(40, LengthUnit.Percent);
                 numLabel.style.fontSize = fontSize;
                 numLabel.style.color = labelColor;
                 row.Add(numLabel);
+
+                // Min value label
+                var numMinLabel = new Label(((int)setting.Min).ToString());
+                numMinLabel.style.fontSize = 9;
+                numMinLabel.style.color = new Color(0.5f, 0.5f, 0.55f);
+                numMinLabel.style.width = 28;
+                numMinLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+                numMinLabel.style.marginRight = 4;
+                row.Add(numMinLabel);
 
                 var intVal = setting.Value is int i ? i : Convert.ToInt32(setting.DefaultValue ?? 0);
                 var sliderInt = new SliderInt((int)setting.Min, (int)setting.Max);
@@ -376,7 +418,27 @@ public class UISettingsPanel
                 sliderInt.style.flexGrow = 1;
                 sliderInt.style.height = 16;
                 row.Add(sliderInt);
+
+                // Max value label
+                var numMaxLabel = new Label(((int)setting.Max).ToString());
+                numMaxLabel.style.fontSize = 9;
+                numMaxLabel.style.color = new Color(0.5f, 0.5f, 0.55f);
+                numMaxLabel.style.width = 28;
+                numMaxLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+                numMaxLabel.style.marginLeft = 4;
+                row.Add(numMaxLabel);
+
+                // Current value label
+                var numValueLabel = new Label(intVal.ToString());
+                numValueLabel.style.fontSize = 10;
+                numValueLabel.style.color = new Color(0.8f, 0.85f, 0.9f);
+                numValueLabel.style.width = 40;
+                numValueLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+                numValueLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                row.Add(numValueLabel);
+
                 _elements.Add((sliderInt, modName, setting.Key, setting.Type));
+                _sliderValueLabels[sliderInt] = numValueLabel;
                 break;
 
             case SettingType.Dropdown:
@@ -476,6 +538,10 @@ public class UISettingsPanel
                             var currentFloat = ModSettings.Get<float>(modName, key);
                             if (Math.Abs(slider.value - currentFloat) > 0.001f)
                                 ModSettings.Set(modName, key, slider.value);
+
+                            // Update value label
+                            if (_sliderValueLabels.TryGetValue(slider, out var sliderLabel))
+                                sliderLabel.text = slider.value.ToString("0.##");
                         }
                         break;
 
@@ -485,6 +551,10 @@ public class UISettingsPanel
                             var currentInt = ModSettings.Get<int>(modName, key);
                             if (sliderInt.value != currentInt)
                                 ModSettings.Set(modName, key, sliderInt.value);
+
+                            // Update value label
+                            if (_sliderValueLabels.TryGetValue(sliderInt, out var intLabel))
+                                intLabel.text = sliderInt.value.ToString();
                         }
                         else
                         {
@@ -574,5 +644,6 @@ public class UISettingsPanel
         }
         _settingsContainer = null;
         _elements.Clear();
+        _sliderValueLabels.Clear();
     }
 }

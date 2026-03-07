@@ -47,6 +47,9 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
                 this.RaisePropertyChanged();
                 ValidateInstallPath();
                 this.RaisePropertyChanged(nameof(MelonLoaderLogPath));
+
+                // Refresh health state after game path change
+                _ = AppHealthStateService.Instance.InvalidateAndRefreshAsync();
             }
         }
     }
@@ -193,6 +196,9 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
                 return;
 
             CleanRedeployStatus = "✓ Clean redeploy complete. Go to Load Order and click Deploy All to redeploy your mods.";
+
+            // Refresh health state after clean redeploy
+            await AppHealthStateService.Instance.InvalidateAndRefreshAsync();
         }
         catch (Exception ex)
         {
@@ -283,6 +289,9 @@ public sealed class LoaderSettingsViewModel : ViewModelBase
                 var preserved = hasUserData ? " (UserData/Saves preserved)" : "";
                 UninstallStatus = $"✓ Uninstalled: {removedDirs} folders, {removedFiles} files{preserved}";
                 ModkitLog.Info($"[Uninstall] Removed {removedDirs} directories, {removedFiles} files from {GameInstallPath}");
+
+                // Refresh health state after uninstall
+                await AppHealthStateService.Instance.InvalidateAndRefreshAsync();
             }
         }
         catch (Exception ex)

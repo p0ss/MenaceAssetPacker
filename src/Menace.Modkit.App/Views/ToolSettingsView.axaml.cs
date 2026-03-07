@@ -236,6 +236,9 @@ public class ToolSettingsView : UserControl
         // Cache Management
         stack.Children.Add(BuildCacheSection());
 
+        // Diagnostics
+        stack.Children.Add(BuildDiagnosticsSection());
+
         scrollViewer.Content = stack;
         return scrollViewer;
     }
@@ -815,5 +818,152 @@ public class ToolSettingsView : UserControl
 
         border.Child = stack;
         return border;
+    }
+
+    private Control BuildDiagnosticsSection()
+    {
+        var border = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#1F1F1F")),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(24)
+        };
+
+        var stack = new StackPanel { Spacing = 16 };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Diagnostics",
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brushes.White
+        });
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Run diagnostic checks to validate your installation. Results can be shared with support.",
+            Opacity = 0.7,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 13
+        });
+
+        var buttonStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+
+        // Dry Run Diagnostics button - dark teal
+        var dryRunButton = new Button
+        {
+            Content = "Dry Run Diagnostics",
+            Background = new SolidColorBrush(Color.Parse("#006666")), // Dark teal
+            Foreground = Brushes.White,
+            FontSize = 13,
+            Padding = new Thickness(16, 10),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+        };
+        dryRunButton.Click += OnDryRunDiagnosticsClick;
+        buttonStack.Children.Add(dryRunButton);
+
+        // Destructive Diagnostic Test button - maroon
+        var destructiveButton = new Button
+        {
+            Content = "Destructive Diagnostic Test",
+            Background = new SolidColorBrush(Color.Parse("#800000")), // Maroon
+            Foreground = Brushes.White,
+            FontSize = 13,
+            Padding = new Thickness(16, 10),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand)
+        };
+        destructiveButton.Click += OnDestructiveDiagnosticsClick;
+        buttonStack.Children.Add(destructiveButton);
+
+        stack.Children.Add(buttonStack);
+
+        // Warning text for destructive test
+        var warningStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        warningStack.Children.Add(new TextBlock
+        {
+            Text = "\u26A0",
+            Foreground = new SolidColorBrush(Color.Parse("#FFB347")), // Orange warning
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        warningStack.Children.Add(new TextBlock
+        {
+            Text = "Destructive test will deploy and undeploy a test modpack, modifying game files.",
+            Foreground = new SolidColorBrush(Color.Parse("#FFB347")),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        });
+        stack.Children.Add(warningStack);
+
+        border.Child = stack;
+        return border;
+    }
+
+    private async void OnDryRunDiagnosticsClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        try
+        {
+            var parentWindow = TopLevel.GetTopLevel(this) as Window;
+            if (parentWindow == null) return;
+
+            await DiagnosticResultsDialog.ShowDryRunAsync(parentWindow);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsView] Dry run diagnostics error: {ex}");
+        }
+    }
+
+    private async void OnDestructiveDiagnosticsClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        try
+        {
+            var parentWindow = TopLevel.GetTopLevel(this) as Window;
+            if (parentWindow == null) return;
+
+            // Show confirmation dialog first
+            var confirmed = await Controls.ConfirmationDialog.ShowAsync(
+                parentWindow,
+                "Destructive Diagnostic Test",
+                "This test will:\n\n" +
+                "- Create a temporary test modpack\n" +
+                "- Deploy it to your game directory\n" +
+                "- Verify deployment succeeded\n" +
+                "- Undeploy and clean up\n\n" +
+                "This modifies game files. Your existing mods will NOT be affected.\n\n" +
+                "Continue?",
+                "Run Test",
+                isDestructive: true);
+
+            if (!confirmed) return;
+
+            // Get ModpackManager from ViewModel
+            if (_viewModel == null)
+            {
+                ModkitLog.Error("[ToolSettingsView] No ViewModel available for destructive test");
+                return;
+            }
+
+            // Create a new ModpackManager for the test
+            var modpackManager = new ModpackManager();
+
+            await DiagnosticResultsDialog.ShowDestructiveAsync(parentWindow, modpackManager);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ToolSettingsView] Destructive diagnostics error: {ex}");
+        }
     }
 }

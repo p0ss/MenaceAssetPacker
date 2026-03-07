@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Menace.Modkit.App.Controls;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
@@ -350,15 +351,35 @@ public class EventHandlerEditorDialog : Window
     {
         var fieldStack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 4) };
 
-        // Label
-        fieldStack.Children.Add(new TextBlock
+        // Label row with optional info icon
+        var labelRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4
+        };
+
+        var label = new TextBlock
         {
             Text = field.Name,
             Foreground = Brushes.White,
             Opacity = 0.8,
             FontSize = 11,
-            FontWeight = FontWeight.SemiBold
-        });
+            FontWeight = FontWeight.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        labelRow.Children.Add(label);
+
+        // Add info icon if description is available
+        var description = _viewModel.ParentVm.SchemaService?
+            .GetFieldDescription(item.TypeName ?? "", field.Name);
+
+        if (!string.IsNullOrEmpty(description))
+        {
+            var infoButton = new InfoButton { TooltipText = description };
+            labelRow.Children.Add(infoButton);
+        }
+
+        fieldStack.Children.Add(labelRow);
 
         // Get current value
         item.Data.TryGetValue(field.Name, out var currentValue);

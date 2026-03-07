@@ -21,6 +21,9 @@ public class SchemaService
     private readonly Dictionary<string, Dictionary<int, string>> _enumsByType = new(StringComparer.Ordinal);
     private bool _isLoaded;
 
+    // Optional field description service for tooltips
+    private FieldDescriptionService? _descriptionService;
+
     public class FieldMeta
     {
         public string Name { get; set; } = "";
@@ -466,5 +469,40 @@ public class SchemaService
     {
         return _fieldsByTemplate.ContainsKey(elementType) ||
                _fieldsByEmbeddedClass.ContainsKey(elementType);
+    }
+
+    /// <summary>
+    /// Set the field description service for tooltip support.
+    /// </summary>
+    public void SetDescriptionService(FieldDescriptionService service)
+    {
+        _descriptionService = service;
+    }
+
+    /// <summary>
+    /// Get a formatted description for an EventHandler field, suitable for display in tooltips.
+    /// Returns null if no description is available.
+    /// </summary>
+    public string? GetFieldDescription(string typeName, string fieldName)
+    {
+        return _descriptionService?.GetDescriptionText(typeName, fieldName);
+    }
+
+    /// <summary>
+    /// Get a formatted description for a template field (SkillTemplate, ItemTemplate, etc.).
+    /// Returns null if no description is available.
+    /// </summary>
+    public string? GetTemplateFieldDescription(string templateType, string fieldName)
+    {
+        return _descriptionService?.GetTemplateDescriptionText(templateType, fieldName);
+    }
+
+    /// <summary>
+    /// Get a formatted description for an embedded class field (non-handler embedded types).
+    /// Returns null if no description is available.
+    /// </summary>
+    public string? GetEmbeddedClassFieldDescription(string className, string fieldName)
+    {
+        return _descriptionService?.GetEmbeddedClassDescriptionText(className, fieldName);
     }
 }

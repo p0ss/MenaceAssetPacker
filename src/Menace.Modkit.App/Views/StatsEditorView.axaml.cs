@@ -1392,19 +1392,56 @@ public class StatsEditorView : UserControl
     if (isReadOnlyField)
       isEditable = false;
 
-    // Property label (show just sub-field name for dotted keys)
+    // Property label row (with optional info icon)
     var displayName = fieldNamePart;
+    var labelRow = new StackPanel
+    {
+      Orientation = Orientation.Horizontal,
+      Spacing = 4
+    };
+
     var label = new TextBlock
     {
       Text = isReadOnlyField ? $"{displayName} (read-only)" : displayName,
       Foreground = isReadOnlyField ? new SolidColorBrush(Color.Parse("#888888")) : Brushes.White,
       Opacity = isReadOnlyField ? 0.6 : 0.8,
       FontSize = 11,
-      FontWeight = FontWeight.SemiBold
+      FontWeight = FontWeight.SemiBold,
+      VerticalAlignment = VerticalAlignment.Center
     };
     if (isReadOnlyField)
       ToolTip.SetTip(label, "This field is computed from other properties and cannot be edited directly. Edit 'Title', 'ShortName', or 'Description' instead.");
-    fieldStack.Children.Add(label);
+    labelRow.Children.Add(label);
+
+    // Add info icon if description is available
+    if (DataContext is StatsEditorViewModel vm)
+    {
+      if (vm.SelectedNode?.Template is Models.DynamicDataTemplate dyn &&
+          !string.IsNullOrEmpty(dyn.TemplateTypeName))
+      {
+        var description = vm.SchemaService?.GetTemplateFieldDescription(dyn.TemplateTypeName, fieldNamePart);
+        if (!string.IsNullOrEmpty(description))
+        {
+          var infoButton = new InfoButton { TooltipText = description };
+          labelRow.Children.Add(infoButton);
+        }
+        else
+        {
+          // DEBUG: Show a test button to verify InfoButton renders - shows what was looked up
+          var debugButton = new InfoButton { TooltipText = $"[DEBUG] No desc for {dyn.TemplateTypeName}.{fieldNamePart}" };
+          labelRow.Children.Add(debugButton);
+        }
+      }
+      else
+      {
+        // DEBUG: Show why no lookup was attempted
+        var templateType = (vm.SelectedNode?.Template as Models.DynamicDataTemplate)?.TemplateTypeName ?? "(null)";
+        var debugButton = new InfoButton { TooltipText = $"[DEBUG] TemplateTypeName={templateType}" };
+        labelRow.Children.Add(debugButton);
+      }
+    }
+
+    fieldStack.Children.Add(labelRow);
 
     // Handle AssetPropertyValue (unity_asset fields)
     if (value is AssetPropertyValue assetValue)
@@ -2805,6 +2842,52 @@ public class StatsEditorView : UserControl
           }
         };
         fieldStack.Children.Add(comboBox);
+        return fieldStack;
+      }
+    }
+
+    // Enum fields: render as ComboBox with enum values
+    if (isEditable && fieldMeta != null && !string.IsNullOrEmpty(fieldMeta.Type))
+    {
+      var enumValues = vm?.SchemaService?.GetEnumValues(fieldMeta.Type);
+      if (enumValues != null && enumValues.Count > 0)
+      {
+        // Get current value as int
+        int currentValue = 0;
+        if (propValue is long lv) currentValue = (int)lv;
+        else if (propValue is int iv) currentValue = iv;
+        else if (propValue is double dv) currentValue = (int)dv;
+
+        // Create list of enum items sorted by value
+        var enumItems = enumValues.OrderBy(kv => kv.Key).Select(kv => new { Value = kv.Key, Name = kv.Value }).ToList();
+        var selectedItem = enumItems.FirstOrDefault(e => e.Value == currentValue);
+
+        var enumCombo = new ComboBox
+        {
+          ItemsSource = enumItems,
+          SelectedItem = selectedItem,
+          Background = new SolidColorBrush(Color.Parse("#1E1E1E")),
+          Foreground = Brushes.White,
+          FontSize = 12,
+          MinWidth = 200
+        };
+
+        // Display format: "Name (Value)"
+        enumCombo.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<object>((item, _) =>
+        {
+          dynamic d = item;
+          return new TextBlock { Text = $"{d.Name} ({d.Value})" };
+        });
+
+        enumCombo.SelectionChanged += (_, _) =>
+        {
+          if (enumCombo.SelectedItem != null)
+          {
+            dynamic selected = enumCombo.SelectedItem;
+            OnFieldChanged((long)selected.Value);
+          }
+        };
+        fieldStack.Children.Add(enumCombo);
         return fieldStack;
       }
     }

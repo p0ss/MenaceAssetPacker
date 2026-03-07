@@ -417,6 +417,9 @@ public sealed class ModpacksViewModel : ViewModelBase
                 {
                     DeployStatus = $"Undeployed: {SelectedModpack.Name}";
                     RefreshModpacks();
+
+                    // Refresh health state after undeploy
+                    await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
                 }
                 else
                 {
@@ -478,6 +481,9 @@ public sealed class ModpacksViewModel : ViewModelBase
             }
 
             RefreshModpacks();
+
+            // Refresh health state after standalone mod deploy/undeploy
+            await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
         }
         catch (Exception ex)
         {
@@ -504,6 +510,9 @@ public sealed class ModpacksViewModel : ViewModelBase
 
             if (result.Success)
                 RefreshModpacks();
+
+            // Refresh health state after deploy
+            await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
         }
         catch (Exception ex)
         {
@@ -530,6 +539,9 @@ public sealed class ModpacksViewModel : ViewModelBase
 
             if (result.Success)
                 RefreshModpacks();
+
+            // Refresh health state after deploy
+            await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
         }
         catch (Exception ex)
         {
@@ -556,6 +568,9 @@ public sealed class ModpacksViewModel : ViewModelBase
 
             if (result.Success)
                 RefreshModpacks();
+
+            // Refresh health state after undeploy
+            await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
         }
         catch (Exception ex)
         {

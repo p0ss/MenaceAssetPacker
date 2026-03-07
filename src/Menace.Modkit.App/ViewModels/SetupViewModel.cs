@@ -499,10 +499,17 @@ public class SetupViewModel : ViewModelBase
                 SetDownloadState(DownloadState.Success, "Update downloaded! Click 'Restart to Update' to apply.");
                 NeedsSelfUpdateRestart = true;
                 this.RaisePropertyChanged(nameof(NeedsSelfUpdateRestart));
+
+                // Refresh health state after component changes
+                await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
             }
             else if (success && !HasRequiredPending)
             {
                 SetDownloadState(DownloadState.Success, "All components installed!");
+
+                // Refresh health state after successful setup
+                await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
+
                 await Task.Delay(500);
                 SetupComplete?.Invoke();
             }

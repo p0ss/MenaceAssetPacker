@@ -1,0 +1,479 @@
+{
+  "handlers": {
+    "AddSkillAfterMovement": {
+      "Effect": {
+        "offset": "0x58",
+        "type": "SkillTemplate",
+        "description": "Skill template to add to actor after movement finishes. Created via SkillTemplate.CreateSkill and added to SkillContainer.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ApplyAuthorityDisciplineMod": {
+      "DisciplineModMult": {
+        "offset": "0x58",
+        "type": "float",
+        "description": "Multiplier applied to authority discipline modifier. Clamped via FloatExtensions.Clamped, then multiplied by StrategyState discipline mod and added to param+0xA0.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "AttachObject": {
+      "ObjectToAttach": {
+        "offset": "0x58",
+        "type": "GameObject",
+        "description": "GameObject prefab to instantiate and attach to entity. Spawned at spawnpoint position when skill is added.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AttachAtInfantry": {
+        "offset": "0x60",
+        "type": "int",
+        "description": "Index into spawnpoint list for player-controlled entities. Uses Element.GetSpawnpoint with this index.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AttachAt": {
+        "offset": "0x64",
+        "type": "int",
+        "description": "Index into spawnpoint list for enemy entities. Used when IsPlayerControlled returns false.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "AttachTemporaryPrefab": {
+      "Prefab": {
+        "offset": "0x58",
+        "type": "GameObject",
+        "description": "GameObject prefab to spawn on animation event 0xF (AttachTemporaryPrefab). Destroyed on event 0x10 (DetachTemporaryPrefab) or OnAfterUse.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AttachmentSlot": {
+        "offset": "0x60",
+        "type": "VisualAlterationSlot",
+        "description": "Slot enum determining attachment point name via VisualAlterationSlotExtensions.GetAttachmentPointName.",
+        "confidence": 1.0,
+        "source": "ghidra_verified",
+        "enum_values": {
+          "None": -1,
+          "EntireModel": 0,
+          "Animation": 1,
+          "Hand_R": 2,
+          "Hand_R_Special": 3,
+          "Back": 4,
+          "Back_Special": 5,
+          "Mount01": 6,
+          "Mount02": 7,
+          "Mount03": 8,
+          "Turret": 9,
+          "Torso": 10,
+          "Hand_L": 11,
+          "Hand_L_Special": 12,
+          "Last": 12
+        }
+      },
+      "LocalOffset": {
+        "offset": "0x64",
+        "type": "Vector3",
+        "description": "Local position offset applied to spawned prefab transform (12 bytes: x,y,z floats at 0x64, 0x68, 0x6C).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "LocalRotation": {
+        "offset": "0x70",
+        "type": "Vector3",
+        "description": "Euler rotation offset in degrees applied to spawned prefab (12 bytes at 0x70, 0x74, 0x78). Converted via Quaternion.Internal_FromEulerRad.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "LocalScale": {
+        "offset": "0x7C",
+        "type": "Vector3",
+        "description": "Local scale applied to spawned prefab transform (12 bytes at 0x7C, 0x80, 0x84).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "AttackOrder": {
+      "ActionPoints": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Action points to add to target actor's current AP. Target is determined via GetTargetActor from tile entity.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "Effect": {
+        "offset": "0x60",
+        "type": "SkillTemplate",
+        "description": "Skill template to grant target actor if their new AP exceeds max AP. Created and added to target's SkillContainer.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ChangeAttackCost": {
+      "CostPerAttack": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Additive flat bonus to attack cost. Added directly to param+0x44 (attack cost property).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "CostPerAttackMult": {
+        "offset": "0x5C",
+        "type": "float",
+        "description": "Multiplicative modifier to attack cost. Applied via FloatExtensions.AddMult_StackPercentages to param+0x48.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ChangeGrowthPotential": {},
+    "ChangeHeatCapacity": {
+      "HeatPerUse": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Additive change to HeatCapacityHandler.HeatPerUse (handler+0x24). Positive increases heat per use.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "MaxHeat": {
+        "offset": "0x5C",
+        "type": "int",
+        "description": "Additive change to HeatCapacityHandler.MaxHeat (handler+0x28). Result clamped to minimum 0.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "HeatDissipationPerTurn": {
+        "offset": "0x60",
+        "type": "int",
+        "description": "Additive change to HeatCapacityHandler.CooldownPerRound (handler+0x2C).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "Cooldown": {
+      "RoundsToCoolDown": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Number of rounds skill is unusable after use. Stored to handler+0x20 (remainingCooldown) on use.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AIOnly": {
+        "offset": "0x5C",
+        "type": "bool",
+        "description": "If true, cooldown only applies when user is not player-controlled. Checked via Entity.IsPlayerControlled.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "DisableByFlag": {
+      "Flag": {
+        "offset": "0x58",
+        "type": "uint",
+        "description": "Bitmask of EntityFlags. Skill is disabled when (EntityFlags & FlagMask) == FlagMask (all flagged bits set).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "GainActionPoints": {
+      "ActionPoints": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Action points to grant actor on skill added. Applied via Actor.SetActionPointsUnsafe, capped at EntityProperties max if Force is false.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AlwaysIncreaseMaxActionPoints": {
+        "offset": "0x5C",
+        "type": "bool",
+        "description": "If true, bypasses max AP cap and grants full Amount. If false, gains capped to not exceed max AP.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "GrantBonusTurn": {
+      "ActionPointsAvailable": {
+        "offset": "0x58",
+        "type": "float",
+        "description": "Multiplier applied to current AP when granting bonus turn. New AP = currentAP * multiplier. Typically 1.0 for full AP restoration.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "Hitchance": {
+      "AccuracyBonus": {
+        "offset": "0x58",
+        "type": "float",
+        "description": "Additive accuracy bonus applied to EntityProperties+0x68 (AccuracyBonus). Typical range 0-100.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AccuracyMult": {
+        "offset": "0x5C",
+        "type": "float",
+        "description": "Multiplicative accuracy modifier applied via AddMult to EntityProperties+0x6C (AccuracyMult). 1.0 = no change.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AccuracyDropoff": {
+        "offset": "0x60",
+        "type": "float",
+        "description": "Additive evasion bonus applied to EntityProperties+0x70. Increases chance to evade attacks.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "AccuracyDropoffMult": {
+        "offset": "0x64",
+        "type": "float",
+        "description": "Multiplicative evasion modifier applied via AddMult to EntityProperties+0x74. 1.0 = no change.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "LimitUsability": {
+      "OnlyUsableIfActorHasSkill": {
+        "offset": "0x58",
+        "type": "List<SkillTemplate>",
+        "description": "Skills that MUST exist on entity for this ability to be usable. Empty list = no requirement.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "NotUsableIfActorHasSkill": {
+        "offset": "0x60",
+        "type": "List<SkillTemplate>",
+        "description": "Skills that BLOCK usability when present on entity. Having ANY blocks the skill.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "HiddenIfActorHasSkill": {
+        "offset": "0x68",
+        "type": "List<SkillTemplate>",
+        "description": "Skills required for ability to be VISIBLE. Hidden if entity lacks any required skill.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "NotHiddenIfActorHasSkill": {
+        "offset": "0x70",
+        "type": "List<SkillTemplate>",
+        "description": "Skills that HIDE the ability when present. Having ANY causes IsHidden to return true.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "LimitedPassiveUses": {
+      "MaxUses": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Maximum times this passive can trigger per mission. Default constructor sets to 3. Copied to runtime RemainingUses (skill+0xA8) at mission start.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ModularVehicleSkill": {
+      "RequiredWeaponCount": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Weapon slot configuration: 0 = requires exactly 1 weapon equipped, 1 = requires exactly 2 weapons equipped. Controls skill.IsEnabled based on equipped count.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "MoveAndSelfDestroy": {},
+    "RecallTarget": {
+      "UseLastTargetOfSkill": {
+        "offset": "0x58",
+        "type": "SkillTemplate",
+        "description": "Skill template to find in container. Retrieved skill's lastTargetTile (skill+0x68) used as override target tile.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ReduceArmor": {
+      "ReductionPerStack": {
+        "offset": "0x58",
+        "type": "float",
+        "description": "Armor reduction per stack. Total reduction = stackCount * perStackReduction, capped at MaxReduction.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "MaxReduction": {
+        "offset": "0x5C",
+        "type": "float",
+        "description": "Maximum total armor reduction. Applied via AddMult_StackPercentages to param+0x28 (armor stat) as (1.0 - cappedReduction).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "RefillSquaddies": {
+      "Animation": {
+        "offset": "0x58",
+        "type": "AnimationSequence",
+        "description": "Animation sequence to play at tile position when squaddies successfully refilled. Started via AnimationSequenceManager.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "RemoveDefect": {
+      "RequiredType": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Skill type enum for defect removal. Used with Skill.IsSkillType to filter which defects can be removed. Handler finds highest-scoring matching skill.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ReportAmmoToAnimator": {
+      "Parameter": {
+        "offset": "0x58",
+        "type": "AnimatorParameterNameTemplate",
+        "description": "Template for animator parameter. Hash retrieved via GetAnimatorHash, set as int with skill's CurrentAmmo (skill+0xA8).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ReturnOfServe": {
+      "ConsumedOnTrigger": {
+        "offset": "0x58",
+        "type": "bool",
+        "description": "If true, removes parent skill after intercepting and returning attack. Checked in OnAfterSkillUse before counter-attack.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "Scanner": {
+      "Range": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Maximum tile distance for scanning. Actors within range have blips spawned and are marked detected by faction.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "Scanline": {
+        "offset": "0x68",
+        "type": "GameObject",
+        "description": "Scanline visual effect prefab instantiated at target position. Duration controlled by ScanlineDuration.",
+        "confidence": 0.95,
+        "source": "ghidra_verified"
+      },
+      "ScanSpeed": {
+        "offset": "0x70",
+        "type": "float",
+        "description": "Duration for scanline effect. Scanline component speed set to 1.0 / duration.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "DetectsInfantry": {
+        "offset": "0x74",
+        "type": "bool",
+        "description": "If true, also detects mounted/embedded actors. Checked before processing actor iteration.",
+        "confidence": 0.95,
+        "source": "ghidra_verified"
+      },
+      "DetectsVehicles": {
+        "offset": "0x75",
+        "type": "bool",
+        "description": "If true, detects player-controlled units. If false, only detects non-player units.",
+        "confidence": 0.95,
+        "source": "ghidra_verified"
+      }
+    },
+    "SetEntityFlag": {
+      "Flag": {
+        "offset": "0x58",
+        "type": "EntityFlags",
+        "description": "Flags to set on entity. Special handling: 0x800 (FLAG_SHOW_HUD) triggers StructureHUD.Show for Structure entities.",
+        "confidence": 1.0,
+        "source": "ghidra_verified",
+        "enum_values": {
+          "None": 0,
+          "Stunned": 1,
+          "Unused": 2,
+          "Rooted": 4,
+          "HeavyWeaponsAllowed": 8,
+          "ImmuneToDamage": 16,
+          "ImmuneToSuppression": 32,
+          "ImmuneToIndirectSuppression": 64,
+          "ImmuneToMorale": 128,
+          "IrrelevantToMorale": 256,
+          "IgnoreDeploymentRequirements": 512,
+          "ImmuneToSuppressionFromElementLost": 1024,
+          "DesignatedTarget": 2048,
+          "IgnoreSuppressedAPLoss": 4096,
+          "ImmuneToLightEffect": 8192,
+          "RootedByStance": 16384,
+          "IgnoreArmorMovementCosts": 32768
+        }
+      }
+    },
+    "ShowHUDIcon": {
+      "IconToShow": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Icon type enum. Value 1 = TargetPainted icon, controls visibility via UnitHUD.SetTargetPaintedIconVisibility.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ShowIsolatedIcon": {
+      "Radius": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "Threshold for isolated icon display. Set via UnitHUD.SetIsolatedThreshold at mission start. Default value 2 (from constructor).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ShowUnitHUDIcon": {
+      "Icon": {
+        "offset": "0x58",
+        "type": "Sprite",
+        "description": "Sprite to display as skill condition icon on UnitHUD via SetSkillConditionIcon.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "Target": {
+        "offset": "0x60",
+        "type": "int",
+        "description": "Target selection mode: 0 = SingleTarget (checks conditions on specific actor), 1 = AllEnemies (iterates all actors via ForEachActor).",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      },
+      "Conditions": {
+        "offset": "0x68",
+        "type": "ITacticalCondition[]",
+        "description": "Array of conditions that must pass for icon to display. Evaluated via CheckConditions before showing icon.",
+        "confidence": 0.95,
+        "source": "ghidra_verified"
+      }
+    },
+    "SpawnPrefab": {
+      "Prefab": {
+        "offset": "0x58",
+        "type": "GameObject",
+        "description": "Prefab to instantiate at target tile world position on skill use. Spawned with identity rotation.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "ToggleSkills": {
+      "ActiveSkills": {
+        "offset": "0x58",
+        "type": "SkillTemplate[]",
+        "description": "Array of skill templates to toggle. Only skill at current index (handler+0x20) has IsEnabled=true, all others false.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "VehicleMovement": {
+      "Concealment": {
+        "offset": "0x58",
+        "type": "int",
+        "description": "AP cost per tile of vehicle movement. Added to Actor.tilesMovedThisTurn (Actor+0xD4) when movement flag (handler+0x20) is set.",
+        "confidence": 1.0,
+        "source": "ghidra_verified"
+      }
+    },
+    "VerifyByCondition": {}
+  }
+}

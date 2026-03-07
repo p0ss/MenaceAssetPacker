@@ -103,8 +103,9 @@ public sealed class ComponentManager : IDisposable
                     ? ComponentState.UpToDate
                     : ComponentState.UpdateAvailable;
             }
-            // Check if installed (downloaded to cache)
-            else if (localManifest.Components.TryGetValue(name, out var installed))
+            // Check if installed (downloaded to cache) - verify path actually exists
+            else if (localManifest.Components.TryGetValue(name, out var installed) &&
+                     VerifyInstalledPathExists(installed.InstallPath))
             {
                 status.InstalledVersion = installed.Version;
                 status.InstalledAt = installed.InstalledAt;
@@ -350,11 +351,14 @@ public sealed class ComponentManager : IDisposable
                     return false;
                 }
 
+                // Compute file hash for provenance tracking (always, not just when verifying)
+                progress?.Report(new DownloadProgress("Computing hash...", 92, 0));
+                var actualHash = await ComputeFileHashAsync(tempFile, ct);
+
                 // Verify checksum if provided
                 if (!string.IsNullOrEmpty(downloadInfo.Sha256))
                 {
-                    progress?.Report(new DownloadProgress("Verifying...", 92, 0));
-                    var actualHash = await ComputeFileHashAsync(tempFile, ct);
+                    progress?.Report(new DownloadProgress("Verifying...", 93, 0));
                     if (!string.Equals(actualHash, downloadInfo.Sha256, StringComparison.OrdinalIgnoreCase))
                     {
                         progress?.Report(new DownloadProgress("Checksum mismatch!", 0, 0));
@@ -389,9 +393,15 @@ public sealed class ComponentManager : IDisposable
                     SetExecutablePermissions(componentPath);
                 }
 
-                // Update local manifest
+                // Update local manifest with provenance data
                 progress?.Report(new DownloadProgress("Updating manifest...", 98, 0));
-                UpdateLocalManifest(componentName, component.Version, component.InstallPath);
+                UpdateLocalManifest(
+                    componentName,
+                    component.Version,
+                    component.InstallPath,
+                    sourceUrl: downloadInfo.Url,
+                    fileHash: actualHash,
+                    downloadedBy: ModkitVersion.AppFull);
 
                 progress?.Report(new DownloadProgress("Complete!", 100, 0));
                 return true;
@@ -573,6 +583,203 @@ public sealed class ComponentManager : IDisposable
         return GetBundledPath("dotnet-refs");
     }
 
+    // --- Legacy Migration & Provenance ---
+
+    /// <summary>
+    /// Migrate legacy component installations to the manifest.
+    /// Discovers components that exist on disk but aren't registered in the manifest.
+    /// </summary>
+    public void MigrateLegacyComponents()
+    {
+        var manifest = GetLocalManifest();
+        var bundledManifest = GetBundledManifest();
+        var migratedCount = 0;
+
+        // Check for bundled components that aren't in the manifest
+        var legacyChecks = new Dictionary<string, Func<string?>>
+        {
+            ["MelonLoader"] = () => GetBundledPath("MelonLoader"),
+            ["DataExtractor"] = () => GetBundledPath("DataExtractor"),
+            ["ModpackLoader"] = () => GetBundledPath("ModpackLoader"),
+            ["DotNetRefs"] = () => GetBundledPath("dotnet-refs"),
+            ["AssetRipper"] = () => GetBundledAssetRipperPath()
+        };
+
+        foreach (var (componentName, findPath) in legacyChecks)
+        {
+            if (manifest.Components.ContainsKey(componentName))
+                continue;
+
+            var legacyPath = findPath();
+            if (legacyPath == null || (!Directory.Exists(legacyPath) && !File.Exists(legacyPath)))
+                continue;
+
+            var version = bundledManifest.Components.TryGetValue(componentName, out var bundledInfo)
+                ? bundledInfo.Version
+                : "unknown";
+
+            manifest.Components[componentName] = new InstalledComponent
+            {
+                Version = version,
+                InstallPath = legacyPath,
+                InstalledAt = DateTime.UtcNow,
+                MigratedFromLegacy = true,
+                Source = "bundled"
+            };
+
+            ModkitLog.Info($"[ComponentManager] Migrated legacy component '{componentName}' (version: {version})");
+            migratedCount++;
+        }
+
+        // Also check cache directory for downloaded components
+        // Map component names to possible cache directory names (including installPath variants)
+        var componentPathVariants = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "MelonLoader", new[] { "MelonLoader" } },
+            { "DataExtractor", new[] { "DataExtractor" } },
+            { "ModpackLoader", new[] { "ModpackLoader" } },
+            { "DotNetRefs", new[] { "DotNetRefs", "dotnet-refs" } }, // versions.json uses dotnet-refs as installPath
+            { "AssetRipper", new[] { "AssetRipper" } }
+        };
+
+        if (Directory.Exists(_componentsCachePath))
+        {
+            foreach (var (componentName, pathVariants) in componentPathVariants)
+            {
+                if (manifest.Components.ContainsKey(componentName))
+                    continue;
+
+                // Try each path variant
+                string? foundPath = null;
+                foreach (var variant in pathVariants)
+                {
+                    var cachePath = Path.Combine(_componentsCachePath, variant);
+                    if (Directory.Exists(cachePath))
+                    {
+                        foundPath = cachePath;
+                        break;
+                    }
+                }
+
+                if (foundPath == null)
+                    continue;
+
+                var version = bundledManifest.Components.TryGetValue(componentName, out var bundledInfo)
+                    ? bundledInfo.Version
+                    : "unknown";
+
+                // Use the actual directory name as install path
+                var installPath = Path.GetFileName(foundPath);
+                manifest.Components[componentName] = new InstalledComponent
+                {
+                    Version = version,
+                    InstallPath = installPath,
+                    InstalledAt = Directory.GetCreationTimeUtc(foundPath),
+                    MigratedFromLegacy = true,
+                    Source = "legacy"
+                };
+
+                ModkitLog.Info($"[ComponentManager] Migrated cached component '{componentName}' from '{installPath}' (version: {version})");
+                migratedCount++;
+            }
+        }
+
+        if (migratedCount > 0)
+        {
+            SaveLocalManifest(manifest);
+            ModkitLog.Info($"[ComponentManager] Migrated {migratedCount} legacy component(s) to manifest");
+        }
+    }
+
+    private void SaveLocalManifest(LocalManifest manifest)
+    {
+        Directory.CreateDirectory(_componentsCachePath);
+        var path = Path.Combine(_componentsCachePath, "manifest.json");
+        var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    /// <summary>
+    /// Validate component provenance on startup.
+    /// </summary>
+    public async Task<List<ProvenanceValidationResult>> ValidateProvenanceAsync(CancellationToken ct = default)
+    {
+        var results = new List<ProvenanceValidationResult>();
+        var localManifest = GetLocalManifest();
+
+        await Task.Yield(); // Make async
+
+        foreach (var (name, installed) in localManifest.Components)
+        {
+            var result = new ProvenanceValidationResult
+            {
+                ComponentName = name,
+                Version = installed.Version,
+                Source = installed.Source,
+                HasProvenance = installed.HasProvenance
+            };
+
+            // First check: verify the install path actually exists
+            var pathExists = VerifyInstalledPathExists(installed.InstallPath);
+            if (!pathExists)
+            {
+                result.Status = ProvenanceStatus.PathMissing;
+                result.Message = $"Install path does not exist: {installed.InstallPath}";
+                results.Add(result);
+                continue;
+            }
+
+            if (!installed.HasProvenance)
+            {
+                if (installed.Source == "legacy" || installed.MigratedFromLegacy)
+                {
+                    result.Status = ProvenanceStatus.Legacy;
+                    result.Message = "Legacy installation without provenance tracking";
+                }
+                else if (installed.Source == "bundled")
+                {
+                    result.Status = ProvenanceStatus.Bundled;
+                    result.Message = "Bundled component (no archive hash)";
+                }
+                else
+                {
+                    result.Status = ProvenanceStatus.MissingData;
+                    result.Message = "Missing provenance data";
+                }
+            }
+            else
+            {
+                // Has provenance and path exists - validated
+                result.Status = ProvenanceStatus.Valid;
+                var host = "unknown";
+                try { host = new Uri(installed.SourceUrl).Host; } catch { }
+                result.Message = $"Downloaded from {host}, hash: {installed.FileHash[..Math.Min(12, installed.FileHash.Length)]}...";
+            }
+
+            results.Add(result);
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Get a summary of component provenance status.
+    /// </summary>
+    public ProvenanceSummary GetProvenanceSummary()
+    {
+        var localManifest = GetLocalManifest();
+        var components = localManifest.Components.Values.ToList();
+
+        return new ProvenanceSummary
+        {
+            TotalComponents = components.Count,
+            WithProvenance = components.Count(c => c.HasProvenance),
+            Downloaded = components.Count(c => c.Source == "downloaded"),
+            Bundled = components.Count(c => c.Source == "bundled"),
+            Legacy = components.Count(c => c.Source == "legacy" || c.MigratedFromLegacy)
+        };
+    }
+
     // --- Private helpers ---
 
     private async Task<VersionsManifest> GetVersionsManifestAsync(bool forceRemote = false)
@@ -688,7 +895,8 @@ public sealed class ComponentManager : IDisposable
         }
     }
 
-    private void UpdateLocalManifest(string componentName, string version, string installPath)
+    private void UpdateLocalManifest(string componentName, string version, string installPath,
+        string? sourceUrl = null, string? fileHash = null, string? downloadedBy = null)
     {
         Directory.CreateDirectory(_componentsCachePath);
         var manifest = GetLocalManifest();
@@ -697,12 +905,34 @@ public sealed class ComponentManager : IDisposable
         {
             Version = version,
             InstallPath = installPath,
-            InstalledAt = DateTime.UtcNow
+            InstalledAt = DateTime.UtcNow,
+            Source = string.IsNullOrEmpty(sourceUrl) ? "unknown" : "downloaded",
+            SourceUrl = sourceUrl ?? "",
+            DownloadedAt = DateTime.UtcNow,
+            FileHash = fileHash ?? "",
+            DownloadedBy = downloadedBy ?? ModkitVersion.AppFull
         };
 
         var path = Path.Combine(_componentsCachePath, "manifest.json");
         var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
+    }
+
+    /// <summary>
+    /// Verify that an installed component's path actually exists.
+    /// Returns false for null/empty paths or non-existent paths.
+    /// </summary>
+    private bool VerifyInstalledPathExists(string? installPath)
+    {
+        if (string.IsNullOrEmpty(installPath))
+            return false;
+
+        // Resolve relative paths against components cache
+        var fullPath = Path.IsPathRooted(installPath)
+            ? installPath
+            : Path.Combine(_componentsCachePath, installPath);
+
+        return Directory.Exists(fullPath) || File.Exists(fullPath);
     }
 
     private DownloadInfo? GetDownloadInfo(string componentName, ComponentInfo component)
@@ -1302,6 +1532,16 @@ public class InstalledComponent
     public string Version { get; set; } = "";
     public string InstallPath { get; set; } = "";
     public DateTime InstalledAt { get; set; }
+
+    // Provenance tracking fields
+    public string Source { get; set; } = ""; // "downloaded", "bundled", "legacy"
+    public string SourceUrl { get; set; } = "";
+    public DateTime DownloadedAt { get; set; }
+    public string FileHash { get; set; } = "";
+    public string DownloadedBy { get; set; } = "";
+    public bool MigratedFromLegacy { get; set; }
+
+    public bool HasProvenance => !string.IsNullOrEmpty(FileHash) && !string.IsNullOrEmpty(SourceUrl);
 }
 
 // --- Status Models ---
@@ -1366,4 +1606,38 @@ public record MultiDownloadProgress(
     public int OverallPercent => TotalComponents > 0
         ? (CompletedComponents * 100 + CurrentPercent) / TotalComponents
         : 0;
+}
+
+// --- Provenance Models ---
+
+public enum ProvenanceStatus
+{
+    Valid,
+    Bundled,
+    Legacy,
+    MissingData,
+    HashMismatch,
+    PathMissing
+}
+
+public class ProvenanceValidationResult
+{
+    public string ComponentName { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string Source { get; set; } = "";
+    public bool HasProvenance { get; set; }
+    public ProvenanceStatus Status { get; set; }
+    public string Message { get; set; } = "";
+}
+
+public class ProvenanceSummary
+{
+    public int TotalComponents { get; set; }
+    public int WithProvenance { get; set; }
+    public int Downloaded { get; set; }
+    public int Bundled { get; set; }
+    public int Legacy { get; set; }
+
+    public bool HasLegacyComponents => Legacy > 0;
+    public int MissingProvenance => Downloaded - WithProvenance;
 }

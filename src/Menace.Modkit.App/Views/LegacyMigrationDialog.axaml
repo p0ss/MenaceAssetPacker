@@ -1,0 +1,145 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Menace.Modkit.App.Views.LegacyMigrationDialog">
+  <Border Background="{StaticResource BrushBgSurface}"
+          BorderBrush="{StaticResource BrushBorder}"
+          BorderThickness="1"
+          CornerRadius="{StaticResource RadiusMd}"
+          Padding="32"
+          MaxWidth="560"
+          MinWidth="480">
+    <StackPanel Spacing="20">
+      <!-- Header -->
+      <StackPanel Spacing="8">
+        <TextBlock x:Name="TitleText"
+                   Text="Legacy Installation Detected"
+                   Classes="h1"
+                   Margin="0"/>
+        <TextBlock x:Name="SubtitleText"
+                   Text="Your installation needs to be updated to the new format."
+                   Classes="body"
+                   Foreground="{StaticResource BrushTextSecondary}"
+                   TextWrapping="Wrap"/>
+      </StackPanel>
+
+      <!-- Confidence Indicator -->
+      <Border x:Name="ConfidenceBorder"
+              Classes="card"
+              Padding="16">
+        <StackPanel Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock x:Name="ConfidenceIcon"
+                       FontSize="16"
+                       VerticalAlignment="Center"/>
+            <TextBlock x:Name="ConfidenceText"
+                       Classes="body"
+                       FontWeight="SemiBold"/>
+          </StackPanel>
+          <TextBlock x:Name="ConfidenceDescription"
+                     Classes="small"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Detected Issues List -->
+      <StackPanel x:Name="IssuesPanel" Spacing="8">
+        <TextBlock Text="DETECTED ISSUES"
+                   Classes="label"
+                   Foreground="{StaticResource BrushTextMuted}"
+                   FontSize="11"
+                   LetterSpacing="1"/>
+        <Border Background="{StaticResource BrushBgElevated}"
+                CornerRadius="{StaticResource RadiusSm}"
+                Padding="12">
+          <ItemsControl x:Name="IssuesList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4">
+                  <TextBlock Text="*"
+                             Foreground="{StaticResource BrushWarning}"
+                             FontSize="12"/>
+                  <TextBlock Text="{Binding}"
+                             Classes="small"
+                             TextWrapping="Wrap"
+                             MaxWidth="420"/>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Border>
+      </StackPanel>
+
+      <!-- Progress Section (hidden by default) -->
+      <Border x:Name="ProgressPanel"
+              IsVisible="False"
+              Background="{StaticResource BrushPrimaryMuted}"
+              CornerRadius="{StaticResource RadiusSm}"
+              Padding="16">
+        <StackPanel Spacing="8">
+          <ProgressBar x:Name="ProgressBar"
+                       IsIndeterminate="True"
+                       Height="4"/>
+          <TextBlock x:Name="ProgressText"
+                     Text="Processing..."
+                     Classes="small"
+                     Foreground="{StaticResource BrushTextSecondary}"
+                     HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Result Section (hidden by default) -->
+      <Border x:Name="ResultPanel"
+              IsVisible="False"
+              CornerRadius="{StaticResource RadiusSm}"
+              Padding="16">
+        <StackPanel Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock x:Name="ResultIcon" FontSize="18"/>
+            <TextBlock x:Name="ResultMessage"
+                       Classes="body"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
+          <ItemsControl x:Name="ResultDetails">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding}"
+                           Classes="small"
+                           Foreground="{StaticResource BrushTextSecondary}"
+                           Margin="26,2,0,0"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <!-- Action Buttons -->
+      <Grid x:Name="ButtonPanel" ColumnDefinitions="*,Auto,Auto" Margin="0,8,0,0">
+        <!-- Spacer -->
+        <Panel Grid.Column="0"/>
+
+        <!-- Clean Reset Button -->
+        <Button x:Name="CleanResetButton"
+                Grid.Column="1"
+                Content="Clean Reset"
+                Classes="destructive"
+                Margin="0,0,12,0"
+                ToolTip.Tip="Remove all mods and start fresh. Recommended when migration confidence is low."/>
+
+        <!-- Migrate Button -->
+        <Button x:Name="MigrateButton"
+                Grid.Column="2"
+                Content="Migrate Existing"
+                Classes="primary"
+                ToolTip.Tip="Attempt to fix issues while preserving your existing mods."/>
+      </Grid>
+
+      <!-- Continue Button (hidden until operation completes) -->
+      <Button x:Name="ContinueButton"
+              Content="Continue"
+              Classes="primary"
+              HorizontalAlignment="Right"
+              IsVisible="False"/>
+    </StackPanel>
+  </Border>
+</UserControl>

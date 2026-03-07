@@ -102,6 +102,29 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
             schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "schema.json");
         _schemaService.LoadSchema(schemaPath);
 
+        // Load field descriptions for EventHandler tooltips
+        var knowledgePath = Path.Combine(AppContext.BaseDirectory, "eventhandler_knowledge.json");
+        if (!File.Exists(knowledgePath))
+            knowledgePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "eventhandler_knowledge.json");
+        var descService = new FieldDescriptionService();
+
+        // Load EventHandler descriptions
+        if (File.Exists(knowledgePath))
+        {
+            descService.LoadKnowledgeBase(knowledgePath);
+        }
+
+        // Load template field descriptions
+        var templateKnowledgePath = Path.Combine(AppContext.BaseDirectory, "template_knowledge.json");
+        if (!File.Exists(templateKnowledgePath))
+            templateKnowledgePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "template_knowledge.json");
+        if (File.Exists(templateKnowledgePath))
+        {
+            descService.LoadTemplateKnowledgeBase(templateKnowledgePath);
+        }
+
+        _schemaService.SetDescriptionService(descService);
+
         // Build or load reference graph for "What Links Here" functionality
         _referenceGraphService.LoadOrBuild(_modpackManager.VanillaDataPath, _schemaService);
 
@@ -2804,7 +2827,10 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         // Add root-level nodes to TreeNodes and save for later restoration (sorted alphabetically)
         _topLevelNodes = rootDict.Values.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ToList();
         foreach (var node in _topLevelNodes)
+        {
+            SortChildrenRecursively(node);
             TreeNodes.Add(node);
+        }
 
         // Build search index
         BuildSearchIndex(TreeNodes);
@@ -2812,6 +2838,27 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
         // Build flat list of ALL nodes for expand/collapse operations
         _allTreeNodes = FlattenTree(TreeNodes);
         PopulateSectionFilters();
+    }
+
+    /// <summary>
+    /// Recursively sorts all children of a node alphabetically (folders first, then items).
+    /// </summary>
+    private static void SortChildrenRecursively(TreeNodeViewModel node)
+    {
+        if (node.Children.Count == 0) return;
+
+        // Sort children: folders (IsCategory) first, then alphabetically by name
+        var sorted = node.Children
+            .OrderByDescending(c => c.IsCategory) // folders first
+            .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        node.Children.Clear();
+        foreach (var child in sorted)
+        {
+            node.Children.Add(child);
+            SortChildrenRecursively(child);
+        }
     }
 
     /// <summary>

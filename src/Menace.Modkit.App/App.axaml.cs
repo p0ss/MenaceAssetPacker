@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Menace.Modkit.App.Models;
 using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 using Menace.Modkit.App.Views;
@@ -52,7 +53,11 @@ public class App : Application
             }
             else
             {
-                // Go directly to main app
+                // Check for legacy installation before showing main window
+                // Keep showing the dialog until legacy state is resolved
+                await EnforceLegacyMigrationAsync();
+
+                // Go to main app
                 ModkitLog.Info("[App] Opening main window");
                 ShowMainWindow();
             }
@@ -63,11 +68,133 @@ public class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
+    /// <summary>
+    /// Check for legacy installation patterns and show migration dialog if needed.
+    /// </summary>
+    /// <returns>True if legacy install was handled (migrated or reset), false otherwise.</returns>
+    private async Task<bool> CheckAndHandleLegacyInstallAsync()
+    {
+        try
+        {
+            var gamePath = AppSettings.Instance.GameInstallPath;
+            if (string.IsNullOrEmpty(gamePath))
+            {
+                ModkitLog.Info("[App] No game path configured, skipping legacy check");
+                return false;
+            }
+
+            ModkitLog.Info("[App] Checking for legacy installation patterns...");
+
+            // Get health status to check for legacy install
+            var healthStatus = await InstallHealthService.Instance.GetCurrentHealthAsync(forceRefresh: true);
+
+            if (healthStatus.State != InstallHealthState.LegacyInstallDetected)
+            {
+                ModkitLog.Info("[App] No legacy installation detected");
+                return false;
+            }
+
+            ModkitLog.Info("[App] Legacy installation detected, showing migration dialog");
+
+            // Run detection again to get full details
+            var detector = new LegacyInstallDetector();
+            var detectionResult = detector.Detect(gamePath);
+
+            // Create a temporary window to host the dialog
+            var hostWindow = new Window
+            {
+                Title = "Menace Modkit",
+                Width = 600,
+                Height = 500,
+                Background = new SolidColorBrush(Color.Parse("#0A0A0A")),
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                ShowInTaskbar = true
+            };
+
+            // Set app icon
+            try
+            {
+                var iconUri = new Uri("avares://Menace.Modkit.App/Assets/icon.jpg");
+                hostWindow.Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(iconUri));
+            }
+            catch { /* Icon loading failed */ }
+
+            if (_desktop != null)
+            {
+                _desktop.MainWindow = hostWindow;
+                hostWindow.Show();
+            }
+
+            // Show the migration dialog
+            var result = await LegacyMigrationDialog.ShowAsync(hostWindow, detectionResult, gamePath);
+
+            // Close the host window
+            hostWindow.Close();
+
+            ModkitLog.Info($"[App] Legacy migration dialog result: {result}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[App] Error checking for legacy install: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Enforce legacy migration - keep showing the dialog until the user resolves legacy state.
+    /// This prevents proceeding to the main app with unresolved legacy installation.
+    /// If legacy state cannot be resolved after max attempts, the app exits.
+    /// </summary>
+    private async Task EnforceLegacyMigrationAsync()
+    {
+        const int maxAttempts = 10; // Prevent infinite loops in case of bugs
+        int attempts = 0;
+
+        while (attempts < maxAttempts)
+        {
+            attempts++;
+            var handled = await CheckAndHandleLegacyInstallAsync();
+
+            if (handled)
+            {
+                ModkitLog.Info("[App] Legacy migration completed successfully");
+                return;
+            }
+
+            // Check if legacy state still exists
+            var healthStatus = await InstallHealthService.Instance.GetCurrentHealthAsync(forceRefresh: true);
+            if (healthStatus.State != InstallHealthState.LegacyInstallDetected)
+            {
+                ModkitLog.Info("[App] No legacy state detected, proceeding");
+                return;
+            }
+
+            // Legacy state still exists but user cancelled - show dialog again
+            ModkitLog.Warn($"[App] Legacy migration cancelled by user (attempt {attempts}), showing dialog again");
+        }
+
+        // Exceeded max attempts - fail closed, do NOT proceed with unresolved legacy state
+        ModkitLog.Error($"[App] Legacy migration not resolved after {maxAttempts} attempts. " +
+            "This may indicate a bug. Please report this issue. Exiting.");
+
+        // Exit the application - we cannot safely proceed with unresolved legacy state
+        if (_desktop != null)
+        {
+            _desktop.Shutdown(1);
+        }
+        Environment.Exit(1);
+    }
+
     private async Task<bool> CheckIfSetupNeededAsync()
     {
         try
         {
             ModkitLog.Info("[App] Checking setup status...");
+
+            // Migrate legacy bundled components to the manifest
+            // This ensures existing installs are tracked before checking setup status
+            ComponentManager.Instance.MigrateLegacyComponents();
 
             var needsSetupTask = ComponentManager.Instance.NeedsSetupAsync();
             var completed = await Task.WhenAny(needsSetupTask, Task.Delay(TimeSpan.FromSeconds(15)));
@@ -81,17 +208,13 @@ public class App : Application
             var needsSetup = await needsSetupTask;
             ModkitLog.Info($"[App] Setup status check complete: needsSetup={needsSetup}");
 
-            // TEMPORARY: Bypass setup to test EventHandler editor
-            ModkitLog.Warn("[App] BYPASSING setup check for testing");
-            return false; // Force skip setup
-
-            //return needsSetup;
+            return needsSetup;
         }
         catch (Exception ex)
         {
-            ModkitLog.Warn($"[App] Failed to check setup status: {ex.Message}");
-            // On error, continue to main app (bundled components may be available)
-            return false;
+            ModkitLog.Error($"[App] Failed to check setup status: {ex.Message}");
+            // On error, require setup - fail closed to prevent incomplete installs from proceeding
+            return true;
         }
     }
 
@@ -115,14 +238,18 @@ public class App : Application
         catch { /* Icon loading failed */ }
 
         var setupViewModel = new SetupViewModel();
-        setupViewModel.SetupComplete += () =>
+        setupViewModel.SetupComplete += async () =>
         {
             setupWindow.Close();
+            // Check for legacy install after setup completes - enforce resolution
+            await EnforceLegacyMigrationAsync();
             ShowMainWindow();
         };
-        setupViewModel.SetupSkipped += () =>
+        setupViewModel.SetupSkipped += async () =>
         {
             setupWindow.Close();
+            // Check for legacy install even if setup was skipped - enforce resolution
+            await EnforceLegacyMigrationAsync();
             ShowMainWindow();
         };
 
@@ -164,6 +291,42 @@ public class App : Application
                 // Start HTTP server for UI automation/testing
                 UIHttpServer.Instance.Start(viewModel);
             }
+
+            // Run provenance validation in background (non-blocking)
+            _ = ValidateComponentProvenanceAsync();
+        }
+    }
+
+    /// <summary>
+    /// Validate component provenance on startup (runs in background).
+    /// Logs warnings for legacy components without provenance tracking.
+    /// </summary>
+    private async Task ValidateComponentProvenanceAsync()
+    {
+        try
+        {
+            // Small delay to not interfere with startup
+            await Task.Delay(2000);
+
+            var results = await ComponentManager.Instance.ValidateProvenanceAsync();
+
+            // Log summary
+            var summary = ComponentManager.Instance.GetProvenanceSummary();
+            if (summary.TotalComponents > 0)
+            {
+                if (summary.HasLegacyComponents)
+                {
+                    ModkitLog.Warn($"[App] {summary.Legacy} component(s) have legacy installation without provenance tracking");
+                }
+                if (summary.MissingProvenance > 0)
+                {
+                    ModkitLog.Warn($"[App] {summary.MissingProvenance} downloaded component(s) are missing provenance data");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[App] Error validating component provenance: {ex.Message}");
         }
     }
 

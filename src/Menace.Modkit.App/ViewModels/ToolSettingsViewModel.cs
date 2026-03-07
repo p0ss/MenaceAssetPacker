@@ -634,6 +634,9 @@ public sealed class ToolSettingsViewModel : ViewModelBase
                         ExtractionStatus = "✓ Extraction complete, mods redeployed";
                         ValidateExtractedData();
                         UpdateCacheStatus();
+
+                        // Refresh health state after extraction
+                        await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
                     }
                     else
                     {
@@ -887,6 +890,9 @@ public sealed class ToolSettingsViewModel : ViewModelBase
                 LoadDependencyVersions();
                 ValidateExtractedData();
                 UpdateCacheStatus();
+
+                // Refresh health state after successful update
+                await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
             }
             else
             {

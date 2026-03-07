@@ -93,9 +93,17 @@ public sealed class UIHttpServer : IDisposable
 
         try
         {
+            // Handle /health/diagnostic separately since it returns plain text
+            if (path == "/health/diagnostic")
+            {
+                await HandleHealthDiagnostic(response);
+                return;
+            }
+
             object? result = path switch
             {
-                "/" => GetHealthStatus(),
+                "/" => GetServerStatus(),
+                "/health" => await GetInstallHealthAsync(),
                 "/ui" or "/ui/state" => GetUIState(),
                 "/ui/controls" => GetControlTree(),
                 "/ui/templates" => GetAvailableTemplates(),
@@ -134,7 +142,7 @@ public sealed class UIHttpServer : IDisposable
         }
     }
 
-    private object GetHealthStatus()
+    private object GetServerStatus()
     {
         return new
         {
@@ -144,6 +152,75 @@ public sealed class UIHttpServer : IDisposable
             port = _port,
             time = DateTime.Now.ToString("o")
         };
+    }
+
+    /// <summary>
+    /// GET /health - Returns installation health status for the in-game ModpackLoader.
+    /// </summary>
+    private async Task<object> GetInstallHealthAsync()
+    {
+        try
+        {
+            var healthService = InstallHealthService.Instance;
+            var status = await healthService.GetCurrentHealthAsync();
+
+            return new
+            {
+                state = status.State.ToString(),
+                canDeploy = status.CanDeploy,
+                canExtract = status.CanExtract,
+                blockingReason = string.IsNullOrEmpty(status.BlockingReason) ? null : status.BlockingReason,
+                componentIssues = status.ComponentIssues.Count > 0 ? status.ComponentIssues.ToArray() : null
+            };
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[UIHttpServer] Health check failed: {ex.Message}");
+            return new
+            {
+                state = "Error",
+                canDeploy = false,
+                canExtract = false,
+                blockingReason = $"Health check failed: {ex.Message}",
+                componentIssues = new[] { ex.Message }
+            };
+        }
+    }
+
+    /// <summary>
+    /// GET /health/diagnostic - Returns detailed diagnostic text summary.
+    /// </summary>
+    private async Task HandleHealthDiagnostic(HttpListenerResponse response)
+    {
+        try
+        {
+            // Ensure health status is computed before getting diagnostic
+            var healthService = InstallHealthService.Instance;
+            await healthService.GetCurrentHealthAsync();
+
+            var diagnosticText = healthService.GetDiagnosticSummary();
+            var buffer = Encoding.UTF8.GetBytes(diagnosticText);
+
+            response.StatusCode = 200;
+            response.ContentType = "text/plain; charset=utf-8";
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[UIHttpServer] Health diagnostic failed: {ex.Message}");
+            var errorText = $"Failed to get diagnostic summary: {ex.Message}";
+            var buffer = Encoding.UTF8.GetBytes(errorText);
+
+            response.StatusCode = 500;
+            response.ContentType = "text/plain; charset=utf-8";
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer);
+        }
+        finally
+        {
+            response.Close();
+        }
     }
 
     private object GetUIState()

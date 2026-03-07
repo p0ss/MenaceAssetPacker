@@ -6,6 +6,8 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Menace;
+using Menace.Modkit.App.Models;
+using Menace.Modkit.App.Services;
 using Menace.Modkit.App.ViewModels;
 using ReactiveUI;
 
@@ -17,6 +19,9 @@ public class MainWindow : Window
     private StackPanel? _subNavPanel;
     private Button? _modLoaderTab;
     private Button? _moddingToolsTab;
+    private Border? _healthStatusBar;
+    private TextBlock? _healthStatusText;
+    private TextBlock? _healthActionText;
 
     public MainWindow(IServiceProvider serviceProvider)
     {
@@ -47,13 +52,66 @@ public class MainWindow : Window
 
         _viewModel.WhenAnyValue(x => x.CurrentSubSection)
             .Subscribe(_ => UpdateSubNavHighlight());
+
+        // Subscribe to health state changes to update status bar
+        _viewModel.HealthState.HealthStatusChanged += OnHealthStatusChanged;
+    }
+
+    private void OnHealthStatusChanged(object? sender, InstallHealthStatus status)
+    {
+        UpdateHealthStatusBar(status);
+    }
+
+    private void UpdateHealthStatusBar(InstallHealthStatus status)
+    {
+        if (_healthStatusBar == null) return;
+
+        // Show/hide based on health state
+        _healthStatusBar.IsVisible = status.State != InstallHealthState.Healthy;
+
+        if (!_healthStatusBar.IsVisible) return;
+
+        // Update colors based on severity
+        var bgColor = status.State switch
+        {
+            InstallHealthState.UpdatePendingRestart => Color.Parse("#1A3A5C"), // Blue for info
+            InstallHealthState.NeedsSetup => Color.Parse("#4A3A1A"),           // Orange/amber for setup
+            InstallHealthState.NeedsRepair => Color.Parse("#4A3A1A"),          // Orange/amber for repair
+            InstallHealthState.RepairableFromBackup => Color.Parse("#4A3A1A"), // Orange/amber
+            _ => Color.Parse("#4A1A1A")                                        // Red for errors
+        };
+
+        var textColor = status.State switch
+        {
+            InstallHealthState.UpdatePendingRestart => Color.Parse("#6BB3FF"),
+            InstallHealthState.NeedsSetup => Color.Parse("#FFB74D"),
+            InstallHealthState.NeedsRepair => Color.Parse("#FFB74D"),
+            InstallHealthState.RepairableFromBackup => Color.Parse("#FFB74D"),
+            _ => Color.Parse("#FF6B6B")
+        };
+
+        _healthStatusBar.Background = new SolidColorBrush(bgColor);
+
+        if (_healthStatusText != null)
+        {
+            _healthStatusText.Text = status.ShortSummary;
+            _healthStatusText.Foreground = new SolidColorBrush(textColor);
+        }
+
+        if (_healthActionText != null)
+        {
+            _healthActionText.Text = !string.IsNullOrEmpty(status.RequiredUserAction)
+                ? status.RequiredUserAction
+                : status.BlockingReason;
+            _healthActionText.Foreground = new SolidColorBrush(Color.Parse("#AAAAAA"));
+        }
     }
 
     private Control BuildUI()
     {
         var mainGrid = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,*")
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*")
         };
 
         // Top menu bar with logo and main tabs
@@ -65,12 +123,86 @@ public class MainWindow : Window
         mainGrid.Children.Add(subNavBar);
         Grid.SetRow(subNavBar, 1);
 
+        // Health status bar (hidden when healthy)
+        var healthBar = BuildHealthStatusBar();
+        mainGrid.Children.Add(healthBar);
+        Grid.SetRow(healthBar, 2);
+
         // Content area
         var contentArea = BuildContentArea();
         mainGrid.Children.Add(contentArea);
-        Grid.SetRow(contentArea, 2);
+        Grid.SetRow(contentArea, 3);
 
         return mainGrid;
+    }
+
+    private Control BuildHealthStatusBar()
+    {
+        _healthStatusBar = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#4A3A1A")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#6A5A2A")),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(16, 8),
+            IsVisible = false // Hidden by default, shown when health state != Healthy
+        };
+
+        var contentStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        // Warning icon
+        var iconText = new TextBlock
+        {
+            Text = "\u26A0", // Warning triangle
+            FontSize = 14,
+            Foreground = new SolidColorBrush(Color.Parse("#FFB74D")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        contentStack.Children.Add(iconText);
+
+        // Status text
+        _healthStatusText = new TextBlock
+        {
+            Text = "",
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#FFB74D")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        contentStack.Children.Add(_healthStatusText);
+
+        // Separator
+        contentStack.Children.Add(new Border
+        {
+            Width = 1,
+            Background = new SolidColorBrush(Color.Parse("#5A4A2A")),
+            Margin = new Thickness(4, 2)
+        });
+
+        // Action/reason text
+        _healthActionText = new TextBlock
+        {
+            Text = "",
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.Parse("#AAAAAA")),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 800
+        };
+        contentStack.Children.Add(_healthActionText);
+
+        _healthStatusBar.Child = contentStack;
+
+        // Initialize with current state
+        var currentStatus = _viewModel.HealthState.CurrentStatus;
+        UpdateHealthStatusBar(currentStatus);
+
+        return _healthStatusBar;
     }
 
     private Control BuildMenuBar()

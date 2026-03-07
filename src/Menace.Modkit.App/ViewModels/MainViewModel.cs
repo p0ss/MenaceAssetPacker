@@ -1,6 +1,8 @@
 using ReactiveUI;
 using System;
 using System.Reactive;
+using System.Threading.Tasks;
+using Menace.Modkit.App.Services;
 
 namespace Menace.Modkit.App.ViewModels;
 
@@ -18,6 +20,9 @@ public sealed class MainViewModel : ViewModelBase
 {
     public MainViewModel(IServiceProvider serviceProvider)
     {
+        // Initialize health state service (singleton, provides observable health status)
+        HealthState = AppHealthStateService.Instance;
+
         // Initialize all view models
         Home = new HomeViewModel();
         Modpacks = new ModpacksViewModel();
@@ -70,8 +75,35 @@ public sealed class MainViewModel : ViewModelBase
         ToolSettings.ModpacksNeedRefresh += (_, _) =>
         {
             Modpacks.RefreshModpacks();
+            // Refresh health state after deploy state changes
+            _ = HealthState.InvalidateAndRefreshAsync();
         };
+
+        // Refresh health state on startup
+        _ = InitializeHealthStateAsync();
     }
+
+    /// <summary>
+    /// Initialize health state on startup.
+    /// </summary>
+    private async Task InitializeHealthStateAsync()
+    {
+        try
+        {
+            await HealthState.RefreshAsync();
+            ModkitLog.Info($"[MainViewModel] Initial health state: {HealthState.State}");
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[MainViewModel] Failed to initialize health state: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Observable health state service for UI binding.
+    /// Provides installation health status that drives UI state.
+    /// </summary>
+    public AppHealthStateService HealthState { get; }
 
     // Home
     public HomeViewModel Home { get; }

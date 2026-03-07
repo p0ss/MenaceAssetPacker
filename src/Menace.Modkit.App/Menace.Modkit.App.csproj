@@ -98,6 +98,18 @@
     </None>
   </ItemGroup>
 
+  <!-- Field description knowledge bases for tooltips -->
+  <ItemGroup>
+    <None Include="eventhandler_knowledge.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="template_knowledge.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- App assets -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\icon.jpg" />
