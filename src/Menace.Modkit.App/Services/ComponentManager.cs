@@ -1008,8 +1008,10 @@ public sealed class ComponentManager : IDisposable
 
         var candidates = new[]
         {
+            // Published app: third_party is alongside the executable
             Path.Combine(AppContext.BaseDirectory, "third_party", filename),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", filename),
+            // Dev mode: bin/Debug/net10.0/ needs to go up 5 levels to repo root
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "third_party", filename),
         };
 
         foreach (var candidate in candidates)
@@ -1030,8 +1032,10 @@ public sealed class ComponentManager : IDisposable
     {
         var candidates = new[]
         {
+            // Published app: third_party is alongside the executable
             Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", subPath),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "third_party", "bundled", subPath),
+            // Dev mode: bin/Debug/net10.0/ needs to go up 5 levels to repo root
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "third_party", "bundled", subPath),
         };
 
         foreach (var candidate in candidates)

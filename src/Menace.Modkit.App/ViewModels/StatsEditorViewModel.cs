@@ -668,9 +668,14 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
     /// <summary>
     /// Get the favourite key for a node. For templates, uses TemplateType/name.
     /// For categories, uses the category path.
+    /// For favourite reference nodes, uses the stored FavouriteKey.
     /// </summary>
     private static string? GetFavouriteKey(TreeNodeViewModel node)
     {
+        // If this is a favourite reference node, use the stored key
+        if (node.FavouriteKey != null)
+            return node.FavouriteKey;
+
         if (node.Template != null)
             return GetTemplateKey(node.Template);
 
@@ -3057,7 +3062,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                             Name = originalNode.Name,
                             IsCategory = true,
                             IsExpanded = false,
-                            Parent = favouritesNode
+                            Parent = favouritesNode,
+                            FavouriteKey = key  // Store original key for removal
                         };
                         // Copy children references
                         foreach (var child in originalNode.Children)
@@ -3084,7 +3090,8 @@ public sealed class StatsEditorViewModel : ViewModelBase, ISearchableViewModel
                             Name = originalNode.Name,
                             IsCategory = false,
                             Template = originalNode.Template,
-                            Parent = favouritesNode
+                            Parent = favouritesNode,
+                            FavouriteKey = key  // Store original key for removal
                         };
                         favouritesNode.Children.Add(refNode);
                     }
@@ -3345,6 +3352,12 @@ public sealed class TreeNodeViewModel : ViewModelBase
 
     // Helper for hierarchy building
     public Dictionary<string, TreeNodeViewModel>? ChildrenDict { get; set; }
+
+    /// <summary>
+    /// For favourite reference nodes, stores the original favourite key.
+    /// This ensures removal works correctly even when the node is in the Favourites folder.
+    /// </summary>
+    public string? FavouriteKey { get; set; }
 }
 
 public sealed class TemplateItemViewModel : ViewModelBase

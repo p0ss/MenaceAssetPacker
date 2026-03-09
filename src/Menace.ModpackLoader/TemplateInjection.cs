@@ -874,15 +874,24 @@ public partial class ModpackLoaderMod
                     }
                 }
 
-                // Incremental list operations: JObject with $remove/$update/$append
+                // Incremental list/array operations: JObject with $remove/$update/$append
                 if (rawValue is JObject jObj)
                 {
                     var collKind = ClassifyCollectionType(prop.PropertyType, out var elType);
-                    if (collKind == CollectionKind.Il2CppList && elType != null)
+                    if (elType != null)
                     {
-                        if (TryApplyIncrementalList(castObj, prop, jObj, elType))
-                            appliedCount++;
-                        continue;
+                        if (collKind == CollectionKind.Il2CppList)
+                        {
+                            if (TryApplyIncrementalList(castObj, prop, jObj, elType))
+                                appliedCount++;
+                            continue;
+                        }
+                        else if (collKind == CollectionKind.StructArray || collKind == CollectionKind.ReferenceArray)
+                        {
+                            if (TryApplyIncrementalArray(castObj, prop, jObj, elType, collKind))
+                                appliedCount++;
+                            continue;
+                        }
                     }
                 }
 
@@ -1879,6 +1888,140 @@ public partial class ModpackLoaderMod
 
         SdkLogger.Msg($"    {prop.Name}: applied {opCount} incremental ops on List<{elementType.Name}>");
         return opCount > 0;
+    }
+
+    /// <summary>
+    /// Applies incremental operations ($remove, $update, $append) to IL2CPP arrays (StructArray/ReferenceArray).
+    /// Since arrays are immutable, this creates a new array with the modifications applied.
+    /// Operations are applied in order: update → remove → append.
+    /// </summary>
+    private bool TryApplyIncrementalArray(object castObj, PropertyInfo prop, JObject ops, Type elementType, CollectionKind arrayKind)
+    {
+        var currentArray = prop.GetValue(castObj);
+        if (currentArray == null)
+        {
+            SdkLogger.Warning($"    {prop.Name}: array is null, cannot apply incremental operations");
+            return false;
+        }
+
+        var arrayType = currentArray.GetType();
+        var lengthProp = arrayType.GetProperty("Length");
+        var indexer = arrayType.GetProperty("Item");
+
+        if (lengthProp == null || indexer == null)
+        {
+            SdkLogger.Warning($"    {prop.Name}: array missing Length or Item property");
+            return false;
+        }
+
+        int currentLength = (int)lengthProp.GetValue(currentArray);
+        var elements = new List<object>();
+
+        // Read existing elements into list for manipulation
+        for (int i = 0; i < currentLength; i++)
+        {
+            elements.Add(indexer.GetValue(currentArray, new object[] { i }));
+        }
+
+        int opCount = 0;
+
+        // $update — modify fields on existing elements at specific indices
+        if (ops.TryGetValue("$update", out var updateToken) && updateToken is JObject updates)
+        {
+            foreach (var kvp in updates)
+            {
+                if (!int.TryParse(kvp.Key, out var idx))
+                {
+                    SdkLogger.Warning($"    {prop.Name}.$update: invalid index '{kvp.Key}'");
+                    continue;
+                }
+                if (idx < 0 || idx >= elements.Count)
+                {
+                    SdkLogger.Warning($"    {prop.Name}.$update: index {idx} out of range (count={elements.Count})");
+                    continue;
+                }
+                if (kvp.Value is not JObject fieldOverrides)
+                {
+                    SdkLogger.Warning($"    {prop.Name}.$update[{idx}]: expected object");
+                    continue;
+                }
+
+                var element = elements[idx];
+                if (element != null)
+                {
+                    ApplyFieldOverrides(element, fieldOverrides);
+                    opCount++;
+                }
+            }
+        }
+
+        // $remove — remove elements by index (highest-first to preserve positions during removal)
+        if (ops.TryGetValue("$remove", out var removeToken) && removeToken is JArray removeIndices)
+        {
+            var indices = removeIndices.Select(t => t.Value<int>()).OrderByDescending(i => i).ToList();
+            foreach (var idx in indices)
+            {
+                if (idx >= 0 && idx < elements.Count)
+                {
+                    elements.RemoveAt(idx);
+                    opCount++;
+                }
+                else
+                {
+                    SdkLogger.Warning($"    {prop.Name}.$remove: index {idx} out of range (count={elements.Count})");
+                }
+            }
+        }
+
+        // $append — add new elements at the end
+        if (ops.TryGetValue("$append", out var appendToken) && appendToken is JArray appendItems)
+        {
+            foreach (var item in appendItems)
+            {
+                var converted = ConvertJTokenToType(item, elementType);
+                if (converted != null)
+                {
+                    elements.Add(converted);
+                    opCount++;
+
+                    // Enhanced logging for ArmyEntry appends
+                    if (elementType.Name == "ArmyEntry")
+                    {
+                        LogArmyEntryAppend(converted, item);
+                    }
+                }
+                else
+                {
+                    SdkLogger.Warning($"    {prop.Name}.$append: failed to convert item: {item}");
+                }
+            }
+        }
+
+        if (opCount == 0)
+            return false;
+
+        // Create new array with modified elements
+        try
+        {
+            var newArray = Activator.CreateInstance(arrayType, new object[] { elements.Count });
+            var newIndexer = arrayType.GetProperty("Item");
+
+            for (int i = 0; i < elements.Count; i++)
+            {
+                newIndexer.SetValue(newArray, elements[i], new object[] { i });
+            }
+
+            prop.SetValue(castObj, newArray);
+
+            var arrayTypeName = arrayKind == CollectionKind.StructArray ? "StructArray" : "ReferenceArray";
+            SdkLogger.Msg($"    {prop.Name}: applied {opCount} incremental ops on {arrayTypeName}<{elementType.Name}> ({currentLength} → {elements.Count} elements)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Error($"    {prop.Name}: failed to create modified array: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>

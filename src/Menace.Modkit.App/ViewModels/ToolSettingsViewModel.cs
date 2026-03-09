@@ -508,14 +508,18 @@ public sealed class ToolSettingsViewModel : ViewModelBase
             var json = File.ReadAllText(path);
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var versions = JsonSerializer.Deserialize<DependencyVersions>(json, options);
-            if (versions?.Dependencies == null || versions.Dependencies.Count == 0)
+            if (versions?.Components == null || versions.Components.Count == 0)
             {
                 DependencyVersionsText = "No dependency info available";
                 return;
             }
 
-            DependencyVersionsText = string.Join(" | ",
-                versions.Dependencies.Select(kv => $"{kv.Key} v{kv.Value.Version}"));
+            // Show core components (skip optional addons and self-update)
+            var coreComponents = versions.Components
+                .Where(kv => kv.Value.Category == "core")
+                .Select(kv => $"{kv.Key} v{kv.Value.Version}");
+
+            DependencyVersionsText = string.Join(" | ", coreComponents);
         }
         catch
         {
