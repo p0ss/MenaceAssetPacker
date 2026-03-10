@@ -1,0 +1,44 @@
+{
+  "id": "arena_60x60",
+  "name": "Large Arena",
+  "author": "Menace SDK",
+  "description": "Large 60x60 open arena with minimal structures and no procedural cover. Test your tactics in open combat.",
+  "version": "1.0",
+
+  "seed": 999999,
+  "mapSize": 60,
+
+  "layers": ["medium", "hard"],
+  "weight": 5,
+
+  "disabledGenerators": [
+    "CoverGenerator"
+  ],
+
+  "generators": {
+    "ChunkGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnDensity": 0.08,
+        "minDistance": 15
+      }
+    },
+
+    "EnvironmentFeatureGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.15,
+        "clusterSize": 3
+      }
+    },
+
+    "EnvironmentPropGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.03
+      }
+    }
+  },
+
+  "tags": ["arena", "large", "no-cover", "open", "60x60"]
+}

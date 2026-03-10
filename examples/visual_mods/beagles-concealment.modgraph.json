@@ -1,0 +1,102 @@
+{
+  "formatVersion": 1,
+  "metadata": {
+    "id": "beagles-concealment",
+    "name": "Beagle's Concealment",
+    "author": "Beagle",
+    "version": "1.0.0",
+    "description": "Non-silent attacks reduce concealment by 3, making stealth tactics more meaningful.",
+    "tags": ["balance", "stealth"]
+  },
+  "graphs": [
+    {
+      "id": "main",
+      "name": "Concealment Penalty",
+      "hookPoint": "skill_used",
+      "enabled": true,
+      "priority": 0,
+      "description": "When a non-silent attack is used, reduce actor concealment",
+      "nodes": [
+        {
+          "id": "event1",
+          "type": "event",
+          "subtype": "skill_used",
+          "x": 100,
+          "y": 200,
+          "config": {},
+          "label": "Skill Used"
+        },
+        {
+          "id": "cond1",
+          "type": "condition",
+          "subtype": "property_check",
+          "x": 350,
+          "y": 150,
+          "config": {
+            "property": "IsAttack",
+            "operator": "==",
+            "value": true
+          },
+          "label": "Is Attack?"
+        },
+        {
+          "id": "cond2",
+          "type": "condition",
+          "subtype": "property_check",
+          "x": 600,
+          "y": 150,
+          "config": {
+            "property": "IsSilent",
+            "operator": "==",
+            "value": false
+          },
+          "label": "Not Silent?"
+        },
+        {
+          "id": "action1",
+          "type": "action",
+          "subtype": "add_effect",
+          "x": 850,
+          "y": 200,
+          "config": {
+            "property": "Concealment",
+            "modifier": -3,
+            "duration": 1
+          },
+          "label": "Concealment -3"
+        }
+      ],
+      "connections": [
+        {
+          "id": "conn1",
+          "sourceNodeId": "event1",
+          "sourcePort": "skill",
+          "targetNodeId": "cond1",
+          "targetPort": "input"
+        },
+        {
+          "id": "conn2",
+          "sourceNodeId": "cond1",
+          "sourcePort": "pass",
+          "targetNodeId": "cond2",
+          "targetPort": "input"
+        },
+        {
+          "id": "conn3",
+          "sourceNodeId": "event1",
+          "sourcePort": "actor",
+          "targetNodeId": "action1",
+          "targetPort": "actor"
+        },
+        {
+          "id": "conn4",
+          "sourceNodeId": "cond2",
+          "sourcePort": "pass",
+          "targetNodeId": "action1",
+          "targetPort": "flow_in"
+        }
+      ]
+    }
+  ],
+  "variables": {}
+}

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using MelonLoader;
 using MoonSharp.Interpreter;
+using CustomMaps = Menace.SDK.CustomMaps;
 
 namespace Menace.SDK;
 
@@ -108,6 +109,77 @@ namespace Menace.SDK;
 ///   get_equipped_armor(actor?)           - Get equipped armor
 ///   get_item_templates(filter?)          - List item template names
 ///
+/// Custom Maps API (maps.* table):
+///   maps.list()                          - List all registered maps
+///   maps.get(id)                         - Get map config by ID
+///   maps.set_active(id_or_config)        - Set active map override
+///   maps.clear_active()                  - Clear active override
+///   maps.get_active()                    - Get current active map
+///   maps.has_active()                    - Check if override is set
+///   maps.load_directory(path)            - Load maps from directory
+///   maps.count()                         - Get registered map count
+///   maps.play_with_seed(seed)            - Quick play with seed
+///   maps.play_with_size(size)            - Quick play with size
+///   maps.play_with(seed, size)           - Quick play with seed+size
+///   maps.create(id)                      - Create map builder (chainable)
+///     :with_name(name)
+///     :with_author(author)
+///     :with_seed(seed)
+///     :with_size(size)
+///     :with_layers("easy", "medium", ...)
+///     :with_tags("tag1", "tag2", ...)
+///     :disable_generator("CoverGenerator")
+///     :configure_generator("PropGenerator", {enabled=true, properties={count=100}})
+///     :build()                           - Return config table
+///     :register()                        - Build and register
+///     :activate()                        - Build, register, and set active
+///   maps.register(config_table)          - Register map from table
+///
+/// Object Bindings API (Phase 3):
+///   Actor(ptr)                           - Create Actor object from pointer
+///   Skill(ptr)                           - Create Skill object from pointer
+///   Tile(x, y)                           - Get Tile object at coordinates
+///   actors()                             - Get all alive actors as Actor objects
+///   player_actors()                      - Get player faction actors
+///   enemy_actors()                       - Get enemy faction actors
+///
+///   Actor object methods:
+///     actor:add_effect(prop, mod, rounds) - Add temporary effect
+///     actor:get_effect(prop)              - Get effect modifier
+///     actor:has_effect(prop)              - Check if has effect
+///     actor:clear_effects()               - Clear all effects
+///     actor:attack(target)                - Attack another actor
+///     actor:use_ability(name, target)     - Use ability by name
+///     actor:damage(amount)                - Apply damage
+///     actor:heal(amount)                  - Heal actor
+///     actor:move_to(x, y)                 - Move to position
+///     actor:teleport(x, y)                - Teleport to position
+///     actor.name, actor.faction_id, actor.x, actor.y, etc.
+///
+///   Skill object properties:
+///     skill.is_attack                     - Is this an attack skill?
+///     skill.is_silent                     - Is this a silent skill?
+///     skill.name, skill.template_name
+///     skill:get_template_property(name)   - Get template property
+///
+///   Tile object methods:
+///     tile:get_cover(direction)           - Get cover in direction
+///     tile:get_occupant()                 - Get actor on tile
+///     tile.is_blocked, tile.has_actor, tile.is_visible
+///
+///   Effect system (standalone functions):
+///     add_effect(ptr, prop, mod, rounds)  - Add effect to actor
+///     get_effect(ptr, prop)               - Get effect modifier
+///     has_effect(ptr, prop)               - Check if has effect
+///     clear_effects(ptr)                  - Clear all effects
+///
+/// Object-based Events (skill_used passes Actor and Skill objects):
+///   on("skill_used", function(actor, skill)
+///       if skill.is_attack and not skill.is_silent then
+///           actor:add_effect("concealment", -3, 1)
+///       end
+///   end)
+///
 /// Tactical Events:
 ///   scene_loaded(sceneName)        - Fired when a scene loads
 ///   tactical_ready()               - Fired when tactical battle is ready
@@ -135,6 +207,9 @@ public class LuaScriptEngine
     // Store handlers with their owning script to avoid cross-script resource errors
     private readonly Dictionary<string, List<(Script OwnerScript, DynValue Handler)>> _eventHandlers = new();
     private readonly List<(string ModId, string ScriptPath, Script Script)> _loadedScripts = new();
+    // Lua interceptors that can modify values (separate from fire-and-forget events)
+    // Keys are dynamically created when interceptors are registered - no fixed list needed
+    private readonly Dictionary<string, List<(Script OwnerScript, DynValue Handler)>> _interceptors = new();
 
     // Supported events - see TacticalEventHooks.cs for event source
     private static readonly HashSet<string> ValidEvents = new(StringComparer.OrdinalIgnoreCase)
@@ -174,7 +249,7 @@ public class LuaScriptEngine
         "move_complete",
 
         // Skill events
-        "skill_used",
+        "skill_used",      // Phase 3: Passes Actor and Skill objects directly
         "skill_complete",
         "skill_added",
         "offmap_ability_used",
@@ -320,6 +395,9 @@ public class LuaScriptEngine
         // Create Lua state with limited permissions (no OS/IO access)
         _lua = new Script(CoreModules.Preset_SoftSandbox);
 
+        // Initialize object bindings (registers UserData types)
+        LuaObjectBindings.Initialize();
+
         // Register API functions
         RegisterApiCallbacks(_lua);
 
@@ -340,6 +418,8 @@ public class LuaScriptEngine
         script.Globals["error"] = DynValue.NewCallback((ctx, args) => { LuaError(args[0].String); return DynValue.Nil; });
         script.Globals["on"] = DynValue.NewCallback((ctx, args) => { LuaOn(args[0].String, args[1]); return DynValue.Nil; });
         script.Globals["off"] = DynValue.NewCallback((ctx, args) => { LuaOff(args[0].String, args[1]); return DynValue.Nil; });
+        script.Globals["intercept"] = DynValue.NewCallback((ctx, args) => { LuaRegisterInterceptor(args[0].String, args[1]); return DynValue.Nil; });
+        script.Globals["unintercept"] = DynValue.NewCallback((ctx, args) => { LuaUnregisterInterceptor(args[0].String, args[1]); return DynValue.Nil; });
         script.Globals["emit"] = DynValue.NewCallback((ctx, args) => {
             var eventArgs = new DynValue[args.Count - 1];
             for (int i = 1; i < args.Count; i++) eventArgs[i - 1] = args[i];
@@ -443,6 +523,139 @@ public class LuaScriptEngine
 
         // --- Animation API ---
         SimpleAnimations.RegisterLuaHelpers(script);
+
+        // --- Object Bindings API (Phase 3) ---
+        // Registers Actor, Skill, Tile factory functions and effect system helpers
+        LuaObjectBindings.RegisterApi(script);
+
+        // --- Custom Maps API ---
+        RegisterCustomMapsApi(script);
+    }
+
+    /// <summary>
+    /// Register Custom Maps API as a 'maps' table with methods.
+    /// </summary>
+    private void RegisterCustomMapsApi(Script script)
+    {
+        var maps = new Table(script);
+
+        // maps.list() - List all registered custom maps
+        maps["list"] = DynValue.NewCallback((ctx, args) => LuaMapsList(script));
+
+        // maps.get(id) - Get a map config by ID
+        maps["get"] = DynValue.NewCallback((ctx, args) => LuaMapsGet(script, args[0].String));
+
+        // maps.set_active(id_or_config) - Set active map override
+        maps["set_active"] = DynValue.NewCallback((ctx, args) => LuaMapsSetActive(args[0]));
+
+        // maps.clear_active() - Clear active override
+        maps["clear_active"] = DynValue.NewCallback((ctx, args) => { LuaMapsClearActive(); return DynValue.Nil; });
+
+        // maps.get_active() - Get current active map
+        maps["get_active"] = DynValue.NewCallback((ctx, args) => LuaMapsGetActive(script));
+
+        // maps.has_active() - Check if there's an active override
+        maps["has_active"] = DynValue.NewCallback((ctx, args) => DynValue.NewBoolean(CustomMaps.CustomMapRegistry.HasActiveOverride()));
+
+        // maps.load_directory(path) - Load maps from directory
+        maps["load_directory"] = DynValue.NewCallback((ctx, args) => DynValue.NewNumber(CustomMaps.CustomMapRegistry.LoadFromDirectory(args[0].String)));
+
+        // maps.count() - Get count of registered maps
+        maps["count"] = DynValue.NewCallback((ctx, args) => DynValue.NewNumber(CustomMaps.CustomMapRegistry.Count));
+
+        // maps.create(id) - Create a new map builder
+        maps["create"] = DynValue.NewCallback((ctx, args) => LuaMapsCreate(script, args[0].String));
+
+        // maps.register(config_table) - Register a map from Lua table
+        maps["register"] = DynValue.NewCallback((ctx, args) => LuaMapsRegister(args[0].Table));
+
+        // maps.play_with_seed(seed) - Quick play with specific seed
+        maps["play_with_seed"] = DynValue.NewCallback((ctx, args) => { CustomMaps.CustomMaps.PlayWithSeed((int)args[0].Number); return DynValue.Nil; });
+
+        // maps.play_with_size(size) - Quick play with specific size
+        maps["play_with_size"] = DynValue.NewCallback((ctx, args) => { CustomMaps.CustomMaps.PlayWithSize((int)args[0].Number); return DynValue.Nil; });
+
+        // maps.play_with(seed, size) - Quick play with seed and size
+        maps["play_with"] = DynValue.NewCallback((ctx, args) => { CustomMaps.CustomMaps.PlayWith((int)args[0].Number, (int)args[1].Number); return DynValue.Nil; });
+
+        script.Globals["maps"] = maps;
+
+        // --- Assets API (for prefab browsing) ---
+        RegisterAssetsApi(script);
+    }
+
+    /// <summary>
+    /// Register Assets API as an 'assets' table for browsing prefabs.
+    /// </summary>
+    private void RegisterAssetsApi(Script script)
+    {
+        var assets = new Table(script);
+
+        // assets.categories() - List asset categories
+        assets["categories"] = DynValue.NewCallback((ctx, args) => {
+            var table = new Table(script);
+            var cats = CustomMaps.AssetResolver.GetCategories();
+            for (int i = 0; i < cats.Length; i++)
+                table[i + 1] = cats[i];
+            return DynValue.NewTable(table);
+        });
+
+        // assets.list(category?) - List prefabs in category (or all)
+        assets["list"] = DynValue.NewCallback((ctx, args) => {
+            var table = new Table(script);
+            string[] prefabs;
+
+            if (args.Count > 0 && !args[0].IsNil())
+            {
+                prefabs = CustomMaps.AssetResolver.GetPrefabsInCategory(args[0].String);
+            }
+            else
+            {
+                // Get all prefabs
+                var all = new List<string>();
+                foreach (var cat in CustomMaps.AssetResolver.GetCategories())
+                    all.AddRange(CustomMaps.AssetResolver.GetPrefabsInCategory(cat));
+                prefabs = all.ToArray();
+            }
+
+            for (int i = 0; i < prefabs.Length; i++)
+                table[i + 1] = prefabs[i];
+            return DynValue.NewTable(table);
+        });
+
+        // assets.search(pattern) - Search prefabs by name pattern
+        assets["search"] = DynValue.NewCallback((ctx, args) => {
+            var pattern = args.Count > 0 ? args[0].String : "";
+            var results = CustomMaps.AssetResolver.SearchPrefabs(pattern);
+            var table = new Table(script);
+            for (int i = 0; i < results.Length; i++)
+                table[i + 1] = results[i];
+            return DynValue.NewTable(table);
+        });
+
+        // assets.rebuild() - Rebuild the asset catalog
+        assets["rebuild"] = DynValue.NewCallback((ctx, args) => {
+            CustomMaps.AssetResolver.ClearCache();
+            CustomMaps.AssetResolver.BuildAssetCatalog();
+            return DynValue.Nil;
+        });
+
+        // assets.count(category?) - Count prefabs
+        assets["count"] = DynValue.NewCallback((ctx, args) => {
+            if (args.Count > 0 && !args[0].IsNil())
+            {
+                return DynValue.NewNumber(CustomMaps.AssetResolver.GetPrefabsInCategory(args[0].String).Length);
+            }
+            else
+            {
+                int total = 0;
+                foreach (var cat in CustomMaps.AssetResolver.GetCategories())
+                    total += CustomMaps.AssetResolver.GetPrefabsInCategory(cat).Length;
+                return DynValue.NewNumber(total);
+            }
+        });
+
+        script.Globals["assets"] = assets;
     }
 
     /// <summary>
@@ -568,6 +781,73 @@ public class LuaScriptEngine
         {
             handlers.RemoveAll(h => h.Handler.Equals(callback));
         }
+    }
+
+    /// <summary>
+    /// intercept("property", callback) - Register interceptor that can modify values.
+    /// Callback receives (owner_ptr, value) and should return modified value.
+    /// Valid names match C# Intercept events (e.g., "concealment", "damage", "accuracy").
+    /// </summary>
+    private void LuaRegisterInterceptor(string name, DynValue callback)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            LuaError("intercept() requires an interceptor name");
+            return;
+        }
+
+        if (callback.Type != DataType.Function)
+        {
+            LuaError($"intercept() requires a function callback, got {callback.Type}");
+            return;
+        }
+
+        // Create list if it doesn't exist - allows any interceptor name
+        if (!_interceptors.ContainsKey(name))
+            _interceptors[name] = new List<(Script, DynValue)>();
+
+        var ownerScript = callback.Function?.OwnerScript ?? _lua;
+        _interceptors[name].Add((ownerScript, callback));
+        SdkLogger.Msg($"[Lua] Registered '{name}' interceptor");
+    }
+
+    /// <summary>
+    /// unintercept("property", callback) - Unregister interceptor.
+    /// </summary>
+    private void LuaUnregisterInterceptor(string name, DynValue callback)
+    {
+        if (_interceptors.TryGetValue(name, out var handlers))
+        {
+            handlers.RemoveAll(h => h.Handler.Equals(callback));
+        }
+    }
+
+    /// <summary>
+    /// Invoke Lua interceptors for integer properties. Called from Intercept.cs.
+    /// Returns the final modified value after all interceptors run.
+    /// </summary>
+    public int InvokeLuaInterceptors(string name, long ownerPtr, int value)
+    {
+        if (!_interceptors.TryGetValue(name, out var handlers) || handlers.Count == 0)
+            return value;
+
+        var result = value;
+        foreach (var (ownerScript, handler) in handlers.ToList())
+        {
+            try
+            {
+                var luaResult = ownerScript.Call(handler, DynValue.NewNumber(ownerPtr), DynValue.NewNumber(result));
+                if (luaResult.Type == DataType.Number)
+                {
+                    result = (int)luaResult.Number;
+                }
+            }
+            catch (Exception ex)
+            {
+                ModError.WarnInternal("LuaScriptEngine", $"Interceptor '{name}' failed: {ex.Message}");
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -1381,6 +1661,466 @@ public class LuaScriptEngine
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Custom Maps API Implementations
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// maps.list() - List all registered custom maps.
+    /// Returns array of {id, name, author, seed, size, layers, active}
+    /// </summary>
+    private DynValue LuaMapsList(Script script)
+    {
+        try
+        {
+            var maps = CustomMaps.CustomMapRegistry.GetAll();
+            var activeId = CustomMaps.CustomMapRegistry.GetActiveOverride()?.Id;
+            var table = new Table(script);
+            int i = 1;
+
+            foreach (var map in maps)
+            {
+                var mapTable = new Table(script);
+                mapTable["id"] = map.Id ?? "";
+                mapTable["name"] = map.Name ?? "";
+                mapTable["author"] = map.Author ?? "";
+                mapTable["seed"] = map.Seed.HasValue ? DynValue.NewNumber(map.Seed.Value) : DynValue.Nil;
+                mapTable["size"] = map.MapSize.HasValue ? DynValue.NewNumber(map.MapSize.Value) : DynValue.Nil;
+                mapTable["weight"] = map.Weight;
+                mapTable["active"] = map.Id == activeId;
+
+                var layersTable = new Table(script);
+                int j = 1;
+                foreach (var layer in map.Layers)
+                    layersTable[j++] = layer;
+                mapTable["layers"] = layersTable;
+
+                table[i++] = mapTable;
+            }
+            return DynValue.NewTable(table);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.list failed: {ex.Message}");
+            return DynValue.NewTable(new Table(script));
+        }
+    }
+
+    /// <summary>
+    /// maps.get(id) - Get a specific map config.
+    /// </summary>
+    private DynValue LuaMapsGet(Script script, string id)
+    {
+        try
+        {
+            var map = CustomMaps.CustomMapRegistry.Get(id);
+            if (map == null) return DynValue.Nil;
+
+            return MapConfigToLuaTable(script, map);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.get failed: {ex.Message}");
+            return DynValue.Nil;
+        }
+    }
+
+    /// <summary>
+    /// Convert CustomMapConfig to Lua table.
+    /// </summary>
+    private DynValue MapConfigToLuaTable(Script script, CustomMaps.CustomMapConfig map)
+    {
+        var table = new Table(script);
+        table["id"] = map.Id ?? "";
+        table["name"] = map.Name ?? "";
+        table["author"] = map.Author ?? "";
+        table["description"] = map.Description ?? "";
+        table["version"] = map.Version ?? "1.0";
+        table["seed"] = map.Seed.HasValue ? DynValue.NewNumber(map.Seed.Value) : DynValue.Nil;
+        table["size"] = map.MapSize.HasValue ? DynValue.NewNumber(map.MapSize.Value) : DynValue.Nil;
+        table["weight"] = map.Weight;
+        table["condition"] = map.Condition ?? "";
+
+        // Layers
+        var layersTable = new Table(script);
+        int i = 1;
+        foreach (var layer in map.Layers)
+            layersTable[i++] = layer;
+        table["layers"] = layersTable;
+
+        // Tags
+        var tagsTable = new Table(script);
+        i = 1;
+        foreach (var tag in map.Tags)
+            tagsTable[i++] = tag;
+        table["tags"] = tagsTable;
+
+        // Disabled generators
+        var disabledTable = new Table(script);
+        i = 1;
+        foreach (var gen in map.DisabledGenerators)
+            disabledTable[i++] = gen;
+        table["disabled_generators"] = disabledTable;
+
+        // Generator configs (simplified)
+        var gensTable = new Table(script);
+        foreach (var (genName, genConfig) in map.Generators)
+        {
+            var genTable = new Table(script);
+            genTable["enabled"] = genConfig.Enabled ?? true;
+
+            var propsTable = new Table(script);
+            foreach (var (propName, propValue) in genConfig.Properties)
+            {
+                propsTable[propName] = DynValue.FromObject(script, propValue);
+            }
+            genTable["properties"] = propsTable;
+            gensTable[genName] = genTable;
+        }
+        table["generators"] = gensTable;
+
+        return DynValue.NewTable(table);
+    }
+
+    /// <summary>
+    /// maps.set_active(id_or_config) - Set active map.
+    /// </summary>
+    private DynValue LuaMapsSetActive(DynValue arg)
+    {
+        try
+        {
+            if (arg.Type == DataType.String)
+            {
+                var success = CustomMaps.CustomMapRegistry.SetActiveOverride(arg.String);
+                return DynValue.NewBoolean(success);
+            }
+            else if (arg.Type == DataType.Table)
+            {
+                // Convert Lua table to config and set
+                var config = LuaTableToMapConfig(arg.Table);
+                if (config != null)
+                {
+                    CustomMaps.CustomMapRegistry.SetActiveOverride(config);
+                    return DynValue.NewBoolean(true);
+                }
+                return DynValue.NewBoolean(false);
+            }
+            return DynValue.NewBoolean(false);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.set_active failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.clear_active() - Clear the active override.
+    /// </summary>
+    private void LuaMapsClearActive()
+    {
+        CustomMaps.CustomMapRegistry.ClearActiveOverride();
+    }
+
+    /// <summary>
+    /// maps.get_active() - Get the currently active map.
+    /// </summary>
+    private DynValue LuaMapsGetActive(Script script)
+    {
+        try
+        {
+            var map = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (map == null) return DynValue.Nil;
+            return MapConfigToLuaTable(script, map);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.get_active failed: {ex.Message}");
+            return DynValue.Nil;
+        }
+    }
+
+    /// <summary>
+    /// maps.create(id) - Create a map builder table.
+    /// Returns a table with chainable methods.
+    /// </summary>
+    private DynValue LuaMapsCreate(Script script, string id)
+    {
+        var builder = new Table(script);
+
+        // Store config data in the table
+        builder["_id"] = id;
+        builder["_name"] = id;
+        builder["_author"] = "";
+        builder["_description"] = "";
+        builder["_version"] = "1.0";
+        builder["_seed"] = DynValue.Nil;
+        builder["_size"] = DynValue.Nil;
+        builder["_weight"] = 10;
+        builder["_layers"] = DynValue.NewTable(new Table(script) { [1] = "medium" });
+        builder["_tags"] = DynValue.NewTable(new Table(script));
+        builder["_disabled"] = DynValue.NewTable(new Table(script));
+        builder["_generators"] = DynValue.NewTable(new Table(script));
+        builder["_condition"] = "";
+
+        // Chainable methods
+        builder["with_name"] = DynValue.NewCallback((ctx, args) => {
+            builder["_name"] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_author"] = DynValue.NewCallback((ctx, args) => {
+            builder["_author"] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_description"] = DynValue.NewCallback((ctx, args) => {
+            builder["_description"] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_version"] = DynValue.NewCallback((ctx, args) => {
+            builder["_version"] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_seed"] = DynValue.NewCallback((ctx, args) => {
+            builder["_seed"] = args[0];
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_size"] = DynValue.NewCallback((ctx, args) => {
+            builder["_size"] = args[0];
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_weight"] = DynValue.NewCallback((ctx, args) => {
+            builder["_weight"] = args[0].Number;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_layers"] = DynValue.NewCallback((ctx, args) => {
+            var layers = new Table(script);
+            for (int i = 0; i < args.Count; i++)
+                layers[i + 1] = args[i].String;
+            builder["_layers"] = DynValue.NewTable(layers);
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_tags"] = DynValue.NewCallback((ctx, args) => {
+            var tags = new Table(script);
+            for (int i = 0; i < args.Count; i++)
+                tags[i + 1] = args[i].String;
+            builder["_tags"] = DynValue.NewTable(tags);
+            return DynValue.NewTable(builder);
+        });
+
+        builder["with_condition"] = DynValue.NewCallback((ctx, args) => {
+            builder["_condition"] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["disable_generator"] = DynValue.NewCallback((ctx, args) => {
+            var disabled = builder.Get("_disabled").Table;
+            disabled[disabled.Length + 1] = args[0].String;
+            return DynValue.NewTable(builder);
+        });
+
+        builder["configure_generator"] = DynValue.NewCallback((ctx, args) => {
+            var genName = args[0].String;
+            var genConfig = args[1].Table;
+            var gens = builder.Get("_generators").Table;
+            gens[genName] = genConfig;
+            return DynValue.NewTable(builder);
+        });
+
+        // Build and return config table
+        builder["build"] = DynValue.NewCallback((ctx, args) => {
+            return LuaBuilderToConfig(script, builder);
+        });
+
+        // Build and register
+        builder["register"] = DynValue.NewCallback((ctx, args) => {
+            var configTable = LuaBuilderToConfig(script, builder);
+            return LuaMapsRegister(configTable.Table);
+        });
+
+        // Build, register, and set active
+        builder["activate"] = DynValue.NewCallback((ctx, args) => {
+            var configTable = LuaBuilderToConfig(script, builder);
+            var success = LuaMapsRegister(configTable.Table);
+            if (success.Boolean)
+            {
+                CustomMaps.CustomMapRegistry.SetActiveOverride(builder.Get("_id").String);
+            }
+            return success;
+        });
+
+        return DynValue.NewTable(builder);
+    }
+
+    /// <summary>
+    /// Convert builder table to config table.
+    /// </summary>
+    private DynValue LuaBuilderToConfig(Script script, Table builder)
+    {
+        var config = new Table(script);
+        config["id"] = builder.Get("_id");
+        config["name"] = builder.Get("_name");
+        config["author"] = builder.Get("_author");
+        config["description"] = builder.Get("_description");
+        config["version"] = builder.Get("_version");
+        config["seed"] = builder.Get("_seed");
+        config["size"] = builder.Get("_size");
+        config["weight"] = builder.Get("_weight");
+        config["layers"] = builder.Get("_layers");
+        config["tags"] = builder.Get("_tags");
+        config["disabled_generators"] = builder.Get("_disabled");
+        config["generators"] = builder.Get("_generators");
+        config["condition"] = builder.Get("_condition");
+        return DynValue.NewTable(config);
+    }
+
+    /// <summary>
+    /// maps.register(config_table) - Register a map from Lua table.
+    /// </summary>
+    private DynValue LuaMapsRegister(Table configTable)
+    {
+        try
+        {
+            var config = LuaTableToMapConfig(configTable);
+            if (config == null)
+            {
+                LuaError("maps.register: Invalid config table");
+                return DynValue.NewBoolean(false);
+            }
+
+            var success = CustomMaps.CustomMapRegistry.Register(config);
+            return DynValue.NewBoolean(success);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.register failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// Convert Lua table to CustomMapConfig.
+    /// </summary>
+    private CustomMaps.CustomMapConfig LuaTableToMapConfig(Table table)
+    {
+        var config = new CustomMaps.CustomMapConfig
+        {
+            Id = table.Get("id").String ?? table.Get("_id").String,
+            Name = table.Get("name").String ?? table.Get("_name").String,
+            Author = table.Get("author").String ?? table.Get("_author").String ?? "",
+            Description = table.Get("description").String ?? table.Get("_description").String ?? "",
+            Version = table.Get("version").String ?? table.Get("_version").String ?? "1.0",
+            Condition = table.Get("condition").String ?? table.Get("_condition").String ?? ""
+        };
+
+        // Seed
+        var seedVal = table.Get("seed");
+        if (seedVal.IsNil()) seedVal = table.Get("_seed");
+        if (!seedVal.IsNil() && seedVal.Type == DataType.Number)
+            config.Seed = (int)seedVal.Number;
+
+        // Size
+        var sizeVal = table.Get("size");
+        if (sizeVal.IsNil()) sizeVal = table.Get("_size");
+        if (!sizeVal.IsNil() && sizeVal.Type == DataType.Number)
+            config.MapSize = (int)sizeVal.Number;
+
+        // Weight
+        var weightVal = table.Get("weight");
+        if (weightVal.IsNil()) weightVal = table.Get("_weight");
+        if (!weightVal.IsNil() && weightVal.Type == DataType.Number)
+            config.Weight = (int)weightVal.Number;
+
+        // Layers
+        var layersVal = table.Get("layers");
+        if (layersVal.IsNil()) layersVal = table.Get("_layers");
+        if (!layersVal.IsNil() && layersVal.Type == DataType.Table)
+        {
+            config.Layers.Clear();
+            foreach (var pair in layersVal.Table.Pairs)
+            {
+                if (pair.Value.Type == DataType.String)
+                    config.Layers.Add(pair.Value.String);
+            }
+        }
+
+        // Tags
+        var tagsVal = table.Get("tags");
+        if (tagsVal.IsNil()) tagsVal = table.Get("_tags");
+        if (!tagsVal.IsNil() && tagsVal.Type == DataType.Table)
+        {
+            foreach (var pair in tagsVal.Table.Pairs)
+            {
+                if (pair.Value.Type == DataType.String)
+                    config.Tags.Add(pair.Value.String);
+            }
+        }
+
+        // Disabled generators
+        var disabledVal = table.Get("disabled_generators");
+        if (disabledVal.IsNil()) disabledVal = table.Get("_disabled");
+        if (!disabledVal.IsNil() && disabledVal.Type == DataType.Table)
+        {
+            foreach (var pair in disabledVal.Table.Pairs)
+            {
+                if (pair.Value.Type == DataType.String)
+                    config.DisabledGenerators.Add(pair.Value.String);
+            }
+        }
+
+        // Generator configs
+        var gensVal = table.Get("generators");
+        if (gensVal.IsNil()) gensVal = table.Get("_generators");
+        if (!gensVal.IsNil() && gensVal.Type == DataType.Table)
+        {
+            foreach (var pair in gensVal.Table.Pairs)
+            {
+                if (pair.Key.Type != DataType.String || pair.Value.Type != DataType.Table)
+                    continue;
+
+                var genName = pair.Key.String;
+                var genTable = pair.Value.Table;
+                var genConfig = new CustomMaps.GeneratorConfig();
+
+                var enabledVal = genTable.Get("enabled");
+                if (!enabledVal.IsNil() && enabledVal.Type == DataType.Boolean)
+                    genConfig.Enabled = enabledVal.Boolean;
+
+                var propsVal = genTable.Get("properties");
+                if (!propsVal.IsNil() && propsVal.Type == DataType.Table)
+                {
+                    foreach (var propPair in propsVal.Table.Pairs)
+                    {
+                        if (propPair.Key.Type == DataType.String)
+                        {
+                            var propName = propPair.Key.String;
+                            object propValue = propPair.Value.Type switch
+                            {
+                                DataType.Number => propPair.Value.Number,
+                                DataType.Boolean => propPair.Value.Boolean,
+                                DataType.String => propPair.Value.String,
+                                _ => null
+                            };
+                            if (propValue != null)
+                                genConfig.Properties[propName] = propValue;
+                        }
+                    }
+                }
+
+                config.Generators[genName] = genConfig;
+            }
+        }
+
+        return config;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Script Execution
     // ═══════════════════════════════════════════════════════════════════
 
@@ -1552,6 +2292,47 @@ public class LuaScriptEngine
             table[kvp.Key] = DynValue.FromObject(_lua, kvp.Value);
         }
         FireEvent(eventName, DynValue.NewTable(table));
+    }
+
+    /// <summary>
+    /// Fire event with actor and skill objects (Phase 3 object bindings).
+    /// Passes LuaActor and LuaSkill UserData objects to handlers.
+    ///
+    /// Example Lua handler:
+    ///   on("skill_used_obj", function(actor, skill)
+    ///       if skill.is_attack and not skill.is_silent then
+    ///           actor:add_effect("concealment", -3, 1)
+    ///       end
+    ///   end)
+    /// </summary>
+    public void FireEventWithActorAndSkill(string eventName, long actorPtr, long skillPtr)
+    {
+        var actorObj = LuaObjectBindings.CreateActor(actorPtr);
+        var skillObj = LuaObjectBindings.CreateSkill(skillPtr);
+        FireEvent(eventName, actorObj, skillObj);
+    }
+
+    /// <summary>
+    /// Fire event with actor object only.
+    /// </summary>
+    public void FireEventWithActor(string eventName, long actorPtr)
+    {
+        var actorObj = LuaObjectBindings.CreateActor(actorPtr);
+        FireEvent(eventName, actorObj);
+    }
+
+    /// <summary>
+    /// Fire event with actor object and additional data table.
+    /// </summary>
+    public void FireEventWithActorAndData(string eventName, long actorPtr, Dictionary<string, object> data)
+    {
+        var actorObj = LuaObjectBindings.CreateActor(actorPtr);
+        var table = new Table(_lua);
+        foreach (var kvp in data)
+        {
+            table[kvp.Key] = DynValue.FromObject(_lua, kvp.Value);
+        }
+        FireEvent(eventName, actorObj, DynValue.NewTable(table));
     }
 
     // ═══════════════════════════════════════════════════════════════════

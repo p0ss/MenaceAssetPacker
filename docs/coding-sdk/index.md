@@ -464,3 +464,6 @@ Detailed documentation for each SDK type:
 - [Intercept](api/intercept.md) -- Central event registry for 100+ game methods
 - [PatchSet](api/patchset.md) -- Fluent builder for Harmony patching
 - [PointerCache](api/pointer-cache.md) -- Thread-safe IL2CPP pointer caching
+
+### Lua Scripting
+- [Custom Maps](lua-custom-maps.md) -- Lua API for map generation control, generator configuration, and prefab selection

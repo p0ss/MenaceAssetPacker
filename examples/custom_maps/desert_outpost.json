@@ -1,0 +1,76 @@
+{
+  "id": "desert_outpost",
+  "name": "Desert Outpost Combat",
+  "author": "Menace SDK",
+  "description": "Sparse desert map with minimal cover and small outposts. Open terrain favors long-range combat.",
+  "version": "1.0",
+
+  "seed": 424242,
+  "mapSize": 50,
+
+  "layers": ["medium", "hard"],
+  "weight": 10,
+
+  "disabledGenerators": [],
+
+  "generators": {
+    "ChunkGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnDensity": 0.2,
+        "minDistance": 10
+      },
+      "prefabs": {
+        "chunkTemplates": [
+          "Buildings/SmallOutpost",
+          "Buildings/Bunker",
+          "Buildings/WatchTower"
+        ]
+      }
+    },
+
+    "EnvironmentFeatureGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.1,
+        "clusterSize": 2
+      },
+      "prefabs": {
+        "featureTemplates": [
+          "Props/Rock_Large_Desert",
+          "Props/Rock_Medium_Desert",
+          "Props/Cactus"
+        ]
+      }
+    },
+
+    "EnvironmentPropGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.05
+      },
+      "prefabs": {
+        "propPrefabs": [
+          "Props/Debris_Metal",
+          "Props/Barrel"
+        ]
+      }
+    },
+
+    "CoverGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnChance": 0.15
+      }
+    }
+  },
+
+  "terrain": {
+    "groundTexture": "Textures/Desert_Sand",
+    "detailTexture": "Textures/Desert_Rocky",
+    "heightScale": 0.8,
+    "roughness": 0.3
+  },
+
+  "tags": ["desert", "sparse", "long-range"]
+}

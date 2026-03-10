@@ -1,0 +1,76 @@
+{
+  "id": "forest_ambush",
+  "name": "Forest Ambush",
+  "author": "Menace SDK",
+  "description": "Wooded combat zone with natural cover and scattered structures. Balanced engagement ranges.",
+  "version": "1.0",
+
+  "seed": 123456,
+  "mapSize": 48,
+
+  "layers": ["easy", "medium"],
+  "weight": 12,
+
+  "disabledGenerators": [],
+
+  "generators": {
+    "ChunkGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnDensity": 0.35,
+        "minDistance": 8
+      },
+      "prefabs": {
+        "chunkTemplates": [
+          "Buildings/Cabin",
+          "Buildings/Shed",
+          "Buildings/RuralHouse"
+        ]
+      }
+    },
+
+    "EnvironmentFeatureGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.5,
+        "clusterSize": 4,
+        "blockNavigation": false
+      },
+      "prefabs": {
+        "featureTemplates": [
+          "Props/Tree_Pine",
+          "Props/Tree_Oak",
+          "Props/Bush_Large",
+          "Props/Rock_Mossy"
+        ]
+      }
+    },
+
+    "EnvironmentPropGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.08
+      },
+      "prefabs": {
+        "propPrefabs": [
+          "Props/Log_Fallen",
+          "Props/Stump",
+          "Props/Mushroom_Cluster"
+        ]
+      }
+    },
+
+    "CoverGenerator": {
+      "enabled": false
+    }
+  },
+
+  "terrain": {
+    "groundTexture": "Textures/Forest_Grass",
+    "detailTexture": "Textures/Forest_Dirt",
+    "heightScale": 1.2,
+    "roughness": 0.6
+  },
+
+  "tags": ["forest", "natural", "balanced", "ambush"]
+}

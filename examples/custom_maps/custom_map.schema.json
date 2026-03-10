@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://menace-modding.dev/schemas/custom_map.json",
+  "title": "Menace Custom Map Configuration",
+  "description": "Configuration schema for custom map generation in Menace",
+  "type": "object",
+  "required": ["id", "name"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this map configuration",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name for the map"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author/creator of the map"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of the map and gameplay characteristics"
+    },
+    "version": {
+      "type": "string",
+      "description": "Version string",
+      "default": "1.0"
+    },
+    "seed": {
+      "type": "integer",
+      "description": "Random seed for deterministic generation. Omit for random."
+    },
+    "mapSize": {
+      "type": "integer",
+      "description": "Map size in tiles (NxN square). Default is 42.",
+      "minimum": 20,
+      "maximum": 80,
+      "default": 42
+    },
+    "layers": {
+      "type": "array",
+      "description": "Difficulty layers this map appears in",
+      "items": {
+        "type": "string",
+        "enum": ["easy", "medium", "hard", "extreme"]
+      },
+      "default": ["medium"]
+    },
+    "weight": {
+      "type": "integer",
+      "description": "Selection weight in mission pools (higher = more likely)",
+      "minimum": 1,
+      "default": 10
+    },
+    "condition": {
+      "type": "string",
+      "description": "Lua condition expression for context-aware placement"
+    },
+    "disabledGenerators": {
+      "type": "array",
+      "description": "Generator class names to disable",
+      "items": {
+        "type": "string"
+      }
+    },
+    "generators": {
+      "type": "object",
+      "description": "Per-generator configuration overrides",
+      "additionalProperties": {
+        "$ref": "#/$defs/generatorConfig"
+      }
+    },
+    "terrain": {
+      "$ref": "#/$defs/terrainConfig"
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags for categorization and filtering",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "generatorConfig": {
+      "type": "object",
+      "description": "Configuration for a specific generator",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this generator is enabled",
+          "default": true
+        },
+        "properties": {
+          "type": "object",
+          "description": "Property overrides for this generator",
+          "additionalProperties": true
+        },
+        "prefabs": {
+          "type": "object",
+          "description": "Prefab array overrides",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "terrainConfig": {
+      "type": "object",
+      "description": "Terrain/biome visual overrides",
+      "properties": {
+        "groundTexture": {
+          "type": "string",
+          "description": "Ground texture asset reference"
+        },
+        "detailTexture": {
+          "type": "string",
+          "description": "Detail/secondary texture asset reference"
+        },
+        "heightScale": {
+          "type": "number",
+          "description": "Terrain height range multiplier",
+          "minimum": 0.1,
+          "maximum": 3.0
+        },
+        "roughness": {
+          "type": "number",
+          "description": "Terrain roughness/noise multiplier",
+          "minimum": 0,
+          "maximum": 1.0
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "desert_sparse",
+      "name": "Desert Sparse",
+      "seed": 12345,
+      "mapSize": 50,
+      "layers": ["medium"],
+      "generators": {
+        "ChunkGenerator": {
+          "properties": {
+            "spawnDensity": 0.2
+          }
+        }
+      }
+    }
+  ]
+}

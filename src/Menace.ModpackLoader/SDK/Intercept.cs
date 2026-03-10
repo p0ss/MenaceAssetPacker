@@ -3050,8 +3050,6 @@ public static class Intercept
 
     private static void GetConcealment_Postfix(object __instance, ref int __result)
     {
-        if (OnGetConcealment == null) return;
-
         try
         {
             var propsPtr = GetPointer(__instance);
@@ -3059,23 +3057,38 @@ public static class Intercept
             var owner = TryResolveOwner(propsPtr);
             var result = __result;
 
-            foreach (var handler in OnGetConcealment.GetInvocationList().Cast<IntIntercept>())
+            // Run C# handlers
+            if (OnGetConcealment != null)
             {
-                try
+                foreach (var handler in OnGetConcealment.GetInvocationList().Cast<IntIntercept>())
                 {
-                    handler(props, owner, ref result);
-                }
-                catch (Exception ex)
-                {
-                    ModError.WarnInternal("Intercept", $"OnGetConcealment handler failed: {ex.Message}");
+                    try
+                    {
+                        handler(props, owner, ref result);
+                    }
+                    catch (Exception ex)
+                    {
+                        ModError.WarnInternal("Intercept", $"OnGetConcealment handler failed: {ex.Message}");
+                    }
                 }
             }
+
+            // Apply EffectSystem modifiers
+            var ownerPtr = owner.IsNull ? 0L : owner.Pointer.ToInt64();
+            if (!owner.IsNull)
+            {
+                result += EffectSystem.GetModifier(owner.Pointer, "concealment");
+            }
+
+            // Run Lua interceptors - they can modify the value
+            result = LuaScriptEngine.Instance?.InvokeLuaInterceptors("concealment", ownerPtr, result) ?? result;
 
             __result = result;
 
             FireLuaEvent("property_concealment", new Dictionary<string, object>
             {
                 ["props_ptr"] = propsPtr.ToInt64(),
+                ["owner_ptr"] = ownerPtr,
                 ["result"] = result
             });
         }

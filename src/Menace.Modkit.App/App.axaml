@@ -9,6 +9,7 @@
     <FluentTheme />
     <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
     <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"/>
+    <StyleInclude Source="avares://Nodify.Avalonia/Themes/Controls.xaml"/>
     <StyleInclude Source="/Styles/Theme.axaml"/>
     <StyleInclude Source="/Styles/Components.axaml"/>
   </Application.Styles>

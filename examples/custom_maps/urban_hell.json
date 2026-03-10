@@ -1,0 +1,65 @@
+{
+  "id": "urban_hell",
+  "name": "Urban Hell",
+  "author": "Menace SDK",
+  "description": "Dense urban warfare with heavy building coverage and abundant cover. Close-quarters combat dominant.",
+  "version": "1.0",
+
+  "seed": 666666,
+  "mapSize": 45,
+
+  "layers": ["hard", "extreme"],
+  "weight": 10,
+
+  "disabledGenerators": [],
+
+  "generators": {
+    "ChunkGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnDensity": 0.75,
+        "minDistance": 3,
+        "allowRotation": true
+      },
+      "prefabs": {
+        "chunkTemplates": [
+          "Buildings/LargeBuilding",
+          "Buildings/MediumBuilding",
+          "Buildings/Warehouse",
+          "Buildings/Office"
+        ]
+      }
+    },
+
+    "EnvironmentFeatureGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.02,
+        "clusterSize": 1
+      }
+    },
+
+    "EnvironmentPropGenerator": {
+      "enabled": true,
+      "properties": {
+        "density": 0.15
+      },
+      "prefabs": {
+        "propPrefabs": [
+          "Props/Debris_Concrete",
+          "Props/Vehicle_Destroyed",
+          "Props/Dumpster"
+        ]
+      }
+    },
+
+    "CoverGenerator": {
+      "enabled": true,
+      "properties": {
+        "spawnChance": 0.85
+      }
+    }
+  },
+
+  "tags": ["urban", "dense", "close-quarters", "hard"]
+}

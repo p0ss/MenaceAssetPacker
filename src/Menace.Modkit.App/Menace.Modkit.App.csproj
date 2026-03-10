@@ -32,12 +32,10 @@
     <MakeDir Directories="$(PublishDir)roslyn" />
 
     <!-- Copy all matches - Copy task handles duplicates by overwriting (last wins) -->
-    <Copy SourceFiles="@(_RoslynAll)"
-          DestinationFolder="$(PublishDir)roslyn"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_RoslynAll)" DestinationFolder="$(PublishDir)roslyn" SkipUnchangedFiles="true" />
 
     <!-- Report unique assemblies copied -->
-    <Message Importance="high" Text="Copied Roslyn assemblies to roslyn/: @(_RoslynAll->'%(Filename)'-&gt;Distinct())" />
+    <Message Importance="high" Text="Copied Roslyn assemblies to roslyn/: @(_RoslynAll-&gt;'%(Filename)'-&gt;Distinct())" />
   </Target>
 
   <ItemGroup>
@@ -61,6 +59,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Nodify.Avalonia" Version="1.0.2" />
     <PackageReference Include="SharpCompress" Version="0.40.0" />
     <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
     <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.4.1" />

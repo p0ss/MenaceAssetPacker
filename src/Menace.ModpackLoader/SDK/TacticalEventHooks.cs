@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes;
 
@@ -69,7 +70,8 @@ public static class TacticalEventHooks
 
     // Turn/Round Events
     public static event Action<IntPtr> OnTurnEnd;                            // actor
-    public static event Action<int> OnRoundStart;                            // roundNumber
+    public static event Action<int> OnRoundEnd;                              // roundNumber (fires before round increments)
+    public static event Action<int> OnRoundStart;                            // roundNumber (fires after round increments)
 
     // Entity Events
     public static event Action<IntPtr> OnEntitySpawned;                      // entity
@@ -154,7 +156,7 @@ public static class TacticalEventHooks
             patchCount += PatchMethod(harmony, "InvokeOnObjectiveStateChanged", nameof(OnObjectiveStateChanged_Postfix));
 
             // Additional hooks for turn/round that don't have InvokeOn methods
-            patchCount += PatchMethod(harmony, "NextRound", nameof(OnNextRound_Postfix));
+            patchCount += PatchMethodPrefixPostfix(harmony, "NextRound", nameof(OnNextRound_Prefix), nameof(OnNextRound_Postfix));
 
             _initialized = true;
             SdkLogger.Msg($"[TacticalEventHooks] Initialized with {patchCount} event hooks");
@@ -197,6 +199,36 @@ public static class TacticalEventHooks
         }
     }
 
+    private static int PatchMethodPrefixPostfix(HarmonyLib.Harmony harmony, string methodName, string prefixMethodName, string postfixMethodName)
+    {
+        try
+        {
+            var targetMethod = _tacticalManagerType.GetMethod(methodName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+            if (targetMethod == null)
+            {
+                SdkLogger.Warning($"[TacticalEventHooks] Method not found: {methodName}");
+                return 0;
+            }
+
+            var prefixMethod = typeof(TacticalEventHooks).GetMethod(prefixMethodName,
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var postfixMethod = typeof(TacticalEventHooks).GetMethod(postfixMethodName,
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            harmony.Patch(targetMethod,
+                prefix: prefixMethod != null ? new HarmonyMethod(prefixMethod) : null,
+                postfix: postfixMethod != null ? new HarmonyMethod(postfixMethod) : null);
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TacticalEventHooks] Failed to patch {methodName}: {ex.Message}");
+            return 0;
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Helper Methods
     // ═══════════════════════════════════════════════════════════════════
@@ -220,6 +252,84 @@ public static class TacticalEventHooks
         catch
         {
             return "<unknown>";
+        }
+    }
+
+    // Skill field offsets - fallbacks if schema not loaded
+    private const int FALLBACK_OFFSET_SKILL_TEMPLATE = 0x10;
+    private const int FALLBACK_OFFSET_TEMPLATE_IS_ATTACK = 0xF2;
+    private const int FALLBACK_OFFSET_TEMPLATE_IS_SILENT = 0x110;
+
+    // Cached schema offsets
+    private static int? _schemaOffsetTemplate;
+    private static int? _schemaOffsetIsAttack;
+    private static int? _schemaOffsetIsSilent;
+    private static bool _schemaChecked;
+
+    private static void EnsureSchemaOffsetsLoaded()
+    {
+        if (_schemaChecked) return;
+        _schemaChecked = true;
+
+        if (!TemplateSchema.IsInitialized) return;
+
+        if (TemplateSchema.TryGetOffset("Skill", "Template", out var tOff))
+            _schemaOffsetTemplate = tOff;
+        if (TemplateSchema.TryGetOffset("SkillTemplate", "IsAttack", out var aOff))
+            _schemaOffsetIsAttack = aOff;
+        if (TemplateSchema.TryGetOffset("SkillTemplate", "IsSilent", out var sOff))
+            _schemaOffsetIsSilent = sOff;
+    }
+
+    private static int GetOffsetSkillTemplate()
+    {
+        EnsureSchemaOffsetsLoaded();
+        return _schemaOffsetTemplate ?? FALLBACK_OFFSET_SKILL_TEMPLATE;
+    }
+
+    private static int GetOffsetIsAttack()
+    {
+        EnsureSchemaOffsetsLoaded();
+        return _schemaOffsetIsAttack ?? FALLBACK_OFFSET_TEMPLATE_IS_ATTACK;
+    }
+
+    private static int GetOffsetIsSilent()
+    {
+        EnsureSchemaOffsetsLoaded();
+        return _schemaOffsetIsSilent ?? FALLBACK_OFFSET_TEMPLATE_IS_SILENT;
+    }
+
+    /// <summary>
+    /// Extract skill information from a skill object for Lua events.
+    /// Returns (isAttack, isSilent, skillName) tuple.
+    /// </summary>
+    private static (bool isAttack, bool isSilent, string name) GetSkillInfo(object skill)
+    {
+        if (skill == null) return (false, false, "<null>");
+
+        try
+        {
+            var skillPtr = GetPointer(skill);
+            if (skillPtr == IntPtr.Zero) return (false, false, "<null>");
+
+            var skillObj = new GameObj(skillPtr);
+            var name = skillObj.GetName() ?? "<unnamed>";
+
+            // Read template pointer from skill
+            var templatePtr = Marshal.ReadIntPtr(skillPtr + GetOffsetSkillTemplate());
+            if (templatePtr == IntPtr.Zero) return (false, false, name);
+
+            // Read IsAttack bool from template
+            var isAttack = Marshal.ReadByte(templatePtr + GetOffsetIsAttack()) != 0;
+
+            // Read IsSilent bool from template
+            var isSilent = Marshal.ReadByte(templatePtr + GetOffsetIsSilent()) != 0;
+
+            return (isAttack, isSilent, name);
+        }
+        catch
+        {
+            return (false, false, "<unknown>");
         }
     }
 
@@ -528,13 +638,20 @@ public static class TacticalEventHooks
 
         OnSkillUsed?.Invoke(userPtr, skillPtr, targetPtr);
 
-        FireLuaEvent("skill_used", new Dictionary<string, object>
+        // Fire Lua event with Actor and Skill objects directly
+        // Usage: on("skill_used", function(actor, skill)
+        //            if skill.is_attack and not skill.is_silent then
+        //                actor:add_effect("concealment", -3, 1)
+        //            end
+        //        end)
+        try
         {
-            ["user"] = GetName(user),
-            ["user_ptr"] = userPtr.ToInt64(),
-            ["skill"] = GetName(skill),
-            ["skill_ptr"] = skillPtr.ToInt64()
-        });
+            LuaScriptEngine.Instance?.FireEventWithActorAndSkill("skill_used", userPtr.ToInt64(), skillPtr.ToInt64());
+        }
+        catch (Exception ex)
+        {
+            ModError.WarnInternal("TacticalEventHooks", $"skill_used event failed: {ex.Message}");
+        }
     }
 
     private static void OnAfterSkillUse_Postfix(object __instance, object skill)
@@ -615,8 +732,22 @@ public static class TacticalEventHooks
         LuaScriptEngine.Instance?.OnTurnEnd(faction, factionName);
     }
 
+    private static void OnNextRound_Prefix(object __instance)
+    {
+        // Fire round_end BEFORE the round number increments
+        int roundNumber = TacticalController.GetCurrentRound();
+
+        OnRoundEnd?.Invoke(roundNumber);
+
+        FireLuaEvent("round_end", new Dictionary<string, object>
+        {
+            ["round"] = roundNumber
+        });
+    }
+
     private static void OnNextRound_Postfix(object __instance)
     {
+        // Fire round_start AFTER the round number has incremented
         int roundNumber = TacticalController.GetCurrentRound();
 
         OnRoundStart?.Invoke(roundNumber);

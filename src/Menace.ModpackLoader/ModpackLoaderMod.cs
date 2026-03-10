@@ -7,10 +7,12 @@ using HarmonyLib;
 using Il2CppInterop.Runtime;
 using MelonLoader;
 using Menace.SDK;
+using Menace.SDK.CustomMaps;
 using Menace.SDK.Internal;
 using Menace.SDK.Repl;
 using Menace.ModpackLoader.Mcp;
 using Menace.ModpackLoader.Diagnostics;
+using Menace.ModpackLoader.VisualEditor.Runtime;
 using Menace.ModpackLoader.TemplateLoading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -48,6 +50,9 @@ public partial class ModpackLoaderMod : MelonMod
         DevConsole.Initialize();
         DevConsole.ApplyInputPatches(HarmonyInstance);
 
+        // Initialize TemplateSchema from schema.json (optional - provides offset lookups)
+        InitializeTemplateSchema();
+
         SdkLogger.Msg($"{ModkitVersion.LoaderFull} initialized");
         ModSettings.Initialize();
 
@@ -83,6 +88,9 @@ public partial class ModpackLoaderMod : MelonMod
         // Patches TacticalManager.InvokeOnX methods to fire SDK events
         TacticalEventHooks.Initialize(HarmonyInstance);
 
+        // Wire EffectSystem to round end for automatic effect expiry
+        TacticalEventHooks.OnRoundEnd += _ => EffectSystem.OnRoundEnd();
+
         // Initialize strategy event hooks for C# and Lua event subscriptions
         // Patches Roster, StoryFaction, Squaddies, Operation, BlackMarket methods
         StrategyEventHooks.Initialize(HarmonyInstance);
@@ -92,6 +100,9 @@ public partial class ModpackLoaderMod : MelonMod
 
         // Initialize boot skip patches (splash/intro skipping in dev mode)
         BootSkip.Initialize(HarmonyInstance);
+
+        // Initialize custom maps SDK (seed/size overrides, generator config, mission pool injection)
+        CustomMaps.Initialize(HarmonyInstance);
 
         // Initialize Lua scripting engine
         try
@@ -105,6 +116,21 @@ public partial class ModpackLoaderMod : MelonMod
         {
             SdkLogger.Error($"[LuaEngine] Failed to initialize: {ex.GetType().Name}: {ex.Message}");
             SdkLogger.Error($"[LuaEngine] Stack: {ex.StackTrace}");
+        }
+
+        // Load custom maps from modpacks
+        LoadCustomMaps();
+
+        // Initialize visual mod graph interpreter
+        // This executes .modgraph.json files at runtime
+        try
+        {
+            GraphInterpreter.Instance.Initialize();
+            LoadVisualMods();
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Error($"[GraphInterpreter] Failed to initialize: {ex.GetType().Name}: {ex.Message}");
         }
 
         // Initialize multi-lingual localization system (loads all language CSVs)
@@ -137,6 +163,8 @@ public partial class ModpackLoaderMod : MelonMod
         if (pluginSummary != null)
             PlayerLog($"Modpack plugins: {pluginSummary}");
         PlayerLog($"Lua scripts loaded: {LuaScriptEngine.Instance.LoadedScriptCount}");
+        PlayerLog($"Visual mods loaded: {GraphInterpreter.Instance.LoadedMods.Count}");
+        PlayerLog($"Custom maps registered: {CustomMapRegistry.Count}");
         PlayerLog("========================================");
     }
 
@@ -271,6 +299,7 @@ public partial class ModpackLoaderMod : MelonMod
         SimpleAnimations.RegisterConsoleCommands();
         UIInspector.RegisterConsoleCommands();
         Modpacks.RegisterConsoleCommands();
+        GraphInterpreter.RegisterConsoleCommands();
 
         // Register test harness commands for automated testing
         TestHarnessCommands.Register();
@@ -300,6 +329,31 @@ public partial class ModpackLoaderMod : MelonMod
         {
             SdkLogger.Error($"Failed to initialize diagnostics: {ex.Message}");
         }
+    }
+
+    private void InitializeTemplateSchema()
+    {
+        // Try to find schema.json in standard locations
+        var baseDir = Directory.GetCurrentDirectory();
+        var candidatePaths = new[]
+        {
+            Path.Combine(baseDir, "UserData", "Menace", "schema.json"),
+            Path.Combine(baseDir, "Mods", "MenaceModpackLoader", "schema.json"),
+            Path.Combine(baseDir, "schema.json"),
+            Path.Combine(Path.GetDirectoryName(typeof(ModpackLoaderMod).Assembly.Location) ?? baseDir, "schema.json"),
+        };
+
+        foreach (var path in candidatePaths)
+        {
+            if (File.Exists(path))
+            {
+                TemplateSchema.Initialize(path);
+                return;
+            }
+        }
+
+        // Schema not found - this is OK, SDK still works without it
+        SdkLogger.Warning("[TemplateSchema] schema.json not found - schema-driven offsets unavailable");
     }
 
     private void LoadModpacks()
@@ -439,6 +493,65 @@ public partial class ModpackLoaderMod : MelonMod
 
         if (scriptCount > 0)
             SdkLogger.Msg($"Loaded {scriptCount} Lua script(s)");
+    }
+
+    /// <summary>
+    /// Load custom map configurations from all modpacks.
+    /// Maps are loaded from the custom_maps/ directory within each modpack.
+    /// </summary>
+    private void LoadCustomMaps()
+    {
+        int mapCount = 0;
+
+        foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
+        {
+            if (string.IsNullOrEmpty(modpack.DirectoryPath))
+                continue;
+
+            var mapsDir = Path.Combine(modpack.DirectoryPath, "custom_maps");
+            if (!Directory.Exists(mapsDir))
+                continue;
+
+            var count = CustomMapRegistry.LoadFromDirectory(mapsDir);
+            if (count > 0)
+            {
+                SdkLogger.Msg($"  Loaded {count} custom map(s) from {modpack.Name}");
+                mapCount += count;
+            }
+        }
+
+        if (mapCount > 0)
+            SdkLogger.Msg($"Loaded {mapCount} custom map(s) total");
+    }
+
+    /// <summary>
+    /// Load visual mod graphs (.modgraph.json) from all modpacks.
+    /// These are executed at runtime via the GraphInterpreter.
+    /// </summary>
+    private void LoadVisualMods()
+    {
+        int graphCount = 0;
+
+        foreach (var modpack in _loadedModpacks.Values.OrderBy(m => m.LoadOrder))
+        {
+            if (string.IsNullOrEmpty(modpack.DirectoryPath))
+                continue;
+
+            // Look for .modgraph.json files in the visual_mods directory
+            var modsDir = Path.Combine(modpack.DirectoryPath, "visual_mods");
+            if (!Directory.Exists(modsDir))
+                continue;
+
+            var count = GraphInterpreter.Instance.LoadModsFromDirectory(modsDir);
+            if (count > 0)
+            {
+                SdkLogger.Msg($"  Loaded {count} visual mod(s) from {modpack.Name}");
+                graphCount += count;
+            }
+        }
+
+        if (graphCount > 0)
+            SdkLogger.Msg($"Loaded {graphCount} visual mod(s) total");
     }
 
     private void LoadModpackAssets(Modpack modpack)

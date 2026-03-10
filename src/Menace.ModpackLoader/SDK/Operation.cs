@@ -279,6 +279,235 @@ public static class Operation
         return info != null && info.TimeLimit > 0;
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  Multi-Operation Support
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get the OperationsManager instance.
+    /// </summary>
+    public static GameObj GetOperationsManager()
+    {
+        try
+        {
+            EnsureTypesLoaded();
+
+            var strategyStateType = _strategyStateType?.ManagedType;
+            if (strategyStateType == null) return GameObj.Null;
+
+            var getMethod = strategyStateType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
+            var strategyState = getMethod?.Invoke(null, null);
+            if (strategyState == null) return GameObj.Null;
+
+            // OperationsManager at offset +0x58
+            var strategyStateObj = new GameObj(((Il2CppObjectBase)strategyState).Pointer);
+            var omPtr = strategyStateObj.ReadPtr(0x58);
+            if (omPtr == IntPtr.Zero) return GameObj.Null;
+
+            return new GameObj(omPtr);
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Operation.GetOperationsManager", "Failed", ex);
+            return GameObj.Null;
+        }
+    }
+
+    /// <summary>
+    /// Get all active operations (not just the current one).
+    /// </summary>
+    public static List<GameObj> GetAllOperations()
+    {
+        var result = new List<GameObj>();
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var om = GetOperationsManager();
+            if (om.IsNull) return result;
+
+            var omType = _operationsManagerType?.ManagedType;
+            if (omType == null) return result;
+
+            var omProxy = GetManagedProxy(om, omType);
+            if (omProxy == null) return result;
+
+            // Try GetAllOperations method first
+            var getAllMethod = omType.GetMethod("GetAllOperations",
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (getAllMethod != null)
+            {
+                var ops = getAllMethod.Invoke(omProxy, null);
+                if (ops != null)
+                {
+                    var listType = ops.GetType();
+                    var countProp = listType.GetProperty("Count");
+                    var indexer = listType.GetMethod("get_Item");
+
+                    int count = (int)(countProp?.GetValue(ops) ?? 0);
+                    for (int i = 0; i < count; i++)
+                    {
+                        var op = indexer?.Invoke(ops, new object[] { i });
+                        if (op != null)
+                            result.Add(new GameObj(((Il2CppObjectBase)op).Pointer));
+                    }
+                    return result;
+                }
+            }
+
+            // Fallback: Try m_Operations field at offset +0x18
+            var opsPtr = om.ReadPtr(0x18);
+            if (opsPtr != IntPtr.Zero)
+            {
+                var opsList = new GameList(opsPtr);
+                for (int i = 0; i < opsList.Count; i++)
+                {
+                    var op = opsList[i];
+                    if (!op.IsNull)
+                        result.Add(op);
+                }
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Operation.GetAllOperations", "Failed", ex);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Get all operation info (for all active operations).
+    /// </summary>
+    public static List<OperationInfo> GetAllOperationInfo()
+    {
+        var result = new List<OperationInfo>();
+        var operations = GetAllOperations();
+        foreach (var op in operations)
+        {
+            var info = GetOperationInfo(op);
+            if (info != null)
+                result.Add(info);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Find an operation by faction name.
+    /// </summary>
+    /// <param name="factionName">Name of enemy or friendly faction.</param>
+    public static GameObj FindByFaction(string factionName)
+    {
+        if (string.IsNullOrEmpty(factionName)) return GameObj.Null;
+
+        var operations = GetAllOperations();
+        foreach (var op in operations)
+        {
+            var info = GetOperationInfo(op);
+            if (info == null) continue;
+
+            if (info.EnemyFaction?.Contains(factionName, StringComparison.OrdinalIgnoreCase) == true ||
+                info.FriendlyFaction?.Contains(factionName, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return op;
+            }
+        }
+        return GameObj.Null;
+    }
+
+    /// <summary>
+    /// Find an operation by planet name.
+    /// </summary>
+    public static GameObj FindByPlanet(string planetName)
+    {
+        if (string.IsNullOrEmpty(planetName)) return GameObj.Null;
+
+        var operations = GetAllOperations();
+        foreach (var op in operations)
+        {
+            var info = GetOperationInfo(op);
+            if (info?.Planet?.Contains(planetName, StringComparison.OrdinalIgnoreCase) == true)
+                return op;
+        }
+        return GameObj.Null;
+    }
+
+    /// <summary>
+    /// Get completed operation types (operations that have been completed at least once).
+    /// </summary>
+    public static List<string> GetCompletedOperationTypes()
+    {
+        var result = new List<string>();
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var om = GetOperationsManager();
+            if (om.IsNull) return result;
+
+            var omType = _operationsManagerType?.ManagedType;
+            if (omType == null) return result;
+
+            var omProxy = GetManagedProxy(om, omType);
+            if (omProxy == null) return result;
+
+            // Try m_CompletedOperationTypes HashSet
+            var completedProp = omType.GetProperty("CompletedOperationTypes",
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (completedProp == null)
+            {
+                // Try field directly
+                var completedField = omType.GetField("m_CompletedOperationTypes",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                if (completedField != null)
+                {
+                    var completed = completedField.GetValue(omProxy);
+                    if (completed != null)
+                    {
+                        var setType = completed.GetType();
+                        var enumerator = setType.GetMethod("GetEnumerator")?.Invoke(completed, null);
+                        if (enumerator != null)
+                        {
+                            var enumType = enumerator.GetType();
+                            var moveNext = enumType.GetMethod("MoveNext");
+                            var currentProp = enumType.GetProperty("Current");
+
+                            while ((bool)moveNext.Invoke(enumerator, null))
+                            {
+                                var current = currentProp.GetValue(enumerator);
+                                if (current != null)
+                                {
+                                    var templateObj = new GameObj(((Il2CppObjectBase)current).Pointer);
+                                    result.Add(templateObj.GetName() ?? "Unknown");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Operation.GetCompletedOperationTypes", "Failed", ex);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Check if an operation type has been completed before.
+    /// </summary>
+    public static bool HasCompletedOperationType(string operationTemplateName)
+    {
+        var completed = GetCompletedOperationTypes();
+        return completed.Exists(c => c.Equals(operationTemplateName, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>
     /// Register console commands for Operation SDK.
     /// </summary>
@@ -337,6 +566,77 @@ public static class Operation
 
             return $"Time: {info.TimeSpent}/{info.TimeLimit}\n" +
                    $"Remaining: {info.TimeRemaining}";
+        });
+
+        // alloperations - List all active operations
+        DevConsole.RegisterCommand("alloperations", "", "List all active operations", args =>
+        {
+            var operations = GetAllOperationInfo();
+            if (operations.Count == 0)
+                return "No active operations";
+
+            var current = GetCurrentOperation();
+            var currentPtr = current.IsNull ? IntPtr.Zero : current.Pointer;
+
+            var lines = new List<string> { $"Active Operations ({operations.Count}):" };
+            foreach (var op in operations)
+            {
+                var isCurrent = op.Pointer == currentPtr ? " <-- CURRENT" : "";
+                var time = op.TimeLimit > 0 ? $" (Time: {op.TimeRemaining} left)" : "";
+                lines.Add($"  {op.TemplateName}: {op.EnemyFaction} vs {op.FriendlyFaction}{time}{isCurrent}");
+                lines.Add($"    Planet: {op.Planet}, Mission {op.CurrentMissionIndex + 1}/{op.MissionCount}");
+            }
+            return string.Join("\n", lines);
+        });
+
+        // completedops - List completed operation types
+        DevConsole.RegisterCommand("completedops", "", "List completed operation types", args =>
+        {
+            var completed = GetCompletedOperationTypes();
+            if (completed.Count == 0)
+                return "No operations completed yet";
+
+            var lines = new List<string> { $"Completed Operation Types ({completed.Count}):" };
+            foreach (var c in completed)
+            {
+                lines.Add($"  {c}");
+            }
+            return string.Join("\n", lines);
+        });
+
+        // findop <faction|planet> - Find operation by faction or planet
+        DevConsole.RegisterCommand("findop", "<name>", "Find operation by faction or planet name", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: findop <faction_or_planet_name>";
+
+            var name = string.Join(" ", args);
+
+            // Try faction first
+            var op = FindByFaction(name);
+            if (!op.IsNull)
+            {
+                var info = GetOperationInfo(op);
+                return $"Found by faction:\n" +
+                       $"  {info.TemplateName}\n" +
+                       $"  Enemy: {info.EnemyFaction}\n" +
+                       $"  Friendly: {info.FriendlyFaction}\n" +
+                       $"  Planet: {info.Planet}";
+            }
+
+            // Try planet
+            op = FindByPlanet(name);
+            if (!op.IsNull)
+            {
+                var info = GetOperationInfo(op);
+                return $"Found by planet:\n" +
+                       $"  {info.TemplateName}\n" +
+                       $"  Enemy: {info.EnemyFaction}\n" +
+                       $"  Friendly: {info.FriendlyFaction}\n" +
+                       $"  Planet: {info.Planet}";
+            }
+
+            return $"No operation found for '{name}'";
         });
     }
 

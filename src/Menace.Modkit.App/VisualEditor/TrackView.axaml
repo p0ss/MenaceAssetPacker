@@ -1,0 +1,137 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:Menace.Modkit.App.VisualEditor"
+             x:Class="Menace.Modkit.App.VisualEditor.TrackView"
+             x:DataType="local:TrackView">
+
+  <UserControl.Resources>
+    <!-- Colors matching the Modkit theme -->
+    <SolidColorBrush x:Key="TrackBackground" Color="#1A1A1A"/>
+    <SolidColorBrush x:Key="TrackBorder" Color="#2D2D2D"/>
+    <SolidColorBrush x:Key="StationBackground" Color="#252525"/>
+    <SolidColorBrush x:Key="StationBackgroundHover" Color="#333333"/>
+    <SolidColorBrush x:Key="StationBorder" Color="#3E3E3E"/>
+    <SolidColorBrush x:Key="StationBorderActive" Color="#004f43"/>
+    <SolidColorBrush x:Key="ConnectorLine" Color="#3E3E3E"/>
+    <SolidColorBrush x:Key="ConnectorArrow" Color="#004f43"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#AAAAAA"/>
+    <SolidColorBrush x:Key="TextMuted" Color="#666666"/>
+    <SolidColorBrush x:Key="ModBadgeBackground" Color="#003d34"/>
+    <SolidColorBrush x:Key="ModBadgeText" Color="#8ECDC8"/>
+    <SolidColorBrush x:Key="AddButtonBackground" Color="#004f43"/>
+  </UserControl.Resources>
+
+  <UserControl.Styles>
+    <!-- Station container style -->
+    <Style Selector="Border.station">
+      <Setter Property="Background" Value="{StaticResource StationBackground}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource StationBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="MinWidth" Value="120"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Border.station:pointerover">
+      <Setter Property="Background" Value="{StaticResource StationBackgroundHover}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource StationBorderActive}"/>
+    </Style>
+
+    <!-- Station with attached mods indicator -->
+    <Style Selector="Border.stationActive">
+      <Setter Property="Background" Value="{StaticResource StationBackground}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource StationBorderActive}"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="MinWidth" Value="120"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Border.stationActive:pointerover">
+      <Setter Property="Background" Value="{StaticResource StationBackgroundHover}"/>
+    </Style>
+
+    <!-- Mod badge style -->
+    <Style Selector="Border.modBadge">
+      <Setter Property="Background" Value="{StaticResource ModBadgeBackground}"/>
+      <Setter Property="CornerRadius" Value="3"/>
+      <Setter Property="Padding" Value="6,2"/>
+      <Setter Property="Margin" Value="0,4,4,0"/>
+    </Style>
+
+    <!-- Add button style -->
+    <Style Selector="Button.addMod">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="{StaticResource StationBorder}"/>
+      <Setter Property="CornerRadius" Value="3"/>
+      <Setter Property="Padding" Value="4,2"/>
+      <Setter Property="Margin" Value="0,4,0,0"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.addMod:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource AddButtonBackground}"/>
+    </Style>
+
+    <!-- Cycle selector tab style -->
+    <Style Selector="Button.cycleTab">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+    <Style Selector="Button.cycleTab:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource StationBackground}"/>
+    </Style>
+    <Style Selector="Button.cycleTabActive">
+      <Setter Property="Background" Value="{StaticResource StationBackground}"/>
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="BorderThickness" Value="0,0,0,2"/>
+      <Setter Property="BorderBrush" Value="{StaticResource StationBorderActive}"/>
+      <Setter Property="CornerRadius" Value="4,4,0,0"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Border Background="{StaticResource TrackBackground}"
+          BorderBrush="{StaticResource TrackBorder}"
+          BorderThickness="1"
+          CornerRadius="8"
+          Padding="16">
+    <Grid RowDefinitions="Auto,*">
+
+      <!-- Cycle selector tabs -->
+      <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="4" Margin="0,0,0,16">
+        <TextBlock Text="GAME CYCLE"
+                   FontSize="11"
+                   FontWeight="SemiBold"
+                   Foreground="{StaticResource TextMuted}"
+                   VerticalAlignment="Center"
+                   Margin="0,0,16,0"/>
+        <Button x:Name="TacticalTabButton"
+                Classes="cycleTabActive"
+                Content="Tactical"
+                Click="OnTacticalTabClick"/>
+        <Button x:Name="StrategicTabButton"
+                Classes="cycleTab"
+                Content="Strategic"
+                Click="OnStrategicTabClick"/>
+      </StackPanel>
+
+      <!-- Track content area with stations -->
+      <ScrollViewer Grid.Row="1"
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Auto">
+        <Canvas x:Name="TrackCanvas"
+                MinWidth="800"
+                MinHeight="400"
+                Background="Transparent"/>
+      </ScrollViewer>
+
+    </Grid>
+  </Border>
+</UserControl>

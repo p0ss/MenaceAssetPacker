@@ -56,14 +56,16 @@ namespace Menace.Tactical.Skills
         /// <summary>Defense multiplier (flipped for defender)</summary>
         public float DefenseMult;           // offset 0x0C
 
+        /// <summary>Whether the skill always hits (100% hit chance)</summary>
+        public bool AlwaysHits;             // offset 0x10
+
         /// <summary>Whether distance dropoff was applied</summary>
         public bool IncludeDropoff;         // offset 0x11
 
+        // 2 bytes padding for alignment (0x12-0x13)
+
         /// <summary>Distance accuracy dropoff applied</summary>
         public float AccuracyDropoff;       // offset 0x14
-
-        /// <summary>Whether the skill always hits (100% hit chance)</summary>
-        public bool AlwaysHits;             // offset 0x15
     }
 
     public partial class Skill
@@ -87,7 +89,7 @@ namespace Menace.Tactical.Skills
         /// <param name="properties">Attacker's EntityProperties (or null to build)</param>
         /// <param name="defenderProperties">Defender's EntityProperties (or null to build)</param>
         /// <param name="includeDropoff">Whether to apply distance dropoff</param>
-        /// <param name="overrideTargetEntity">Target entity override (can be null for empty tile)</param>
+        /// <param name="overrideTargetEntity">Target entity override (can be null to auto-resolve from tile)</param>
         /// <param name="forImmediateUse">Whether this is for immediate use</param>
         /// <returns>HitChanceResult with breakdown</returns>
         public HitChanceResult GetHitchance(
@@ -109,6 +111,12 @@ namespace Menace.Tactical.Skills
                 result.FinalValue = 100f;
                 result.AlwaysHits = true;
                 return result;
+            }
+
+            // If no override target provided, try to get entity from tile
+            if (target == null && targetTile != null && !targetTile.IsEmpty())
+            {
+                target = targetTile.GetEntity();
             }
 
             // Build attack properties if not provided
@@ -194,6 +202,13 @@ namespace Menace.Tactical.Skills
         /// Calculates cover multiplier between attacker and defender.
         ///
         /// Address: 0x1806d9bb0
+        ///
+        /// Early returns 1.0f (no cover penalty) when:
+        /// - AlwaysHits flag is set on skill template (SkillTemplate+0xF3)
+        /// - CoverUsage on defender is <= 0.0
+        /// - Skill ignores cover for the target (IsIgnoringCoverInsideForTarget)
+        /// - Skill ignores cover at range (SkillTemplate+0x100)
+        /// - Distance is less than 2 tiles
         /// </summary>
         public float GetCoverMult(
             Tile sourceTile,
@@ -202,10 +217,65 @@ namespace Menace.Tactical.Skills
             EntityProperties defenseProps,
             bool isContained)
         {
-            // Check if skill ignores cover
-            if (this.SkillTemplate.IsIgnoringCoverInsideForTarget(target))
+            // Early return if AlwaysHits flag is set (SkillTemplate+0xF3)
+            if (this.SkillTemplate.AlwaysHits)
             {
                 return 1.0f;
+            }
+
+            // If no target provided, try to resolve from tile
+            if (target == null && targetTile != null && !targetTile.IsEmpty())
+            {
+                target = targetTile.GetEntity();
+            }
+
+            // Build defense properties if not provided and target exists
+            if (defenseProps == null && target != null)
+            {
+                var targetSkillContainer = target.GetSkillContainer();
+                var attacker = this.GetActor();
+                defenseProps = targetSkillContainer.BuildPropertiesForDefense(
+                    attacker, sourceTile, targetTile, this);
+            }
+
+            // Early return if no defense properties available or no target
+            if (defenseProps == null || target == null)
+            {
+                return 1.0f;
+            }
+
+            // CoverUsage zero check - if defender has no cover usage, no penalty
+            float coverUsage = FloatExtensions.Clamped(defenseProps.CoverUsage);  // EntityProperties+0x88
+            if (coverUsage <= 0.0f)
+            {
+                return 1.0f;
+            }
+
+            // Get tile entity for containment checks
+            Entity tileEntity = targetTile.GetEntity();
+
+            // Check if skill ignores cover for this target
+            if (this.SkillTemplate.IsIgnoringCoverInsideForTarget(tileEntity))
+            {
+                return 1.0f;
+            }
+
+            // Complex containment logic: if target is contained, may use interior cover
+            // from the container entity's TacticsCombat component (+0x398 -> +0xE0 -> +0x58)
+            if ((isContained || target.HasContainmentProperty) && !targetTile.IsEmpty())
+            {
+                Entity containerEntity = targetTile.GetEntity();
+                if (target != containerEntity)
+                {
+                    // Get interior cover from container's TacticsCombat component
+                    var tacticsCombat = containerEntity.GetTacticsCombat();  // +0x398
+                    if (tacticsCombat?.InteriorCover != null)  // +0xE0
+                    {
+                        float interiorCover = tacticsCombat.InteriorCover.CoverValue;  // +0x58
+                        float coverMult = Math.Min(interiorCover / coverUsage, 1.0f);
+                        return 1.0f.AddMult(coverMult);
+                    }
+                }
             }
 
             // Check if skill ignores cover at range (SkillTemplate+0x100)
@@ -225,15 +295,15 @@ namespace Menace.Tactical.Skills
             int direction = targetTile.GetDirectionTo(sourceTile);
 
             // Get cover level (0-3) from tile in that direction
-            int coverLevel = targetTile.GetCover(direction, target);
+            // Note: GetCover takes additional params for defenseProps and whether target == tileEntity
+            int coverLevel = targetTile.GetCover(direction, target, defenseProps, target == tileEntity);
 
             // Look up cover multiplier from Config table
             float[] coverMultipliers = Config.Instance.CoverMultipliers;  // Config+0x88
             float coverValue = coverMultipliers[coverLevel];
 
             // Apply defender's cover usage effectiveness
-            float defenderCoverUsage = FloatExtensions.Clamped(defenseProps.CoverUsage);
-            float coverMult = Math.Min(coverValue / defenderCoverUsage, 1.0f);
+            float coverMult = Math.Min(coverValue / coverUsage, 1.0f);
 
             // Convert to additive multiplier format
             return 1.0f.AddMult(coverMult);

@@ -672,6 +672,423 @@ public static class Roster
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  Squaddie Management (Strategic Layer)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get squaddies for a squad leader.
+    /// </summary>
+    public static List<SquaddieInfo> GetSquaddies(GameObj leader)
+    {
+        var result = new List<SquaddieInfo>();
+        if (leader.IsNull) return result;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return result;
+
+            var proxy = GetManagedProxy(leader, leaderType);
+            if (proxy == null) return result;
+
+            // Get squaddies field
+            var squaddiesField = proxy.GetType().GetField("m_Squaddies",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var squaddies = squaddiesField?.GetValue(proxy);
+            if (squaddies == null) return result;
+
+            var listType = squaddies.GetType();
+            var countProp = listType.GetProperty("Count");
+            var indexer = listType.GetMethod("get_Item");
+
+            int count = (int)(countProp?.GetValue(squaddies) ?? 0);
+            for (int i = 0; i < count; i++)
+            {
+                var squaddie = indexer?.Invoke(squaddies, new object[] { i });
+                if (squaddie == null) continue;
+
+                var squaddieObj = new GameObj(((Il2CppObjectBase)squaddie).Pointer);
+                var info = GetSquaddieInfo(squaddieObj);
+                if (info != null)
+                    result.Add(info);
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.GetSquaddies", "Failed", ex);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Get information about a squaddie.
+    /// </summary>
+    public static SquaddieInfo GetSquaddieInfo(GameObj squaddie)
+    {
+        if (squaddie.IsNull) return null;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var squaddieType = _squaddieType?.ManagedType;
+            if (squaddieType == null) return null;
+
+            var proxy = GetManagedProxy(squaddie, squaddieType);
+            if (proxy == null) return null;
+
+            var info = new SquaddieInfo { Pointer = squaddie.Pointer };
+
+            // Get first name
+            var firstNameProp = squaddieType.GetProperty("FirstName",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (firstNameProp != null)
+                info.FirstName = Il2CppUtils.ToManagedString(firstNameProp.GetValue(proxy));
+
+            // Get last name
+            var lastNameProp = squaddieType.GetProperty("LastName",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (lastNameProp != null)
+                info.LastName = Il2CppUtils.ToManagedString(lastNameProp.GetValue(proxy));
+
+            // Get full name
+            var getFullNameMethod = squaddieType.GetMethod("GetFullName",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (getFullNameMethod != null)
+                info.FullName = Il2CppUtils.ToManagedString(getFullNameMethod.Invoke(proxy, null));
+            else
+                info.FullName = $"{info.FirstName} {info.LastName}".Trim();
+
+            // Get gender
+            var genderProp = squaddieType.GetProperty("Gender",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (genderProp != null)
+                info.Gender = genderProp.GetValue(proxy)?.ToString();
+
+            // Get home planet
+            var homePlanetProp = squaddieType.GetProperty("HomePlanet",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (homePlanetProp != null)
+            {
+                var planet = homePlanetProp.GetValue(proxy);
+                if (planet != null)
+                {
+                    var planetObj = new GameObj(((Il2CppObjectBase)planet).Pointer);
+                    info.HomePlanet = planetObj.GetName();
+                }
+            }
+
+            return info;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.GetSquaddieInfo", "Failed", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Add a squaddie to a squad leader.
+    /// </summary>
+    public static bool AddSquaddie(GameObj leader, GameObj squaddie)
+    {
+        if (leader.IsNull || squaddie.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            var squaddieType = _squaddieType?.ManagedType;
+            if (leaderType == null || squaddieType == null) return false;
+
+            var leaderProxy = GetManagedProxy(leader, leaderType);
+            var squaddieProxy = GetManagedProxy(squaddie, squaddieType);
+            if (leaderProxy == null || squaddieProxy == null) return false;
+
+            // Try AddSquaddie method
+            var method = leaderType.GetMethod("AddSquaddie",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (method != null)
+            {
+                method.Invoke(leaderProxy, new[] { squaddieProxy });
+                return true;
+            }
+
+            // Fallback: direct list manipulation
+            var squaddiesField = leaderType.GetField("m_Squaddies",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var squaddies = squaddiesField?.GetValue(leaderProxy);
+            if (squaddies != null)
+            {
+                var addMethod = squaddies.GetType().GetMethod("Add");
+                addMethod?.Invoke(squaddies, new[] { squaddieProxy });
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.AddSquaddie", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Remove a squaddie from a squad leader.
+    /// </summary>
+    public static bool RemoveSquaddie(GameObj leader, GameObj squaddie)
+    {
+        if (leader.IsNull || squaddie.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            var squaddieType = _squaddieType?.ManagedType;
+            if (leaderType == null || squaddieType == null) return false;
+
+            var leaderProxy = GetManagedProxy(leader, leaderType);
+            var squaddieProxy = GetManagedProxy(squaddie, squaddieType);
+            if (leaderProxy == null || squaddieProxy == null) return false;
+
+            // Try RemoveSquaddie method
+            var method = leaderType.GetMethod("RemoveSquaddie",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (method != null)
+            {
+                method.Invoke(leaderProxy, new[] { squaddieProxy });
+                return true;
+            }
+
+            // Fallback: direct list manipulation
+            var squaddiesField = leaderType.GetField("m_Squaddies",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var squaddies = squaddiesField?.GetValue(leaderProxy);
+            if (squaddies != null)
+            {
+                var removeMethod = squaddies.GetType().GetMethod("Remove");
+                var result = removeMethod?.Invoke(squaddies, new[] { squaddieProxy });
+                return result is bool b && b;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.RemoveSquaddie", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get squaddie count for a leader.
+    /// </summary>
+    public static int GetSquaddieCount(GameObj leader)
+    {
+        if (leader.IsNull) return 0;
+
+        try
+        {
+            var squaddies = GetSquaddies(leader);
+            return squaddies.Count;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Add a perk to a leader.
+    /// </summary>
+    public static bool AddPerk(GameObj leader, GameObj perk)
+    {
+        if (leader.IsNull || perk.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return false;
+
+            var leaderProxy = GetManagedProxy(leader, leaderType);
+            if (leaderProxy == null) return false;
+
+            var perkTemplateType = GameType.Find("Menace.Strategy.PerkTemplate")?.ManagedType;
+            if (perkTemplateType == null) return false;
+
+            var perkProxy = GetManagedProxy(perk, perkTemplateType);
+            if (perkProxy == null) return false;
+
+            var method = leaderType.GetMethod("AddPerk",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (method == null) return false;
+
+            method.Invoke(leaderProxy, new[] { perkProxy });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.AddPerk", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Remove a perk from a leader.
+    /// </summary>
+    public static bool RemovePerk(GameObj leader, string perkName)
+    {
+        if (leader.IsNull || string.IsNullOrEmpty(perkName)) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return false;
+
+            var leaderProxy = GetManagedProxy(leader, leaderType);
+            if (leaderProxy == null) return false;
+
+            // Get perks list
+            var perksPtr = leader.ReadPtr(0x48);
+            if (perksPtr == IntPtr.Zero) return false;
+
+            var perkTemplateType = GameType.Find("Menace.Strategy.PerkTemplate")?.ManagedType;
+            if (perkTemplateType == null) return false;
+
+            var (perks, listType) = GetTypedList(perksPtr, perkTemplateType);
+            if (perks == null) return false;
+
+            var countProp = listType.GetProperty("Count");
+            var indexer = listType.GetMethod("get_Item");
+            var removeAtMethod = listType.GetMethod("RemoveAt");
+
+            int count = (int)countProp.GetValue(perks);
+            for (int i = 0; i < count; i++)
+            {
+                var perk = indexer.Invoke(perks, new object[] { i });
+                if (perk == null) continue;
+
+                var perkObj = new GameObj(((Il2CppObjectBase)perk).Pointer);
+                var name = perkObj.GetName();
+                if (name?.Contains(perkName, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    removeAtMethod?.Invoke(perks, new object[] { i });
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.RemovePerk", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Find a perk template by name.
+    /// </summary>
+    public static GameObj FindPerk(string perkName)
+    {
+        if (string.IsNullOrEmpty(perkName)) return GameObj.Null;
+        return GameQuery.FindByName("PerkTemplate", perkName);
+    }
+
+    /// <summary>
+    /// Heal a leader to full health.
+    /// </summary>
+    public static bool HealLeader(GameObj leader)
+    {
+        if (leader.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return false;
+
+            var proxy = GetManagedProxy(leader, leaderType);
+            if (proxy == null) return false;
+
+            var method = leaderType.GetMethod("Heal", BindingFlags.Public | BindingFlags.Instance);
+            if (method != null)
+            {
+                method.Invoke(proxy, null);
+                return true;
+            }
+
+            // Try SetHitpoints
+            var setHpMethod = leaderType.GetMethod("SetHitpoints",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (setHpMethod != null)
+            {
+                var getMaxHpMethod = leaderType.GetMethod("GetMaxHitpoints",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (getMaxHpMethod != null)
+                {
+                    var maxHp = (int)getMaxHpMethod.Invoke(proxy, null);
+                    setHpMethod.Invoke(proxy, new object[] { maxHp });
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.HealLeader", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Set a leader's availability status.
+    /// </summary>
+    public static bool SetLeaderAvailable(GameObj leader, bool available)
+    {
+        if (leader.IsNull) return false;
+
+        try
+        {
+            EnsureTypesLoaded();
+
+            var leaderType = _unitLeaderType?.ManagedType;
+            if (leaderType == null) return false;
+
+            var proxy = GetManagedProxy(leader, leaderType);
+            if (proxy == null) return false;
+
+            var method = leaderType.GetMethod("SetUnavailable",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (method != null)
+            {
+                method.Invoke(proxy, new object[] { !available });
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("Roster.SetLeaderAvailable", "Failed", ex);
+            return false;
+        }
+    }
+
     /// <summary>
     /// Register console commands for Roster SDK.
     /// </summary>
@@ -781,6 +1198,109 @@ public static class Roster
                 return $"Dismissed: {info?.Nickname ?? nickname}";
             else
                 return "Failed to dismiss leader";
+        });
+
+        // squaddies <nickname> - List squaddies for a leader
+        DevConsole.RegisterCommand("squaddies", "<nickname>", "List squaddies for a leader", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: squaddies <nickname>";
+
+            var nickname = string.Join(" ", args);
+            var leader = FindByNickname(nickname);
+            if (leader.IsNull)
+                return $"Leader '{nickname}' not found";
+
+            var squaddies = GetSquaddies(leader);
+            if (squaddies.Count == 0)
+                return $"{nickname} has no squaddies";
+
+            var lines = new List<string> { $"{nickname}'s Squaddies ({squaddies.Count}):" };
+            foreach (var s in squaddies)
+            {
+                var homeInfo = !string.IsNullOrEmpty(s.HomePlanet) ? $" (from {s.HomePlanet})" : "";
+                lines.Add($"  {s.FullName}{homeInfo}");
+            }
+            return string.Join("\n", lines);
+        });
+
+        // healleader <nickname> - Heal a leader to full
+        DevConsole.RegisterCommand("healleader", "<nickname>", "Heal a leader to full health", args =>
+        {
+            if (args.Length == 0)
+                return "Usage: healleader <nickname>";
+
+            var nickname = string.Join(" ", args);
+            var leader = FindByNickname(nickname);
+            if (leader.IsNull)
+                return $"Leader '{nickname}' not found";
+
+            var infoBefore = GetLeaderInfo(leader);
+            if (HealLeader(leader))
+            {
+                var infoAfter = GetLeaderInfo(leader);
+                return $"Healed {nickname}: {infoBefore?.HealthPercent:P0} -> {infoAfter?.HealthPercent:P0}";
+            }
+            return "Failed to heal leader";
+        });
+
+        // addperk <nickname> <perk> - Add a perk to a leader
+        DevConsole.RegisterCommand("addperk", "<nickname> <perk>", "Add a perk to a leader", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: addperk <nickname> <perk_name>";
+
+            var nickname = args[0];
+            var perkName = string.Join(" ", args.Skip(1));
+
+            var leader = FindByNickname(nickname);
+            if (leader.IsNull)
+                return $"Leader '{nickname}' not found";
+
+            var perk = FindPerk(perkName);
+            if (perk.IsNull)
+                return $"Perk '{perkName}' not found";
+
+            if (AddPerk(leader, perk))
+                return $"Added perk '{perkName}' to {nickname}";
+            return "Failed to add perk";
+        });
+
+        // removeperk <nickname> <perk> - Remove a perk from a leader
+        DevConsole.RegisterCommand("removeperk", "<nickname> <perk>", "Remove a perk from a leader", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: removeperk <nickname> <perk_name>";
+
+            var nickname = args[0];
+            var perkName = string.Join(" ", args.Skip(1));
+
+            var leader = FindByNickname(nickname);
+            if (leader.IsNull)
+                return $"Leader '{nickname}' not found";
+
+            if (RemovePerk(leader, perkName))
+                return $"Removed perk '{perkName}' from {nickname}";
+            return "Failed to remove perk (perk not found?)";
+        });
+
+        // setavailable <nickname> <true/false> - Set leader availability
+        DevConsole.RegisterCommand("setavailable", "<nickname> <true/false>", "Set leader availability", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: setavailable <nickname> <true/false>";
+
+            var nickname = args[0];
+            var leader = FindByNickname(nickname);
+            if (leader.IsNull)
+                return $"Leader '{nickname}' not found";
+
+            if (!bool.TryParse(args[1], out var available))
+                return "Second argument must be 'true' or 'false'";
+
+            if (SetLeaderAvailable(leader, available))
+                return $"Set {nickname} availability to {available}";
+            return "Failed to set availability";
         });
     }
 
