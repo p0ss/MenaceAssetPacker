@@ -414,6 +414,31 @@ public static class EntityCombat
     }
 
     /// <summary>
+    /// Kill an entity by setting HP to 0.
+    /// </summary>
+    public static bool Kill(GameObj entity)
+    {
+        if (entity.IsNull)
+            return false;
+
+        try
+        {
+            // Set HP to 0
+            Marshal.WriteInt32(entity.Pointer + (int)OFFSET_ENTITY_CURRENT_HP, 0);
+
+            // Set IsAlive to false
+            Marshal.WriteByte(entity.Pointer + (int)OFFSET_ENTITY_IS_ALIVE, 0);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("EntityCombat.Kill", "Failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Heal an entity.
     /// </summary>
     public static bool Heal(GameObj entity, int amount)

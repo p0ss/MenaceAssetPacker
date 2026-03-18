@@ -85,6 +85,12 @@ public class Tile
 
     /// <summary>
     /// Get the actor occupying this tile (if any).
+    /// Property accessor for generated code compatibility.
+    /// </summary>
+    public Actor Occupant => GetOccupant();
+
+    /// <summary>
+    /// Get the actor occupying this tile (if any).
     /// </summary>
     public Actor GetOccupant()
     {

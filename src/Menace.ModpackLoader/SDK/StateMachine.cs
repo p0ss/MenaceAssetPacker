@@ -1,3 +1,4 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 
@@ -82,8 +83,8 @@ public static class StateMachine
     public static bool SetState(IntPtr entityPtr, string machine, string newState)
     {
         string oldState;
-        StateCallbacks? exitCallbacks = null;
-        StateCallbacks? enterCallbacks = null;
+        StateCallbacks exitCallbacks = null;
+        StateCallbacks enterCallbacks = null;
 
         lock (_lock)
         {
@@ -228,7 +229,7 @@ public static class StateMachine
 
     private class StateCallbacks
     {
-        public Action? OnEnter { get; set; }
-        public Action? OnExit { get; set; }
+        public Action OnEnter { get; set; }
+        public Action OnExit { get; set; }
     }
 }

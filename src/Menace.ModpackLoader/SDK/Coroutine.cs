@@ -1,3 +1,4 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 
@@ -206,7 +207,7 @@ public static class Coroutine
         public int RoundsRemaining { get; set; }
         public int Interval { get; set; }  // 0 = one-shot, >0 = repeat every N rounds
         public int RemainingIterations { get; set; }  // 0 = infinite
-        public Action? Action { get; set; }
+        public Action Action { get; set; }
         public bool IsComplete { get; set; }
     }
 }

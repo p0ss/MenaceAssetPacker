@@ -293,6 +293,25 @@ public class Actor
     public int ActionPoints => IsValid ? EntityMovement.GetRemainingAP(_gameObj) : 0;
 
     /// <summary>
+    /// Get current hitpoints.
+    /// </summary>
+    public int Hitpoints => CombatInfo.CurrentHP;
+
+    /// <summary>
+    /// Get maximum hitpoints.
+    /// </summary>
+    public int MaxHitpoints => CombatInfo.MaxHP;
+
+    /// <summary>
+    /// Kill this actor (set HP to 0).
+    /// </summary>
+    public bool Kill()
+    {
+        if (!IsValid) return false;
+        return EntityCombat.Kill(_gameObj);
+    }
+
+    /// <summary>
     /// Get the movement range for this actor.
     /// </summary>
     public List<(int x, int y)> GetMovementRange() => IsValid ? EntityMovement.GetMovementRange(_gameObj) : new List<(int, int)>();
