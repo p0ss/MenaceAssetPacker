@@ -9,8 +9,12 @@
       "installPath": "_self",
       "selfUpdate": true,
       "downloads": {
-        "win-x64": { "size": 85000000 },
-        "linux-x64": { "size": 90000000 }
+        "win-x64": {
+          "size": 85000000
+        },
+        "linux-x64": {
+          "size": 90000000
+        }
       }
     },
     "MelonLoader": {
@@ -22,8 +26,12 @@
       "sourceUrl": "https://github.com/LavaGang/MelonLoader/actions/runs/12633016693",
       "sourceNote": "Official LavaGang CI build",
       "downloads": {
-        "win-x64": { "size": 49000000 },
-        "linux-x64": { "size": 47000000 }
+        "win-x64": {
+          "size": 49000000
+        },
+        "linux-x64": {
+          "size": 47000000
+        }
       }
     },
     "DataExtractor": {
@@ -33,7 +41,9 @@
       "description": "Extracts game template data for editing",
       "installPath": "DataExtractor",
       "downloads": {
-        "any": { "size": 1000000 }
+        "any": {
+          "size": 1000000
+        }
       }
     },
     "ModpackLoader": {
@@ -43,7 +53,9 @@
       "description": "In-game mod loader with REPL and hot-reload",
       "installPath": "ModpackLoader",
       "downloads": {
-        "any": { "size": 13000000 }
+        "any": {
+          "size": 13000000
+        }
       }
     },
     "DotNetRefs": {
@@ -53,7 +65,9 @@
       "description": ".NET 6 reference assemblies for mod compilation",
       "installPath": "dotnet-refs",
       "downloads": {
-        "any": { "size": 5000000 }
+        "any": {
+          "size": 5000000
+        }
       }
     },
     "AssetRipper": {
@@ -66,8 +80,12 @@
       "sourceUrl": "https://github.com/AssetRipper/AssetRipper/releases/tag/1.3.4",
       "sourceNote": "Patched build - fixes texture extraction for IL2CPP games",
       "downloads": {
-        "win-x64": { "size": 136000000 },
-        "linux-x64": { "size": 142000000 }
+        "win-x64": {
+          "size": 136000000
+        },
+        "linux-x64": {
+          "size": 142000000
+        }
       }
     },
     "TwitchSquaddies": {
@@ -77,7 +95,9 @@
       "description": "Twitch chat integration - let viewers control squaddies",
       "installPath": "addons/TwitchSquaddies",
       "downloads": {
-        "any": { "size": 12000000 }
+        "any": {
+          "size": 12000000
+        }
       }
     },
     "DevMode": {
@@ -87,7 +107,9 @@
       "description": "Developer tools: cheats, god mode, entity spawning, in-game tweaks",
       "installPath": "addons/DevMode",
       "downloads": {
-        "any": { "size": 50000 }
+        "any": {
+          "size": 50000
+        }
       }
     }
   }
