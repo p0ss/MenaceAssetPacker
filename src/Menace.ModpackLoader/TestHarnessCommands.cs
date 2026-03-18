@@ -16,7 +16,7 @@ namespace Menace.ModpackLoader;
 /// </summary>
 public static class TestHarnessCommands
 {
-    private static Coroutine _waitCoroutine;
+    private static UnityEngine.Coroutine _waitCoroutine;
     private static bool _waitComplete;
     private static string _waitResult;
 

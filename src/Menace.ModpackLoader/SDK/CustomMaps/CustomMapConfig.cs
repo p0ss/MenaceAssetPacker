@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 
 namespace Menace.SDK.CustomMaps;
@@ -121,6 +122,34 @@ public class CustomMapConfig
     public List<string> Tags { get; set; } = new();
 
     /// <summary>
+    /// Map zones with custom generator settings.
+    /// Zones define rectangular regions with priority-based generator overrides.
+    /// </summary>
+    [JsonPropertyName("zones")]
+    public List<MapZone> Zones { get; set; } = new();
+
+    /// <summary>
+    /// Per-tile overrides for precise map control.
+    /// Sparse collection - only contains tiles that differ from procedural generation.
+    /// </summary>
+    [JsonPropertyName("tiles")]
+    public List<TileOverride> Tiles { get; set; } = new();
+
+    /// <summary>
+    /// Paths connecting waypoints (roads, rivers, etc.).
+    /// These are hints for the road generator, not exact specifications.
+    /// </summary>
+    [JsonPropertyName("paths")]
+    public List<MapPath> Paths { get; set; } = new();
+
+    /// <summary>
+    /// Specific chunk placements on the map.
+    /// Allows placing game chunks at exact positions with rotation.
+    /// </summary>
+    [JsonPropertyName("chunks")]
+    public List<ChunkPlacement> Chunks { get; set; } = new();
+
+    /// <summary>
     /// Validate the configuration for common errors.
     /// Returns list of validation errors, empty if valid.
     /// </summary>
@@ -213,4 +242,254 @@ public class TerrainConfig
     /// </summary>
     [JsonPropertyName("roughness")]
     public float? Roughness { get; set; }
+}
+
+/// <summary>
+/// Zone types matching the game's MissionAreaType enum.
+/// These define deployment/area zones on the map.
+/// </summary>
+public enum ZoneType
+{
+    /// <summary>Base deployment zone (default player spawn area).</summary>
+    Base = 0,
+    /// <summary>Chunk-based zone - positions relative to a chunk.</summary>
+    Chunk = 1,
+    /// <summary>South border of the map.</summary>
+    SouthMapBorder = 2,
+    /// <summary>East border of the map.</summary>
+    EastMapBorder = 3,
+    /// <summary>West border of the map.</summary>
+    WestMapBorder = 4,
+    /// <summary>North border of the map.</summary>
+    NorthMapBorder = 5,
+    /// <summary>Generic rectangle area.</summary>
+    Rect = 6,
+    /// <summary>Northeast corner of the map.</summary>
+    NorthEastMapBorder = 7,
+    /// <summary>Southeast corner of the map.</summary>
+    SouthEastMapBorder = 8,
+    /// <summary>Southwest corner of the map.</summary>
+    SouthWestMapBorder = 9,
+    /// <summary>Northwest corner of the map.</summary>
+    NorthWestMapBorder = 10,
+    /// <summary>Custom zone type for modding purposes.</summary>
+    Custom = 100
+}
+
+/// <summary>
+/// Rectangular zone for gameplay purposes (spawn points, objectives, etc.).
+/// Zones can overlap - higher priority zones take precedence.
+/// </summary>
+public class MapZone
+{
+    /// <summary>
+    /// Unique identifier for this zone.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; }
+
+    /// <summary>
+    /// Display name for the zone.
+    /// </summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; }
+
+    /// <summary>
+    /// Type of zone (PlayerSpawn, EnemySpawn, Entry, Extraction, Objective, etc.).
+    /// </summary>
+    [JsonPropertyName("type")]
+    public ZoneType Type { get; set; } = ZoneType.Custom;
+
+    /// <summary>
+    /// X coordinate of zone origin (top-left).
+    /// </summary>
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    /// <summary>
+    /// Y coordinate of zone origin (top-left).
+    /// </summary>
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+
+    /// <summary>
+    /// Zone width in tiles.
+    /// </summary>
+    [JsonPropertyName("width")]
+    public int Width { get; set; }
+
+    /// <summary>
+    /// Zone height in tiles.
+    /// </summary>
+    [JsonPropertyName("height")]
+    public int Height { get; set; }
+
+    /// <summary>
+    /// Zone priority for overlapping zones.
+    /// Higher values take precedence.
+    /// </summary>
+    [JsonPropertyName("priority")]
+    public int Priority { get; set; } = 0;
+
+    /// <summary>
+    /// Per-generator configuration overrides within this zone.
+    /// </summary>
+    [JsonPropertyName("generators")]
+    public Dictionary<string, GeneratorConfig> Generators { get; set; } = new();
+
+    /// <summary>
+    /// Generators to disable within this zone.
+    /// </summary>
+    [JsonPropertyName("disabledGenerators")]
+    public List<string> DisabledGenerators { get; set; } = new();
+
+    /// <summary>
+    /// Check if the given tile coordinates are within this zone.
+    /// </summary>
+    public bool Contains(int x, int y)
+    {
+        return x >= X && x < X + Width && y >= Y && y < Y + Height;
+    }
+}
+
+/// <summary>
+/// A chunk placement on the map - placing a specific game chunk at a position with rotation.
+/// </summary>
+public class ChunkPlacement
+{
+    /// <summary>
+    /// X coordinate of chunk placement.
+    /// </summary>
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    /// <summary>
+    /// Y coordinate of chunk placement.
+    /// </summary>
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+
+    /// <summary>
+    /// Name of the chunk template to place.
+    /// </summary>
+    [JsonPropertyName("template")]
+    public string ChunkTemplate { get; set; }
+
+    /// <summary>
+    /// Rotation in degrees (0, 90, 180, 270).
+    /// </summary>
+    [JsonPropertyName("rotation")]
+    public int Rotation { get; set; } = 0;
+}
+
+/// <summary>
+/// Terrain types for painting.
+/// </summary>
+public enum TerrainType
+{
+    Default,
+    Trees,
+    Water,
+    HighGround,
+    Road,
+    Sand,
+    Concrete
+}
+
+/// <summary>
+/// Override for a specific tile position.
+/// Used for terrain painting (trees, water, high ground, etc.).
+/// </summary>
+public class TileOverride
+{
+    /// <summary>
+    /// X coordinate of the tile.
+    /// </summary>
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    /// <summary>
+    /// Y coordinate of the tile.
+    /// </summary>
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+
+    /// <summary>
+    /// Terrain type (Trees, Water, HighGround, Road, Sand, Concrete).
+    /// </summary>
+    [JsonPropertyName("terrain")]
+    public string Terrain { get; set; }
+
+    /// <summary>
+    /// If set, override the height of the tile.
+    /// </summary>
+    [JsonPropertyName("height")]
+    public float? Height { get; set; }
+}
+
+/// <summary>
+/// Path type enumeration.
+/// </summary>
+public enum PathType
+{
+    Road,
+    River,
+    Trail,
+    Trench
+}
+
+/// <summary>
+/// A path connecting waypoints.
+/// </summary>
+public class MapPath
+{
+    /// <summary>
+    /// Unique identifier for this path.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string Id { get; set; }
+
+    /// <summary>
+    /// Type of path (affects rendering and gameplay).
+    /// </summary>
+    [JsonPropertyName("type")]
+    public PathType Type { get; set; } = PathType.Road;
+
+    /// <summary>
+    /// Width of the path in tiles.
+    /// </summary>
+    [JsonPropertyName("width")]
+    public int Width { get; set; } = 3;
+
+    /// <summary>
+    /// Ordered list of waypoints defining the path.
+    /// </summary>
+    [JsonPropertyName("waypoints")]
+    public List<PathWaypoint> Waypoints { get; set; } = new();
+}
+
+/// <summary>
+/// A waypoint along a path.
+/// </summary>
+public class PathWaypoint
+{
+    /// <summary>
+    /// X coordinate of the waypoint.
+    /// </summary>
+    [JsonPropertyName("x")]
+    public int X { get; set; }
+
+    /// <summary>
+    /// Y coordinate of the waypoint.
+    /// </summary>
+    [JsonPropertyName("y")]
+    public int Y { get; set; }
+
+    public PathWaypoint() { }
+
+    public PathWaypoint(int x, int y)
+    {
+        X = x;
+        Y = y;
+    }
 }

@@ -395,6 +395,8 @@ public class MainWindow : Window
                 _subNavPanel.Children.Add(CreateSubTab("Data", "Data", _viewModel.NavigateToData));
                 _subNavPanel.Children.Add(CreateSubTab("Assets", "Assets", _viewModel.NavigateToAssets));
                 _subNavPanel.Children.Add(CreateSubTab("Code", "Code", _viewModel.NavigateToCode));
+                _subNavPanel.Children.Add(CreateSubTab("Maps", "Maps", _viewModel.NavigateToMaps));
+                _subNavPanel.Children.Add(CreateSubTab("Nodes", "Nodes", _viewModel.NavigateToNodes));
                 _subNavPanel.Children.Add(CreateSubTab("Docs", "Docs", _viewModel.NavigateToDocs));
                 _subNavPanel.Children.Add(CreateSubTab("Settings", "Settings", _viewModel.NavigateToToolSettings));
                 break;

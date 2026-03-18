@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -56,6 +57,10 @@ public static class AssetReplacer
     // Byte cache to avoid re-reading files from disk
     private static readonly Dictionary<string, byte[]> _bytesCache = new();
 
+    // Track texture instance IDs that have already been replaced to avoid
+    // re-decoding PNG/JPG on every scene load (expensive operation)
+    private static readonly HashSet<int> _replacedTextureInstanceIds = new();
+
     // Custom sprites loaded from PNG files, keyed by name
     // These are kept alive so FindObjectsOfTypeAll(Sprite) can discover them
     private static readonly Dictionary<string, Sprite> _customSprites
@@ -81,6 +86,27 @@ public static class AssetReplacer
     private static readonly Dictionary<string, string> _pendingSpriteLoads
         = new(StringComparer.OrdinalIgnoreCase);
 
+    // Assets that should load immediately (loading screens, critical UI)
+    private static readonly HashSet<string> _preloadAssets
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Register an asset name for immediate (synchronous) loading.
+    /// Use for loading screen backgrounds and other critical startup assets.
+    /// </summary>
+    public static void RegisterPreloadAsset(string assetName)
+    {
+        _preloadAssets.Add(assetName);
+    }
+
+    /// <summary>
+    /// Check if an asset is marked for preloading.
+    /// </summary>
+    public static bool IsPreloadAsset(string assetName)
+    {
+        return _preloadAssets.Contains(assetName);
+    }
+
     public static Sprite LoadCustomSprite(string diskFilePath, string spriteName)
     {
         if (_customSprites.TryGetValue(spriteName, out var existing))
@@ -94,6 +120,12 @@ public static class AssetReplacer
             return null;
         }
 
+        // Preload assets load immediately (for loading screens, etc.)
+        if (_preloadAssets.Contains(spriteName))
+        {
+            return LoadSpriteImmediate(diskFilePath, spriteName);
+        }
+
         // Defer loading - store the path for later
         _pendingSpriteLoads[spriteName] = diskFilePath;
         SdkLogger.Msg($"  Queued custom sprite: '{spriteName}'");
@@ -101,60 +133,155 @@ public static class AssetReplacer
     }
 
     /// <summary>
-    /// Actually load all pending sprites. Call this after Unity is fully initialized.
+    /// Load a sprite immediately (synchronously). Used for preload assets.
+    /// </summary>
+    private static Sprite LoadSpriteImmediate(string diskFilePath, string spriteName)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(diskFilePath);
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            texture.name = spriteName;
+            texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+            var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+            if (!ImageConversion.LoadImage(texture, il2cppBytes))
+            {
+                SdkLogger.Warning($"  Failed to decode preload texture: {spriteName}");
+                return null;
+            }
+
+            var rect = new Rect(0, 0, texture.width, texture.height);
+            var pivot = new Vector2(0.5f, 0.5f);
+            var sprite = Sprite.Create(texture, rect, pivot, 100f);
+
+            if (sprite == null)
+            {
+                SdkLogger.Warning($"  Sprite.Create returned null for preload: {spriteName}");
+                return null;
+            }
+
+            sprite.name = spriteName;
+            sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+            _customTextures[spriteName] = texture;
+            _customSprites[spriteName] = sprite;
+
+            SdkLogger.Msg($"  Preloaded sprite: '{spriteName}' ({texture.width}x{texture.height})");
+            return sprite;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Error($"  Failed to preload sprite '{spriteName}': {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Actually load all pending sprites synchronously.
+    /// Prefer LoadPendingSpritesAsync for large modpacks to avoid stutter.
     /// </summary>
     public static void LoadPendingSprites()
     {
         if (_pendingSpriteLoads.Count == 0) return;
 
-        SdkLogger.Msg($"Loading {_pendingSpriteLoads.Count} pending custom sprite(s)...");
+        SdkLogger.Msg($"Loading {_pendingSpriteLoads.Count} pending custom sprite(s) (sync)...");
 
         foreach (var (spriteName, diskFilePath) in _pendingSpriteLoads)
         {
-            if (_customSprites.ContainsKey(spriteName)) continue;
-
-            try
-            {
-                var bytes = File.ReadAllBytes(diskFilePath);
-                var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                texture.name = spriteName;
-                texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
-
-                var il2cppBytes = new Il2CppStructArray<byte>(bytes);
-                if (!ImageConversion.LoadImage(texture, il2cppBytes))
-                {
-                    SdkLogger.Warning($"  Failed to decode texture: {spriteName}");
-                    continue;
-                }
-
-                // Create a sprite from the full texture
-                var rect = new Rect(0, 0, texture.width, texture.height);
-                var pivot = new Vector2(0.5f, 0.5f);
-                var sprite = Sprite.Create(texture, rect, pivot, 100f);
-
-                if (sprite == null)
-                {
-                    SdkLogger.Warning($"  Sprite.Create returned null: {spriteName}");
-                    continue;
-                }
-
-                sprite.name = spriteName;
-                sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
-
-                // Keep references so they don't get garbage collected
-                _customTextures[spriteName] = texture;
-                _customSprites[spriteName] = sprite;
-
-                SdkLogger.Msg($"  Loaded sprite: '{spriteName}' ({texture.width}x{texture.height})");
-            }
-            catch (Exception ex)
-            {
-                SdkLogger.Error($"  Failed to load sprite '{spriteName}': {ex.Message}");
-            }
+            LoadSingleSprite(spriteName, diskFilePath);
         }
 
         _pendingSpriteLoads.Clear();
         SdkLogger.Msg($"Custom sprites loaded: {_customSprites.Count}");
+    }
+
+    /// <summary>
+    /// Load all pending sprites asynchronously, yielding between batches to avoid stutter.
+    /// Use this for large modpacks with many images.
+    /// </summary>
+    /// <param name="batchSize">Number of sprites to load per frame (default 5)</param>
+    public static IEnumerator LoadPendingSpritesAsync(int batchSize = 5)
+    {
+        if (_pendingSpriteLoads.Count == 0) yield break;
+
+        var total = _pendingSpriteLoads.Count;
+        SdkLogger.Msg($"Loading {total} pending custom sprite(s) (async, batch size {batchSize})...");
+
+        // Copy to list since we can't modify dictionary while iterating
+        var pending = _pendingSpriteLoads.ToList();
+        _pendingSpriteLoads.Clear();
+
+        int loaded = 0;
+        int batchCount = 0;
+
+        foreach (var (spriteName, diskFilePath) in pending)
+        {
+            LoadSingleSprite(spriteName, diskFilePath);
+            loaded++;
+            batchCount++;
+
+            // Yield after each batch to give Unity a frame
+            if (batchCount >= batchSize)
+            {
+                batchCount = 0;
+                yield return null;
+            }
+        }
+
+        SdkLogger.Msg($"Custom sprites loaded: {_customSprites.Count} ({loaded} this session)");
+    }
+
+    /// <summary>
+    /// Returns the number of pending sprites waiting to be loaded.
+    /// </summary>
+    public static int PendingSpriteCount => _pendingSpriteLoads.Count;
+
+    /// <summary>
+    /// Load a single sprite from disk and register it.
+    /// </summary>
+    private static void LoadSingleSprite(string spriteName, string diskFilePath)
+    {
+        if (_customSprites.ContainsKey(spriteName)) return;
+
+        try
+        {
+            var bytes = File.ReadAllBytes(diskFilePath);
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            texture.name = spriteName;
+            texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+            var il2cppBytes = new Il2CppStructArray<byte>(bytes);
+            if (!ImageConversion.LoadImage(texture, il2cppBytes))
+            {
+                SdkLogger.Warning($"  Failed to decode texture: {spriteName}");
+                return;
+            }
+
+            // Create a sprite from the full texture
+            var rect = new Rect(0, 0, texture.width, texture.height);
+            var pivot = new Vector2(0.5f, 0.5f);
+            var sprite = Sprite.Create(texture, rect, pivot, 100f);
+
+            if (sprite == null)
+            {
+                SdkLogger.Warning($"  Sprite.Create returned null: {spriteName}");
+                return;
+            }
+
+            sprite.name = spriteName;
+            sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
+
+            // Keep references so they don't get garbage collected
+            _customTextures[spriteName] = texture;
+            _customSprites[spriteName] = sprite;
+
+            SdkLogger.Msg($"  Loaded sprite: '{spriteName}' ({texture.width}x{texture.height})");
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Error($"  Failed to load sprite '{spriteName}': {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -440,6 +567,16 @@ public static class AssetReplacer
                     var tex = obj.Cast<Texture2D>();
                     if (tex == null) continue;
 
+                    // Skip if we've already replaced this specific texture instance
+                    // (avoids expensive PNG decode + GPU upload on every scene load)
+                    var instanceId = tex.GetInstanceID();
+                    if (_replacedTextureInstanceIds.Contains(instanceId))
+                    {
+                        // Already processed - count as success but skip the work
+                        replaced++;
+                        continue;
+                    }
+
                     var bytes = GetOrLoadBytes(replacement.DiskPath);
                     if (bytes == null)
                     {
@@ -456,6 +593,7 @@ public static class AssetReplacer
                     if (success)
                     {
                         replaced++;
+                        _replacedTextureInstanceIds.Add(instanceId);
                         SdkLogger.Msg($"  Replaced texture: {texName} → now {tex.width}x{tex.height}");
                     }
                     else
@@ -918,8 +1056,16 @@ public static class AssetReplacer
                     continue;
 
                 // Don't overwrite the bundle-loaded texture with itself
-                if (obj.GetInstanceID() == bundleTex.GetInstanceID())
+                var instanceId = obj.GetInstanceID();
+                if (instanceId == bundleTex.GetInstanceID())
                     continue;
+
+                // Skip if already replaced (avoids redundant GPU copies on scene reload)
+                if (_replacedTextureInstanceIds.Contains(instanceId))
+                {
+                    replaced++;
+                    continue;
+                }
 
                 try
                 {
@@ -928,6 +1074,7 @@ public static class AssetReplacer
 
                     Graphics.CopyTexture(bundleTex, gameTex);
                     replaced++;
+                    _replacedTextureInstanceIds.Add(instanceId);
                     SdkLogger.Msg($"  Replaced texture from bundle: {texName}");
                 }
                 catch (Exception ex)
@@ -1424,6 +1571,11 @@ public static class AssetInjectionPatches
 
     public static void LoadPendingSprites()
         => AssetReplacer.LoadPendingSprites();
+
+    public static IEnumerator LoadPendingSpritesAsync(int batchSize = 5)
+        => AssetReplacer.LoadPendingSpritesAsync(batchSize);
+
+    public static int PendingSpriteCount => AssetReplacer.PendingSpriteCount;
 
     public static AudioClip LoadCustomAudio(string diskFilePath, string clipName)
         => AssetReplacer.LoadCustomAudio(diskFilePath, clipName);

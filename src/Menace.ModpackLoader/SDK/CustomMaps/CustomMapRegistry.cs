@@ -414,5 +414,113 @@ public static class CustomMapRegistry
 
             return string.Join("\n", lines);
         });
+
+        // mapzone <x> <y> - Show zone at position
+        DevConsole.RegisterCommand("mapzone", "<x> <y>", "Show zone info at tile position", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: mapzone <x> <y>";
+
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Invalid coordinates";
+
+            return TileOverrideInjector.GetZoneInfo(x, y);
+        });
+
+        // maptile <x> <y> - Show tile override at position
+        DevConsole.RegisterCommand("maptile", "<x> <y>", "Show tile override info at position", args =>
+        {
+            if (args.Length < 2)
+                return "Usage: maptile <x> <y>";
+
+            if (!int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
+                return "Invalid coordinates";
+
+            return TileOverrideInjector.GetTileInfo(x, y);
+        });
+
+        // testmap - Create a test map with zones/tiles/paths
+        DevConsole.RegisterCommand("testmap", "", "Create and activate a test map with zones, tiles, and paths", args =>
+        {
+            var testConfig = new CustomMapConfig
+            {
+                Id = "test_map",
+                Name = "Test Map",
+                Author = "SDK",
+                Seed = 424242,
+                MapSize = 50
+            };
+
+            // Add deployment/area zones (matches game's MissionAreaType)
+            testConfig.Zones.Add(new MapZone
+            {
+                Id = "base_deploy",
+                Name = "Base Deployment",
+                Type = ZoneType.Base,  // Player deployment area
+                X = 5,
+                Y = 5,
+                Width = 8,
+                Height = 8,
+                Priority = 1
+            });
+
+            testConfig.Zones.Add(new MapZone
+            {
+                Id = "north_border",
+                Name = "North Border",
+                Type = ZoneType.NorthMapBorder,
+                X = 0,
+                Y = 40,
+                Width = 50,
+                Height = 10,
+                Priority = 1
+            });
+
+            testConfig.Zones.Add(new MapZone
+            {
+                Id = "objective_rect",
+                Name = "Objective Area",
+                Type = ZoneType.Rect,  // Generic rectangle for objectives
+                X = 22,
+                Y = 22,
+                Width = 6,
+                Height = 6,
+                Priority = 2
+            });
+
+            // Add terrain painting
+            testConfig.Tiles.Add(new TileOverride { X = 25, Y = 25, Terrain = "Water" });
+            testConfig.Tiles.Add(new TileOverride { X = 26, Y = 25, Terrain = "Water" });
+            testConfig.Tiles.Add(new TileOverride { X = 20, Y = 20, Terrain = "Trees" });
+            testConfig.Tiles.Add(new TileOverride { X = 30, Y = 30, Terrain = "HighGround", Height = 3.0f });
+
+            // Add a test path (hint for road generator)
+            testConfig.Paths.Add(new MapPath
+            {
+                Id = "main_road",
+                Type = PathType.Road,
+                Width = 3,
+                Waypoints = new List<PathWaypoint>
+                {
+                    new(0, 25),
+                    new(50, 25)
+                }
+            });
+
+            // Add a chunk placement
+            testConfig.Chunks.Add(new ChunkPlacement
+            {
+                X = 15,
+                Y = 15,
+                ChunkTemplate = "Bunker",
+                Rotation = 90
+            });
+
+            // Register and activate
+            Register(testConfig);
+            SetActiveOverride(testConfig);
+
+            return $"Test map created and activated:\n  3 gameplay zones\n  4 terrain tiles\n  1 path\n  1 chunk placement";
+        });
     }
 }

@@ -1,4 +1,4 @@
-#nullable disable
+#nullable enable
 
 using Avalonia;
 using Avalonia.Controls;
@@ -18,7 +18,7 @@ namespace Menace.Modkit.App.VisualEditor;
 /// </summary>
 public class StationState
 {
-    public StationDefinition Definition { get; init; }
+    public required StationDefinition Definition { get; init; }
     public List<string> AttachedMods { get; } = new();
     public Point Position { get; set; }
 
@@ -26,7 +26,7 @@ public class StationState
     public string Name => Definition.Name;
     public string Description => Definition.Description;
     public int Depth => Definition.Depth;
-    public string ParentId => Definition.ParentId;
+    public string? ParentId => Definition.ParentId;
 }
 
 /// <summary>
@@ -34,11 +34,11 @@ public class StationState
 /// </summary>
 public class StationDefinition
 {
-    public string Id { get; init; }
-    public string Name { get; init; }
-    public string Description { get; init; }
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public string Description { get; init; } = "";
     public int Depth { get; init; }
-    public string ParentId { get; init; }
+    public string? ParentId { get; init; }
     public string[] AvailableData { get; init; } = Array.Empty<string>();
 }
 
@@ -66,32 +66,26 @@ public static class GameCycleDefinitions
         };
     }
 
+    // Simplified tactical cycle - main hook points only
     public static readonly IReadOnlyList<StationDefinition> TacticalCycle = new[]
     {
-        new StationDefinition { Id = "round_start", Name = "Round Start", Description = "Beginning of combat round", Depth = 0, AvailableData = new[] { "round_number" } },
-        new StationDefinition { Id = "faction_turn", Name = "Faction Turn", Description = "A faction begins acting", Depth = 1, ParentId = "round_start", AvailableData = new[] { "faction" } },
-        new StationDefinition { Id = "turn_start", Name = "Turn Start", Description = "An actor begins their turn", Depth = 2, ParentId = "faction_turn", AvailableData = new[] { "actor" } },
-        new StationDefinition { Id = "move_start", Name = "Move Start", Description = "Actor begins moving", Depth = 3, ParentId = "turn_start", AvailableData = new[] { "actor", "from_tile", "to_tile" } },
-        new StationDefinition { Id = "move_complete", Name = "Move Complete", Description = "Actor finished moving", Depth = 3, ParentId = "turn_start", AvailableData = new[] { "actor", "tile" } },
-        new StationDefinition { Id = "skill_used", Name = "Skill Used", Description = "Actor uses a skill", Depth = 3, ParentId = "turn_start", AvailableData = new[] { "actor", "skill", "target" } },
-        new StationDefinition { Id = "damage_received", Name = "Damage Received", Description = "Entity takes damage", Depth = 4, ParentId = "skill_used", AvailableData = new[] { "target", "attacker", "skill", "amount" } },
-        new StationDefinition { Id = "attack_missed", Name = "Attack Missed", Description = "Attack fails to hit", Depth = 4, ParentId = "skill_used", AvailableData = new[] { "target", "attacker", "skill" } },
-        new StationDefinition { Id = "actor_killed", Name = "Actor Killed", Description = "Entity dies", Depth = 4, ParentId = "skill_used", AvailableData = new[] { "actor", "killer", "skill" } },
-        new StationDefinition { Id = "turn_end", Name = "Turn End", Description = "Actor's turn ends", Depth = 2, ParentId = "faction_turn", AvailableData = new[] { "actor" } },
-        new StationDefinition { Id = "round_end", Name = "Round End", Description = "Combat round ends", Depth = 0, AvailableData = new[] { "round_number" } },
+        new StationDefinition { Id = "round_start", Name = "Round Start", Description = "Combat round begins", AvailableData = new[] { "round" } },
+        new StationDefinition { Id = "turn_start", Name = "Turn Start", Description = "Actor's turn begins", AvailableData = new[] { "actor" } },
+        new StationDefinition { Id = "skill_used", Name = "Skill Used", Description = "Actor uses ability", AvailableData = new[] { "actor", "skill", "target" } },
+        new StationDefinition { Id = "damage_dealt", Name = "Damage Dealt", Description = "Damage is applied", AvailableData = new[] { "target", "attacker", "amount" } },
+        new StationDefinition { Id = "actor_killed", Name = "Actor Killed", Description = "Actor dies", AvailableData = new[] { "actor", "killer" } },
+        new StationDefinition { Id = "turn_end", Name = "Turn End", Description = "Actor's turn ends", AvailableData = new[] { "actor" } },
+        new StationDefinition { Id = "round_end", Name = "Round End", Description = "Combat round ends", AvailableData = new[] { "round" } },
     };
 
+    // Simplified strategic cycle
     public static readonly IReadOnlyList<StationDefinition> StrategicCycle = new[]
     {
-        new StationDefinition { Id = "operation_start", Name = "Operation Start", Description = "New operation begins", Depth = 0, AvailableData = new[] { "operation" } },
-        new StationDefinition { Id = "leader_hired", Name = "Leader Hired", Description = "New leader joins roster", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "leader" } },
-        new StationDefinition { Id = "leader_dismissed", Name = "Leader Dismissed", Description = "Leader leaves roster", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "leader" } },
-        new StationDefinition { Id = "blackmarket_restocked", Name = "Black Market", Description = "Market inventory changes", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "items" } },
-        new StationDefinition { Id = "faction_trust_changed", Name = "Faction Trust", Description = "Faction relations change", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "faction", "old_trust", "new_trust" } },
-        new StationDefinition { Id = "mission_start", Name = "Mission Start", Description = "Mission begins", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "mission" } },
-        new StationDefinition { Id = "tactical_cycle", Name = "Tactical Cycle", Description = "Combat occurs", Depth = 2, ParentId = "mission_start", AvailableData = new[] { "mission" } },
-        new StationDefinition { Id = "mission_ended", Name = "Mission End", Description = "Mission completes", Depth = 1, ParentId = "operation_start", AvailableData = new[] { "mission", "success" } },
-        new StationDefinition { Id = "operation_finished", Name = "Operation End", Description = "Operation completes", Depth = 0, AvailableData = new[] { "operation", "success" } },
+        new StationDefinition { Id = "mission_start", Name = "Mission Start", Description = "Mission begins", AvailableData = new[] { "mission" } },
+        new StationDefinition { Id = "squad_deployed", Name = "Squad Deployed", Description = "Squad enters mission", AvailableData = new[] { "squad" } },
+        new StationDefinition { Id = "objective_complete", Name = "Objective Done", Description = "Objective completed", AvailableData = new[] { "objective" } },
+        new StationDefinition { Id = "mission_end", Name = "Mission End", Description = "Mission completes", AvailableData = new[] { "mission", "success" } },
+        new StationDefinition { Id = "loot_acquired", Name = "Loot Acquired", Description = "Items obtained", AvailableData = new[] { "items" } },
     };
 }
 
@@ -102,14 +96,17 @@ public static class GameCycleDefinitions
 public partial class TrackView : UserControl
 {
     private CycleType _currentCycle = CycleType.Tactical;
+    private string? _selectedStationId;
     private readonly Dictionary<string, Border> _stationControls = new();
     private List<StationState> _currentStations = new();
 
     // Colors matching the Modkit theme
     private static readonly SolidColorBrush StationBackground = new(Color.Parse("#252525"));
     private static readonly SolidColorBrush StationBackgroundHover = new(Color.Parse("#333333"));
+    private static readonly SolidColorBrush StationBackgroundSelected = new(Color.Parse("#1a3d38"));
     private static readonly SolidColorBrush StationBorder = new(Color.Parse("#3E3E3E"));
     private static readonly SolidColorBrush StationBorderActive = new(Color.Parse("#004f43"));
+    private static readonly SolidColorBrush StationBorderSelected = new(Color.Parse("#00a88f"));
     private static readonly SolidColorBrush ConnectorLine = new(Color.Parse("#3E3E3E"));
     private static readonly SolidColorBrush TextPrimary = new(Color.Parse("#FFFFFF"));
     private static readonly SolidColorBrush TextSecondary = new(Color.Parse("#AAAAAA"));
@@ -120,12 +117,12 @@ public partial class TrackView : UserControl
     /// <summary>
     /// Event raised when a station is clicked.
     /// </summary>
-    public event EventHandler<StationClickedEventArgs> StationClicked;
+    public event EventHandler<StationClickedEventArgs>? StationClicked;
 
     /// <summary>
     /// Event raised when the "Add" button on a station is clicked.
     /// </summary>
-    public event EventHandler<StationClickedEventArgs> AddModClicked;
+    public event EventHandler<StationClickedEventArgs>? AddModClicked;
 
     /// <summary>
     /// Gets or sets the currently displayed cycle type.
@@ -150,17 +147,17 @@ public partial class TrackView : UserControl
         Loaded += OnLoaded;
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         RenderCycle(_currentCycle);
     }
 
-    private void OnTacticalTabClick(object sender, RoutedEventArgs e)
+    private void OnTacticalTabClick(object? sender, RoutedEventArgs e)
     {
         CurrentCycle = CycleType.Tactical;
     }
 
-    private void OnStrategicTabClick(object sender, RoutedEventArgs e)
+    private void OnStrategicTabClick(object? sender, RoutedEventArgs e)
     {
         CurrentCycle = CycleType.Strategic;
     }
@@ -230,137 +227,57 @@ public partial class TrackView : UserControl
 
     private void LayoutStations(List<StationState> stations)
     {
-        const double startX = 40;
-        const double startY = 40;
-        const double horizontalSpacing = 180;
-        const double verticalSpacing = 80;
-        const double depthIndent = 40;
+        const double startX = 20;
+        const double startY = 20;
+        const double horizontalSpacing = 160;
 
-        double currentX = startX;
-        double currentY = startY;
-        int lastDepth = 0;
-
-        foreach (var station in stations)
+        // Simple horizontal layout - all stations in a row
+        for (int i = 0; i < stations.Count; i++)
         {
-            // Handle depth changes for nested structures
-            if (station.Depth > lastDepth)
-            {
-                currentY += verticalSpacing;
-                currentX = startX + (station.Depth * depthIndent);
-            }
-            else if (station.Depth < lastDepth)
-            {
-                currentY += verticalSpacing;
-                currentX = startX + (station.Depth * depthIndent);
-            }
-            else
-            {
-                currentX += horizontalSpacing;
-            }
-
-            station.Position = new Point(currentX, currentY);
-            lastDepth = station.Depth;
+            var station = stations[i];
+            station.Position = new Point(startX + (i * horizontalSpacing), startY);
         }
     }
 
     private void DrawConnectors(List<StationState> stations)
     {
+        const double stationWidth = 140;
+        const double stationHeight = 60;
+
         for (int i = 0; i < stations.Count - 1; i++)
         {
             var from = stations[i];
             var to = stations[i + 1];
 
-            // Calculate connection points (from right edge of 'from' to left edge of 'to')
-            var fromX = from.Position.X + 120; // Approximate width
-            var fromY = from.Position.Y + 30;  // Approximate center height
+            // Draw horizontal line from right edge of 'from' to left edge of 'to'
+            var fromX = from.Position.X + stationWidth;
+            var fromY = from.Position.Y + (stationHeight / 2);
             var toX = to.Position.X;
-            var toY = to.Position.Y + 30;
+            var toY = to.Position.Y + (stationHeight / 2);
 
-            // For stations at different depths, draw an L-shaped connector
-            if (Math.Abs(from.Depth - to.Depth) > 0 || Math.Abs(fromY - toY) > 10)
+            // Main line
+            var line = new Line
             {
-                DrawLConnector(fromX, fromY, toX, toY);
-            }
-            else
+                StartPoint = new Point(fromX, fromY),
+                EndPoint = new Point(toX - 8, toY),
+                Stroke = ConnectorLine,
+                StrokeThickness = 2
+            };
+            TrackCanvas.Children.Add(line);
+
+            // Arrowhead
+            var arrow = new Polygon
             {
-                // Simple horizontal line with arrow
-                DrawArrowLine(fromX, fromY, toX, toY);
-            }
+                Points = new Points
+                {
+                    new Point(toX, toY),
+                    new Point(toX - 10, toY - 5),
+                    new Point(toX - 10, toY + 5)
+                },
+                Fill = StationBorderActive
+            };
+            TrackCanvas.Children.Add(arrow);
         }
-    }
-
-    private void DrawArrowLine(double x1, double y1, double x2, double y2)
-    {
-        // Main line
-        var line = new Line
-        {
-            StartPoint = new Point(x1, y1),
-            EndPoint = new Point(x2 - 8, y2),
-            Stroke = ConnectorLine,
-            StrokeThickness = 2
-        };
-        TrackCanvas.Children.Add(line);
-
-        // Arrowhead
-        var arrow = new Polygon
-        {
-            Points = new Points
-            {
-                new Point(x2, y2),
-                new Point(x2 - 10, y2 - 5),
-                new Point(x2 - 10, y2 + 5)
-            },
-            Fill = StationBorderActive
-        };
-        TrackCanvas.Children.Add(arrow);
-    }
-
-    private void DrawLConnector(double x1, double y1, double x2, double y2)
-    {
-        var midX = x1 + 20;
-
-        // Horizontal segment from source
-        var line1 = new Line
-        {
-            StartPoint = new Point(x1, y1),
-            EndPoint = new Point(midX, y1),
-            Stroke = ConnectorLine,
-            StrokeThickness = 2
-        };
-        TrackCanvas.Children.Add(line1);
-
-        // Vertical segment
-        var line2 = new Line
-        {
-            StartPoint = new Point(midX, y1),
-            EndPoint = new Point(midX, y2),
-            Stroke = ConnectorLine,
-            StrokeThickness = 2
-        };
-        TrackCanvas.Children.Add(line2);
-
-        // Horizontal segment to target
-        var line3 = new Line
-        {
-            StartPoint = new Point(midX, y2),
-            EndPoint = new Point(x2 - 8, y2),
-            Stroke = ConnectorLine,
-            StrokeThickness = 2
-        };
-        TrackCanvas.Children.Add(line3);
-
-        // Arrowhead
-        var arrow = new Polygon
-        {
-            Points = new Points
-            {
-                new Point(x2, y2),
-                new Point(x2 - 10, y2 - 5),
-                new Point(x2 - 10, y2 + 5)
-            },
-            Fill = StationBorderActive
-        };
-        TrackCanvas.Children.Add(arrow);
     }
 
     private Border CreateStationControl(StationState station)
@@ -480,15 +397,47 @@ public partial class TrackView : UserControl
         return border;
     }
 
-    private void OnStationClick(object sender, PointerPressedEventArgs e)
+    private void OnStationClick(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Border { Tag: StationState station })
+        if (sender is Border border && border.Tag is StationState station)
         {
+            SelectStation(station.Id);
             StationClicked?.Invoke(this, new StationClickedEventArgs(station));
         }
     }
 
-    private void OnAddModButtonClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Selects a station by ID, highlighting it visually.
+    /// </summary>
+    public void SelectStation(string? stationId)
+    {
+        // Deselect previous
+        if (_selectedStationId != null && _stationControls.TryGetValue(_selectedStationId, out var prevBorder))
+        {
+            var prevStation = _currentStations.FirstOrDefault(s => s.Id == _selectedStationId);
+            bool hasMods = prevStation?.AttachedMods.Count > 0;
+            prevBorder.Background = StationBackground;
+            prevBorder.BorderBrush = hasMods ? StationBorderActive : StationBorder;
+            prevBorder.BorderThickness = new Thickness(hasMods ? 2 : 1);
+        }
+
+        _selectedStationId = stationId;
+
+        // Select new
+        if (stationId != null && _stationControls.TryGetValue(stationId, out var newBorder))
+        {
+            newBorder.Background = StationBackgroundSelected;
+            newBorder.BorderBrush = StationBorderSelected;
+            newBorder.BorderThickness = new Thickness(2);
+        }
+    }
+
+    /// <summary>
+    /// Gets the currently selected station ID.
+    /// </summary>
+    public string? SelectedStationId => _selectedStationId;
+
+    private void OnAddModButtonClick(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: StationState station })
         {

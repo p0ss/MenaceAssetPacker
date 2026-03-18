@@ -1,4 +1,4 @@
-#nullable disable
+#nullable enable
 
 using System;
 using System.Collections.ObjectModel;
@@ -106,8 +106,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         // skill -> Is Attack?
         var conn1 = new ConnectionViewModel
         {
-            Source = skillOutput,
-            Target = isAttackInput
+            SourceConnector = skillOutput,
+            TargetConnector = isAttackInput
         };
         skillOutput.IsConnected = true;
         isAttackInput.IsConnected = true;
@@ -116,8 +116,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         // skill -> Not Silent?
         var conn2 = new ConnectionViewModel
         {
-            Source = skillOutput,
-            Target = notSilentInput
+            SourceConnector = skillOutput,
+            TargetConnector = notSilentInput
         };
         notSilentInput.IsConnected = true;
         Connections.Add(conn2);
@@ -125,8 +125,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         // actor -> Concealment actor
         var conn3 = new ConnectionViewModel
         {
-            Source = actorOutput,
-            Target = concealActorInput
+            SourceConnector = actorOutput,
+            TargetConnector = concealActorInput
         };
         actorOutput.IsConnected = true;
         concealActorInput.IsConnected = true;
@@ -135,8 +135,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         // Is Attack pass -> Concealment trigger (representing AND logic visually)
         var conn4 = new ConnectionViewModel
         {
-            Source = isAttackPass,
-            Target = concealTriggerInput
+            SourceConnector = isAttackPass,
+            TargetConnector = concealTriggerInput
         };
         isAttackPass.IsConnected = true;
         concealTriggerInput.IsConnected = true;
@@ -175,7 +175,7 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         for (int i = Connections.Count - 1; i >= 0; i--)
         {
             var conn = Connections[i];
-            if (conn.Source?.Node == node || conn.Target?.Node == node)
+            if (conn.SourceConnector?.Node == node || conn.TargetConnector?.Node == node)
             {
                 RemoveConnection(conn);
             }
@@ -205,8 +205,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         // Check if connection already exists
         foreach (var conn in Connections)
         {
-            if ((conn.Source == source && conn.Target == target) ||
-                (conn.Source == target && conn.Target == source))
+            if ((conn.SourceConnector == source && conn.TargetConnector == target) ||
+                (conn.SourceConnector == target && conn.TargetConnector == source))
             {
                 StatusMessage = "Connection already exists";
                 return null;
@@ -215,8 +215,8 @@ public class NodeGraphViewModel : INotifyPropertyChanged
 
         var connection = new ConnectionViewModel
         {
-            Source = source,
-            Target = target
+            SourceConnector = source,
+            TargetConnector = target
         };
 
         source.IsConnected = true;
@@ -233,10 +233,10 @@ public class NodeGraphViewModel : INotifyPropertyChanged
     /// </summary>
     public void RemoveConnection(ConnectionViewModel connection)
     {
-        if (connection.Source != null)
-            connection.Source.IsConnected = HasOtherConnections(connection.Source, connection);
-        if (connection.Target != null)
-            connection.Target.IsConnected = HasOtherConnections(connection.Target, connection);
+        if (connection.SourceConnector != null)
+            connection.SourceConnector.IsConnected = HasOtherConnections(connection.SourceConnector, connection);
+        if (connection.TargetConnector != null)
+            connection.TargetConnector.IsConnected = HasOtherConnections(connection.TargetConnector, connection);
 
         Connections.Remove(connection);
         ModkitLog.Info($"[NodeGraph] Removed connection");
@@ -264,13 +264,117 @@ public class NodeGraphViewModel : INotifyPropertyChanged
         StatusMessage = "Viewport reset";
     }
 
+    /// <summary>
+    /// Starts a pending connection from the specified connector.
+    /// Called when user starts dragging from a connector.
+    /// </summary>
+    public void StartConnection(ConnectorViewModel? connector)
+    {
+        if (connector == null) return;
+
+        PendingConnection.Source = connector;
+        PendingConnection.TargetLocation = connector.Anchor;
+        PendingConnection.IsVisible = true;
+        StatusMessage = $"Connecting from {connector.Node?.Title}.{connector.Title}...";
+    }
+
+    /// <summary>
+    /// Completes a pending connection to the specified connector.
+    /// Called when user releases on a connector.
+    /// </summary>
+    public void CompleteConnection(ConnectorViewModel? connector)
+    {
+        if (PendingConnection.Source == null || connector == null)
+        {
+            CancelConnection();
+            return;
+        }
+
+        // Don't connect to self
+        if (PendingConnection.Source == connector)
+        {
+            CancelConnection();
+            return;
+        }
+
+        // Don't connect node to itself
+        if (PendingConnection.Source.Node == connector.Node)
+        {
+            StatusMessage = "Cannot connect a node to itself";
+            CancelConnection();
+            return;
+        }
+
+        // Create the connection
+        var source = PendingConnection.Source;
+        var target = connector;
+
+        // Determine direction: output -> input
+        // If source is from an input, swap
+        bool sourceIsInput = source.Node?.Input.Contains(source) ?? false;
+        bool targetIsInput = target.Node?.Input.Contains(target) ?? false;
+
+        if (sourceIsInput && !targetIsInput)
+        {
+            // Swap: we dragged from input to output
+            (source, target) = (target, source);
+        }
+        else if (sourceIsInput && targetIsInput)
+        {
+            // Both inputs - invalid
+            StatusMessage = "Cannot connect two inputs";
+            CancelConnection();
+            return;
+        }
+        else if (!sourceIsInput && !targetIsInput)
+        {
+            // Both outputs - invalid
+            StatusMessage = "Cannot connect two outputs";
+            CancelConnection();
+            return;
+        }
+
+        Connect(source, target);
+        CancelConnection();
+    }
+
+    /// <summary>
+    /// Cancels the pending connection.
+    /// </summary>
+    public void CancelConnection()
+    {
+        PendingConnection.Source = null;
+        PendingConnection.IsVisible = false;
+    }
+
+    /// <summary>
+    /// Disconnects all connections from the specified connector.
+    /// Called when user wants to remove connections from a port.
+    /// </summary>
+    public void DisconnectConnector(ConnectorViewModel? connector)
+    {
+        if (connector == null) return;
+
+        // Find and remove all connections involving this connector
+        for (int i = Connections.Count - 1; i >= 0; i--)
+        {
+            var conn = Connections[i];
+            if (conn.SourceConnector == connector || conn.TargetConnector == connector)
+            {
+                RemoveConnection(conn);
+            }
+        }
+
+        StatusMessage = $"Disconnected {connector.Node?.Title}.{connector.Title}";
+    }
+
     private bool HasOtherConnections(ConnectorViewModel connector, ConnectionViewModel excludeConnection)
     {
         foreach (var conn in Connections)
         {
             if (conn == excludeConnection)
                 continue;
-            if (conn.Source == connector || conn.Target == connector)
+            if (conn.SourceConnector == connector || conn.TargetConnector == connector)
                 return true;
         }
         return false;

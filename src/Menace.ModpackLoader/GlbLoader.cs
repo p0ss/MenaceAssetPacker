@@ -123,6 +123,16 @@ public static class GlbLoader
                     {
                         BundleLoader.RegisterAsset(model.Name, model.RootPrefab, "GameObject");
                         _log.Msg($"  Registered prefab '{model.Name}' as GameObject with BundleLoader");
+
+                        // Auto-register character visual overrides for character prefab names.
+                        // If a GLB is named like a character prefab (e.g., "rmc_default_female_soldier"),
+                        // automatically register it as a visual override so the meshes/materials
+                        // are applied to spawned characters without requiring any code.
+                        if (IsCharacterPrefabName(model.Name))
+                        {
+                            SDK.CharacterVisuals.RegisterOverrideFromGlb(model.Name, model.Name);
+                            _log.Msg($"  Auto-registered character visual override for '{model.Name}'");
+                        }
                     }
                     else
                     {
@@ -648,5 +658,45 @@ public static class GlbLoader
             new Vector4(-m.M31, -m.M32, m.M33, -m.M34),
             new Vector4(m.M41, m.M42, -m.M43, m.M44)
         );
+    }
+
+    /// <summary>
+    /// Check if a prefab name looks like a character prefab that should have
+    /// visual overrides auto-applied when spawned.
+    /// </summary>
+    private static bool IsCharacterPrefabName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        // Common character prefab patterns in the game:
+        // - rmc_* (e.g., rmc_default_female_soldier, rmc_heavy_trooper)
+        // - Contains "soldier", "trooper", "enemy", "character", "humanoid"
+        // - Contains "_LOD" suffix patterns indicating it's a character model
+
+        var lower = name.ToLowerInvariant();
+
+        // Explicit character prefab prefixes
+        if (lower.StartsWith("rmc_"))
+            return true;
+
+        // Character-related keywords
+        string[] characterKeywords = {
+            "soldier", "trooper", "enemy", "character", "humanoid",
+            "civilian", "squaddie", "alien", "construct", "militia"
+        };
+
+        foreach (var keyword in characterKeywords)
+        {
+            if (lower.Contains(keyword))
+                return true;
+        }
+
+        // Has LOD children (indicates skinned mesh with LOD levels)
+        // Check if name ends with base name without LOD suffix
+        if (lower.Contains("_lod"))
+            return true;
+
+        return false;
     }
 }

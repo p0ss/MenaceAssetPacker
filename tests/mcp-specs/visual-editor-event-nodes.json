@@ -1,0 +1,88 @@
+{
+  "name": "visual_editor_event_nodes",
+  "description": "Test all event node types in the visual node editor",
+  "continueOnFailure": false,
+  "steps": [
+    {
+      "type": "ui_navigate",
+      "name": "Navigate to Nodes view",
+      "section": "moddingtools",
+      "subSection": "nodes"
+    },
+    {
+      "type": "wait",
+      "name": "Wait for view to load",
+      "durationMs": 500
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Start with empty graph"
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Skill Used event",
+      "nodeType": "EventSkillUsed",
+      "x": 100,
+      "y": 50
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Damage Received event",
+      "nodeType": "EventDamageReceived",
+      "x": 100,
+      "y": 150
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Actor Killed event",
+      "nodeType": "EventActorKilled",
+      "x": 100,
+      "y": 250
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Round Start event",
+      "nodeType": "EventRoundStart",
+      "x": 100,
+      "y": 350
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Round End event",
+      "nodeType": "EventRoundEnd",
+      "x": 100,
+      "y": 450
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Turn End event",
+      "nodeType": "EventTurnEnd",
+      "x": 100,
+      "y": 550
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify all 6 event nodes exist",
+      "expected": "\"nodeCount\": 6"
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify Skill Used node",
+      "expected": "\"title\": \"Skill Used\""
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify Damage Received node",
+      "expected": "\"title\": \"Damage Received\""
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify Actor Killed node",
+      "expected": "\"title\": \"Actor Killed\""
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Clean up graph"
+    }
+  ]
+}

@@ -114,6 +114,10 @@ public sealed class UIHttpServer : IDisposable
                 "/ui/set-complex-property" when request.HttpMethod == "POST" => await HandleSetComplexProperty(request),
                 "/ui/click" when request.HttpMethod == "POST" => await HandleClick(request),
                 "/ui/actions" => GetAvailableActions(),
+                "/ui/nodegraph" => GetNodeGraphState(),
+                "/ui/nodegraph/add-node" when request.HttpMethod == "POST" => await HandleNodeGraphAddNode(request),
+                "/ui/nodegraph/remove-node" when request.HttpMethod == "POST" => await HandleNodeGraphRemoveNode(request),
+                "/ui/nodegraph/clear" when request.HttpMethod == "POST" => HandleNodeGraphClear(),
                 "/deploy" when request.HttpMethod == "POST" => await HandleDeploy(request),
                 "/undeploy" when request.HttpMethod == "POST" => await HandleUndeploy(),
                 _ => new { error = "Not found", path }
@@ -342,6 +346,12 @@ public sealed class UIHttpServer : IDisposable
                 data["searchText"] = docs.SearchText;
                 break;
 
+            case NodesViewModel nodes:
+                data["nodeCount"] = nodes.NodeGraph.Nodes.Count;
+                data["connectionCount"] = nodes.NodeGraph.Connections.Count;
+                data["statusMessage"] = nodes.NodeGraph.StatusMessage;
+                break;
+
             case SaveEditorViewModel saves:
                 data["saveCount"] = saves.SaveFiles?.Count ?? 0;
                 data["selectedSave"] = saves.SelectedSave?.FileName;
@@ -411,6 +421,7 @@ public sealed class UIHttpServer : IDisposable
                                 case "assets": _mainViewModel.NavigateToAssets(); break;
                                 case "code": _mainViewModel.NavigateToCode(); break;
                                 case "docs": _mainViewModel.NavigateToDocs(); break;
+                                case "nodes": _mainViewModel.NavigateToNodes(); break;
                                 case "settings": _mainViewModel.NavigateToToolSettings(); break;
                             }
                         }
@@ -672,9 +683,142 @@ public sealed class UIHttpServer : IDisposable
                 subSections = new Dictionary<string, string[]>
                 {
                     ["modloader"] = new[] { "loadorder", "saves", "settings" },
-                    ["moddingtools"] = new[] { "data", "assets", "code", "docs", "settings" }
+                    ["moddingtools"] = new[] { "data", "assets", "code", "docs", "nodes", "settings" }
                 }
             };
+        });
+    }
+
+    /// <summary>
+    /// GET /ui/nodegraph - Get the state of the visual node editor.
+    /// </summary>
+    private object GetNodeGraphState()
+    {
+        return Dispatcher.UIThread.Invoke<object>(() =>
+        {
+            if (_mainViewModel?.SelectedViewModel is not NodesViewModel nodesVm)
+                return new { error = "Not on Nodes view. Navigate to ModdingTools -> Nodes first." };
+
+            var nodeGraph = nodesVm.NodeGraph;
+
+            var nodes = nodeGraph.Nodes.Select(n => new
+            {
+                title = n.Title,
+                locationX = n.Location.X,
+                locationY = n.Location.Y,
+                inputs = n.Input.Select(c => c.Title).ToList(),
+                outputs = n.Output.Select(c => c.Title).ToList()
+            }).ToList();
+
+            var connections = nodeGraph.Connections.Select(c => new
+            {
+                sourceNode = c.SourceConnector?.Node?.Title,
+                sourceConnector = c.SourceConnector?.Title,
+                targetNode = c.TargetConnector?.Node?.Title,
+                targetConnector = c.TargetConnector?.Title
+            }).ToList();
+
+            return new
+            {
+                success = true,
+                statusMessage = nodeGraph.StatusMessage,
+                viewportZoom = nodeGraph.ViewportZoom,
+                nodeCount = nodes.Count,
+                connectionCount = connections.Count,
+                nodes,
+                connections
+            };
+        });
+    }
+
+    /// <summary>
+    /// POST /ui/nodegraph/add-node - Add a node to the graph.
+    /// </summary>
+    private async Task<object> HandleNodeGraphAddNode(HttpListenerRequest request)
+    {
+        var body = await ReadBody(request);
+        var nodeType = body.GetValueOrDefault("type")?.ToString();
+        var x = body.GetValueOrDefault("x");
+        var y = body.GetValueOrDefault("y");
+
+        if (string.IsNullOrEmpty(nodeType))
+            return new { error = "Missing 'type' parameter. Valid types: EventSkillUsed, EventDamageReceived, EventActorKilled, EventRoundStart, EventRoundEnd, EventTurnEnd, Condition, And, Or, Not, ActionAddEffect, ActionDamage, ActionHeal, ActionSetFlag, ActionLog" };
+
+        return Dispatcher.UIThread.Invoke<object>(() =>
+        {
+            if (_mainViewModel?.SelectedViewModel is not NodesViewModel nodesVm)
+                return new { error = "Not on Nodes view. Navigate to ModdingTools -> Nodes first." };
+
+            try
+            {
+                if (!Enum.TryParse<VisualEditor.NodeType>(nodeType, true, out var parsedType))
+                    return new { error = $"Invalid node type: {nodeType}" };
+
+                double posX = 100, posY = 100;
+                if (x != null) double.TryParse(x.ToString(), out posX);
+                if (y != null) double.TryParse(y.ToString(), out posY);
+
+                var node = nodesVm.NodeGraph.AddNode(parsedType, new Avalonia.Point(posX, posY));
+
+                return new
+                {
+                    success = true,
+                    node = new
+                    {
+                        title = node.Title,
+                        locationX = node.Location.X,
+                        locationY = node.Location.Y,
+                        inputs = node.Input.Select(c => c.Title).ToList(),
+                        outputs = node.Output.Select(c => c.Title).ToList()
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                return new { error = ex.Message };
+            }
+        });
+    }
+
+    /// <summary>
+    /// POST /ui/nodegraph/remove-node - Remove a node by title.
+    /// </summary>
+    private async Task<object> HandleNodeGraphRemoveNode(HttpListenerRequest request)
+    {
+        var body = await ReadBody(request);
+        var title = body.GetValueOrDefault("title")?.ToString();
+
+        if (string.IsNullOrEmpty(title))
+            return new { error = "Missing 'title' parameter" };
+
+        return Dispatcher.UIThread.Invoke<object>(() =>
+        {
+            if (_mainViewModel?.SelectedViewModel is not NodesViewModel nodesVm)
+                return new { error = "Not on Nodes view. Navigate to ModdingTools -> Nodes first." };
+
+            var node = nodesVm.NodeGraph.Nodes.FirstOrDefault(n =>
+                n.Title.Equals(title, StringComparison.OrdinalIgnoreCase));
+
+            if (node == null)
+                return new { error = $"Node '{title}' not found" };
+
+            nodesVm.NodeGraph.RemoveNode(node);
+            return new { success = true, removed = title };
+        });
+    }
+
+    /// <summary>
+    /// POST /ui/nodegraph/clear - Clear all nodes and connections.
+    /// </summary>
+    private object HandleNodeGraphClear()
+    {
+        return Dispatcher.UIThread.Invoke<object>(() =>
+        {
+            if (_mainViewModel?.SelectedViewModel is not NodesViewModel nodesVm)
+                return new { error = "Not on Nodes view. Navigate to ModdingTools -> Nodes first." };
+
+            nodesVm.NodeGraph.Clear();
+            return new { success = true, message = "Graph cleared" };
         });
     }
 

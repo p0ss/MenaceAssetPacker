@@ -237,11 +237,12 @@ public class MyModPlugin : IModpackPlugin
     private void ReadNestedField(GameObj obj)
     {
         // Read a pointer field to get a child IL2CPP object
-        GameObj statsObj = obj.ReadObj("Stats");
-        if (!statsObj.IsNull)
+        // For EntityTemplate, use "Properties" to get the EntityProperties object
+        GameObj propsObj = obj.ReadObj("Properties");
+        if (!propsObj.IsNull)
         {
-            int maxHp = statsObj.ReadInt("MaxHealth");
-            _log.Msg($"MaxHealth = {maxHp}");
+            int hp = propsObj.ReadInt("HitpointsPerElement");
+            _log.Msg($"HitpointsPerElement = {hp}");
         }
 
         // Write a field directly in IL2CPP memory

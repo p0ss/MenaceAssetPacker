@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using Menace.Modkit.App.Services;
@@ -23,6 +24,70 @@ public static class TestTools
     {
         PropertyNameCaseInsensitive = true
     };
+
+    /// <summary>
+    /// Default location for test specifications.
+    /// </summary>
+    private static string TestSpecsDirectory => Path.Combine(
+        Path.GetDirectoryName(typeof(TestTools).Assembly.Location) ?? ".",
+        "..", "..", "..", "..", "..", "tests", "mcp-specs");
+
+    [McpServerTool(Name = "test_list", ReadOnly = true)]
+    [Description("List available test specifications. Returns the names and descriptions of all test specs in the tests/mcp-specs directory.")]
+    public static string ListTests()
+    {
+        try
+        {
+            var specsDir = TestSpecsDirectory;
+            if (!Directory.Exists(specsDir))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    error = $"Test specs directory not found: {specsDir}",
+                    tests = Array.Empty<object>()
+                }, JsonOptions);
+            }
+
+            var tests = new List<object>();
+            foreach (var file in Directory.GetFiles(specsDir, "*.json"))
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var spec = JsonSerializer.Deserialize<JsonElement>(json);
+
+                    tests.Add(new
+                    {
+                        file = Path.GetFileName(file),
+                        path = file,
+                        name = spec.TryGetProperty("name", out var n) ? n.GetString() : Path.GetFileNameWithoutExtension(file),
+                        description = spec.TryGetProperty("description", out var d) ? d.GetString() : null,
+                        stepCount = spec.TryGetProperty("steps", out var s) ? s.GetArrayLength() : 0
+                    });
+                }
+                catch
+                {
+                    tests.Add(new
+                    {
+                        file = Path.GetFileName(file),
+                        path = file,
+                        error = "Failed to parse test spec"
+                    });
+                }
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                specsDirectory = specsDir,
+                testCount = tests.Count,
+                tests
+            }, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message }, JsonOptions);
+        }
+    }
 
     [McpServerTool(Name = "test_run", Destructive = false)]
     [Description("Run an automated test against the game. Deploys modpack (if specified), ensures game is running, executes test steps, and returns results. Test can be a JSON file path or inline JSON.")]
@@ -245,6 +310,18 @@ public static class TestTools
 
                 case "ui_list_templates":
                     return await ExecuteUIListTemplates(step);
+
+                case "ui_nodegraph_state":
+                    return await ExecuteUINodeGraphState(step);
+
+                case "ui_nodegraph_add_node":
+                    return await ExecuteUINodeGraphAddNode(step);
+
+                case "ui_nodegraph_remove_node":
+                    return await ExecuteUINodeGraphRemoveNode(step);
+
+                case "ui_nodegraph_clear":
+                    return await ExecuteUINodeGraphClear(step);
 
                 default:
                     return new
@@ -608,6 +685,159 @@ public static class TestTools
         }
     }
 
+    private static async Task<dynamic> ExecuteUINodeGraphState(TestStep step)
+    {
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        try
+        {
+            var response = await httpClient.GetAsync("http://127.0.0.1:21421/ui/nodegraph");
+            var result = await response.Content.ReadAsStringAsync();
+
+            var success = result.Contains("\"success\": true");
+
+            // Check expected values if provided
+            if (success && !string.IsNullOrEmpty(step.Expected))
+            {
+                var match = result.Contains(step.Expected);
+                return new
+                {
+                    step = step.Name,
+                    type = "ui_nodegraph_state",
+                    status = match ? "pass" : "fail",
+                    expected = step.Expected,
+                    result
+                };
+            }
+
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_state",
+                status = success ? "pass" : "fail",
+                result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_state",
+                status = "fail",
+                error = $"Failed to connect to UI server: {ex.Message}"
+            };
+        }
+    }
+
+    private static async Task<dynamic> ExecuteUINodeGraphAddNode(TestStep step)
+    {
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        try
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["type"] = step.NodeType,
+                ["x"] = step.X ?? 100,
+                ["y"] = step.Y ?? 100
+            };
+
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await httpClient.PostAsync("http://127.0.0.1:21421/ui/nodegraph/add-node", content);
+            var result = await response.Content.ReadAsStringAsync();
+
+            var success = result.Contains("\"success\": true");
+
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_add_node",
+                status = success ? "pass" : "fail",
+                nodeType = step.NodeType,
+                result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_add_node",
+                status = "fail",
+                error = $"Failed to connect to UI server: {ex.Message}"
+            };
+        }
+    }
+
+    private static async Task<dynamic> ExecuteUINodeGraphRemoveNode(TestStep step)
+    {
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        try
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["title"] = step.NodeTitle
+            };
+
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await httpClient.PostAsync("http://127.0.0.1:21421/ui/nodegraph/remove-node", content);
+            var result = await response.Content.ReadAsStringAsync();
+
+            var success = result.Contains("\"success\": true");
+
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_remove_node",
+                status = success ? "pass" : "fail",
+                nodeTitle = step.NodeTitle,
+                result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_remove_node",
+                status = "fail",
+                error = $"Failed to connect to UI server: {ex.Message}"
+            };
+        }
+    }
+
+    private static async Task<dynamic> ExecuteUINodeGraphClear(TestStep step)
+    {
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        try
+        {
+            var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var response = await httpClient.PostAsync("http://127.0.0.1:21421/ui/nodegraph/clear", content);
+            var result = await response.Content.ReadAsStringAsync();
+
+            var success = result.Contains("\"success\": true");
+
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_clear",
+                status = success ? "pass" : "fail",
+                result
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                step = step.Name,
+                type = "ui_nodegraph_clear",
+                status = "fail",
+                error = $"Failed to connect to UI server: {ex.Message}"
+            };
+        }
+    }
+
     // Test specification models
     private class TestSpec
     {
@@ -635,5 +865,11 @@ public static class TestTools
         public string? Value { get; set; }
         public string? Field { get; set; }
         public string? Property { get; set; }
+
+        // Node graph test step properties
+        public string? NodeType { get; set; }
+        public string? NodeTitle { get; set; }
+        public double? X { get; set; }
+        public double? Y { get; set; }
     }
 }

@@ -1,13 +1,15 @@
-#nullable disable
+#nullable enable
 
 using System;
 using System.ComponentModel;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Menace.Modkit.App.Services;
+using Avalonia.Styling;
 using Menace.Modkit.App.Styles;
 using Nodify.Avalonia;
 using Nodify.Avalonia.Connections;
@@ -16,7 +18,6 @@ namespace Menace.Modkit.App.VisualEditor;
 
 /// <summary>
 /// Visual node graph editor view using Nodify-Avalonia.
-/// Provides a canvas for creating and connecting nodes to define mod behavior.
 /// </summary>
 public class NodeGraphView : UserControl
 {
@@ -42,12 +43,61 @@ public class NodeGraphView : UserControl
         if (_viewModel != null)
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+            // Set up the editor with commands
+            if (_editor != null)
+            {
+                SetupEditorCommands();
+            }
         }
+    }
+
+    private void SetupEditorCommands()
+    {
+        if (_editor == null || _viewModel == null) return;
+
+        // Connection commands - use object type since Nodify may pass different types
+        _editor.ConnectionStartedCommand = new RelayCommand<object>(param =>
+        {
+            var connector = param as ConnectorViewModel;
+            if (connector != null)
+            {
+                _viewModel.StartConnection(connector);
+            }
+            else
+            {
+                Menace.Modkit.App.Services.ModkitLog.Warn($"[NodeGraph] ConnectionStarted received unexpected type: {param?.GetType().Name ?? "null"}");
+            }
+        });
+
+        _editor.ConnectionCompletedCommand = new RelayCommand<object>(param =>
+        {
+            var connector = param as ConnectorViewModel;
+            if (connector != null)
+            {
+                _viewModel.CompleteConnection(connector);
+            }
+            else
+            {
+                // If null or wrong type, just cancel the pending connection
+                _viewModel.CancelConnection();
+                Menace.Modkit.App.Services.ModkitLog.Warn($"[NodeGraph] ConnectionCompleted received unexpected type: {param?.GetType().Name ?? "null"}");
+            }
+        });
+
+        _editor.DisconnectConnectorCommand = new RelayCommand<object>(param =>
+        {
+            var connector = param as ConnectorViewModel;
+            if (connector != null)
+            {
+                _viewModel.DisconnectConnector(connector);
+            }
+        });
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // Handle any view-specific updates based on ViewModel changes
+        // Handle any view-specific updates
     }
 
     private Control BuildUI()
@@ -91,17 +141,6 @@ public class NodeGraphView : UserControl
             Spacing = 8
         };
 
-        // Title
-        toolbarPanel.Children.Add(new TextBlock
-        {
-            Text = "Visual Editor",
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Brushes.White,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 16, 0)
-        });
-
         // Add Event Node dropdown
         var eventDropdown = CreateNodeDropdown("+ Event", new[]
         {
@@ -117,7 +156,7 @@ public class NodeGraphView : UserControl
         // Add Condition Node dropdown
         var conditionDropdown = CreateNodeDropdown("+ Condition", new[]
         {
-            ("Condition", NodeType.Condition),
+            ("Property Check", NodeType.Condition),
             ("AND", NodeType.And),
             ("OR", NodeType.Or),
             ("NOT", NodeType.Not)
@@ -149,7 +188,6 @@ public class NodeGraphView : UserControl
             Content = "Clear",
             FontSize = 11
         };
-        clearButton.Classes.Add("destructive");
         clearButton.Click += (_, _) => _viewModel?.Clear();
         toolbarPanel.Children.Add(clearButton);
 
@@ -159,12 +197,11 @@ public class NodeGraphView : UserControl
             Content = "Reset View",
             FontSize = 11
         };
-        resetViewButton.Classes.Add("secondary");
         resetViewButton.Click += (_, _) => _viewModel?.ResetViewport();
         toolbarPanel.Children.Add(resetViewButton);
 
         // Spacer
-        toolbarPanel.Children.Add(new Border { Width = 1, HorizontalAlignment = HorizontalAlignment.Stretch });
+        toolbarPanel.Children.Add(new Border { HorizontalAlignment = HorizontalAlignment.Stretch });
 
         // Zoom indicator
         var zoomText = new TextBlock
@@ -190,7 +227,6 @@ public class NodeGraphView : UserControl
             Content = label,
             FontSize = 11
         };
-        button.Classes.Add("secondary");
 
         var menu = new ContextMenu();
         foreach (var (name, type) in options)
@@ -201,10 +237,9 @@ public class NodeGraphView : UserControl
             {
                 if (_viewModel != null)
                 {
-                    // Add node at center of viewport
                     var location = new Point(
-                        _viewModel.ViewportLocation.X + 200,
-                        _viewModel.ViewportLocation.Y + 150
+                        -_viewModel.ViewportLocation.X + 300,
+                        -_viewModel.ViewportLocation.Y + 200
                     );
                     _viewModel.AddNode(capturedType, location);
                 }
@@ -236,60 +271,82 @@ public class NodeGraphView : UserControl
         {
             Background = new SolidColorBrush(Color.Parse("#1a1a1a")),
             MinViewportZoom = 0.1,
-            MaxViewportZoom = 3.0
+            MaxViewportZoom = 3.0,
+            DisableAutoPanning = true,
+            EnableRealtimeSelection = false
         };
 
-        // Bind to ViewModel
+        // Bind nodes and connections
         _editor.Bind(NodifyEditor.ItemsSourceProperty, new Binding("Nodes"));
         _editor.Bind(NodifyEditor.ConnectionsProperty, new Binding("Connections"));
-        _editor.Bind(NodifyEditor.SelectedItemsProperty, new Binding("SelectedNodes"));
+        _editor.Bind(NodifyEditor.PendingConnectionProperty, new Binding("PendingConnection"));
         _editor.Bind(NodifyEditor.ViewportZoomProperty, new Binding("ViewportZoom") { Mode = BindingMode.TwoWay });
         _editor.Bind(NodifyEditor.ViewportLocationProperty, new Binding("ViewportLocation") { Mode = BindingMode.TwoWay });
 
-        // Configure node template using FuncDataTemplate
+        // Set up ItemContainerStyle to bind Location for dragging
+        // NodifyEditor uses ItemContainer which has a Location property
+        var containerStyle = new Style(x => x.OfType<ItemContainer>());
+        containerStyle.Setters.Add(new Setter(ItemContainer.LocationProperty, new Binding("Location") { Mode = BindingMode.TwoWay }));
+        _editor.Styles.Add(containerStyle);
+
+        // Node item template - this creates the visual for each node
         _editor.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<NodeViewModel>((node, _) =>
         {
             return CreateNodeControl(node);
         });
 
-        // Configure pending connection
-        _editor.Bind(NodifyEditor.PendingConnectionProperty, new Binding("PendingConnection"));
+        // Note: Connection rendering is handled by Nodify's internal templates
+        // The ConnectionViewModel.SourceAnchor/TargetAnchor properties provide the anchor points
+        // Nodify's default Connection control should bind to Source/Target properties
+
+        // Add a style to configure connection appearance
+        var connectionStyle = new Style(x => x.OfType<Connection>());
+        connectionStyle.Setters.Add(new Setter(Connection.StrokeProperty, ThemeColors.BrushPrimary));
+        connectionStyle.Setters.Add(new Setter(Connection.StrokeThicknessProperty, 2.0));
+        _editor.Styles.Add(connectionStyle);
+
+        // Set up commands if viewmodel already exists
+        if (_viewModel != null)
+        {
+            SetupEditorCommands();
+        }
 
         container.Child = _editor;
         return container;
     }
 
-    private Control CreateNodeControl(NodeViewModel node)
+    private Control CreateNodeControl(NodeViewModel nodeVm)
     {
-        // Create node content directly - ItemContainer handles positioning
+        // Create a custom node visual - Nodify positions this via its ItemContainer
         var nodeContent = new Border
         {
             Background = ThemeColors.BrushBgSurface,
             BorderBrush = ThemeColors.BrushBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            MinWidth = 120,
+            MinWidth = 140,
             Padding = new Thickness(0)
         };
 
         var contentStack = new StackPanel();
 
-        // Header
+        // Header with node type color
+        var headerColor = GetNodeTypeColor(nodeVm.Title);
         var header = new Border
         {
-            Background = ThemeColors.BrushBgElevated,
+            Background = new SolidColorBrush(headerColor),
             CornerRadius = new CornerRadius(5, 5, 0, 0),
-            Padding = new Thickness(12, 6)
+            Padding = new Thickness(12, 8)
         };
 
         var titleBlock = new TextBlock
         {
-            Text = node.Title,
             FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             Foreground = Brushes.White,
             HorizontalAlignment = HorizontalAlignment.Center
         };
+        titleBlock.Bind(TextBlock.TextProperty, new Binding("Title") { Source = nodeVm });
         header.Child = titleBlock;
         contentStack.Children.Add(header);
 
@@ -297,15 +354,13 @@ public class NodeGraphView : UserControl
         var connectorsGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,*"),
-            Margin = new Thickness(8)
+            Margin = new Thickness(0, 8, 0, 8),
+            MinHeight = 30
         };
 
         // Input connectors (left side)
-        var inputStack = new StackPanel
-        {
-            Spacing = 4
-        };
-        foreach (var input in node.Input)
+        var inputStack = new StackPanel { Spacing = 6 };
+        foreach (var input in nodeVm.Input)
         {
             inputStack.Children.Add(CreateConnectorControl(input, isInput: true));
         }
@@ -315,10 +370,10 @@ public class NodeGraphView : UserControl
         // Output connectors (right side)
         var outputStack = new StackPanel
         {
-            Spacing = 4,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Right
         };
-        foreach (var output in node.Output)
+        foreach (var output in nodeVm.Output)
         {
             outputStack.Children.Add(CreateConnectorControl(output, isInput: false));
         }
@@ -326,10 +381,19 @@ public class NodeGraphView : UserControl
         Grid.SetColumn(outputStack, 1);
 
         contentStack.Children.Add(connectorsGrid);
-
         nodeContent.Child = contentStack;
 
         return nodeContent;
+    }
+
+    private Color GetNodeTypeColor(string title)
+    {
+        if (title.Contains("Skill") || title.Contains("Damage") || title.Contains("Kill") ||
+            title.Contains("Round") || title.Contains("Turn"))
+            return Color.Parse("#2d5a27"); // Green for events
+        if (title.Contains("?") || title == "AND" || title == "OR" || title == "NOT")
+            return Color.Parse("#4a4a2d"); // Yellow-ish for conditions
+        return Color.Parse("#4a2d2d"); // Red-ish for actions
     }
 
     private Control CreateConnectorControl(ConnectorViewModel connector, bool isInput)
@@ -337,43 +401,45 @@ public class NodeGraphView : UserControl
         var panel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4
+            Spacing = 6,
+            Margin = new Thickness(isInput ? 8 : 0, 0, isInput ? 0 : 8, 0)
         };
 
-        // Create the connector element
-        var connectorElement = new Connector();
-
-        // Bind anchor position for connections
-        connectorElement.Bind(Connector.AnchorProperty, new Binding("Anchor")
+        // The connector dot using Nodify's Connector control
+        var connectorDot = new Connector
         {
-            Mode = BindingMode.OneWayToSource,
-            Source = connector
+            Width = 12,
+            Height = 12,
+            // Set DataContext so Nodify's commands receive our ConnectorViewModel
+            DataContext = connector
+        };
+
+        // Bind anchor for connection drawing - this is how Nodify knows where connections start/end
+        connectorDot.Bind(Connector.AnchorProperty, new Binding("Anchor")
+        {
+            Mode = BindingMode.OneWayToSource
         });
 
-        // Bind IsConnected for visual feedback
-        connectorElement.Bind(Connector.IsConnectedProperty, new Binding("IsConnected")
-        {
-            Source = connector
-        });
+        connectorDot.Bind(Connector.IsConnectedProperty, new Binding("IsConnected"));
 
         var label = new TextBlock
         {
             Text = connector.Title,
-            FontSize = 10,
+            FontSize = 11,
             Foreground = ThemeColors.BrushTextSecondary,
             VerticalAlignment = VerticalAlignment.Center
         };
 
         if (isInput)
         {
-            panel.Children.Add(connectorElement);
+            panel.Children.Add(connectorDot);
             panel.Children.Add(label);
         }
         else
         {
             panel.HorizontalAlignment = HorizontalAlignment.Right;
             panel.Children.Add(label);
-            panel.Children.Add(connectorElement);
+            panel.Children.Add(connectorDot);
         }
 
         return panel;
@@ -395,16 +461,6 @@ public class NodeGraphView : UserControl
             Spacing = 16
         };
 
-        // Status message
-        var statusText = new TextBlock
-        {
-            FontSize = 11,
-            Foreground = ThemeColors.BrushTextSecondary
-        };
-        statusText.Bind(TextBlock.TextProperty, new Binding("StatusMessage"));
-        statusPanel.Children.Add(statusText);
-
-        // Node count
         var nodeCountText = new TextBlock
         {
             FontSize = 11,
@@ -416,7 +472,6 @@ public class NodeGraphView : UserControl
         });
         statusPanel.Children.Add(nodeCountText);
 
-        // Connection count
         var connCountText = new TextBlock
         {
             FontSize = 11,
@@ -428,10 +483,9 @@ public class NodeGraphView : UserControl
         });
         statusPanel.Children.Add(connCountText);
 
-        // Instructions
         statusPanel.Children.Add(new TextBlock
         {
-            Text = "Pan: Middle-click drag | Zoom: Scroll | Select: Click | Multi-select: Ctrl+Click",
+            Text = "Drag nodes to move | Drag from connectors to connect | Right-click to pan",
             FontSize = 10,
             Foreground = ThemeColors.BrushTextDim,
             Margin = new Thickness(16, 0, 0, 0)
@@ -440,4 +494,27 @@ public class NodeGraphView : UserControl
         statusBar.Child = statusPanel;
         return statusBar;
     }
+}
+
+/// <summary>
+/// Simple relay command for Nodify commands.
+/// </summary>
+public class RelayCommand<T> : ICommand
+{
+    private readonly Action<T?> _execute;
+    private readonly Func<T?, bool>? _canExecute;
+
+    public RelayCommand(Action<T?> execute, Func<T?, bool>? canExecute = null)
+    {
+        _execute = execute;
+        _canExecute = canExecute;
+    }
+
+    public event EventHandler? CanExecuteChanged;
+
+    public bool CanExecute(object? parameter) => _canExecute?.Invoke((T?)parameter) ?? true;
+
+    public void Execute(object? parameter) => _execute((T?)parameter);
+
+    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }

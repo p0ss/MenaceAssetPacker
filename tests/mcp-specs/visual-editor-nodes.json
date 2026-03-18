@@ -1,0 +1,87 @@
+{
+  "name": "visual_editor_nodes",
+  "description": "Test the visual node editor UI and node graph operations",
+  "continueOnFailure": false,
+  "steps": [
+    {
+      "type": "ui_navigate",
+      "name": "Navigate to Modding Tools",
+      "section": "moddingtools"
+    },
+    {
+      "type": "wait",
+      "name": "Wait for view to load",
+      "durationMs": 500
+    },
+    {
+      "type": "ui_navigate",
+      "name": "Navigate to Nodes view",
+      "section": "moddingtools",
+      "subSection": "nodes"
+    },
+    {
+      "type": "wait",
+      "name": "Wait for nodes view to load",
+      "durationMs": 500
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify example graph loaded",
+      "expected": "\"nodeCount\": 4"
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify connections exist",
+      "expected": "\"connectionCount\": 4"
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Clear the graph"
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify graph is empty",
+      "expected": "\"nodeCount\": 0"
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Skill Used event node",
+      "nodeType": "EventSkillUsed",
+      "x": 50,
+      "y": 100
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Condition node",
+      "nodeType": "Condition",
+      "x": 250,
+      "y": 100
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add Add Effect action node",
+      "nodeType": "ActionAddEffect",
+      "x": 450,
+      "y": 100
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify three nodes exist",
+      "expected": "\"nodeCount\": 3"
+    },
+    {
+      "type": "ui_nodegraph_remove_node",
+      "name": "Remove the Condition node",
+      "nodeTitle": "Condition"
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify two nodes remain",
+      "expected": "\"nodeCount\": 2"
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Clear graph for cleanup"
+    }
+  ]
+}

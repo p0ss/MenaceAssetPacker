@@ -1,4 +1,4 @@
-#nullable disable
+#nullable enable
 
 using System;
 using System.Collections.ObjectModel;
@@ -85,19 +85,68 @@ public class NodeViewModel : INotifyPropertyChanged
 /// </summary>
 public class ConnectionViewModel : INotifyPropertyChanged
 {
-    private ConnectorViewModel? _source;
-    private ConnectorViewModel? _target;
+    private ConnectorViewModel? _sourceConnector;
+    private ConnectorViewModel? _targetConnector;
 
-    public ConnectorViewModel? Source
+    public ConnectionViewModel()
     {
-        get => _source;
-        set { _source = value; OnPropertyChanged(); }
     }
 
-    public ConnectorViewModel? Target
+    /// <summary>
+    /// The source connector (for internal reference).
+    /// </summary>
+    public ConnectorViewModel? SourceConnector
     {
-        get => _target;
-        set { _target = value; OnPropertyChanged(); }
+        get => _sourceConnector;
+        set
+        {
+            if (_sourceConnector != null)
+                _sourceConnector.PropertyChanged -= OnConnectorPropertyChanged;
+            _sourceConnector = value;
+            if (_sourceConnector != null)
+                _sourceConnector.PropertyChanged += OnConnectorPropertyChanged;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(Source));
+        }
+    }
+
+    /// <summary>
+    /// The target connector (for internal reference).
+    /// </summary>
+    public ConnectorViewModel? TargetConnector
+    {
+        get => _targetConnector;
+        set
+        {
+            if (_targetConnector != null)
+                _targetConnector.PropertyChanged -= OnConnectorPropertyChanged;
+            _targetConnector = value;
+            if (_targetConnector != null)
+                _targetConnector.PropertyChanged += OnConnectorPropertyChanged;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(Target));
+        }
+    }
+
+    /// <summary>
+    /// Source anchor point for connection drawing (used by Nodify).
+    /// </summary>
+    public Point Source => _sourceConnector?.Anchor ?? default;
+
+    /// <summary>
+    /// Target anchor point for connection drawing (used by Nodify).
+    /// </summary>
+    public Point Target => _targetConnector?.Anchor ?? default;
+
+    private void OnConnectorPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ConnectorViewModel.Anchor))
+        {
+            if (sender == _sourceConnector)
+                OnPropertyChanged(nameof(Source));
+            else if (sender == _targetConnector)
+                OnPropertyChanged(nameof(Target));
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -117,8 +166,22 @@ public class PendingConnectionViewModel : INotifyPropertyChanged
     public ConnectorViewModel? Source
     {
         get => _source;
-        set { _source = value; OnPropertyChanged(); }
+        set
+        {
+            if (_source != null)
+                _source.PropertyChanged -= OnSourcePropertyChanged;
+            _source = value;
+            if (_source != null)
+                _source.PropertyChanged += OnSourcePropertyChanged;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SourceAnchor));
+        }
     }
+
+    /// <summary>
+    /// Source anchor point for pending connection drawing.
+    /// </summary>
+    public Point SourceAnchor => _source?.Anchor ?? default;
 
     public Point TargetLocation
     {
@@ -130,6 +193,14 @@ public class PendingConnectionViewModel : INotifyPropertyChanged
     {
         get => _isVisible;
         set { _isVisible = value; OnPropertyChanged(); }
+    }
+
+    private void OnSourcePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ConnectorViewModel.Anchor))
+        {
+            OnPropertyChanged(nameof(SourceAnchor));
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

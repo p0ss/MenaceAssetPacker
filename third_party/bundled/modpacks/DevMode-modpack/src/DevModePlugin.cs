@@ -370,10 +370,11 @@ public class DevModePlugin : IModpackPlugin
 
                 if (!_baseValuesStored && !_originalEntityHealth.ContainsKey(name))
                 {
-                    var stats = Templates.ReadField(entity, "Stats");
-                    if (stats is GameObj statsObj && !statsObj.IsNull)
+                    // EntityTemplate.Properties is at offset +0x2F8 (type: EntityProperties)
+                    var props = Templates.ReadField(entity, "Properties");
+                    if (props is GameObj propsObj && !propsObj.IsNull)
                     {
-                        var baseHp = statsObj.ReadInt("HitpointsPerElement");
+                        var baseHp = propsObj.ReadInt("HitpointsPerElement");
                         if (baseHp > 0)
                             _originalEntityHealth[name] = baseHp;
                     }
@@ -381,11 +382,11 @@ public class DevModePlugin : IModpackPlugin
 
                 if (_originalEntityHealth.TryGetValue(name, out float origHp))
                 {
-                    var stats = Templates.ReadField(entity, "Stats");
-                    if (stats is GameObj statsObj && !statsObj.IsNull)
+                    var props = Templates.ReadField(entity, "Properties");
+                    if (props is GameObj propsObj && !propsObj.IsNull)
                     {
                         int newHp = (int)(origHp * healthMult);
-                        if (statsObj.WriteInt("HitpointsPerElement", newHp))
+                        if (propsObj.WriteInt("HitpointsPerElement", newHp))
                             modified++;
                     }
                 }

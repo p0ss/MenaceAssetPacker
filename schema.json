@@ -46599,9 +46599,37 @@
         }
       ]
     },
+    "FixedChunkEntry": {
+      "fields": [
+        {
+          "name": "X",
+          "type": "int",
+          "offset": "0x10",
+          "category": "primitive"
+        },
+        {
+          "name": "Y",
+          "type": "int",
+          "offset": "0x14",
+          "category": "primitive"
+        }
+      ]
+    },
     "FixedPrefabEntry": {
       "base_class": "FixedChunkEntry",
       "fields": [
+        {
+          "name": "X",
+          "type": "int",
+          "offset": "0x10",
+          "category": "primitive"
+        },
+        {
+          "name": "Y",
+          "type": "int",
+          "offset": "0x14",
+          "category": "primitive"
+        },
         {
           "name": "Prefab",
           "type": "GameObject",

@@ -1,0 +1,67 @@
+{
+  "name": "visual_editor_logic_nodes",
+  "description": "Test logic node types (AND, OR, NOT) in the visual node editor",
+  "continueOnFailure": false,
+  "steps": [
+    {
+      "type": "ui_navigate",
+      "name": "Navigate to Nodes view",
+      "section": "moddingtools",
+      "subSection": "nodes"
+    },
+    {
+      "type": "wait",
+      "name": "Wait for view to load",
+      "durationMs": 500
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Start with empty graph"
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add AND logic node",
+      "nodeType": "And",
+      "x": 200,
+      "y": 100
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add OR logic node",
+      "nodeType": "Or",
+      "x": 200,
+      "y": 200
+    },
+    {
+      "type": "ui_nodegraph_add_node",
+      "name": "Add NOT logic node",
+      "nodeType": "Not",
+      "x": 200,
+      "y": 300
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify all logic nodes exist",
+      "expected": "\"nodeCount\": 3"
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify AND node has result output",
+      "expected": "\"title\": \"AND\""
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify OR node exists",
+      "expected": "\"title\": \"OR\""
+    },
+    {
+      "type": "ui_nodegraph_state",
+      "name": "Verify NOT node exists",
+      "expected": "\"title\": \"NOT\""
+    },
+    {
+      "type": "ui_nodegraph_clear",
+      "name": "Clean up graph"
+    }
+  ]
+}

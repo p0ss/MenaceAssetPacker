@@ -864,6 +864,487 @@ public static class TileManipulation
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
+    //  COORDINATE-BASED API (for map generation)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    // Map memory layout offsets (from RE)
+    private const int OFFSET_MAP_WIDTH = 0x10;
+    private const int OFFSET_MAP_HEIGHT = 0x14;
+    private const int OFFSET_MAP_TILES = 0x18;
+
+    // Tile memory layout offsets (from RE)
+    private const int OFFSET_TILE_X = 0x10;
+    private const int OFFSET_TILE_Y = 0x14;
+    private const int OFFSET_TILE_ELEVATION = 0x18;
+    private const int OFFSET_TILE_SURFACE_TYPE = 0x48;
+
+    // Tile array layout: Il2Cpp 2D array has length info at +0x10 and data at +0x20
+    private const int OFFSET_ARRAY_LENGTHS = 0x10;
+    private const int OFFSET_ARRAY_DATA = 0x20;
+
+    // World coordinate scale factors (from RE: DAT_182d8fc50, DAT_182d8fc44)
+    // TILE_SIZE is the world unit size per tile, TILE_OFFSET centers the position
+    private const float TILE_SIZE = 2.0f;
+    private const float TILE_OFFSET = 1.0f;  // Half of TILE_SIZE for centering
+
+    // Surface type enum (from RE: 14 values 0-13)
+    private static readonly Dictionary<string, int> SurfaceTypeMap = new()
+    {
+        { "default", 0 },
+        { "grass", 1 },
+        { "dirt", 2 },
+        { "mud", 3 },
+        { "sand", 4 },
+        { "stone", 5 },
+        { "concrete", 6 },
+        { "metal", 7 },
+        { "wood", 8 },
+        { "asphalt", 9 },
+        { "road", 9 },
+        { "snow", 10 },
+        { "rubble", 11 },
+        { "water", 12 },
+        { "shallow_water", 13 }
+    };
+
+    // Cached map reference for coordinate lookups
+    private static IntPtr _mapPointer = IntPtr.Zero;
+    private static IntPtr _tilesArray = IntPtr.Zero;
+    private static int _mapWidth = 42;
+    private static int _mapHeight = 42;
+
+    /// <summary>
+    /// Set the map instance for coordinate-based lookups.
+    /// Called by TileOverrideInjector when map generation begins.
+    /// </summary>
+    /// <param name="mapPointer">Pointer to Menace.Tactical.Map instance</param>
+    /// <param name="mapSize">Map size (width and height)</param>
+    public static void SetMapInstance(IntPtr mapPointer, int mapSize)
+    {
+        _mapPointer = mapPointer;
+        _tilesArray = IntPtr.Zero; // Reset cache
+
+        if (mapPointer != IntPtr.Zero)
+        {
+            try
+            {
+                // Read actual map dimensions from the Map object
+                _mapWidth = Marshal.ReadInt32(mapPointer + OFFSET_MAP_WIDTH);
+                _mapHeight = Marshal.ReadInt32(mapPointer + OFFSET_MAP_HEIGHT);
+
+                // Cache the tiles array pointer
+                _tilesArray = Marshal.ReadIntPtr(mapPointer + OFFSET_MAP_TILES);
+
+                SdkLogger.Msg($"[TileManipulation] Map initialized: {_mapWidth}x{_mapHeight}, tiles array at 0x{_tilesArray:X}");
+            }
+            catch (Exception ex)
+            {
+                SdkLogger.Warning($"[TileManipulation] Failed to read map dimensions: {ex.Message}");
+                _mapWidth = mapSize;
+                _mapHeight = mapSize;
+            }
+        }
+        else
+        {
+            _mapWidth = mapSize;
+            _mapHeight = mapSize;
+        }
+    }
+
+    /// <summary>
+    /// Set the map instance using object wrapper (for compatibility).
+    /// </summary>
+    public static void SetMapInstance(object mapInstance, int mapSize)
+    {
+        // Extract pointer from GameObj or IL2CPP object if possible
+        if (mapInstance is GameObj gameObj)
+        {
+            SetMapInstance(gameObj.Pointer, mapSize);
+        }
+        else if (mapInstance != null)
+        {
+            // Try to get pointer via GCHandle for IL2CPP objects
+            try
+            {
+                var handle = System.Runtime.InteropServices.GCHandle.Alloc(mapInstance, GCHandleType.Pinned);
+                SetMapInstance(handle.AddrOfPinnedObject(), mapSize);
+                handle.Free();
+            }
+            catch
+            {
+                // Fallback: just use size
+                _mapPointer = IntPtr.Zero;
+                _tilesArray = IntPtr.Zero;
+                _mapWidth = mapSize;
+                _mapHeight = mapSize;
+            }
+        }
+        else
+        {
+            SetMapInstance(IntPtr.Zero, mapSize);
+        }
+    }
+
+    /// <summary>
+    /// Get the tile pointer at the specified coordinates.
+    /// Returns IntPtr.Zero if coordinates are out of bounds or map not initialized.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <returns>Pointer to BaseTile at coordinates, or IntPtr.Zero</returns>
+    public static IntPtr GetTilePointer(int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= _mapWidth || y >= _mapHeight)
+            return IntPtr.Zero;
+
+        if (_tilesArray == IntPtr.Zero)
+            return IntPtr.Zero;
+
+        try
+        {
+            // IL2CPP 2D array layout: tiles[x, y] = *(array_base + 0x20 + (x * height + y) * 8)
+            // First get the row stride from array metadata
+            int rowStride = Marshal.ReadInt32(_tilesArray + OFFSET_ARRAY_LENGTHS + 4);
+
+            // Calculate index and read tile pointer
+            int index = x * rowStride + y;
+            IntPtr tilePtr = Marshal.ReadIntPtr(_tilesArray + OFFSET_ARRAY_DATA + index * 8);
+
+            return tilePtr;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TileManipulation] GetTilePointer({x}, {y}) failed: {ex.Message}");
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Get the base tile at the specified coordinates.
+    /// Returns null if coordinates are out of bounds or map not initialized.
+    /// </summary>
+    public static GameObj GetBaseTile(int x, int y)
+    {
+        var ptr = GetTilePointer(x, y);
+        return ptr != IntPtr.Zero ? new GameObj(ptr) : GameObj.Null;
+    }
+
+    /// <summary>
+    /// Set blocked state for a tile at coordinates.
+    /// Modifies the FLAGS field bit 0 at tile offset 0x1C.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <param name="blocked">True to block, false to unblock</param>
+    /// <returns>True if successful</returns>
+    public static bool SetBlocked(int x, int y, bool blocked)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetBlocked({x}, {y}): tile not found");
+            return false;
+        }
+
+        try
+        {
+            // Read current flags
+            uint flags = (uint)Marshal.ReadInt32(tilePtr + (int)OFFSET_TILE_FLAGS);
+
+            // Modify bit 0 (FLAG_BLOCKED)
+            if (blocked)
+                flags |= FLAG_BLOCKED;   // Set bit 0 (block)
+            else
+                flags &= ~FLAG_BLOCKED;  // Clear bit 0 (unblock)
+
+            // Write back
+            Marshal.WriteInt32(tilePtr + (int)OFFSET_TILE_FLAGS, (int)flags);
+
+            SdkLogger.Msg($"[TileManipulation] SetBlocked({x}, {y}, {blocked}) -> flags=0x{flags:X}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetBlocked({x}, {y}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Set height/elevation for a tile at coordinates.
+    /// Modifies the ELEVATION field (float) at tile offset 0x18.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <param name="height">Height value in world units</param>
+    /// <returns>True if successful</returns>
+    public static bool SetHeight(int x, int y, float height)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetHeight({x}, {y}): tile not found");
+            return false;
+        }
+
+        try
+        {
+            // Write elevation as float
+            byte[] bytes = BitConverter.GetBytes(height);
+            Marshal.Copy(bytes, 0, tilePtr + OFFSET_TILE_ELEVATION, 4);
+
+            SdkLogger.Msg($"[TileManipulation] SetHeight({x}, {y}, {height})");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetHeight({x}, {y}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get height/elevation for a tile at coordinates.
+    /// </summary>
+    public static float GetHeight(int x, int y)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+            return 0f;
+
+        try
+        {
+            byte[] bytes = new byte[4];
+            Marshal.Copy(tilePtr + OFFSET_TILE_ELEVATION, bytes, 0, 4);
+            return BitConverter.ToSingle(bytes, 0);
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
+    /// <summary>
+    /// Set surface type for a tile at coordinates.
+    /// Modifies the SURFACE_TYPE field (uint) at tile offset 0x48.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <param name="surface">Surface type name (grass, dirt, concrete, etc.)</param>
+    /// <returns>True if successful</returns>
+    public static bool SetSurface(int x, int y, string surface)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetSurface({x}, {y}): tile not found");
+            return false;
+        }
+
+        // Map surface name to type ID
+        int surfaceType = 0;
+        if (!string.IsNullOrEmpty(surface))
+        {
+            string key = surface.ToLowerInvariant().Replace(" ", "_");
+            if (!SurfaceTypeMap.TryGetValue(key, out surfaceType))
+            {
+                // Try parsing as integer
+                if (!int.TryParse(surface, out surfaceType))
+                {
+                    SdkLogger.Warning($"[TileManipulation] Unknown surface type: {surface}");
+                    surfaceType = 0;
+                }
+            }
+        }
+
+        try
+        {
+            // Write surface type as uint
+            Marshal.WriteInt32(tilePtr + OFFSET_TILE_SURFACE_TYPE, surfaceType);
+
+            SdkLogger.Msg($"[TileManipulation] SetSurface({x}, {y}, {surface}) -> type={surfaceType}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetSurface({x}, {y}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Set surface type by ID for a tile at coordinates.
+    /// </summary>
+    public static bool SetSurfaceType(int x, int y, int surfaceType)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+            return false;
+
+        try
+        {
+            Marshal.WriteInt32(tilePtr + OFFSET_TILE_SURFACE_TYPE, surfaceType);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get surface type for a tile at coordinates.
+    /// </summary>
+    public static int GetSurfaceType(int x, int y)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+            return 0;
+
+        try
+        {
+            return Marshal.ReadInt32(tilePtr + OFFSET_TILE_SURFACE_TYPE);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Set cover value for a tile at coordinates in a specific direction.
+    /// Modifies the COVER_VALUES array (int[8]) at tile offset 0x28.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <param name="direction">Direction (0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW)</param>
+    /// <param name="coverValue">Cover value (0=None, 1=Half, 2=Full)</param>
+    /// <returns>True if successful</returns>
+    public static bool SetCover(int x, int y, int direction, int coverValue)
+    {
+        if (direction < 0 || direction >= DIRECTIONS_8)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetCover: invalid direction {direction}");
+            return false;
+        }
+
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetCover({x}, {y}): tile not found");
+            return false;
+        }
+
+        try
+        {
+            // Cover array is int[8] at offset 0x28
+            int coverOffset = (int)OFFSET_TILE_COVER_VALUES + direction * sizeof(int);
+            Marshal.WriteInt32(tilePtr + coverOffset, coverValue);
+
+            SdkLogger.Msg($"[TileManipulation] SetCover({x}, {y}, dir={direction}, cover={coverValue})");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[TileManipulation] SetCover({x}, {y}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Set cover value for all 8 directions.
+    /// </summary>
+    public static bool SetCoverAll(int x, int y, int coverValue)
+    {
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+            return false;
+
+        try
+        {
+            for (int dir = 0; dir < DIRECTIONS_8; dir++)
+            {
+                int coverOffset = (int)OFFSET_TILE_COVER_VALUES + dir * sizeof(int);
+                Marshal.WriteInt32(tilePtr + coverOffset, coverValue);
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Get cover value for a tile at coordinates in a specific direction.
+    /// </summary>
+    /// <param name="x">X coordinate</param>
+    /// <param name="y">Y coordinate</param>
+    /// <param name="direction">Direction (0-7)</param>
+    /// <returns>Cover value (0=None, 1=Half, 2=Full)</returns>
+    public static int GetCover(int x, int y, int direction)
+    {
+        if (direction < 0 || direction >= DIRECTIONS_8)
+            return 0;
+
+        var tilePtr = GetTilePointer(x, y);
+        if (tilePtr == IntPtr.Zero)
+            return 0;
+
+        try
+        {
+            int coverOffset = (int)OFFSET_TILE_COVER_VALUES + direction * sizeof(int);
+            return Marshal.ReadInt32(tilePtr + coverOffset);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Convert tile coordinates to world position.
+    /// Based on RE findings: worldPos = tilePos * TILE_SIZE + TILE_OFFSET
+    /// </summary>
+    /// <param name="x">Tile X coordinate</param>
+    /// <param name="y">Tile Y coordinate</param>
+    /// <returns>World position (x, elevation, z)</returns>
+    public static UnityEngine.Vector3 TileToWorld(int x, int y)
+    {
+        // Get elevation if available
+        float elevation = GetHeight(x, y);
+
+        // Convert using game's coordinate system
+        // From RE: worldPos.x = tileX * TILE_SIZE + TILE_OFFSET
+        return new UnityEngine.Vector3(
+            x * TILE_SIZE + TILE_OFFSET,
+            elevation,
+            y * TILE_SIZE + TILE_OFFSET
+        );
+    }
+
+    /// <summary>
+    /// Convert world position to tile coordinates.
+    /// </summary>
+    public static (int x, int y) WorldToTile(float worldX, float worldZ)
+    {
+        // Inverse of TileToWorld: tileX = (worldX - TILE_OFFSET) / TILE_SIZE
+        int tileX = (int)Math.Max(0, Math.Min(_mapWidth - 1, (worldX - TILE_OFFSET) / TILE_SIZE));
+        int tileY = (int)Math.Max(0, Math.Min(_mapHeight - 1, (worldZ - TILE_OFFSET) / TILE_SIZE));
+        return (tileX, tileY);
+    }
+
+    /// <summary>
+    /// Check if map is initialized and ready for tile operations.
+    /// </summary>
+    public static bool IsMapInitialized => _tilesArray != IntPtr.Zero;
+
+    /// <summary>
+    /// Get current map dimensions.
+    /// </summary>
+    public static (int width, int height) GetMapSize() => (_mapWidth, _mapHeight);
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     //  INITIALIZATION
     // ═══════════════════════════════════════════════════════════════════════════════
 

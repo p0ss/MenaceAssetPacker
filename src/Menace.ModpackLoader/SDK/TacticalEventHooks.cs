@@ -69,6 +69,7 @@ public static class TacticalEventHooks
     public static event Action<IntPtr> OnOffmapAbilityCanceled;              // ability
 
     // Turn/Round Events
+    public static event Action<IntPtr> OnTurnStart;                          // actor (fires when actor becomes active)
     public static event Action<IntPtr> OnTurnEnd;                            // actor
     public static event Action<int> OnRoundEnd;                              // roundNumber (fires before round increments)
     public static event Action<int> OnRoundStart;                            // roundNumber (fires after round increments)
@@ -147,7 +148,9 @@ public static class TacticalEventHooks
             patchCount += PatchMethod(harmony, "InvokeOnOffmapAbilityCanceled", nameof(OnOffmapAbilityCanceled_Postfix));
 
             patchCount += PatchMethod(harmony, "InvokeOnTurnEnd", nameof(OnTurnEnd_Postfix));
-            // Note: OnRoundStart and OnTurnStart are handled via NextRound/SetActiveActor
+
+            // OnTurnStart fires when SetActiveActor is called with a new actor
+            patchCount += PatchMethod(harmony, "SetActiveActor", nameof(OnSetActiveActor_Postfix));
 
             patchCount += PatchMethod(harmony, "InvokeOnEntitySpawned", nameof(OnEntitySpawned_Postfix));
             patchCount += PatchMethod(harmony, "InvokeOnElementDeath", nameof(OnElementDeath_Postfix));
@@ -755,6 +758,36 @@ public static class TacticalEventHooks
         FireLuaEvent("round_start", new Dictionary<string, object>
         {
             ["round"] = roundNumber
+        });
+    }
+
+    private static void OnSetActiveActor_Postfix(object __instance, object actor, bool isNewTurn)
+    {
+        // Only fire turn_start if this is actually a new turn (not just selecting an actor)
+        if (!isNewTurn || actor == null) return;
+
+        var actorPtr = GetPointer(actor);
+        if (actorPtr == IntPtr.Zero) return;
+
+        OnTurnStart?.Invoke(actorPtr);
+
+        // Get faction info for Lua
+        int faction = 0;
+        string factionName = "";
+        try
+        {
+            var gameObj = new GameObj(actorPtr);
+            faction = gameObj.ReadInt(0xBC); // OFFSET_ACTOR_FACTION_ID
+            factionName = TacticalController.GetFactionName((FactionType)faction);
+        }
+        catch { }
+
+        FireLuaEvent("turn_start", new Dictionary<string, object>
+        {
+            ["actor"] = GetName(actor),
+            ["actor_ptr"] = actorPtr.ToInt64(),
+            ["faction"] = faction,
+            ["faction_name"] = factionName
         });
     }
 

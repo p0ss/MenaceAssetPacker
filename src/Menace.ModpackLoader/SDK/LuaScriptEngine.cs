@@ -578,10 +578,166 @@ public class LuaScriptEngine
         // maps.play_with(seed, size) - Quick play with seed and size
         maps["play_with"] = DynValue.NewCallback((ctx, args) => { CustomMaps.CustomMaps.PlayWith((int)args[0].Number, (int)args[1].Number); return DynValue.Nil; });
 
+        // === Zone Management ===
+
+        // maps.add_zone({ id, name, type, x, y, width, height, priority })
+        maps["add_zone"] = DynValue.NewCallback((ctx, args) => LuaMapsAddZone(args[0].Table));
+
+        // maps.configure_zone(id, { generators = {...}, disabled = {...} })
+        maps["configure_zone"] = DynValue.NewCallback((ctx, args) => LuaMapsConfigureZone(args[0].String, args[1].Table));
+
+        // maps.remove_zone(id)
+        maps["remove_zone"] = DynValue.NewCallback((ctx, args) => LuaMapsRemoveZone(args[0].String));
+
+        // maps.get_zone_at(x, y)
+        maps["get_zone_at"] = DynValue.NewCallback((ctx, args) => LuaMapsGetZoneAt(script, (int)args[0].Number, (int)args[1].Number));
+
+        // === Tile/Terrain Painting ===
+
+        // maps.set_tile(x, y, { terrain, height })
+        maps["set_tile"] = DynValue.NewCallback((ctx, args) => LuaMapsSetTile((int)args[0].Number, (int)args[1].Number, args[2].Table));
+
+        // maps.clear_tile(x, y)
+        maps["clear_tile"] = DynValue.NewCallback((ctx, args) => LuaMapsClearTile((int)args[0].Number, (int)args[1].Number));
+
+        // maps.get_tile(x, y)
+        maps["get_tile"] = DynValue.NewCallback((ctx, args) => LuaMapsGetTile(script, (int)args[0].Number, (int)args[1].Number));
+
+        // === Chunk Placement ===
+
+        // maps.add_chunk({ x, y, template, rotation })
+        maps["add_chunk"] = DynValue.NewCallback((ctx, args) => LuaMapsAddChunk(args[0].Table));
+
+        // maps.remove_chunk(x, y)
+        maps["remove_chunk"] = DynValue.NewCallback((ctx, args) => LuaMapsRemoveChunk((int)args[0].Number, (int)args[1].Number));
+
+        // === Path Drawing ===
+
+        // maps.add_path({ id, type, width, waypoints = {{x,y}, ...} })
+        maps["add_path"] = DynValue.NewCallback((ctx, args) => LuaMapsAddPath(args[0].Table));
+
+        // maps.remove_path(id)
+        maps["remove_path"] = DynValue.NewCallback((ctx, args) => LuaMapsRemovePath(args[0].String));
+
+        // === Utility ===
+
+        // maps.stats() - Get tile/zone/path/chunk counts
+        maps["stats"] = DynValue.NewCallback((ctx, args) =>
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            var table = new Table(script);
+            table["tiles"] = activeConfig?.Tiles.Count ?? 0;
+            table["zones"] = activeConfig?.Zones.Count ?? 0;
+            table["paths"] = activeConfig?.Paths.Count ?? 0;
+            table["chunks"] = activeConfig?.Chunks.Count ?? 0;
+            return DynValue.NewTable(table);
+        });
+
         script.Globals["maps"] = maps;
+
+        // --- Chunks API (for chunk template browsing) ---
+        RegisterChunksApi(script);
 
         // --- Assets API (for prefab browsing) ---
         RegisterAssetsApi(script);
+    }
+
+    /// <summary>
+    /// Register Chunks API as a 'chunks' table for browsing chunk templates.
+    /// </summary>
+    private void RegisterChunksApi(Script script)
+    {
+        var chunks = new Table(script);
+
+        // chunks.list([query]) - List available chunk templates
+        chunks["list"] = DynValue.NewCallback((ctx, args) =>
+        {
+            var table = new Table(script);
+            var chunkList = args.Count > 0 && !args[0].IsNil()
+                ? CustomMaps.ChunkBrowser.Search(args[0].String)
+                : CustomMaps.ChunkBrowser.GetAll();
+
+            for (int i = 0; i < chunkList.Count; i++)
+            {
+                var info = chunkList[i];
+                var chunkTable = new Table(script);
+                chunkTable["name"] = info.Name;
+                chunkTable["width"] = info.Width;
+                chunkTable["height"] = info.Height;
+                chunkTable["type"] = info.TypeName;
+                table[i + 1] = DynValue.NewTable(chunkTable);
+            }
+            return DynValue.NewTable(table);
+        });
+
+        // chunks.get(name) - Get detailed chunk info
+        chunks["get"] = DynValue.NewCallback((ctx, args) =>
+        {
+            if (args.Count == 0 || args[0].IsNil())
+                return DynValue.Nil;
+
+            var info = CustomMaps.ChunkBrowser.Get(args[0].String);
+            if (info == null)
+                return DynValue.Nil;
+
+            var table = new Table(script);
+            table["name"] = info.Name;
+            table["width"] = info.Width;
+            table["height"] = info.Height;
+            table["type"] = info.TypeName;
+            table["type_id"] = info.Type;
+            table["spawn_mode"] = info.SpawnMode == 0 ? "block" : "scatter";
+            table["max_spawns"] = info.MaxSpawns;
+            table["fixed_children"] = info.FixedChildCount;
+            table["random_children"] = info.RandomChildCount;
+            table["fixed_prefabs"] = info.FixedPrefabCount;
+            return DynValue.NewTable(table);
+        });
+
+        // chunks.exists(name) - Check if chunk exists
+        chunks["exists"] = DynValue.NewCallback((ctx, args) =>
+        {
+            if (args.Count == 0 || args[0].IsNil())
+                return DynValue.NewBoolean(false);
+            return DynValue.NewBoolean(CustomMaps.ChunkBrowser.Exists(args[0].String));
+        });
+
+        // chunks.count() - Get total chunk count
+        chunks["count"] = DynValue.NewCallback((ctx, args) =>
+        {
+            return DynValue.NewNumber(CustomMaps.ChunkBrowser.Count);
+        });
+
+        // chunks.refresh() - Refresh chunk cache
+        chunks["refresh"] = DynValue.NewCallback((ctx, args) =>
+        {
+            CustomMaps.ChunkBrowser.RefreshCache();
+            return DynValue.NewNumber(CustomMaps.ChunkBrowser.Count);
+        });
+
+        // chunks.by_size(min_width, min_height) - Filter by minimum size
+        chunks["by_size"] = DynValue.NewCallback((ctx, args) =>
+        {
+            int minW = args.Count > 0 ? (int)args[0].Number : 1;
+            int minH = args.Count > 1 ? (int)args[1].Number : 1;
+
+            var table = new Table(script);
+            var chunkList = CustomMaps.ChunkBrowser.GetByMinSize(minW, minH);
+
+            for (int i = 0; i < chunkList.Count; i++)
+            {
+                var info = chunkList[i];
+                var chunkTable = new Table(script);
+                chunkTable["name"] = info.Name;
+                chunkTable["width"] = info.Width;
+                chunkTable["height"] = info.Height;
+                chunkTable["type"] = info.TypeName;
+                table[i + 1] = DynValue.NewTable(chunkTable);
+            }
+            return DynValue.NewTable(table);
+        });
+
+        script.Globals["chunks"] = chunks;
     }
 
     /// <summary>
@@ -656,6 +812,85 @@ public class LuaScriptEngine
         });
 
         script.Globals["assets"] = assets;
+
+        // ============================================================
+        // visuals.* - Character visual override system
+        // ============================================================
+        var visuals = new Table(script);
+
+        // visuals.override_glb(prefab_name, glb_asset) - Register override from GLB
+        visuals["override_glb"] = DynValue.NewCallback((ctx, args) => {
+            if (args.Count < 2)
+                return DynValue.NewString("Usage: visuals.override_glb(prefab_name, glb_asset)");
+
+            var prefabName = args[0].String;
+            var glbAsset = args[1].String;
+
+            CharacterVisuals.RegisterOverrideFromGlb(prefabName, glbAsset);
+            return DynValue.NewString($"Registered visual override for '{prefabName}'");
+        });
+
+        // visuals.override(prefab_name, mesh_mappings, material_mappings) - Register override with mappings
+        visuals["override"] = DynValue.NewCallback((ctx, args) => {
+            if (args.Count < 1)
+                return DynValue.NewString("Usage: visuals.override(prefab_name, {mesh_mappings}, {material_mappings})");
+
+            var prefabName = args[0].String;
+            var meshMappings = new Dictionary<string, UnityEngine.Mesh>();
+            var matMappings = new Dictionary<string, UnityEngine.Material>();
+
+            // Parse mesh mappings from table
+            if (args.Count > 1 && args[1].Type == DataType.Table)
+            {
+                foreach (var pair in args[1].Table.Pairs)
+                {
+                    var childName = pair.Key.String;
+                    var meshName = pair.Value.String;
+                    var mesh = Menace.ModpackLoader.BundleLoader.GetAsset<UnityEngine.Mesh>(meshName);
+                    if (mesh != null)
+                        meshMappings[childName] = mesh;
+                }
+            }
+
+            // Parse material mappings from table
+            if (args.Count > 2 && args[2].Type == DataType.Table)
+            {
+                foreach (var pair in args[2].Table.Pairs)
+                {
+                    var matName = pair.Key.String;
+                    var replacementName = pair.Value.String;
+                    var mat = Menace.ModpackLoader.BundleLoader.GetAsset<UnityEngine.Material>(replacementName);
+                    if (mat != null)
+                        matMappings[matName] = mat;
+                }
+            }
+
+            CharacterVisuals.RegisterOverride(prefabName, meshMappings, matMappings);
+            return DynValue.NewString($"Registered visual override for '{prefabName}'");
+        });
+
+        // visuals.apply_existing() - Apply overrides to already-spawned entities
+        visuals["apply_existing"] = DynValue.NewCallback((ctx, args) => {
+            var count = CharacterVisuals.ApplyToExistingEntities();
+            return DynValue.NewString($"Applied overrides to {count} entities");
+        });
+
+        // visuals.clear() - Clear all registered overrides
+        visuals["clear"] = DynValue.NewCallback((ctx, args) => {
+            CharacterVisuals.ClearOverrides();
+            return DynValue.NewString("Cleared all visual overrides");
+        });
+
+        // visuals.list() - List registered overrides
+        visuals["list"] = DynValue.NewCallback((ctx, args) => {
+            var overrides = CharacterVisuals.GetRegisteredOverrides();
+            var table = new Table(script);
+            for (int i = 0; i < overrides.Length; i++)
+                table[i + 1] = overrides[i];
+            return DynValue.NewTable(table);
+        });
+
+        script.Globals["visuals"] = visuals;
     }
 
     /// <summary>
@@ -2118,6 +2353,417 @@ public class LuaScriptEngine
         }
 
         return config;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Maps API: Zone/Tile/Path Management
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// maps.add_zone({ id, name, type, x, y, width, height, priority })
+    /// </summary>
+    private DynValue LuaMapsAddZone(Table table)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+            {
+                LuaError("maps.add_zone: No active map override");
+                return DynValue.NewBoolean(false);
+            }
+
+            var zone = new CustomMaps.MapZone
+            {
+                Id = table.Get("id").String ?? $"zone_{DateTime.Now.Ticks}",
+                Name = table.Get("name").String ?? "Unnamed Zone",
+                X = (int)(table.Get("x").Number),
+                Y = (int)(table.Get("y").Number),
+                Width = (int)(table.Get("width").Number),
+                Height = (int)(table.Get("height").Number),
+                Priority = table.Get("priority").IsNil() ? 0 : (int)(table.Get("priority").Number)
+            };
+
+            // Parse zone type (matches game's MissionAreaType enum)
+            var typeVal = table.Get("type");
+            if (!typeVal.IsNil())
+            {
+                if (typeVal.Type == DataType.Number)
+                {
+                    // Allow numeric type values
+                    zone.Type = (CustomMaps.ZoneType)(int)typeVal.Number;
+                }
+                else if (typeVal.Type == DataType.String)
+                {
+                    zone.Type = typeVal.String.ToLowerInvariant() switch
+                    {
+                        "base" => CustomMaps.ZoneType.Base,
+                        "chunk" => CustomMaps.ZoneType.Chunk,
+                        "southmapborder" or "south" => CustomMaps.ZoneType.SouthMapBorder,
+                        "eastmapborder" or "east" => CustomMaps.ZoneType.EastMapBorder,
+                        "westmapborder" or "west" => CustomMaps.ZoneType.WestMapBorder,
+                        "northmapborder" or "north" => CustomMaps.ZoneType.NorthMapBorder,
+                        "rect" => CustomMaps.ZoneType.Rect,
+                        "northeastmapborder" or "northeast" => CustomMaps.ZoneType.NorthEastMapBorder,
+                        "southeastmapborder" or "southeast" => CustomMaps.ZoneType.SouthEastMapBorder,
+                        "southwestmapborder" or "southwest" => CustomMaps.ZoneType.SouthWestMapBorder,
+                        "northwestmapborder" or "northwest" => CustomMaps.ZoneType.NorthWestMapBorder,
+                        _ => CustomMaps.ZoneType.Custom
+                    };
+                }
+            }
+
+            // Remove existing zone with same ID
+            activeConfig.Zones.RemoveAll(z => z.Id == zone.Id);
+            activeConfig.Zones.Add(zone);
+
+            return DynValue.NewBoolean(true);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.add_zone failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.remove_zone(id)
+    /// </summary>
+    private DynValue LuaMapsRemoveZone(string id)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+                return DynValue.NewBoolean(false);
+
+            var removed = activeConfig.Zones.RemoveAll(z => z.Id == id);
+            return DynValue.NewBoolean(removed > 0);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.remove_zone failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.configure_zone(id, { generators = {...}, disabled = {...} })
+    /// </summary>
+    private DynValue LuaMapsConfigureZone(string id, Table config)
+    {
+        try
+        {
+            // Get active config
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+            {
+                LuaError("maps.configure_zone: No active map override");
+                return DynValue.NewBoolean(false);
+            }
+
+            var zone = activeConfig.Zones.FirstOrDefault(z => z.Id == id);
+            if (zone == null)
+            {
+                LuaError($"maps.configure_zone: Zone '{id}' not found");
+                return DynValue.NewBoolean(false);
+            }
+
+            // Apply generator configs
+            var gensVal = config.Get("generators");
+            if (!gensVal.IsNil() && gensVal.Type == DataType.Table)
+            {
+                foreach (var pair in gensVal.Table.Pairs)
+                {
+                    if (pair.Key.Type != DataType.String || pair.Value.Type != DataType.Table)
+                        continue;
+
+                    var genName = pair.Key.String;
+                    var genTable = pair.Value.Table;
+                    var genConfig = new CustomMaps.GeneratorConfig();
+
+                    var enabledVal = genTable.Get("enabled");
+                    if (!enabledVal.IsNil() && enabledVal.Type == DataType.Boolean)
+                        genConfig.Enabled = enabledVal.Boolean;
+
+                    var propsVal = genTable.Get("properties");
+                    if (!propsVal.IsNil() && propsVal.Type == DataType.Table)
+                    {
+                        foreach (var propPair in propsVal.Table.Pairs)
+                        {
+                            if (propPair.Key.Type == DataType.String)
+                            {
+                                var propName = propPair.Key.String;
+                                object propValue = propPair.Value.Type switch
+                                {
+                                    DataType.Number => propPair.Value.Number,
+                                    DataType.Boolean => propPair.Value.Boolean,
+                                    DataType.String => propPair.Value.String,
+                                    _ => null
+                                };
+                                if (propValue != null)
+                                    genConfig.Properties[propName] = propValue;
+                            }
+                        }
+                    }
+
+                    zone.Generators[genName] = genConfig;
+                }
+            }
+
+            // Apply disabled generators
+            var disabledVal = config.Get("disabled");
+            if (!disabledVal.IsNil() && disabledVal.Type == DataType.Table)
+            {
+                zone.DisabledGenerators.Clear();
+                foreach (var pair in disabledVal.Table.Pairs)
+                {
+                    if (pair.Value.Type == DataType.String)
+                        zone.DisabledGenerators.Add(pair.Value.String);
+                }
+            }
+
+            return DynValue.NewBoolean(true);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.configure_zone failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.get_zone_at(x, y)
+    /// </summary>
+    private DynValue LuaMapsGetZoneAt(Script script, int x, int y)
+    {
+        var zone = CustomMaps.TileOverrideInjector.GetZoneAt(x, y);
+        if (zone == null)
+            return DynValue.Nil;
+
+        var table = new Table(script);
+        table["id"] = zone.Id;
+        table["name"] = zone.Name;
+        table["type"] = zone.Type.ToString().ToLowerInvariant();
+        table["x"] = zone.X;
+        table["y"] = zone.Y;
+        table["width"] = zone.Width;
+        table["height"] = zone.Height;
+        table["priority"] = zone.Priority;
+        return DynValue.NewTable(table);
+    }
+
+    /// <summary>
+    /// maps.set_tile(x, y, { terrain, height })
+    /// </summary>
+    private DynValue LuaMapsSetTile(int x, int y, Table config)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+            {
+                LuaError("maps.set_tile: No active map override");
+                return DynValue.NewBoolean(false);
+            }
+
+            var tile = new CustomMaps.TileOverride
+            {
+                X = x,
+                Y = y
+            };
+
+            // terrain type (Trees, Water, HighGround, Road, Sand, Concrete)
+            var terrainVal = config.Get("terrain");
+            if (!terrainVal.IsNil() && terrainVal.Type == DataType.String)
+                tile.Terrain = terrainVal.String;
+
+            // height
+            var heightVal = config.Get("height");
+            if (!heightVal.IsNil() && heightVal.Type == DataType.Number)
+                tile.Height = (float)heightVal.Number;
+
+            // Remove existing tile at this position and add new one
+            activeConfig.Tiles.RemoveAll(t => t.X == x && t.Y == y);
+            activeConfig.Tiles.Add(tile);
+
+            return DynValue.NewBoolean(true);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.set_tile failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.clear_tile(x, y)
+    /// </summary>
+    private DynValue LuaMapsClearTile(int x, int y)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+                return DynValue.NewBoolean(false);
+
+            var removed = activeConfig.Tiles.RemoveAll(t => t.X == x && t.Y == y);
+            return DynValue.NewBoolean(removed > 0);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.clear_tile failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.get_tile(x, y)
+    /// </summary>
+    private DynValue LuaMapsGetTile(Script script, int x, int y)
+    {
+        var tile = CustomMaps.TileOverrideInjector.GetTileAt(x, y);
+        if (tile == null)
+            return DynValue.Nil;
+
+        var table = new Table(script);
+        table["x"] = tile.X;
+        table["y"] = tile.Y;
+        if (!string.IsNullOrEmpty(tile.Terrain)) table["terrain"] = tile.Terrain;
+        if (tile.Height.HasValue) table["height"] = tile.Height.Value;
+        return DynValue.NewTable(table);
+    }
+
+    /// <summary>
+    /// maps.add_chunk({ x, y, template, rotation })
+    /// </summary>
+    private DynValue LuaMapsAddChunk(Table config)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+            {
+                LuaError("maps.add_chunk: No active map override");
+                return DynValue.NewBoolean(false);
+            }
+
+            var chunk = new CustomMaps.ChunkPlacement
+            {
+                X = (int)config.Get("x").Number,
+                Y = (int)config.Get("y").Number,
+                ChunkTemplate = config.Get("template").String ?? ""
+            };
+
+            var rotationVal = config.Get("rotation");
+            if (!rotationVal.IsNil() && rotationVal.Type == DataType.Number)
+                chunk.Rotation = (int)rotationVal.Number;
+
+            // Remove existing chunk at same position and add new one
+            activeConfig.Chunks.RemoveAll(c => c.X == chunk.X && c.Y == chunk.Y);
+            activeConfig.Chunks.Add(chunk);
+
+            return DynValue.NewBoolean(true);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.add_chunk failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.remove_chunk(x, y)
+    /// </summary>
+    private DynValue LuaMapsRemoveChunk(int x, int y)
+    {
+        try
+        {
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig == null)
+                return DynValue.NewBoolean(false);
+
+            var removed = activeConfig.Chunks.RemoveAll(c => c.X == x && c.Y == y);
+            return DynValue.NewBoolean(removed > 0);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.remove_chunk failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.add_path({ id, type, width, waypoints = {{x,y}, ...} })
+    /// </summary>
+    private DynValue LuaMapsAddPath(Table config)
+    {
+        try
+        {
+            var path = new CustomMaps.MapPath
+            {
+                Id = config.Get("id").String ?? $"path_{DateTime.Now.Ticks}",
+                Width = config.Get("width").IsNil() ? 3 : (int)config.Get("width").Number
+            };
+
+            // Parse type
+            var typeVal = config.Get("type");
+            if (!typeVal.IsNil() && typeVal.Type == DataType.String)
+            {
+                path.Type = typeVal.String.ToLowerInvariant() switch
+                {
+                    "road" => CustomMaps.PathType.Road,
+                    "river" => CustomMaps.PathType.River,
+                    "trail" => CustomMaps.PathType.Trail,
+                    "trench" => CustomMaps.PathType.Trench,
+                    _ => CustomMaps.PathType.Road
+                };
+            }
+
+            // Parse waypoints
+            var waypointsVal = config.Get("waypoints");
+            if (!waypointsVal.IsNil() && waypointsVal.Type == DataType.Table)
+            {
+                foreach (var pair in waypointsVal.Table.Pairs)
+                {
+                    if (pair.Value.Type == DataType.Table)
+                    {
+                        var wpTable = pair.Value.Table;
+                        var x = (int)wpTable.Get("x").Number;
+                        var y = (int)wpTable.Get("y").Number;
+                        path.Waypoints.Add(new CustomMaps.PathWaypoint(x, y));
+                    }
+                }
+            }
+
+            // Add to active config
+            var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+            if (activeConfig != null)
+            {
+                activeConfig.Paths.RemoveAll(p => p.Id == path.Id);
+                activeConfig.Paths.Add(path);
+            }
+
+            return DynValue.NewBoolean(true);
+        }
+        catch (Exception ex)
+        {
+            LuaError($"maps.add_path failed: {ex.Message}");
+            return DynValue.NewBoolean(false);
+        }
+    }
+
+    /// <summary>
+    /// maps.remove_path(id)
+    /// </summary>
+    private DynValue LuaMapsRemovePath(string id)
+    {
+        var activeConfig = CustomMaps.CustomMapRegistry.GetActiveOverride();
+        if (activeConfig == null)
+            return DynValue.NewBoolean(false);
+
+        var removed = activeConfig.Paths.RemoveAll(p => p.Id == id) > 0;
+        return DynValue.NewBoolean(removed);
     }
 
     // ═══════════════════════════════════════════════════════════════════

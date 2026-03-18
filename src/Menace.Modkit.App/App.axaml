@@ -40,6 +40,12 @@
     <DataTemplate DataType="{x:Type viewModels:CodeEditorViewModel}">
       <views:CodeEditorView />
     </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:MapsViewModel}">
+      <views:MapsView />
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type viewModels:NodesViewModel}">
+      <views:NodesView />
+    </DataTemplate>
     <DataTemplate DataType="{x:Type viewModels:DocsViewModel}">
       <views:DocsView />
     </DataTemplate>

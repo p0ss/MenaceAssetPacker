@@ -37,6 +37,9 @@ public static class CustomMaps
             // Register console commands
             CustomMapRegistry.RegisterConsoleCommands();
             AssetResolver.RegisterConsoleCommands();
+            TemplateCatalog.RegisterConsoleCommands();
+            StructureSpawner.RegisterConsoleCommands();
+            ChunkBrowser.RegisterConsoleCommands();
 
             _initialized = true;
             SdkLogger.Msg("[CustomMaps] SDK initialized");

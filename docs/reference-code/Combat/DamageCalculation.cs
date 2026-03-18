@@ -3,6 +3,8 @@
 // =============================================================================
 // Reconstructed damage system showing how weapon damage, armor, and
 // armor penetration interact to determine final damage.
+//
+// VERIFIED against binary via Ghidra - 2024
 // =============================================================================
 
 using Menace.Tools;
@@ -17,25 +19,44 @@ namespace Menace.Tactical
     /// </summary>
     public class DamageInfo
     {
+        /// <summary>Fatality/death animation type (0=normal, higher=special). Offset: +0x18</summary>
+        public int FatalityType;
+
+        /// <summary>Minimum element index to start hitting. Offset: +0x1C</summary>
+        public int ElementHitMinIndex;
+
         /// <summary>Final damage value after all calculations. Offset: +0x2C</summary>
         public int Damage;
 
-        /// <summary>Armor penetration value. Offset: +0x34</summary>
-        public int ArmorPenetration;
+        /// <summary>Flat armor durability damage. Offset: +0x34</summary>
+        public int ArmorDmgFlat;
 
-        /// <summary>Damage applied to armor durability (anti-armor). Offset: +0x38</summary>
-        public int ArmorDurabilityDamage;
+        /// <summary>Percentage of current armor as durability damage. Offset: +0x38</summary>
+        public int ArmorDmgPct;
 
         /// <summary>Number of shots/hits in this attack. Offset: +0x3C</summary>
         public int TotalShots;
 
-        /// <summary>Whether this attack can cause dismemberment. Offset: +0x4E</summary>
-        public bool CanDismember;
+        /// <summary>Armor penetration value. Offset: +0x40</summary>
+        public float ArmorPenetration;
+
+        /// <summary>Armor damage scaled by elements hit. Offset: +0x44</summary>
+        public float ArmorDmgFromElements;
+
+        /// <summary>Whether armor blocked any penetration rolls. Offset: +0x4A</summary>
+        public bool ArmorBlockedPenetration;
+
+        /// <summary>Whether any hit penetrated armor. Offset: +0x4B</summary>
+        public bool HitPenetrated;
+
+        /// <summary>Whether all elements are dead after this damage. Offset: +0x4C</summary>
+        public bool AllElementsDead;
 
         /// <summary>Whether damage was absorbed by armor. Offset: +0x4D</summary>
         public bool AbsorbedByArmor;
 
-        // Additional fields at +0x18, +0x40, +0x44, +0x1C
+        /// <summary>Whether this attack can critically strike. Offset: +0x4E</summary>
+        public bool CanCrit;
     }
 
     /// <summary>
@@ -135,13 +156,15 @@ namespace Menace.Tactical
         /// <summary>
         /// Gets effective armor (max of all zones).
         /// Address: 0x18060bb00
+        ///
+        /// Note: Actual comparison order is Front -> Side -> Base
         /// </summary>
         public int GetArmor()
         {
-            // Get maximum armor from all zones
-            int armor = ArmorBase;
-            if (ArmorFront > armor) armor = ArmorFront;
+            // Actual order from decompiled code: start with Front, compare to Side, then Base
+            int armor = ArmorFront;
             if (ArmorSide > armor) armor = ArmorSide;
+            if (ArmorBase > armor) armor = ArmorBase;
 
             float clampedMult = FloatExtensions.Clamped(ArmorMult);
             return (int)(armor * clampedMult);
@@ -187,6 +210,58 @@ namespace Menace.Tactical
 namespace Menace.Tactical.Skills.Effects
 {
     /// <summary>
+    /// Effect data fields for the Damage effect (at handler+0x18).
+    /// These control how damage is calculated and applied.
+    /// </summary>
+    public class DamageEffectData
+    {
+        /// <summary>If true, damage targets passenger inside container, not container itself. Offset: +0x58</summary>
+        public bool IsAppliedOnlyToPassengers;
+
+        /// <summary>Base flat number added to hit count calculation. Offset: +0x5C</summary>
+        public int FlatDamageBase;
+
+        /// <summary>Fraction 0.0-1.0 of target's elements to hit. Formula: ceil(elementCount * pct). Offset: +0x60</summary>
+        public float ElementsHitPercentage;
+
+        /// <summary>Flat HP damage added to damage total. Offset: +0x64</summary>
+        public float DamageFlatAmount;
+
+        /// <summary>Percentage of target's CURRENT HP as damage (0.0-1.0 scale). Offset: +0x68</summary>
+        public float DamagePctCurrentHitpoints;
+
+        /// <summary>Minimum floor for current HP% damage. Offset: +0x6C</summary>
+        public float DamagePctCurrentHitpointsMin;
+
+        /// <summary>Percentage of target's MAX HP as damage (0.0-1.0 scale). Offset: +0x70</summary>
+        public float DamagePctMaxHitpoints;
+
+        /// <summary>Minimum floor for max HP% damage. Offset: +0x74</summary>
+        public float DamagePctMaxHitpointsMin;
+
+        /// <summary>Flat armor durability damage. Offset: +0x78</summary>
+        public float DamageToArmor;
+
+        /// <summary>Percentage of current armor durability to damage (0.0-1.0). Offset: +0x7C</summary>
+        public float ArmorDmgPctCurrent;
+
+        /// <summary>Death animation type enum (0=normal, higher=special). Offset: +0x80</summary>
+        public int FatalityType;
+
+        /// <summary>Armor penetration value - reduces effective armor. Offset: +0x84</summary>
+        public float ArmorPenetration;
+
+        /// <summary>Armor damage multiplied by number of elements hit. Offset: +0x88</summary>
+        public float ArmorDmgFromElementCount;
+
+        /// <summary>First element index to start hitting (skip first N elements). Offset: +0x8C</summary>
+        public int ElementHitMinIndex;
+
+        /// <summary>Whether damage can critically strike. Offset: +0x90</summary>
+        public bool CanCrit;
+    }
+
+    /// <summary>
     /// Handles damage application from skills to entities.
     /// </summary>
     public class DamageHandler : SkillEventHandler
@@ -196,68 +271,85 @@ namespace Menace.Tactical.Skills.Effects
         ///
         /// Address: 0x180702970
         ///
+        /// DAMAGE FORMULA (HP percentage-based, NOT distance-based):
+        ///   hitCount = FlatDamageBase + ceil(elementCount * ElementsHitPercentage)
+        ///   hitCount = max(1, hitCount)
+        ///
+        ///   currentHpDmg = max(currentHP * DamagePctCurrentHitpoints, DamagePctCurrentHitpointsMin)
+        ///   maxHpDmg = max(maxHP * DamagePctMaxHitpoints, DamagePctMaxHitpointsMin)
+        ///   totalDamage = currentHpDmg + DamageFlatAmount + maxHpDmg
+        ///
         /// Flow:
-        /// 1. Get attack properties from skill
-        /// 2. Calculate damage with range modifiers
-        /// 3. Create DamageInfo packet
-        /// 4. Apply to target via OnDamageReceived
+        /// 1. Get effect data from handler+0x18
+        /// 2. Calculate HP percentage damage with minimums
+        /// 3. Create DamageInfo packet with all fields
+        /// 4. Apply to target or passenger via OnDamageReceived
         /// </summary>
         public void ApplyDamage()
         {
             Entity target = this.GetEntity();
             if (target == null) return;
 
-            EntityProperties attackProps = this.AttackProperties;  // offset +0x18
+            DamageEffectData effectData = this.EffectData;  // handler+0x18
 
-            // Calculate base damage with distance modifier
-            int distance = target.DistanceToAttacker;  // offset +0x54
-            float baseDamage = distance * attackProps.BaseDamage;  // +0x68
+            // Get target HP values
+            int currentHP = target.CurrentHitpoints;  // entity+0x54
+            int maxHP = target.MaxHitpoints;          // entity[0xB] (via element list)
+            int elementCount = target.ElementCount;   // entity[4]+0x18
 
-            float minDamage = attackProps.MinDamage;  // +0x6C
-            float damage = Math.Max(minDamage, baseDamage);
+            // Calculate current HP percentage damage
+            float currentHpDmg = currentHP * effectData.DamagePctCurrentHitpoints;  // +0x68
+            float minCurrentDmg = effectData.DamagePctCurrentHitpointsMin;          // +0x6C
+            if (minCurrentDmg > currentHpDmg) currentHpDmg = minCurrentDmg;
 
-            // Calculate armor durability damage
-            int elementCount = target.ElementCount;  // +0x58
-            float armorDmg = elementCount * attackProps.ArmorDurDmgBase;  // +0x70
-            float minArmorDmg = attackProps.MinArmorDmg;  // +0x74
-            armorDmg = Math.Max(minArmorDmg, armorDmg);
+            // Calculate max HP percentage damage
+            float maxHpDmg = maxHP * effectData.DamagePctMaxHitpoints;  // +0x70
+            float minMaxDmg = effectData.DamagePctMaxHitpointsMin;      // +0x74
+            if (minMaxDmg > maxHpDmg) maxHpDmg = minMaxDmg;
 
             // Create DamageInfo
             var dmgInfo = new DamageInfo();
 
-            // Calculate total shots
-            int baseShots = attackProps.ShotCount;  // +0x5C
-            float shotsPerElement = attackProps.ShotsPerElement;  // +0x60
-            int totalShots = (int)Math.Ceiling(elementCount * shotsPerElement) + baseShots;
-            totalShots = Math.Max(1, totalShots);
+            // Calculate hit count: flatBase + ceil(elements * percentage)
+            int flatBase = effectData.FlatDamageBase;         // +0x5C
+            float elemPct = effectData.ElementsHitPercentage; // +0x60
+            int hitCount = flatBase + (int)Math.Ceiling(elementCount * elemPct);
+            hitCount = Math.Max(1, hitCount);
+            dmgInfo.TotalShots = hitCount;  // DamageInfo+0x3C
 
-            dmgInfo.TotalShots = totalShots;
+            // Calculate total damage: currentHpDmg + flat + maxHpDmg
+            float flatAmount = effectData.DamageFlatAmount;  // +0x64
+            dmgInfo.Damage = (int)(currentHpDmg + flatAmount + maxHpDmg);  // DamageInfo+0x2C
 
-            // Set damage values
-            float damageBonus = attackProps.DamageBonus;  // +0x64 (100 decimal)
-            dmgInfo.Damage = (int)(damage + damageBonus + armorDmg);
+            // Set armor-related values
+            dmgInfo.ArmorDmgFlat = (int)effectData.DamageToArmor;               // +0x34 from +0x78
+            dmgInfo.ArmorDmgPct = (int)effectData.ArmorDmgPctCurrent;           // +0x38 from +0x7C
+            dmgInfo.FatalityType = effectData.FatalityType;                     // +0x18 from +0x80
+            dmgInfo.ArmorPenetration = effectData.ArmorPenetration;             // +0x40 from +0x84
+            dmgInfo.ArmorDmgFromElements = effectData.ArmorDmgFromElementCount; // +0x44 from +0x88
+            dmgInfo.ElementHitMinIndex = effectData.ElementHitMinIndex;         // +0x1C from +0x8C
+            dmgInfo.CanCrit = effectData.CanCrit;                               // +0x4E from +0x90
 
-            dmgInfo.ArmorPenetration = (int)attackProps.ArmorPenBase;  // +0x78
-            dmgInfo.ArmorDurabilityDamage = (int)attackProps.ArmorDurDmg;  // +0x7C
-
-            // Copy additional properties
-            dmgInfo.CanDismember = attackProps.CanDismember;  // +0x90
-
-            // Determine if damage goes to parent container (e.g., vehicle)
-            bool damageParent = attackProps.DamageParent;  // +0x58
-
-            // Apply damage to appropriate target
-            if (damageParent && this.GetActor()?.HasDefaultAttribute == true)
+            // Apply to target or passenger based on IsAppliedOnlyToPassengers flag
+            if (effectData.IsAppliedOnlyToPassengers)  // +0x58
             {
-                target.ParentContainer?.OnDamageReceived(this.Skill, dmgInfo);
+                Actor actor = this.GetActor();
+                if (actor?.HasDefaultAttribute == true)
+                {
+                    Entity passenger = target.PassengerContainer;  // entity[0xD]
+                    if (passenger != null)
+                    {
+                        passenger.OnDamageReceived(this.Skill, dmgInfo);
+                        return;
+                    }
+                }
             }
-            else
-            {
-                target.OnDamageReceived(this.Skill, dmgInfo);
-            }
+
+            // Normal damage application
+            target.OnDamageReceived(this.Skill, dmgInfo);
 
             // Report to combat log
-            int healthLost = target.PreviousHealth - target.CurrentHealth;
+            int healthLost = target.PreviousElementCount - target.ElementCount;
             DevCombatLog.ReportHit(this.GetActor(), this.Skill, healthLost, target, dmgInfo);
         }
     }
@@ -267,58 +359,123 @@ namespace Menace.Tactical
 {
     /// <summary>
     /// How damage is resolved when an entity receives it.
+    /// Address: 0x180613030
     ///
-    /// Formula:
-    ///   EffectiveArmor = Armor - ArmorPenetration
-    ///   if (EffectiveArmor > 0) {
-    ///       FinalDamage = Damage - EffectiveArmor
-    ///   } else {
-    ///       FinalDamage = Damage
-    ///   }
-    ///   FinalDamage = max(0, FinalDamage)
+    /// This is a complex function (~700 lines decompiled) that handles:
+    /// - Armor penetration chance rolls per hit
+    /// - Per-element damage distribution
+    /// - Armor durability reduction
+    /// - Counterattack skill triggers
+    /// - Death event invocation
+    ///
+    /// Simplified armor penetration formula:
+    ///   effectiveArmor = (armor * armorDurabilityRatio) - ArmorPenetration
+    ///   penetrationChance = 100 - (effectiveArmor * 3)
+    ///   penetrationChance = max(0, penetrationChance)
+    ///
+    /// For each hit in TotalShots:
+    ///   - Roll penetration check vs penetrationChance
+    ///   - If penetrated: Apply damage to random element
+    ///   - If blocked: Apply reduced armor durability damage
     /// </summary>
     public partial class Entity
     {
         /// <summary>
         /// Receives damage and applies armor reduction.
+        /// Address: 0x180613030
         /// </summary>
         public virtual void OnDamageReceived(Skill source, DamageInfo damageInfo)
         {
+            if (!this.IsAlive) return;  // entity[9] != 0
+            if (this.ElementCount == 0) return;  // entity[4]+0x18
+
             // Get defense properties
             EntityProperties defProps = this.DefenseProperties;
 
-            // Calculate effective armor after penetration
-            int armor = defProps.GetArmor();
-            int effectiveArmor = armor - damageInfo.ArmorPenetration;
-
-            int finalDamage;
-            if (effectiveArmor > 0)
+            // Get armor value based on hit direction (damageInfo+0x30)
+            int direction = damageInfo.HitDirection;
+            int armor;
+            switch (direction)
             {
-                // Armor reduces damage
-                finalDamage = damageInfo.Damage - effectiveArmor;
-                damageInfo.AbsorbedByArmor = true;
-            }
-            else
-            {
-                // Armor penetration exceeds armor
-                finalDamage = damageInfo.Damage;
+                case 1: armor = defProps.ArmorFront; break;
+                case 2: armor = defProps.ArmorSide; break;
+                case 3: armor = Math.Max(defProps.ArmorFront, Math.Max(defProps.ArmorSide, defProps.ArmorBase)); break;
+                default: armor = defProps.ArmorBase; break;
             }
 
-            // Minimum 0 damage
-            finalDamage = Math.Max(0, finalDamage);
+            float armorMult = FloatExtensions.Clamped(defProps.ArmorMult);
+            int effectiveArmorBase = (int)(armor * armorMult);
 
-            // Apply armor durability damage
-            if (damageInfo.ArmorDurabilityDamage > 0)
+            // Calculate armor durability ratio
+            float maxArmorDurability = (float)this.MaxArmorDurability;  // entity[0xC]
+            if (maxArmorDurability < 1.0f) maxArmorDurability = 1.0f;
+            float durabilityRatio = (float)this.CurrentArmorDurability / maxArmorDurability;  // entity+0x5C
+
+            // Calculate effective armor after durability and penetration
+            float scaledArmor = effectiveArmorBase * durabilityRatio;
+            float effectiveArmor = scaledArmor - damageInfo.ArmorPenetration;
+            if (effectiveArmor < 0) effectiveArmor = 0;
+
+            // Calculate penetration chance: 100 - (effectiveArmor * 3)
+            int penetrationChance = (int)(100.0f - effectiveArmor * 3.0f);
+            if (penetrationChance < 0) penetrationChance = 0;
+
+            damageInfo.ArmorBlockedPenetration = penetrationChance > 0;
+
+            // Process each hit
+            int hitCount = Math.Min(damageInfo.TotalShots, this.ElementCount);
+            int totalDamageDealt = 0;
+            int armorDurabilityBefore = this.CurrentArmorDurability;
+
+            for (int i = 0; i < hitCount; i++)
             {
-                defProps.ArmorDurability -= damageInfo.ArmorDurabilityDamage;
-                if (defProps.ArmorDurability < 0)
+                int roll = PseudoRandom.NextPercent();
+
+                if (roll >= penetrationChance)
                 {
-                    defProps.ArmorDurability = 0;
+                    // Armor blocked - apply reduced armor durability damage
+                    // Formula involves durability ratio squared and ArmorDmgPct
+                }
+                else
+                {
+                    // Penetration successful - apply damage to random element
+                    Element targetElement = this.GetRandomElement();
+                    int elementDamage = damageInfo.Damage;  // Can be modified by crit
+
+                    int actualDamage = Math.Min(elementDamage, targetElement.Hitpoints);
+                    totalDamageDealt += actualDamage;
+                    targetElement.SetHitpoints(targetElement.Hitpoints - actualDamage);
+                    damageInfo.HitPenetrated = true;
+
+                    // Apply armor durability damage on penetration
+                    // Uses ArmorDmgPct * durabilityRatio^2 formula
                 }
             }
 
-            // Apply final damage to health
-            this.CurrentHealth -= finalDamage;
+            // Update final damage dealt in DamageInfo
+            damageInfo.Damage = totalDamageDealt;
+            damageInfo.ArmorDmgFlat = armorDurabilityBefore - this.CurrentArmorDurability;
+
+            // Check for counterattack skill at entity+0x6D
+            // ... (complex counterattack logic)
+
+            // Invoke OnDamageReceived event on TacticalManager
+            TacticalManager.Instance.InvokeOnDamageReceived(this, source, damageInfo);
+
+            // Check if all elements dead
+            if (this.ElementCount == 0)
+            {
+                damageInfo.AllElementsDead = true;
+                TacticalManager.Instance.InvokeOnDeath(this, source);
+            }
+            else
+            {
+                this.UpdateHitpoints();
+                foreach (var element in this.Elements)
+                {
+                    element.UpdateDamageShader();
+                }
+            }
         }
     }
 }

@@ -3,6 +3,15 @@
 // =============================================================================
 // Reconstructed template loading system showing how game data assets are
 // loaded from Resources folders.
+//
+// VERIFICATION STATUS: Verified against binary 2026-03-10
+// Key corrections applied:
+//   - Template keys use GetID() not .name (verified at 0x180a595d0)
+//   - GetID() returns cached ID at offset +0x68, falls back to .name
+//   - Added missing template types: GlobalAnimatorConfig, MissionPreviewConfigTemplate
+//   - Removed non-existent separate paths for WeaponTemplate/ArmorTemplate
+//   - Added duplicate detection error logging
+//   - Added BasePlayerSettingTemplate with inheritance support
 // =============================================================================
 
 using System;
@@ -14,12 +23,44 @@ namespace Menace
     /// <summary>
     /// Base class for all data templates (ScriptableObjects).
     /// Templates define game data like entities, skills, items, etc.
+    ///
+    /// Address: 0x18052fd50 (GetID)
     /// </summary>
     public abstract class DataTemplate : ScriptableObject
     {
         // Unity's ScriptableObject provides:
-        // - name: Asset name (used for lookup)
+        // - name: Asset name (fallback for GetID())
         // - Serialization support
+
+        /// <summary>
+        /// Cached ID value. Offset: +0x68
+        /// If null/empty, GetID() will populate it from the asset name.
+        /// </summary>
+        [SerializeField]
+        private string m_CachedID;
+
+        /// <summary>
+        /// Returns the template's unique identifier used for dictionary lookup.
+        ///
+        /// Address: 0x18052fd50
+        ///
+        /// IMPORTANT: This method is used (not .name) when building the
+        /// template lookup dictionaries. The ID is cached at offset +0x68.
+        /// If the cached ID is null/empty, it falls back to the asset name.
+        /// </summary>
+        /// <returns>The template's unique identifier string</returns>
+        public virtual string GetID()
+        {
+            // Actual implementation at 0x18052fd50:
+            // 1. Check if m_CachedID (offset +0x68) is null or empty
+            // 2. If so, populate it from UnityEngine.Object.name
+            // 3. Return the cached ID
+            if (string.IsNullOrEmpty(m_CachedID))
+            {
+                m_CachedID = name;
+            }
+            return m_CachedID;
+        }
     }
 
     /// <summary>
@@ -27,11 +68,15 @@ namespace Menace
     ///
     /// Key addresses:
     ///   GetBaseFolder: 0x18052dea0
-    ///   GetAll<T>: 0x180a58e60
-    ///   LoadTemplates<T>: 0x180a595d0
+    ///   GetAll&lt;T&gt;: 0x180a58e60
+    ///   LoadTemplates&lt;T&gt;: 0x180a595d0
+    ///   GetSingleton: 0x18052f570
     ///
     /// Templates are loaded via Resources.LoadAll from predefined paths.
     /// Results are cached for subsequent access.
+    ///
+    /// NOTE: The actual binary uses a large if-else chain for type-to-path mapping,
+    /// not a Dictionary. The Dictionary shown here is a conceptual simplification.
     /// </summary>
     public class DataTemplateLoader
     {
@@ -41,6 +86,10 @@ namespace Menace
 
         private static DataTemplateLoader s_Instance;
 
+        /// <summary>
+        /// Gets the singleton instance.
+        /// Actual implementation uses GetSingleton() method at 0x18052f570.
+        /// </summary>
         public static DataTemplateLoader Instance
         {
             get
@@ -55,10 +104,18 @@ namespace Menace
         // CACHE
         // =====================================================================
 
-        /// <summary>Cached template arrays by type.</summary>
+        /// <summary>
+        /// Cached template arrays by type.
+        /// Offset: +0x10 from instance
+        /// </summary>
         private Dictionary<Type, object> m_TemplateArrays = new();
 
-        /// <summary>Cached template name -> instance maps by type.</summary>
+        /// <summary>
+        /// Cached template ID -> instance maps by type.
+        /// Offset: +0x18 from instance
+        ///
+        /// IMPORTANT: Keys are template.GetID(), NOT template.name
+        /// </summary>
         private Dictionary<Type, Dictionary<string, DataTemplate>> m_TemplateMaps = new();
 
         // =====================================================================
@@ -70,15 +127,31 @@ namespace Menace
         /// These are the "Data/" subfolder paths where templates are stored.
         ///
         /// Address: 0x18052dea0 (GetBaseFolder)
+        ///
+        /// NOTE: Actual implementation uses sequential type comparisons via
+        /// Unity_Burst_Unsafe__AreSame&lt;&gt;() in a large if-else chain,
+        /// not a Dictionary lookup. This is shown as a Dictionary for clarity.
+        ///
+        /// For types with inheritance support (BaseItemTemplate, BasePlayerSettingTemplate,
+        /// TileEffectTemplate), the actual code uses IsSubclassOf checks via virtual
+        /// method calls at offset +0x2a8.
         /// </summary>
         private static readonly Dictionary<Type, string> TemplatePaths = new()
         {
+            // Animation
+            { typeof(AnimationSequenceTemplate), "Data/AnimationSequences/" },
+            { typeof(AnimationSoundTemplate), "Data/AnimationSounds/" },
+
             // Combat & Entities
             { typeof(EntityTemplate), "Data/Entities/" },
             { typeof(SkillTemplate), "Data/Skills/" },
-            { typeof(WeaponTemplate), "Data/Items/Weapons/" },
-            { typeof(ArmorTemplate), "Data/Items/Armor/" },
+
+            // Items (BaseItemTemplate with inheritance support)
+            // NOTE: WeaponTemplate, ArmorTemplate etc. inherit from BaseItemTemplate
+            // and use the same path - there are NO separate paths for subtypes
             { typeof(BaseItemTemplate), "Data/Items/" },
+            { typeof(ItemListTemplate), "Data/ItemLists/" },
+            { typeof(ItemFilterTemplate), "Data/ItemFilters/" },
 
             // Units & Progression
             { typeof(UnitLeaderTemplate), "Data/UnitLeaders/" },
@@ -86,15 +159,21 @@ namespace Menace
             { typeof(PerkTemplate), "Data/Perks/" },
             { typeof(PerkTreeTemplate), "Data/PerkTrees/" },
 
+            // Player Settings (BasePlayerSettingTemplate with inheritance support)
+            { typeof(BasePlayerSettingTemplate), "Data/PlayerSettings/" },
+
             // Campaign & Missions
             { typeof(FactionTemplate), "Data/Factions/" },
             { typeof(StoryFactionTemplate), "Data/StoryFactions/" },
             { typeof(OperationTemplate), "Data/Operations/" },
+            { typeof(OperationIntrosTemplate), "Data/OperationIntros/" },
+            { typeof(OperationDurationTemplate), "Data/OperationDurations/" },
             { typeof(MissionTemplate), "Data/Missions/" },
             { typeof(GenericMissionTemplate), "Data/Missions/" },
             { typeof(MissionDifficultyTemplate), "Data/MissionDifficulty/" },
             { typeof(MissionPOITemplate), "Data/MissionPOI/" },
             { typeof(MissionSetpiece), "Data/MissionSetpieces/" },
+            { typeof(MissionPreviewConfigTemplate), "Data/MissionPreviews/" },
 
             // Army & Enemies
             { typeof(ArmyTemplate), "Data/Armies/" },
@@ -106,6 +185,7 @@ namespace Menace
             { typeof(PlanetTemplate), "Data/Planets/" },
             { typeof(BiomeTemplate), "Data/Biomes/" },
             { typeof(WeatherTemplate), "Data/Weather/" },
+            // TileEffectTemplate has inheritance support
             { typeof(TileEffectTemplate), "Data/TileEffects/" },
             { typeof(SurfaceTypeTemplate), "Data/SurfaceTypes/" },
 
@@ -122,12 +202,8 @@ namespace Menace
             { typeof(ShipUpgradeTemplate), "Data/ShipUpgrades/" },
             { typeof(ShipUpgradeSlotTemplate), "Data/ShipUpgradeSlots/" },
             { typeof(OffmapAbilityTemplate), "Data/OffmapAbilities/" },
-            { typeof(OperationDurationTemplate), "Data/OperationDurations/" },
-            { typeof(OperationIntrosTemplate), "Data/OperationIntros/" },
 
-            // Items & Rewards
-            { typeof(ItemListTemplate), "Data/ItemLists/" },
-            { typeof(ItemFilterTemplate), "Data/ItemFilters/" },
+            // Rewards
             { typeof(RewardTableTemplate), "Data/RewardTables/" },
 
             // Misc
@@ -135,8 +211,6 @@ namespace Menace
             { typeof(GlobalDifficultyTemplate), "Data/GlobalDifficulty/" },
             { typeof(VideoTemplate), "Data/Videos/" },
             { typeof(PropertyDisplayConfigTemplate), "Data/PropertyDisplayConfigs/" },
-            { typeof(AnimationSequenceTemplate), "Data/AnimationSequences/" },
-            { typeof(AnimationSoundTemplate), "Data/AnimationSounds/" },
         };
 
         // =====================================================================
@@ -148,6 +222,11 @@ namespace Menace
         /// Results are cached after first load.
         ///
         /// Address: 0x180a58e60
+        ///
+        /// Implementation details:
+        /// - Calls GetSingleton() to get instance
+        /// - Uses dictionary at offset +0x10 for cache lookup
+        /// - Includes verbose logging when LogVerbose(7,0) returns true
         /// </summary>
         /// <typeparam name="T">Template type (must extend DataTemplate)</typeparam>
         /// <returns>Read-only collection of all templates of this type</returns>
@@ -155,7 +234,7 @@ namespace Menace
         {
             Type type = typeof(T);
 
-            // Check cache
+            // Check cache (offset +0x10 from instance)
             if (Instance.m_TemplateArrays.TryGetValue(type, out var cached))
             {
                 return (T[])cached;
@@ -170,12 +249,15 @@ namespace Menace
         }
 
         /// <summary>
-        /// Gets a specific template by name.
+        /// Gets a specific template by ID.
+        ///
+        /// IMPORTANT: The lookup key is template.GetID(), not template.name.
+        /// For most templates these are the same, but some may have custom IDs.
         /// </summary>
         /// <typeparam name="T">Template type</typeparam>
-        /// <param name="name">Template name (asset name)</param>
+        /// <param name="id">Template ID (from GetID(), typically same as asset name)</param>
         /// <returns>Template instance or null if not found</returns>
-        public static T Get<T>(string name) where T : DataTemplate
+        public static T Get<T>(string id) where T : DataTemplate
         {
             // Ensure templates are loaded
             GetAll<T>();
@@ -183,7 +265,7 @@ namespace Menace
             Type type = typeof(T);
             if (Instance.m_TemplateMaps.TryGetValue(type, out var map))
             {
-                if (map.TryGetValue(name, out var template))
+                if (map.TryGetValue(id, out var template))
                 {
                     return template as T;
                 }
@@ -196,6 +278,14 @@ namespace Menace
         /// Gets the resource folder path for a template type.
         ///
         /// Address: 0x18052dea0
+        ///
+        /// Actual implementation uses sequential type comparisons via
+        /// Unity_Burst_Unsafe__AreSame&lt;&gt;() in a large if-else chain.
+        ///
+        /// For certain types (BaseItemTemplate, BasePlayerSettingTemplate, TileEffectTemplate),
+        /// inheritance is checked via IsSubclassOf (virtual call at +0x2a8).
+        ///
+        /// If no match found, logs warning and returns empty string (StringLiteral_7655).
         /// </summary>
         public static string GetBaseFolder(Type templateType)
         {
@@ -203,14 +293,16 @@ namespace Menace
             if (TemplatePaths.TryGetValue(templateType, out string path))
                 return path;
 
-            // Check inheritance (for BaseItemTemplate subclasses, etc.)
+            // Check inheritance (for BaseItemTemplate, BasePlayerSettingTemplate,
+            // TileEffectTemplate subclasses)
             foreach (var kvp in TemplatePaths)
             {
                 if (templateType.IsSubclassOf(kvp.Key))
                     return kvp.Value;
             }
 
-            // No path - template is embedded or singleton config
+            // No path found - actual implementation logs warning here
+            Debug.LogWarning($"No resource path for template type: {templateType}");
             return string.Empty;
         }
 
@@ -222,10 +314,20 @@ namespace Menace
         /// Loads all templates of specified type from Resources.
         ///
         /// Address: 0x180a595d0
+        ///
+        /// Implementation details:
+        /// - Creates StopwatchScope for performance measurement
+        /// - Logs debug info when LogDebug(7,0) returns true
+        /// - If templates.Length &lt; 1, logs warning (not shown in reference)
+        /// - Uses GetID() NOT .name for dictionary keys
+        /// - Checks for duplicate IDs and logs ERROR (does not silently overwrite)
+        /// - Stores arrays at instance offset +0x10
+        /// - Stores maps at instance offset +0x18
         /// </summary>
         private void LoadTemplates<T>(out T[] templates, out Dictionary<string, DataTemplate> map)
             where T : DataTemplate
         {
+            // Note: Actual implementation uses StopwatchScope for timing
             string folder = GetBaseFolder(typeof(T));
 
             if (string.IsNullOrEmpty(folder))
@@ -239,11 +341,26 @@ namespace Menace
             // Load all assets from Resources folder
             templates = Resources.LoadAll<T>(folder);
 
-            // Build name -> template map for fast lookup
+            // Actual implementation logs warning if no templates found
+            if (templates.Length < 1)
+            {
+                Debug.LogWarning($"No {typeof(T).Name} found in folder {folder}");
+            }
+
+            // Build ID -> template map for fast lookup
+            // IMPORTANT: Uses GetID() not .name
             map = new Dictionary<string, DataTemplate>(templates.Length);
             foreach (var template in templates)
             {
-                map[template.name] = template;
+                string id = template.GetID();
+
+                // Actual implementation checks for duplicates and logs ERROR
+                if (map.ContainsKey(id))
+                {
+                    Debug.LogError($"Duplicate template ID in {typeof(T).Name}: '{id}'");
+                }
+
+                map[id] = template;
             }
         }
 
@@ -264,9 +381,10 @@ namespace Menace
 
     /// <summary>
     /// Singleton configuration templates.
-    /// These are loaded individually, not from folders.
+    /// These are loaded individually via GetBaseFolder returning their paths,
+    /// or loaded directly via Resources.Load.
     ///
-    /// Use: var config = Resources.Load&lt;TacticalConfig&gt;("path/to/config");
+    /// Note: GlobalAnimatorConfig was found in the binary but not in original reference.
     /// </summary>
     public static class SingletonConfigs
     {
@@ -307,6 +425,10 @@ namespace Menace
 
         public static AIWeightsTemplate AIWeights =>
             Resources.Load<AIWeightsTemplate>("Config/AIWeights");
+
+        // Added from binary verification - was missing in original reference
+        public static GlobalAnimatorConfig GlobalAnimator =>
+            Resources.Load<GlobalAnimatorConfig>("Config/GlobalAnimatorConfig");
     }
 
     // =========================================================================

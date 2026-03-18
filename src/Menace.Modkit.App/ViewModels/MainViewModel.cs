@@ -31,6 +31,8 @@ public sealed class MainViewModel : ViewModelBase
         StatsEditor = new StatsEditorViewModel();
         AssetBrowser = new AssetBrowserViewModel();
         CodeEditor = new CodeEditorViewModel();
+        Maps = new MapsViewModel();
+        Nodes = new NodesViewModel();
         Docs = new DocsViewModel();
         ToolSettings = new ToolSettingsViewModel(serviceProvider);
 
@@ -117,6 +119,8 @@ public sealed class MainViewModel : ViewModelBase
     public StatsEditorViewModel StatsEditor { get; }
     public AssetBrowserViewModel AssetBrowser { get; }
     public CodeEditorViewModel CodeEditor { get; }
+    public MapsViewModel Maps { get; }
+    public NodesViewModel Nodes { get; }
     public DocsViewModel Docs { get; }
     public ToolSettingsViewModel ToolSettings { get; }
 
@@ -196,7 +200,7 @@ public sealed class MainViewModel : ViewModelBase
         {
             CurrentSection = NavigationSection.ModLoader;
         }
-        else if (target == StatsEditor || target == AssetBrowser || target == CodeEditor || target == Docs || target == ToolSettings)
+        else if (target == StatsEditor || target == AssetBrowser || target == CodeEditor || target == Maps || target == Nodes || target == Docs || target == ToolSettings)
         {
             CurrentSection = NavigationSection.ModdingTools;
         }
@@ -220,6 +224,8 @@ public sealed class MainViewModel : ViewModelBase
     public void NavigateToData() => NavigateTo(StatsEditor, "Data");
     public void NavigateToAssets() => NavigateTo(AssetBrowser, "Assets");
     public void NavigateToCode() => NavigateTo(CodeEditor, "Code");
+    public void NavigateToMaps() => NavigateTo(Maps, "Maps");
+    public void NavigateToNodes() => NavigateTo(Nodes, "Nodes");
     public void NavigateToDocs() => NavigateTo(Docs, "Docs");
     public void NavigateToToolSettings() => NavigateTo(ToolSettings, "Settings");
 }

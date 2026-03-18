@@ -505,4 +505,58 @@ public class SchemaService
     {
         return _descriptionService?.GetEmbeddedClassDescriptionText(className, fieldName);
     }
+
+    /// <summary>
+    /// Get all template instance IDs (names) for a given template type.
+    /// Loads from extracted data JSON files.
+    /// </summary>
+    /// <param name="templateType">Template type name (e.g., "ActorTemplate", "SkillTemplate")</param>
+    /// <param name="extractedDataPath">Path to extracted game data directory</param>
+    /// <returns>Sorted list of template instance names/IDs</returns>
+    public List<string> GetTemplateInstanceIds(string templateType, string extractedDataPath)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(extractedDataPath) || !Directory.Exists(extractedDataPath))
+            return result;
+
+        var filePath = Path.Combine(extractedDataPath, $"{templateType}.json");
+        if (!File.Exists(filePath))
+            return result;
+
+        try
+        {
+            var json = File.ReadAllText(filePath);
+            using var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in doc.RootElement.EnumerateArray())
+                {
+                    // Templates typically have a "name" property
+                    if (element.TryGetProperty("name", out var nameProp))
+                    {
+                        var name = nameProp.GetString();
+                        if (!string.IsNullOrEmpty(name))
+                            result.Add(name);
+                    }
+                }
+            }
+
+            result.Sort(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[SchemaService] Error loading template IDs from {templateType}: {ex.Message}");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Get all known template type names from the schema.
+    /// </summary>
+    public IEnumerable<string> GetAllTemplateTypeNames()
+    {
+        return _fieldsByTemplate.Keys;
+    }
 }

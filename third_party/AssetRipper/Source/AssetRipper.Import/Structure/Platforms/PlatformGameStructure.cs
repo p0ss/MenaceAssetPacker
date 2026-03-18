@@ -92,15 +92,56 @@ public abstract partial class PlatformGameStructure
 	/// <summary>Attempts to find the path for the dependency with that name.</summary>
 	public string? RequestDependency(string dependency)
 	{
+		// 1. Exact match in Files dictionary
 		string? dependencyPath = Files.FirstOrDefault(t => t.Key == dependency).Value;
 		if (!string.IsNullOrEmpty(dependencyPath))
 		{
 			return dependencyPath;
 		}
 
+		// 2. Case-insensitive match in Files dictionary
+		dependencyPath = Files.FirstOrDefault(t =>
+			string.Equals(t.Key, dependency, StringComparison.OrdinalIgnoreCase)).Value;
+		if (!string.IsNullOrEmpty(dependencyPath))
+		{
+			return dependencyPath;
+		}
+
+		// 3. Match by filename only (dependency might be just a name without path)
+		string dependencyFileName = FileSystem.Path.GetFileName(dependency);
+		dependencyPath = Files.FirstOrDefault(t =>
+			string.Equals(FileSystem.Path.GetFileName(t.Key), dependencyFileName, StringComparison.OrdinalIgnoreCase)).Value;
+		if (!string.IsNullOrEmpty(dependencyPath))
+		{
+			return dependencyPath;
+		}
+
+		// 4. Match by filename without extension
+		string dependencyWithoutExt = FileSystem.Path.GetFileNameWithoutExtension(dependency);
+		if (!string.IsNullOrEmpty(dependencyWithoutExt))
+		{
+			dependencyPath = Files.FirstOrDefault(t =>
+			{
+				string keyWithoutExt = FileSystem.Path.GetFileNameWithoutExtension(t.Key);
+				return string.Equals(keyWithoutExt, dependencyWithoutExt, StringComparison.OrdinalIgnoreCase);
+			}).Value;
+			if (!string.IsNullOrEmpty(dependencyPath))
+			{
+				return dependencyPath;
+			}
+		}
+
+		// 5. Search in DataPaths
 		foreach (string dataPath in DataPaths)
 		{
 			string filePath = FileSystem.Path.Join(dataPath, dependency);
+			if (MultiFileStream.Exists(filePath, FileSystem))
+			{
+				return filePath;
+			}
+
+			// Try with case variations
+			filePath = FileSystem.Path.Join(dataPath, dependency.ToLowerInvariant());
 			if (MultiFileStream.Exists(filePath, FileSystem))
 			{
 				return filePath;
@@ -117,6 +158,57 @@ public abstract partial class PlatformGameStructure
 					FindEngineDependency(dataPath, SpecialFileNames.BuiltinExtraName2);
 			}
 		}
+
+		// 6. Search StreamingAssets subdirectories recursively for the dependency
+		if (StreamingAssetsPath is not null && FileSystem.Directory.Exists(StreamingAssetsPath))
+		{
+			string? found = SearchForFileRecursively(StreamingAssetsPath, dependencyFileName);
+			if (found is not null)
+			{
+				return found;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Recursively searches a directory for a file matching the given name (case-insensitive).
+	/// </summary>
+	private string? SearchForFileRecursively(string directory, string fileName)
+	{
+		try
+		{
+			foreach (string filePath in FileSystem.Directory.EnumerateFiles(directory))
+			{
+				string name = FileSystem.Path.GetFileName(filePath);
+				if (string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase))
+				{
+					return filePath;
+				}
+				// Also try matching without extension
+				string nameWithoutExt = FileSystem.Path.GetFileNameWithoutExtension(filePath);
+				string targetWithoutExt = FileSystem.Path.GetFileNameWithoutExtension(fileName);
+				if (string.Equals(nameWithoutExt, targetWithoutExt, StringComparison.OrdinalIgnoreCase))
+				{
+					return filePath;
+				}
+			}
+
+			foreach (string subDir in FileSystem.Directory.EnumerateDirectories(directory))
+			{
+				string? found = SearchForFileRecursively(subDir, fileName);
+				if (found is not null)
+				{
+					return found;
+				}
+			}
+		}
+		catch
+		{
+			// Directory access issues, skip
+		}
+
 		return null;
 	}
 

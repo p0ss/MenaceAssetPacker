@@ -52,6 +52,7 @@ public static class CustomMapPatches
             ApplyMissionPatches();
             ApplyMapSizePatches();
             ApplyMissionPoolPatches();
+            ApplyTileOverridePatches();
 
             _initialized = true;
             SdkLogger.Msg("[CustomMaps] Patches initialized");
@@ -115,6 +116,28 @@ public static class CustomMapPatches
             "GetMissionsForDifficulties", poolPatchMethod);
     }
 
+    /// <summary>
+    /// Apply patches for tile override injection during map generation.
+    /// </summary>
+    private static void ApplyTileOverridePatches()
+    {
+        // Patch OnSecondPass (State 7) to apply tile-level overrides after generation
+        var secondPassPostfixMethod = typeof(CustomMapPatches).GetMethod(nameof(OnSecondPass_Postfix),
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        // The map generator's OnSecondPass is called after initial layout is complete
+        // This is the ideal hook point for applying tile overrides
+        GamePatch.Postfix(_harmony, "Menace.Tactical.MapGeneration.MapGenerator",
+            "OnSecondPass", secondPassPostfixMethod);
+
+        // Also patch OnLayoutPass (State 3) for zone-aware generator parameter overrides
+        var layoutPassPrefixMethod = typeof(CustomMapPatches).GetMethod(nameof(OnLayoutPass_Prefix),
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        GamePatch.Prefix(_harmony, "Menace.Tactical.MapGeneration.MapGenerator",
+            "OnLayoutPass", layoutPassPrefixMethod);
+    }
+
     // ==================== Patch Methods ====================
 
     /// <summary>
@@ -127,9 +150,15 @@ public static class CustomMapPatches
         {
             var config = CustomMapRegistry.GetActiveOverride();
             if (config == null)
+            {
+                TileOverrideInjector.Clear();
                 return;
+            }
 
             SdkLogger.Msg($"[CustomMaps] Applying config: {config.Name}");
+
+            // Initialize tile override injector with zones/tiles/paths
+            TileOverrideInjector.Initialize(config);
 
             // Override seed if specified
             if (config.Seed.HasValue)
@@ -222,6 +251,127 @@ public static class CustomMapPatches
         {
             ModError.ReportInternal("CustomMapPatches.GetMissionsForDifficulties_Postfix",
                 "Failed to inject custom maps", ex);
+        }
+    }
+
+    /// <summary>
+    /// Prefix patch for MapGenerator.OnLayoutPass (State 3).
+    /// Applies zone-aware generator parameter overrides before layout generation.
+    /// </summary>
+    private static void OnLayoutPass_Prefix(object __instance)
+    {
+        try
+        {
+            if (!TileOverrideInjector.HasActiveConfig)
+                return;
+
+            // Zone overrides are checked dynamically during generation via TileOverrideInjector
+            // Generators can query ShouldGeneratorRunAt() and GetGeneratorConfigAt()
+            SdkLogger.Msg("[CustomMaps] OnLayoutPass - zone overrides active");
+        }
+        catch (Exception ex)
+        {
+            ModError.WarnInternal("CustomMapPatches.OnLayoutPass_Prefix", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Postfix patch for MapGenerator.OnSecondPass (State 7).
+    /// Applies tile-level overrides after generation is complete.
+    /// </summary>
+    private static void OnSecondPass_Postfix(object __instance)
+    {
+        try
+        {
+            if (!TileOverrideInjector.HasActiveConfig)
+                return;
+
+            SdkLogger.Msg("[CustomMaps] OnSecondPass - applying tile overrides");
+
+            // Get the Map instance from TacticalManager singleton
+            // From RE: TacticalManager singleton at TypeInfo + 0xB8, Map at +0x28
+            IntPtr mapPointer = GetMapFromTacticalManager();
+
+            if (mapPointer != IntPtr.Zero)
+            {
+                SdkLogger.Msg($"[CustomMaps] Got Map pointer: 0x{mapPointer:X}");
+                TileOverrideInjector.ApplyTileOverrides(mapPointer);
+            }
+            else
+            {
+                // Fallback: try using the generator instance (may have map reference)
+                SdkLogger.Warning("[CustomMaps] Could not get Map from TacticalManager, using generator instance");
+                TileOverrideInjector.ApplyTileOverrides(__instance);
+            }
+        }
+        catch (Exception ex)
+        {
+            ModError.ReportInternal("CustomMapPatches.OnSecondPass_Postfix",
+                "Failed to apply tile overrides", ex);
+        }
+    }
+
+    /// <summary>
+    /// Get the Map pointer from TacticalManager singleton.
+    /// From RE: TacticalManager singleton at TypeInfo + 0xB8, Map reference at +0x28
+    /// </summary>
+    private static IntPtr GetMapFromTacticalManager()
+    {
+        try
+        {
+            // Get TacticalManager TypeInfo
+            var tacticalManagerType = Type.GetType("Menace.Tactical.TacticalManager, Menace");
+            if (tacticalManagerType == null)
+            {
+                // Try with assembly-qualified name search
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    tacticalManagerType = asm.GetType("Menace.Tactical.TacticalManager");
+                    if (tacticalManagerType != null)
+                        break;
+                }
+            }
+
+            if (tacticalManagerType == null)
+            {
+                SdkLogger.Warning("[CustomMaps] TacticalManager type not found");
+                return IntPtr.Zero;
+            }
+
+            // Get the singleton instance via Instance property
+            var instanceProp = tacticalManagerType.GetProperty("Instance",
+                BindingFlags.Public | BindingFlags.Static);
+
+            if (instanceProp != null)
+            {
+                var instance = instanceProp.GetValue(null);
+                if (instance is Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase il2cppObj)
+                {
+                    // Map is at offset 0x28
+                    IntPtr mapPtr = Marshal.ReadIntPtr(il2cppObj.Pointer + 0x28);
+                    return mapPtr;
+                }
+            }
+
+            // Fallback: try getting from static field
+            var currentMapField = tacticalManagerType.GetField("CurrentMap",
+                BindingFlags.Public | BindingFlags.Static);
+
+            if (currentMapField != null)
+            {
+                var map = currentMapField.GetValue(null);
+                if (map is Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase il2cppMap)
+                {
+                    return il2cppMap.Pointer;
+                }
+            }
+
+            return IntPtr.Zero;
+        }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"[CustomMaps] GetMapFromTacticalManager failed: {ex.Message}");
+            return IntPtr.Zero;
         }
     }
 

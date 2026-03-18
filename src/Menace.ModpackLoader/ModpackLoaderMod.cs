@@ -91,9 +91,21 @@ public partial class ModpackLoaderMod : MelonMod
         // Wire EffectSystem to round end for automatic effect expiry
         TacticalEventHooks.OnRoundEnd += _ => EffectSystem.OnRoundEnd();
 
+        // Initialize coroutine system (delays, repeats for mod effects)
+        SDK.Coroutine.Initialize();
+
         // Initialize strategy event hooks for C# and Lua event subscriptions
         // Patches Roster, StoryFaction, Squaddies, Operation, BlackMarket methods
         StrategyEventHooks.Initialize(HarmonyInstance);
+
+        // Cleanup coroutines, state machines, and once-trackers when mission ends
+        StrategyEventHooks.OnMissionEnded += _ =>
+        {
+            SDK.Coroutine.Cleanup();
+            StateMachine.Cleanup();
+            OnceTracker.Cleanup();
+            EffectSystem.ClearAll();
+        };
 
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
@@ -248,8 +260,18 @@ public partial class ModpackLoaderMod : MelonMod
         // (manifest was loaded during init, actual Resources.Load happens here)
         CompiledAssetLoader.LoadAssets();
 
-        // Load any pending custom sprites now that Unity is initialized
-        AssetReplacer.LoadPendingSprites();
+        // Load any pending custom sprites asynchronously to avoid stutter
+        // This spreads the work across multiple frames (5 sprites per frame by default)
+        var pendingCount = AssetReplacer.PendingSpriteCount;
+        if (pendingCount > 0)
+        {
+            SdkLogger.Msg($"Loading {pendingCount} sprites asynchronously...");
+            var spriteLoader = AssetReplacer.LoadPendingSpritesAsync(5);
+            while (spriteLoader.MoveNext())
+            {
+                yield return spriteLoader.Current;
+            }
+        }
 
         var allApplied = ApplyAllModpacks();
 
@@ -559,6 +581,17 @@ public partial class ModpackLoaderMod : MelonMod
         if (modpack.Assets == null || string.IsNullOrEmpty(modpack.DirectoryPath))
             return;
 
+        // Register preload assets first (these load immediately for loading screens, etc.)
+        if (modpack.PreloadAssets != null)
+        {
+            foreach (var preloadName in modpack.PreloadAssets)
+            {
+                AssetReplacer.RegisterPreloadAsset(preloadName);
+            }
+            if (modpack.PreloadAssets.Count > 0)
+                SdkLogger.Msg($"  Registered {modpack.PreloadAssets.Count} preload asset(s)");
+        }
+
         foreach (var (assetPath, replacementFile) in modpack.Assets)
         {
             try
@@ -584,11 +617,12 @@ public partial class ModpackLoaderMod : MelonMod
                         AssetReplacer.RegisterAssetReplacement(assetPath, fullPath);
                         SdkLogger.Msg($"  Registered asset replacement: {assetPath}");
 
+                        // LoadCustomSprite returns null for non-preload assets (they're queued)
+                        // Preload assets return the sprite immediately
                         var sprite = AssetReplacer.LoadCustomSprite(fullPath, assetName);
                         if (sprite != null)
-                            SdkLogger.Msg($"  Custom sprite ready: '{assetName}'");
-                        else
-                            SdkLogger.Warning($"  Failed to load custom sprite: '{assetName}'");
+                            SdkLogger.Msg($"  Preloaded sprite ready: '{assetName}'");
+                        // Non-preload sprites are queued - no warning needed
                     }
                     // For GLB/GLTF files, load as custom 3D model
                     else if (ext == ".glb" || ext == ".gltf")
@@ -625,6 +659,11 @@ public partial class ModpackLoaderMod : MelonMod
                 SdkLogger.Error($"  Failed to load asset {assetPath}: {ex.Message}");
             }
         }
+
+        // Log how many sprites are queued for async loading
+        var pendingCount = AssetReplacer.PendingSpriteCount;
+        if (pendingCount > 0)
+            SdkLogger.Msg($"  {pendingCount} sprite(s) queued for async loading");
     }
 
     /// <summary>
@@ -973,6 +1012,14 @@ public class Modpack
     /// </summary>
     [JsonProperty("clones")]
     public Dictionary<string, Dictionary<string, string>> Clones { get; set; }
+
+    /// <summary>
+    /// Assets that should load immediately (synchronously) at startup.
+    /// Use for loading screen backgrounds, critical UI elements, etc.
+    /// Other assets load asynchronously across frames to avoid stutter.
+    /// </summary>
+    [JsonProperty("preloadAssets")]
+    public List<string> PreloadAssets { get; set; }
 
     // -- Repository / Updates --
     /// <summary>
