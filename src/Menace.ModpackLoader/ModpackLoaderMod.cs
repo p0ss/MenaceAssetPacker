@@ -322,6 +322,7 @@ public partial class ModpackLoaderMod : MelonMod
         UIInspector.RegisterConsoleCommands();
         Modpacks.RegisterConsoleCommands();
         GraphInterpreter.RegisterConsoleCommands();
+        StrategyResources.RegisterConsoleCommands();
 
         // Register test harness commands for automated testing
         TestHarnessCommands.Register();
