@@ -79,6 +79,15 @@
       <HintPath>$(GameAssembliesPath)/UnityEngine.UIElementsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!--
+      MelonLoader 0.7.3's hand-resolved AssetBundle wrapper. The Il2CppInterop-generated
+      UnityEngine.AssetBundle proxy fails its string marshalling on Unity 6000 + Il2CppInterop 1.5.1,
+      so bundle loading goes through this instead. Ships inside MelonLoader/net6, never deployed by us.
+    -->
+    <Reference Include="UnityEngine.Il2CppAssetBundleManager">
+      <HintPath>$(MelonLoaderPath)/UnityEngine.Il2CppAssetBundleManager.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

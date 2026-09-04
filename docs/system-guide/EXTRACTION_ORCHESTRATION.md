@@ -12,7 +12,7 @@ Tracks the state of all extraction operations:
 
 ```json
 {
-  "UnityVersion": "6000.0.56f1",
+  "UnityVersion": "6000.0.72f1",
   "GameAssemblyHash": "a1b2c3d4...",
   "MetadataHash": "e5f6g7h8...",
   "IL2CppDumpTimestamp": "2025-10-10T16:30:00Z",

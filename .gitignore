@@ -47,3 +47,4 @@ docs/dev-notes/
 
 # Generated at build time from versions.json
 src/Shared/ModkitVersion.cs
+.dotnet_cli_home/

@@ -56,10 +56,12 @@ def parse_class_from_dump(content, class_name, allow_abstract=False):
     is_abstract = bool(re.search(
         rf"public abstract class {re.escape(class_name)}\s", content))
 
-    # Extract base class
+    # Extract base class. Anchor the colon to the class name so a nested class
+    # declared earlier in the dump (e.g. "public class BiomeTemplate.Inner // TypeDefIndex: 1294")
+    # cannot match and hand back "1294" as the base.
     base_patterns = [
-        rf"public class {re.escape(class_name)}.*?:\s+(\w+)",
-        rf"public abstract class {re.escape(class_name)}.*?:\s+(\w+)",
+        rf"public class {re.escape(class_name)}\s*:\s*(\w+)",
+        rf"public abstract class {re.escape(class_name)}\s*:\s*(\w+)",
     ]
     base_class = None
     for pattern in base_patterns:
@@ -68,9 +70,11 @@ def parse_class_from_dump(content, class_name, allow_abstract=False):
             base_class = base_match.group(1)
             break
 
-    # Parse fields (both public and private - private with [SerializeField] are Unity-serialized)
+    # Parse fields regardless of access modifier: Unity serialises private/protected
+    # fields tagged [SerializeField], and the game moved item Title/ShortName/Description
+    # to protected in v0.7.x.
     fields = []
-    field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+    field_pattern = r"(?:public|protected|private|internal)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
     for m in re.finditer(field_pattern, class_body):
         field_type = m.group(1)
@@ -199,7 +203,9 @@ def classify_field(field_type, known_enums, known_structs, known_templates):
 def parse_all_enums(content):
     """Parse all enum definitions from dump.cs."""
     enums = {}
-    enum_pattern = r"public enum (\w+).*?\n\{\n(.*?)\n\}"
+    # Dotted names are enums nested in a class (e.g. "AddSkill.AddEvent"); event
+    # handler fields reference them by that dotted name, so keep them.
+    enum_pattern = r"public enum ([\w.]+).*?\n\{\n(.*?)\n\}"
 
     for m in re.finditer(enum_pattern, content, re.DOTALL):
         enum_name = m.group(1)
@@ -212,7 +218,8 @@ def parse_all_enums(content):
             underlying = underlying_match.group(1)
 
         values = {}
-        value_pattern = r"public const \w+ (\w+) = (-?\d+);"
+        # The const's type is the enum's own (possibly dotted) name.
+        value_pattern = r"public const [\w.]+ (\w+) = (-?\d+);"
         for vm in re.finditer(value_pattern, enum_body):
             values[vm.group(1)] = int(vm.group(2))
 
@@ -235,7 +242,7 @@ def parse_all_structs(content):
         struct_body = m.group(2)
 
         fields = []
-        field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+        field_pattern = r"(?:public|protected|private|internal)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
         for fm in re.finditer(field_pattern, struct_body):
             field_type = fm.group(1)
@@ -250,7 +257,7 @@ def parse_all_structs(content):
             # Skip statics (offset 0x0 can be legitimate for struct field 0,
             # but also static. Check if there's a 'static' keyword.)
             line_match = re.search(
-                rf"(?:public|private) static\s+.*\s+{re.escape(field_name)};", struct_body)
+                rf"(?:public|protected|private|internal) static\s+.*\s+{re.escape(field_name)};", struct_body)
             if line_match:
                 continue
 
@@ -305,13 +312,13 @@ def parse_embedded_class(content, class_name):
 
     class_body = match.group(1)
 
-    # Extract base class
-    base_match = re.search(rf"public class {re.escape(class_name)}.*?:\s+(\w+)", content)
+    # Extract base class (colon anchored to the class name; see parse_class_from_dump)
+    base_match = re.search(rf"public class {re.escape(class_name)}\s*:\s*(\w+)", content)
     base_class = base_match.group(1) if base_match else None
 
-    # Parse fields (both public and private - private with [SerializeField] are Unity-serialized)
+    # Parse fields regardless of access modifier ([SerializeField] non-public fields serialise)
     fields = []
-    field_pattern = r"(?:public|private)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
+    field_pattern = r"(?:public|protected|private|internal)\s+([\w<>\[\]\.]+)\s+(\w+);\s+//\s+0x([0-9A-Fa-f]+)"
 
     for m in re.finditer(field_pattern, class_body):
         field_type = m.group(1)

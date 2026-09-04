@@ -998,7 +998,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleReplacements()
     {
-        if (CompiledAssetLoader.LoadedAssetCount == 0)
+        if (CompiledAssetLoader.LoadedAssetCount == 0 && BundleLoader.LoadedAssetCount == 0)
             return 0;
 
         int replaced = 0;
@@ -1015,11 +1015,35 @@ public static class AssetReplacer
     }
 
     /// <summary>
+    /// Replacement candidates of one IL2CPP type from both registries: assets the deploy step
+    /// injected into resources.assets (CompiledAssetLoader) and assets loaded at runtime from
+    /// .bundle files or GLB models (BundleLoader). Until this union existed, GLB-loaded prefabs
+    /// registered into BundleLoader and never reached the appliers below, which only read
+    /// CompiledAssetLoader. Deduplicated by native pointer; runtime assets win on a name clash
+    /// because they are registered later.
+    /// </summary>
+    private static List<UnityEngine.Object> GetReplacementAssets(string typeName)
+    {
+        var results = new List<UnityEngine.Object>();
+        var seen = new HashSet<IntPtr>();
+        foreach (var source in new[] { CompiledAssetLoader.GetAssetsByType(typeName), BundleLoader.GetAssetsByType(typeName) })
+        {
+            foreach (var asset in source)
+            {
+                if (asset == null) continue;
+                if (seen.Add(asset.Pointer))
+                    results.Add(asset);
+            }
+        }
+        return results;
+    }
+
+    /// <summary>
     /// For bundle-loaded Texture2D assets, find the matching game texture and copy pixels.
     /// </summary>
     private static int ApplyBundleTextureReplacements()
     {
-        var bundleTextures = CompiledAssetLoader.GetAssetsByType("Texture2D");
+        var bundleTextures = GetReplacementAssets("Texture2D");
         if (bundleTextures.Count == 0)
             return 0;
 
@@ -1097,7 +1121,7 @@ public static class AssetReplacer
     /// </summary>
     private static int ApplyBundleAudioReplacements()
     {
-        var bundleClips = CompiledAssetLoader.GetAssetsByType("AudioClip");
+        var bundleClips = GetReplacementAssets("AudioClip");
         if (bundleClips.Count == 0)
             return 0;
 
@@ -1168,7 +1192,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMeshReplacements()
     {
-        var bundleMeshes = CompiledAssetLoader.GetAssetsByType("Mesh");
+        var bundleMeshes = GetReplacementAssets("Mesh");
         if (bundleMeshes.Count == 0)
             return 0;
 
@@ -1258,7 +1282,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMaterialReplacements()
     {
-        var bundleMaterials = CompiledAssetLoader.GetAssetsByType("Material");
+        var bundleMaterials = GetReplacementAssets("Material");
         if (bundleMaterials.Count == 0)
             return 0;
 
@@ -1346,7 +1370,7 @@ public static class AssetReplacer
 
     private static int ApplyBundlePrefabReplacements()
     {
-        var bundlePrefabs = CompiledAssetLoader.GetAssetsByType("GameObject");
+        var bundlePrefabs = GetReplacementAssets("GameObject");
         if (bundlePrefabs.Count == 0)
             return 0;
 

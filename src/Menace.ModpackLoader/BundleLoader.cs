@@ -9,16 +9,31 @@ using UnityEngine;
 namespace Menace.ModpackLoader;
 
 /// <summary>
-/// Loads .bundle files from deployed modpacks via AssetBundle.LoadFromFile and
+/// Loads .bundle files from deployed modpacks via MelonLoader's Il2CppAssetBundleManager and
 /// maintains a registry of all loaded assets. Mod code can query loaded assets
 /// by name and type, enabling both replacement of existing game content and
 /// injection of entirely new content (new templates, textures, prefabs, etc.).
+///
+/// The Il2CppInterop-generated UnityEngine.AssetBundle proxy is not used: on Unity 6000 with
+/// Il2CppInterop 1.5.x its string marshalling into the AssetBundle ICalls fails, so every
+/// LoadFromFile/LoadAsset returns nothing. MelonLoader 0.7.3 ships a hand-resolved wrapper
+/// (UnityEngine.Il2CppAssetBundleManager.dll) that pins the string itself and works.
 ///
 /// Assets remain in memory as long as their source AssetBundle is loaded.
 /// </summary>
 public static class BundleLoader
 {
-    private static readonly List<AssetBundle> _loadedBundles = new();
+    private static readonly List<Il2CppAssetBundle> _loadedBundles = new();
+
+    /// <summary>
+    /// Asset types probed for each bundle entry, in order. LoadAsset needs a concrete type and
+    /// a miss costs a native lookup, so common replacement types come first.
+    /// </summary>
+    private static readonly Type[] ProbeTypes =
+    {
+        typeof(GameObject), typeof(Mesh), typeof(Texture2D), typeof(Sprite), typeof(Material),
+        typeof(AudioClip), typeof(ScriptableObject), typeof(UnityEngine.Object),
+    };
 
     // Asset registry: name → list of loaded UnityEngine.Object (multiple bundles may have same-named assets)
     private static readonly Dictionary<string, List<UnityEngine.Object>> _assetsByName
@@ -53,15 +68,20 @@ public static class BundleLoader
 
         var bundleFiles = Directory.GetFiles(modpackDir, "*.bundle", SearchOption.AllDirectories);
 
+        // Native Il2CppSystem.Type pointers for the probe list, resolved once per call.
+        var probeTypePtrs = new IntPtr[ProbeTypes.Length];
+        for (int i = 0; i < ProbeTypes.Length; i++)
+            probeTypePtrs[i] = IL2CPP.Il2CppObjectBaseToPtr(Il2CppType.From(ProbeTypes[i]));
+
         foreach (var bundlePath in bundleFiles)
         {
             var bundleFileName = Path.GetFileName(bundlePath);
-            AssetBundle bundle = null;
+            Il2CppAssetBundle bundle = null;
 
             try
             {
                 SdkLogger.Msg($"  [{modpackName}] Loading bundle: {bundleFileName}");
-                bundle = AssetBundle.LoadFromFile(bundlePath);
+                bundle = Il2CppAssetBundleManager.LoadFromFile(bundlePath);
             }
             catch (Exception loadEx)
             {
@@ -71,14 +91,13 @@ public static class BundleLoader
 
             if (bundle == null)
             {
-                SdkLogger.Warning($"  [{modpackName}] Failed to load bundle: {bundleFileName}");
+                SdkLogger.Warning($"  [{modpackName}] Failed to load bundle: {bundleFileName} (built for another Unity version, or not a UnityFS bundle?)");
                 continue;
             }
 
             _loadedBundles.Add(bundle);
             SdkLogger.Msg($"  [{modpackName}] Loaded bundle: {bundleFileName}");
 
-            // Try GetAllAssetNames first (may not work for all bundle types)
             string[] assetNames = null;
             try
             {
@@ -89,47 +108,47 @@ public static class BundleLoader
                 SdkLogger.Warning($"    GetAllAssetNames failed: {namesEx.Message}");
             }
 
-            if (assetNames != null && assetNames.Length > 0)
+            if (assetNames == null || assetNames.Length == 0)
             {
-                SdkLogger.Msg($"    Contains {assetNames.Length} asset(s)");
-
-                foreach (var assetPath in assetNames)
-                {
-                    try
-                    {
-                        var asset = bundle.LoadAsset(assetPath);
-                        if (asset != null)
-                            RegisterAsset(asset, modpackName);
-                    }
-                    catch (Exception assetEx)
-                    {
-                        SdkLogger.Warning($"    Failed to load asset '{assetPath}': {assetEx.Message}");
-                    }
-                }
+                SdkLogger.Warning($"    Bundle {bundleFileName} lists no assets; nothing registered.");
+                continue;
             }
-            else
+
+            SdkLogger.Msg($"    Contains {assetNames.Length} asset(s)");
+
+            foreach (var assetPath in assetNames)
             {
-                // Fallback: try LoadAllAssets for bundles without asset names
-                SdkLogger.Msg($"    No asset names, trying LoadAllAssets fallback...");
                 try
                 {
-                    var allAssets = bundle.LoadAllAssets();
-                    if (allAssets != null)
-                    {
-                        SdkLogger.Msg($"    Contains {allAssets.Length} asset(s) (fallback)");
-                        foreach (var asset in allAssets)
-                        {
-                            if (asset == null) continue;
-                            RegisterAsset(asset, modpackName);
-                        }
-                    }
+                    var asset = LoadFirstMatchingType(bundle, assetPath, probeTypePtrs);
+                    if (asset != null)
+                        RegisterAsset(asset, modpackName);
+                    else
+                        SdkLogger.Warning($"    Asset '{assetPath}' matched none of the probed types; skipped.");
                 }
-                catch (Exception fallbackEx)
+                catch (Exception assetEx)
                 {
-                    SdkLogger.Warning($"    LoadAllAssets fallback failed: {fallbackEx.Message}");
+                    SdkLogger.Warning($"    Failed to load asset '{assetPath}': {assetEx.Message}");
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The 0.7.3 wrapper's LoadAsset takes the asset's concrete type as a native Il2CppSystem.Type
+    /// pointer and returns a raw object pointer. Probe the known types in order and wrap the first hit
+    /// in the base UnityEngine.Object proxy; RegisterAsset reads the real class name off the native
+    /// object, so the wrapper type does not need to be exact.
+    /// </summary>
+    private static UnityEngine.Object LoadFirstMatchingType(Il2CppAssetBundle bundle, string assetPath, IntPtr[] probeTypePtrs)
+    {
+        foreach (var typePtr in probeTypePtrs)
+        {
+            var ptr = bundle.LoadAsset(assetPath, typePtr);
+            if (ptr != IntPtr.Zero)
+                return new UnityEngine.Object(ptr);
+        }
+        return null;
     }
 
     /// <summary>

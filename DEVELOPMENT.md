@@ -5,7 +5,7 @@ This document describes how to set up a development environment for MenaceAssetP
 ## Prerequisites
 
 - **.NET 10 SDK** (or later)
-- **MelonLoader 0.7.x** - Required for runtime mod development
+- **MelonLoader 0.7.3** - Required for runtime mod development (0.7.3 adds the Unity 6000 AssetBundle loader the ModpackLoader uses)
 - A copy of the game with MelonLoader installed (for building mods that reference game assemblies)
 
 ## Environment Variables
@@ -58,7 +58,9 @@ ln -s /path/to/your/MelonLoader MelonLoader
 ln -s "/path/to/game/MelonLoader/Il2CppAssemblies" GameAssemblies
 
 # Example with typical Steam paths:
-ln -s ~/.steam/steam/steamapps/common/Menace\ Demo/MelonLoader/Il2CppAssemblies GameAssemblies
+ln -s ~/.local/share/Steam/steamapps/common/Menace/MelonLoader/Il2CppAssemblies GameAssemblies
+# MelonLoader 0.7.3 net6 folder from the same install works for the MelonLoader symlink:
+ln -s ~/.local/share/Steam/steamapps/common/Menace/MelonLoader/net6 MelonLoader
 ```
 
 ```powershell

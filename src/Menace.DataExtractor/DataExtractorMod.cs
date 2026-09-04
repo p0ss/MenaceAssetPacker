@@ -19,7 +19,7 @@ namespace Menace.DataExtractor
 {
     public class DataExtractorMod : MelonMod
     {
-        private const string ExtractorVersion = "9.0.0"; // User-controlled extraction dialog + EventHandler parsing
+        private const string ExtractorVersion = "13.0.0"; // Schema regenerated for MENACE v0.7.14 (Unity 6000.0.72f1), MelonLoader 0.7.3
 
         // Singleton instance for static method access from DevConsole
         private static DataExtractorMod _instance;
@@ -228,6 +228,13 @@ namespace Menace.DataExtractor
         private string _cachedFingerprint;
         private bool _commandRegistrationPending = false;
         private bool _commandRegistered = false;
+
+        // DevConsole discovery retry: every 5 seconds for about a minute, then stop.
+        private const int DevConsoleSearchIntervalFrames = 300;
+        private const int DevConsoleSearchMaxAttempts = 12;
+        private int _nextDevConsoleSearchFrame = 0;
+        private int _devConsoleSearchAttempts = 0;
+        private bool _devConsoleSearchLogged = false;
 
         // Extraction dialog UI
         private bool _showExtractionDialog = false;
@@ -597,10 +604,22 @@ namespace Menace.DataExtractor
                 LoadExtractionKeybinding();
             }
 
-            // Try to register command if pending
-            if (_commandRegistrationPending && !_commandRegistered)
+            // Try to register command if pending. The DevConsole lives in the ModpackLoader; when that
+            // mod is not installed the search can never succeed, so retry on a timer and give up after
+            // a minute instead of scanning every assembly (and logging it) on every frame.
+            if (_commandRegistrationPending && !_commandRegistered && _frameCount >= _nextDevConsoleSearchFrame)
             {
                 TryRegisterExtractCommand();
+                if (!_commandRegistered)
+                {
+                    _devConsoleSearchAttempts++;
+                    _nextDevConsoleSearchFrame = _frameCount + DevConsoleSearchIntervalFrames;
+                    if (_devConsoleSearchAttempts >= DevConsoleSearchMaxAttempts)
+                    {
+                        _commandRegistrationPending = false;
+                        LoggerInstance.Msg("[DevConsole] ModpackLoader's DevConsole not found; the 'extract' console command is unavailable this session.");
+                    }
+                }
             }
 
             // Show extraction dialog when extraction is needed
@@ -610,8 +629,22 @@ namespace Menace.DataExtractor
                 if (_frameCount >= AutoExtractionDelayFrames)
                 {
                     _autoExtractionPending = false;
-                    _showExtractionDialog = true;
-                    LoggerInstance.Msg($"=== SHOWING EXTRACTION DIALOG ({_extractionReason}) ===");
+                    if (_extractionReason == ExtractionReason.ForceRequested)
+                    {
+                        // The modkit wrote _force_extraction.flag and launched the game for this
+                        // purpose; it already told the user extraction is automatic. Start without
+                        // the dialog so an unattended update run needs no click.
+                        _extractionInProgress = true;
+                        _isManualExtraction = false;
+                        LoggerInstance.Msg("=== EXTRACTION STARTED (requested by modkit, no dialog) ===");
+                        ShowExtractionProgress("Extraction starting (requested by modkit)...");
+                        MelonCoroutines.Start(RunExtractionCoroutine(_cachedFingerprint));
+                    }
+                    else
+                    {
+                        _showExtractionDialog = true;
+                        LoggerInstance.Msg($"=== SHOWING EXTRACTION DIALOG ({_extractionReason}) ===");
+                    }
                 }
             }
 
@@ -852,9 +885,11 @@ namespace Menace.DataExtractor
 
             try
             {
-                // Look for DevConsole in ALL loaded assemblies
+                // Look for DevConsole in ALL loaded assemblies. Log the search once; the
+                // retry loop in OnUpdate calls this repeatedly while ModpackLoader is absent.
                 var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-                LoggerInstance.Msg($"[DevConsole] Searching {assemblies.Length} assemblies...");
+                if (!_devConsoleSearchLogged)
+                    LoggerInstance.Msg($"[DevConsole] Searching {assemblies.Length} assemblies...");
 
                 foreach (var asm in assemblies)
                 {
@@ -877,7 +912,9 @@ namespace Menace.DataExtractor
                     }
                     catch { }
                 }
-                LoggerInstance.Msg("[DevConsole] Type 'Menace.SDK.DevConsole' not found in any assembly");
+                if (!_devConsoleSearchLogged)
+                    LoggerInstance.Msg("[DevConsole] Type 'Menace.SDK.DevConsole' not found in any assembly (ModpackLoader not loaded?)");
+                _devConsoleSearchLogged = true;
             }
             catch (Exception ex)
             {

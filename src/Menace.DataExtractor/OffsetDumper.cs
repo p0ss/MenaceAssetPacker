@@ -12,7 +12,7 @@ namespace Menace.DataExtractor
         public static string DumpTemplateOffsets()
         {
             var sb = new StringBuilder();
-            sb.AppendLine("// IL2CPP Field Offsets - Generated for Unity 6000.0.56f1");
+            sb.AppendLine("// IL2CPP Field Offsets - Generated for Unity 6000.0.72f1 (MENACE v0.7.14)");
             sb.AppendLine($"// Generated: {DateTime.Now}");
             sb.AppendLine();
 

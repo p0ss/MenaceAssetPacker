@@ -59,7 +59,7 @@ The Menace Modkit is a modding toolchain for the game "Menace" that allows users
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Game Layer                               │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Menace.exe (Unity 6000.0.56f1 + IL2CPP)                  │ │
+│  │  Menace.exe (Unity 6000.0.72f1 + IL2CPP)                  │ │
 │  │                                                             │ │
 │  │  ├─ GameAssembly.dll (IL2CPP Compiled C# → C++)           │ │
 │  │  ├─ Assembly-CSharp (Game Logic)                          │ │
@@ -150,7 +150,7 @@ The app includes bundled dependencies that are automatically copied to the outpu
 
 ### 3. MelonLoader (IL2CPP Mod Loader)
 
-**Version:** 0.7.2-ci.2388
+**Version:** 0.7.3
 **Purpose:** Enables C# mod development for IL2CPP Unity games
 
 #### How It Works:
@@ -325,7 +325,7 @@ cp /tmp/dump_output/dump.cs "$MODKIT_DIR/il2cpp_dump/"
 
 # 5. Check Unity version in the dump
 head -n 20 "$MODKIT_DIR/il2cpp_dump/dump.cs"
-# Should show: // Unity 6000.0.56f1 (or current version)
+# Should show: // Unity 6000.0.72f1 (or current version)
 ```
 
 **Extract Field Offsets from dump.cs:**
@@ -440,7 +440,7 @@ cat "$HOME/.steam/debian-installation/steamapps/common/Menace Demo/UserData/Extr
 
 **Current Dump:**
 - Location: `/il2cpp_dump/dump.cs`
-- Unity Version: 6000.0.56f1
+- Unity Version: 6000.0.72f1
 - Size: 874,630 lines
 - Generated: 2025-10-10 (when game updated to Unity 6)
 
@@ -646,11 +646,11 @@ Expected: `MinRange`, `Damage`, `ArmorPenetration`, etc.
 | Core Library | .NET | 10.0 | Shared business logic |
 | MelonLoader Mods | .NET | 6.0 | Game/MelonLoader compatibility |
 | UI Pattern | ReactiveUI | Latest | MVVM with observables |
-| Mod Loader | MelonLoader | 0.7.2-ci.2388 | IL2CPP mod framework |
+| Mod Loader | MelonLoader | 0.7.3 | IL2CPP mod framework |
 | IL2CPP Interop | Il2CppInterop | 1.5.0 | Managed ↔ IL2CPP bridge |
 | Decompiler | Cpp2IL | 2022.1.0 | IL2CPP to .NET |
 | Asset Extractor | AssetRipper | 1.3.4-patched | Unity asset export |
-| Game Engine | Unity | 6000.0.56f1 | Game runtime |
+| Game Engine | Unity | 6000.0.72f1 | Game runtime |
 | Serialization | System.Text.Json | .NET 10 | Template JSON |
 | Mod Serialization | Newtonsoft.Json | 13.0.3 | DataExtractor output |
 
