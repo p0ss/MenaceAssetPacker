@@ -1,5 +1,14 @@
 # Menace Modkit
 
+> **This repository is archived (September 2026).**
+>
+> Development has moved to a fork maintained by the author of Jiangyu:
+>
+> - **Playing with mods:** [antistrategie/MenaceModkit](https://github.com/antistrategie/MenaceModkit) ships a standalone **Mod Manager** that installs modpacks, raw MelonLoader mods and Jiangyu mods, plus a continuation of this Modkit with loader fixes for current game builds.
+> - **Making mods:** [Jiangyu](https://github.com/antistrategie/jiangyu) ([docs](https://antistrategie.github.io/jiangyu/)) is the actively developed authoring platform, including 3D model replacement and prefab additions.
+>
+> The final release here is [v37.0.0 (beta)](https://github.com/p0ss/MenaceAssetPacker/releases/tag/v37.0.0), updated for MENACE v0.7.14 and MelonLoader 0.7.3. The schema regeneration pipeline it added (`tools/update-for-game-patch.sh`) is what keeps the data extractor working across game patches; the fork had not picked it up at the time of archiving. Issues are closed; the code stays available under the GPL for anyone who wants to build on it.
+
 <p align="center">
   <img src="img/pirates.png" alt="Menace Modkit" width="200"/>
 </p>
