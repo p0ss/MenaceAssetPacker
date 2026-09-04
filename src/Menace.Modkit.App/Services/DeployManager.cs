@@ -1184,7 +1184,11 @@ public class DeployManager
 
         foreach (var modpack in modpacks)
         {
-            // Clones from clones/*.json files
+            // Clones declared in modpack.json (the documented authoring form)
+            if (modpack.HasClones)
+                mergedClones.AddFromModpack(modpack.Clones);
+
+            // Clones from clones/*.json files (written by the GUI's clone tool; win on conflict)
             var clonesDir = Path.Combine(modpack.Path, "clones");
             if (Directory.Exists(clonesDir))
             {
@@ -1688,7 +1692,8 @@ public class DeployManager
         runtimeObj["patches"] = patches;
         runtimeObj["templates"] = legacyTemplates; // v1 backward compat
 
-        // Clones from clones/*.json files
+        // Clones from clones/*.json files, then any manifest-declared clones for types the
+        // files did not cover, so the deployed modpack.json carries the full clone set.
         var clones = new JsonObject();
         var clonesDir = Path.Combine(deployPath, "clones");
         if (Directory.Exists(clonesDir))
@@ -1703,6 +1708,18 @@ public class DeployManager
                         clones[templateType] = node;
                 }
                 catch { }
+            }
+        }
+        if (modpack.HasClones)
+        {
+            foreach (var (templateType, cloneMap) in modpack.Clones!)
+            {
+                if (cloneMap == null || cloneMap.Count == 0 || clones.ContainsKey(templateType))
+                    continue;
+                var node = new JsonObject();
+                foreach (var (newName, sourceName) in cloneMap)
+                    node[newName] = sourceName;
+                clones[templateType] = node;
             }
         }
         if (clones.Count > 0)
