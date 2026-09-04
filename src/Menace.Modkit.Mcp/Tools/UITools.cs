@@ -110,12 +110,24 @@ public static class UITools
     /// Set a field value on the currently selected template.
     /// </summary>
     [McpServerTool(Name = "modkit_set_field"), Description("Set a field value on the currently selected template in the Stats Editor. Requires being on the Data view with a template selected.")]
-    public static async Task<object> SetField(string field, object? value)
+    public static async Task<object> SetField(string field, string value)
     {
         try
         {
-            var body = new { field, value };
-            var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            // Parse the value - try as JSON first, then as primitives
+            JsonElement parsedValue;
+            try
+            {
+                parsedValue = JsonSerializer.Deserialize<JsonElement>(value, JsonOptions);
+            }
+            catch
+            {
+                // If not valid JSON, safely convert any string to a JsonElement
+                parsedValue = JsonSerializer.SerializeToElement(value);
+            }
+
+            var body = new { field, value = parsedValue };
+            var content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
             var response = await Http.PostAsync($"{BaseUrl}/ui/set-field", content);
 
             var json = await response.Content.ReadAsStringAsync();
