@@ -160,6 +160,15 @@ def classify_field(field_type, known_enums, known_structs, known_templates):
     """Classify a field type into a category."""
     base = field_type.rstrip("[]")
 
+    # Collections first. Stripping "[]" before classifying used to label int[] as
+    # "primitive" and RectInt[] as "struct", so the extractor never read them as arrays
+    # (75 missing m_EnemySpawnAreaRects fields in the v0.7.14 mission data).
+    list_match = re.match(r"List<([\w.]+)>", field_type)
+    if list_match:
+        return "collection", list_match.group(1)
+    if "[]" in field_type:
+        return "collection", base
+
     if base in PRIMITIVE_TYPES:
         return "primitive", None
 
@@ -177,13 +186,6 @@ def classify_field(field_type, known_enums, known_structs, known_templates):
 
     if base in UNITY_ASSET_TYPES:
         return "unity_asset", None
-
-    # Collections
-    list_match = re.match(r"List<(\w+)>", field_type)
-    if list_match:
-        return "collection", list_match.group(1)
-    if "[]" in field_type:
-        return "collection", base
 
     # Template references
     if base.endswith("Template") and base in known_templates:

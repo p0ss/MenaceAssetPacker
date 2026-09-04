@@ -212,9 +212,12 @@ public static class GamePatch
                 return null;
             }
 
-            // Try exact match first
+            // Il2CppInterop prefixes the game's namespaces in the managed proxies, so the
+            // game-facing name "Menace.Tactical.Map" is "Il2CppMenace.Tactical.Map" here.
+            // Accept the short name, the exact full name, and the prefixed full name.
+            var prefixed = "Il2Cpp" + typeName;
             var type = gameAssembly.GetTypes()
-                .FirstOrDefault(t => t.Name == typeName || t.FullName == typeName);
+                .FirstOrDefault(t => t.Name == typeName || t.FullName == typeName || t.FullName == prefixed);
 
             if (type == null)
             {

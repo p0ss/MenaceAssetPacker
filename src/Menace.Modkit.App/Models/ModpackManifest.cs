@@ -62,6 +62,12 @@ public class ModpackManifest
     // -- Data patches (template type → instance name → field → value) --
     public Dictionary<string, Dictionary<string, Dictionary<string, JsonElement>>> Patches { get; set; } = new();
 
+    // -- Template clones (template type → new name → source name) --
+    // Authored in the manifest per docs/modding-guides/03-template-cloning.md; the GUI's
+    // clone tool writes clones/<Type>.json instead. Deploy merges both. Without this
+    // property System.Text.Json dropped the block on every SaveToFile.
+    public Dictionary<string, Dictionary<string, string>>? Clones { get; set; }
+
     // -- Asset bundles --
     public List<string> Bundles { get; set; } = new();
 
@@ -102,6 +108,7 @@ public class ModpackManifest
 
     public bool HasCode => Code?.HasAnyCode ?? false;
     public bool HasPatches => Patches?.Count > 0;
+    public bool HasClones => Clones?.Values.Any(m => m?.Count > 0) ?? false;
     public bool HasBundles => Bundles?.Count > 0;
     public bool HasAssets => Assets?.Count > 0;
 

@@ -126,6 +126,7 @@ namespace Menace.DataExtractor
         private Dictionary<string, SchemaType> _schemaTypes = new();
         private Dictionary<string, SchemaType> _embeddedClasses = new();
         private Dictionary<string, SchemaType> _structTypes = new();  // Value type structs
+        private HashSet<string> _enumNames = new();  // Enum type names, for inline enum arrays
         private EventHandlerParser _effectHandlerParser = new();  // Polymorphic effect handler parsing
         private bool _schemaLoaded = false;
 
@@ -402,6 +403,13 @@ namespace Menace.DataExtractor
                     }
                 }
 
+                // Enum names, so enum arrays can be read inline as int32
+                if (root["enums"] is JObject enums)
+                {
+                    foreach (var kvp in enums)
+                        _enumNames.Add(kvp.Key);
+                }
+
                 // Parse value type structs (like OperationTrustChange, OperationResources)
                 if (root["structs"] is JObject structs)
                 {
@@ -547,7 +555,36 @@ namespace Menace.DataExtractor
 
         // Track frames for auto-extraction delay (wait for game to stabilize)
         private int _frameCount = 0;
-        private const int AutoExtractionDelayFrames = 300; // ~5 seconds at 60fps
+        private const int AutoExtractionDelayFrames = 300; // ~5 seconds at 60fps, counted from the main menu
+
+        // Extraction must not start while the game is still booting: with the ModpackLoader installed the
+        // boot takes longer than 300 frames, and kicking off template loading from OnUpdate mid-boot froze
+        // the game every time. Arm the auto-start only once the main menu scene has loaded, with a fallback
+        // so a build whose menu scene is named differently still extracts eventually.
+        private const string MainMenuSceneName = "Title";
+        private const int AutoExtractionFallbackFrames = 5400; // ~90 seconds
+        private int _autoStartFrame = int.MaxValue;
+
+        public override void OnSceneWasLoaded(int buildIndex, string sceneName)
+        {
+            if (string.Equals(sceneName, MainMenuSceneName, StringComparison.OrdinalIgnoreCase) && _autoStartFrame == int.MaxValue)
+            {
+                _autoStartFrame = _frameCount + AutoExtractionDelayFrames;
+                LoggerInstance.Msg($"Main menu loaded; extraction can start after frame {_autoStartFrame}.");
+            }
+        }
+
+        private bool GameReadyForExtraction()
+        {
+            if (_frameCount >= _autoStartFrame) return true;
+            if (_frameCount >= AutoExtractionFallbackFrames)
+            {
+                LoggerInstance.Warning($"Main menu scene '{MainMenuSceneName}' not seen after {AutoExtractionFallbackFrames} frames; proceeding anyway.");
+                _autoStartFrame = _frameCount;
+                return true;
+            }
+            return false;
+        }
 
         // Configurable keybinding (loaded from ModSettings.json)
         private UnityEngine.KeyCode _extractionKey = UnityEngine.KeyCode.F11;
@@ -626,7 +663,7 @@ namespace Menace.DataExtractor
             // Wait for game to stabilize before showing (a few seconds after loading)
             if (_autoExtractionPending && !_extractionInProgress && !_manualExtractionInProgress && !_dialogDismissedThisSession)
             {
-                if (_frameCount >= AutoExtractionDelayFrames)
+                if (GameReadyForExtraction())
                 {
                     _autoExtractionPending = false;
                     if (_extractionReason == ExtractionReason.ForceRequested)
@@ -936,13 +973,13 @@ namespace Menace.DataExtractor
                 InitDevConsoleReflection();
             }
 
-            // Log to DevConsole if available (don't require ShowPanel for logging to work)
+            // Log to DevConsole if available. Do not open the console panel from here: forcing the
+            // IMGUI console visible on MENACE v0.7.14 froze the game every time (both mid-boot and at
+            // the main menu), and the extractor's progress is also written to the MelonLoader log.
             if (_devConsoleLog != null)
             {
                 try
                 {
-                    // Open the Log panel if method is available
-                    _devConsoleShowPanel?.Invoke(null, new object[] { "Log" });
                     _devConsoleLog.Invoke(null, new object[] { $"[DataExtractor] {message}" });
                 }
                 catch (Exception ex)
@@ -1205,7 +1242,9 @@ namespace Menace.DataExtractor
             // Only log to MelonLogger during early wait - DevConsole not safe yet
             LoggerInstance.Msg("Waiting for stable game state...");
 
-            // Wait for a stable scene before extraction to avoid GC during scene transitions
+            // Wait for a stable scene before extraction to avoid GC during scene transitions.
+            // Unscaled time: the title screen can sit at timeScale 0 (the loader's BootSkip leaves the
+            // paused intro video state behind), and scaled deltaTime would never accumulate there.
             // Scene transitions cause Unity's GC to be very active, which can collect
             // objects we're trying to extract, causing AccessViolationException.
             float waited = 0f;
@@ -1217,7 +1256,7 @@ namespace Menace.DataExtractor
             while (waited < maxWait)
             {
                 yield return null;
-                waited += Time.deltaTime;
+                waited += Time.unscaledDeltaTime;
 
                 // Get current scene name
                 string currentScene = "";
@@ -1231,7 +1270,7 @@ namespace Menace.DataExtractor
                 // Track scene stability
                 if (currentScene == lastScene)
                 {
-                    sceneStableTime += Time.deltaTime;
+                    sceneStableTime += Time.unscaledDeltaTime;
                 }
                 else
                 {
@@ -1256,7 +1295,7 @@ namespace Menace.DataExtractor
                 }
 
                 // Log progress every 10 seconds (only to MelonLogger - DevConsole not safe yet)
-                if ((int)waited % 10 == 0 && waited > 0 && Time.deltaTime > 0)
+                if ((int)waited % 10 == 0 && waited > 0 && Time.unscaledDeltaTime > 0)
                 {
                     LoggerInstance.Msg($"Waiting for stable scene... (current: {currentScene}, {waited:F0}s)");
                 }
@@ -1707,7 +1746,7 @@ namespace Menace.DataExtractor
                 while (retryWait < 2f)
                 {
                     yield return null;
-                    retryWait += Time.deltaTime;
+                    retryWait += Time.unscaledDeltaTime;
                 }
             }
 
@@ -3253,6 +3292,27 @@ namespace Menace.DataExtractor
             bool isPrimitive = IsPrimitiveTypeName(elementType);
             bool isEffectHandler = elementType == "SkillEventHandlerTemplate";
 
+            // Value-type element arrays (RectInt[], Vector2Int[], OperationTrustChange[], int[]) store
+            // their elements inline at a fixed stride, not as pointers. Read them in place; the
+            // pointer loop below is for reference-type elements only.
+            if (elementType != "string" && elementType != "String" && TryGetInlineElementStride(elementType, out var inlineSchema, out var stride))
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    try
+                    {
+                        IntPtr elemAddr = arrayPtr + elementsOffset + i * stride;
+                        result.Add(ReadInlineElement(elemAddr, elementType, inlineSchema, depth + 1));
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugLog($"        element[{i}] ({elementType}) error: {ex.Message}");
+                        result.Add($"(error: {elementType})");
+                    }
+                }
+                return result;
+            }
+
             for (int i = 0; i < count; i++)
             {
                 try
@@ -3288,9 +3348,9 @@ namespace Menace.DataExtractor
                     }
                     else if (isPrimitive)
                     {
-                        // For primitive arrays, elements are inline (not pointers)
-                        // This case shouldn't happen for reference arrays
-                        result.Add(elemPtr.ToString());
+                        // Only string reaches here: value-type primitives took the inline
+                        // path above. A string element is a pointer to an Il2CppString.
+                        result.Add(IL2CPP.Il2CppStringToManaged(elemPtr));
                     }
                     else
                     {
@@ -3306,6 +3366,151 @@ namespace Menace.DataExtractor
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Element stride for arrays whose elements are stored inline: primitives, the common
+        /// Unity structs, and any struct the schema describes. Returns false for reference types.
+        /// </summary>
+        private bool TryGetInlineElementStride(string typeName, out SchemaType schema, out int stride)
+        {
+            schema = null;
+            stride = 0;
+
+            if (IsPrimitiveTypeName(typeName))
+            {
+                stride = PrimitiveSize(typeName);
+                return stride > 0;
+            }
+
+            switch (typeName)
+            {
+                case "Vector2Int":
+                case "Vector2":
+                    stride = 8;
+                    return true;
+                case "Vector3":
+                case "Vector3Int":
+                    stride = 12;
+                    return true;
+                case "Vector4":
+                case "Quaternion":
+                case "Rect":
+                case "RectInt":
+                case "Color":
+                    stride = 16;
+                    return true;
+            }
+
+            // Schema structs before enums: "ID" is both (the Stem sound ID struct is the
+            // one that appears in arrays), and the scalar reader gives structs priority too.
+            if (_structTypes.TryGetValue(typeName, out schema) && schema.Fields.Count > 0)
+            {
+                stride = EstimateStructSize(schema, 0);
+                return stride > 0;
+            }
+
+            if (_enumNames.Contains(typeName))
+            {
+                stride = 4;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Size in bytes of one inline element: the common Unity structs by hand, schema structs from
+        /// their field layout (largest offset plus that field's size, padded to the struct's alignment).
+        /// The dump gives offsets but not sizes, so an 8-byte trailing field pads the struct to 8.
+        /// </summary>
+        private int EstimateStructSize(SchemaType schema, int depth)
+        {
+            if (depth > 4) return 4;
+            int end = 0;
+            int align = 4;
+            foreach (var field in schema.Fields)
+            {
+                int size = FieldStorageSize(field, depth);
+                if (size >= 8) align = 8;
+                end = Math.Max(end, (int)field.Offset + size);
+            }
+            if (end <= 0) return 0;
+            return (end + align - 1) / align * align;
+        }
+
+        private int FieldStorageSize(SchemaField field, int depth)
+        {
+            switch (field.Category ?? "primitive")
+            {
+                case "primitive":
+                    return PrimitiveSize(field.Type);
+                case "enum":
+                    return 4;
+                case "struct":
+                    if (TryGetInlineElementStride(field.Type, out var nested, out var nestedStride) && nested == null)
+                        return nestedStride;
+                    if (_structTypes.TryGetValue(field.Type, out var nestedSchema))
+                        return EstimateStructSize(nestedSchema, depth + 1);
+                    return 4;
+                default:
+                    return IntPtr.Size; // references, strings, collections, Unity assets
+            }
+        }
+
+        private static int PrimitiveSize(string typeName)
+        {
+            return typeName switch
+            {
+                "bool" or "Boolean" or "byte" or "Byte" or "sbyte" or "SByte" => 1,
+                "short" or "Int16" or "ushort" or "UInt16" or "char" or "Char" => 2,
+                "long" or "Int64" or "ulong" or "UInt64" or "double" or "Double" => 8,
+                "string" or "String" => IntPtr.Size,
+                _ => 4,
+            };
+        }
+
+        /// <summary>
+        /// Read one inline array element: a primitive, one of the common Unity structs, or a
+        /// schema-described struct.
+        /// </summary>
+        private object ReadInlineElement(IntPtr addr, string typeName, SchemaType schema, int depth)
+        {
+            if (schema != null)
+                return ReadStructFromSchema(addr, schema, depth);
+
+            if (IsPrimitiveTypeName(typeName))
+                return ReadSchemaPrimitive(addr, typeName);
+
+            if (_enumNames.Contains(typeName))
+                return Marshal.ReadInt32(addr);
+
+            switch (typeName)
+            {
+                case "Vector2Int":
+                    return new Dictionary<string, object> { { "x", Marshal.ReadInt32(addr) }, { "y", Marshal.ReadInt32(addr + 4) } };
+                case "Vector3Int":
+                    return new Dictionary<string, object> { { "x", Marshal.ReadInt32(addr) }, { "y", Marshal.ReadInt32(addr + 4) }, { "z", Marshal.ReadInt32(addr + 8) } };
+                case "RectInt":
+                    return new Dictionary<string, object>
+                    {
+                        { "x", Marshal.ReadInt32(addr) }, { "y", Marshal.ReadInt32(addr + 4) },
+                        { "width", Marshal.ReadInt32(addr + 8) }, { "height", Marshal.ReadInt32(addr + 12) },
+                    };
+                case "Vector2":
+                    return new Dictionary<string, object> { { "x", ReadFloat(addr) }, { "y", ReadFloat(addr + 4) } };
+                case "Vector3":
+                    return new Dictionary<string, object> { { "x", ReadFloat(addr) }, { "y", ReadFloat(addr + 4) }, { "z", ReadFloat(addr + 8) } };
+                case "Vector4":
+                case "Quaternion":
+                    return new Dictionary<string, object> { { "x", ReadFloat(addr) }, { "y", ReadFloat(addr + 4) }, { "z", ReadFloat(addr + 8) }, { "w", ReadFloat(addr + 12) } };
+                case "Rect":
+                    return new Dictionary<string, object> { { "x", ReadFloat(addr) }, { "y", ReadFloat(addr + 4) }, { "width", ReadFloat(addr + 8) }, { "height", ReadFloat(addr + 12) } };
+                case "Color":
+                    return new Dictionary<string, object> { { "r", ReadFloat(addr) }, { "g", ReadFloat(addr + 4) }, { "b", ReadFloat(addr + 8) }, { "a", ReadFloat(addr + 12) } };
+            }
+
+            return $"({typeName})";
         }
 
         /// <summary>
@@ -4828,7 +5033,10 @@ namespace Menace.DataExtractor
             {
                 if (depth > 8) return null;
                 IntPtr arrayPtr = Marshal.ReadIntPtr(addr);
-                if (arrayPtr == IntPtr.Zero) return null;
+                // A null array is an empty collection as far as the schema is concerned. Returning
+                // null made the caller drop the field entirely, which the modkit's validator then
+                // reported as missing (69 reinforcement groups with no m_EnemySpawnAreaRects).
+                if (arrayPtr == IntPtr.Zero) return new List<object>();
                 return ReadArrayFromFieldMetadata(arrayPtr, fieldType, depth + 1);
             }
             catch { return null; }

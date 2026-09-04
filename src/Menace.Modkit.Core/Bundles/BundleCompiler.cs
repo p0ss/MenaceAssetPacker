@@ -682,9 +682,12 @@ public class BundleCompiler
                 continue;
 
             // Check if it matches template ID pattern: prefix.name
-            // - prefix: 2-20 lowercase letters/underscores (e.g., "weapon", "squad_leader")
+            // - prefix: 2-40 lowercase letters/underscores (e.g., "weapon", "squad_leader",
+            //   "construct_carrier_animation" is 27 chars in v0.7.x data)
             // - separator: exactly one dot
-            // - name: lowercase letters, numbers, underscores (can contain more dots)
+            // - name: letters of either case, numbers, underscores, dots, slashes, hyphens.
+            //   Uppercase is common ("weapon.generic_assault_rifle_tier1_ARC_762"); rejecting
+            //   it made native patching silently skip those assets and fall back to runtime.
             int dotPos = -1;
             bool validPrefix = true;
             bool validName = true;
@@ -706,16 +709,16 @@ public class BundleCompiler
                 }
             }
 
-            // Prefix must be 2-20 chars and valid
-            if (!validPrefix || dotPos < 2 || dotPos > 20)
+            // Prefix must be 2-40 chars and valid
+            if (!validPrefix || dotPos < 2 || dotPos > 40)
                 continue;
 
             // Validate name portion (after first dot)
             for (int i = dotPos + 1; i < len; i++)
             {
                 byte b = bytes[offset + 4 + i];
-                // Name can have lowercase letters, numbers, underscores, and dots
-                if (!((b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_' || b == '.'))
+                if (!((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+                      || b == '_' || b == '.' || b == '/' || b == '-'))
                 {
                     validName = false;
                     break;
